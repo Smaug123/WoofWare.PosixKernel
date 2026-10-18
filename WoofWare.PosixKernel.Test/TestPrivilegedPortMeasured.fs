@@ -10,7 +10,8 @@ open WoofWare.PosixKernel
 /// Which addresses an unprivileged `bind(2)` to a port below 1024 is refused
 /// for, replayed cell by cell from both flavours' outputs of
 /// `docs/probes/privileged-port`: every socket shape the probe made, each of
-/// its addresses, at ports 1, 80, 1023 and 1024.
+/// its addresses, at ports 1, 80, 1023 and 1024; and Darwin's run as root,
+/// which binds all of them.
 ///
 /// Every cell must be answered as measured, except those this kernel refuses
 /// (`refused` lists them by row, with why), which must be refused -- so a row
@@ -58,13 +59,15 @@ module TestPrivilegedPortMeasured =
             }
         | _ -> failwith $"unparsed row %s{line}"
 
-    /// The measured rows, and the uid that measured them.
-    let private measured (flavour : SimulatedUnixFlavour) : uint32 * Row list =
-        let name =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> "privileged-port.linux.txt"
-            | SimulatedUnixFlavour.Darwin -> "privileged-port.darwin.txt"
+    /// The resource holding each flavour's run as an ordinary user.
+    let private unprivilegedRun (flavour : SimulatedUnixFlavour) : string =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> "privileged-port.linux.txt"
+        | SimulatedUnixFlavour.Darwin -> "privileged-port.darwin.txt"
 
+    /// The measured rows of the run in the resource `name`, and the uid that
+    /// measured them.
+    let private measured (name : string) : uint32 * Row list =
         let lines = SocketLadder.resource name |> Array.map (fun line -> line.TrimEnd '\r')
 
         let uid =
@@ -181,11 +184,11 @@ module TestPrivilegedPortMeasured =
         | Ok (BindAnswer.Failed error, _) -> $"%A{error}", None
         | Error refusal -> "REFUSED", Some (BindRefusal.describe refusal)
 
-    let private replay (platform : SimulatedUnixPlatform) : unit =
-        let uid, rows = measured (SimulatedUnixPlatform.flavour platform)
+    let private replay (platform : SimulatedUnixPlatform) (name : string) (expectedUid : uint32) : unit =
+        let uid, rows = measured name
 
-        if uid = 0u then
-            failwith "the probe ran as root, so its rows say nothing about the privileged ports"
+        if uid <> expectedUid then
+            failwith $"%s{name}: the probe ran as uid %d{uid}, not %d{expectedUid}"
 
         let mismatches =
             [
@@ -206,17 +209,28 @@ module TestPrivilegedPortMeasured =
             failwith (String.Join ("\n", mismatches))
 
     [<Test>]
-    let ``every Linux row is replayed`` () : unit = replay SimulatedUnixPlatform.linuxX64
+    let ``every Linux row is replayed`` () : unit =
+        replay SimulatedUnixPlatform.linuxX64 (unprivilegedRun SimulatedUnixFlavour.Linux) 1000u
 
     [<Test>]
-    let ``every Darwin row is replayed`` () : unit = replay SimulatedUnixPlatform.macOsArm64
+    let ``every Darwin row is replayed`` () : unit =
+        replay SimulatedUnixPlatform.macOsArm64 (unprivilegedRun SimulatedUnixFlavour.Darwin) 501u
+
+    [<Test>]
+    let ``every row of Darwin's root run is replayed`` () : unit =
+        replay SimulatedUnixPlatform.macOsArm64 "privileged-port.darwin-root.txt" 0u
 
     /// The replay checks every cell it finds, so it is only as strong as the
     /// cells it finds: each output must hold every row the probe prints.
     [<Test>]
     let ``each output holds every row the probe prints`` () : unit =
-        for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let _, rows = measured flavour
+        for name in
+            [
+                unprivilegedRun SimulatedUnixFlavour.Linux
+                unprivilegedRun SimulatedUnixFlavour.Darwin
+                "privileged-port.darwin-root.txt"
+            ] do
+            let _, rows = measured name
 
             rows.Length |> shouldEqual 20
 
