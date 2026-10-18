@@ -81,6 +81,12 @@ output:
   Both flavours.
 - `udp-truesize.c`: what Linux charges a receiver per datagram, read through
   `SO_MEMINFO`, and when the charge is given back. Linux only.
+- `udp-release.c`: which calls refill a Linux receiver's reader queue, seen
+  through when the charge comes back. Linux only.
+- `udp-mbufs.c`: what Darwin charges a receiver per datagram in bytes and in
+  mbuf memory, read from `net.inet.udp.pcblist_n`, what a socket's history
+  does to the charge, and whether the two-budget rule predicts every arrival.
+  Darwin only.
 
 Each probe was run more than once. Every row repeated, except the two that are
 races by nature: which of several sleeping receivers took a datagram (S1), and
@@ -135,15 +141,16 @@ first) or bound to 0.0.0.0 or 127.0.0.1.
 
 `EMSGSIZE` sends nothing, on both flavours.
 
-### 2.4 How many datagrams a receiver holds (I, `udp-capacity.c`, `udp-truesize.c`)
+### 2.4 How many datagrams a receiver holds (I, `udp-capacity.c`, `udp-truesize.c`, `udp-release.c`, `udp-mbufs.c`)
 
 Datagrams beyond a receiver's capacity are **dropped silently**: the sender's
 call succeeds, and no error appears anywhere (L13). Both flavours are
-deterministic here. Every count repeated exactly, paced or not, and fresh or
-not, except for Darwin's first-datagram rule below.
+deterministic here. Each kernel's own account of a socket's buffer was read
+directly: Linux's through `SO_MEMINFO`, and Darwin's through the
+`net.inet.udp.pcblist_n` sysctl, which `netstat` reads. Every rule below
+predicted every admission in its probe.
 
-**Linux** charges each queued datagram a fixed *truesize* by its length, read
-directly through `SO_MEMINFO`:
+**Linux** charges each queued datagram a fixed *truesize* by its length:
 
 | length | charge |
 |---|---|
@@ -155,6 +162,9 @@ directly through `SO_MEMINFO`:
 | 7814–16004 | 16640 |
 | 16005–65507 | length + 832 (sampled at 512 sizes, no exception) |
 
+The table is of slab sizes, measured on aarch64. x86-64's may differ, and
+CI's host test (section 4, U1) is what will show it.
+
 - **Admission.** A datagram is admitted exactly when the charge already held
   plus its own is at most `SO_RCVBUF` (212992). That held for every admission in
   nine single-size fills and in five mixed-size trials of 600 sends. Charges
@@ -162,48 +172,73 @@ directly through `SO_MEMINFO`:
   198–645, 92 of 646–1669, and 3 of 65507.
 - **Release.** Taking a datagram does not give its charge back at once. The
   charge of the datagrams taken accumulates, and is given back together once it
-  reaches a quarter of `SO_RCVBUF` (53248), or once the reader's queue is empty.
+  reaches a quarter of `SO_RCVBUF` (53248), or once the reader queue is empty.
   After 92 datagrams of 1000 bytes, the charge stood at 211968 through 23 takes
   and fell by 24 × 2304 at the 24th. A full receiver with 22 datagrams taken
   admitted nothing more; with 29 taken, 24 more.
 
-  This is `udp_rmem_release`'s forward deficit. Linux's source has the shape:
-  a receive moves the whole arrival queue into a reader queue when the reader
-  queue is empty, and "the reader's queue is empty" means that reader queue.
+  This is `udp_rmem_release`'s forward deficit. Linux keeps two queues: the
+  arrivals, and a reader queue that a receive refills with every arrival at
+  once, when it finds the reader queue empty. "Empty" means the reader queue.
+- **Which calls refill the reader queue** (`udp-release.c`). Each was made with
+  ten datagrams arrived, before ten more:
+  - **refill**: `recv(MSG_PEEK)`, `FIONREAD`, and `poll`, `epoll_ctl(ADD)` or
+    `epoll_wait` of a **blocking** socket;
+  - **do not refill**: the same `poll` and `epoll_wait` of a non-blocking
+    socket, and `FIONREAD` when the reader queue holds something.
 
-**Darwin** counts in `sb_cc`, the same number `FIONREAD` reports (2.5).
+  This is `first_packet_length`, which `FIONREAD` calls, and which `udp_poll`
+  calls only for a description without `O_NONBLOCK`. So on Linux, a `poll` of a
+  blocking UDP socket changes when its charge comes back.
 
-- **Charge.** A datagram costs its length plus 32 bytes (a 16-byte address
-  record and 16 more). The **first datagram a socket ever receives** costs
-  its length plus 16 instead.
-- **Admission.** A datagram is admitted exactly when `sb_cc` plus its cost is at
-  most 786896.
-- **Measurements.** The fresh and primed counts at 1138, 1139 and 1140 bytes
-  are 672/672, 672/671 and 671/671. Those are
-  floor((786896 + 16) / (length + 32)) for a fresh socket, and
-  floor(786896 / (length + 32)) for one whose first datagram was taken.
-  `FIONREAD` follows the same arithmetic step by step (F5, F6).
-- **Release** is immediate (F5).
-- **A second budget.** Darwin also counts mbufs, its kernel memory buffers, and
-  that budget binds for small datagrams. A receiver holds at most 4099
-  datagrams of 1–159 bytes, 3075 empty ones (3074 once primed), and 1757 of
-  257 bytes up to at least 404. These fit a budget of 4 × 786896, at 768 per
-  datagram of 1–256 bytes, 1024 per empty one and 1792 per larger one, with a
-  datagram admitted while the budget is not exhausted.
+**Darwin** keeps two budgets, both in bytes:
 
-  Above 415 bytes the byte budget always binds first. The byte formula held at
-  every one of 150 sizes sampled from 160 to 9216, except at 282, 343 and 404,
-  where the cap of 1757 binds. So at the default `recvspace`, the mbuf budget
-  decides only for datagrams of 0–159 and 257–415 bytes. The per-datagram mbuf
-  charges are inferred from three caps, not read from the kernel: Darwin has no
-  `SO_MEMINFO`.
+- **`sb_cc`**, which `FIONREAD` reports (2.5):
+  - **the charge** is a datagram's length plus 32 (its 16-byte source address
+    and a 16-byte control record);
+  - **the cheaper charge** is length + 16, without the control record. It goes
+    to a datagram arriving at a socket that has never sent or received a
+    datagram and is not connected (`udp-mbufs.c` section 2):
+    - a socket that has sent, received, or is connected pays 32;
+    - `connect` followed by `AF_UNSPEC`, with nothing sent, restores the 16;
+    - `getsockname`, `SO_REUSEADDR`, `poll`, `FIONREAD` and an empty `recv`
+      change nothing.
+- **`sb_mbcnt`**, the mbuf memory the datagram occupies. It is measured at every
+  size from 0 to 9216, with the cheaper charge and without:
+
+  | length | with the 16-byte control record | without |
+  |---|---|---|
+  | 0 | 2048 | 1536 |
+  | 1–256 | 1536 | 1024 |
+  | 257–288 | 3584 | 1536 |
+  | 289–2016 | 3584 | 3584 |
+  | 2017–2048 | 5632 | 3584 |
+  | 2049–4064 | 5632 | 5632 |
+  | 4065–4096 | 10240 | 5632 |
+  | 4097–8160 | 10240 | 10240 |
+  | 8161–8192 | 14848 | 10240 |
+  | 8193–9216 | 14848 | 14848 |
+
+- **Admission.** A datagram is admitted exactly when `sb_cc` plus its byte
+  charge is at most `sb_hiwat` (786896, `net.inet.udp.recvspace`), *and*
+  `sb_mbcnt` plus the same byte charge is at most `sb_mbmax`. The budget is
+  6295168 = 8 × 786896, under `kern.ipc.maxsockbuf`'s 8388608.
+  - Section 3 of `udp-mbufs.c` checked this against every arrival and drop in
+    eight random mixtures of sizes and takes, about 6,000 datagrams, with no
+    exception.
+  - It also explains every count of `udp-capacity.c`: 4099 datagrams of 1–159
+    bytes, 3075 empty ones (3074 once primed), and 1757 of 257–415 bytes, where
+    the mbuf budget decides, and floor(786896 / (length + 32)) elsewhere.
+  - It explains the reviewer's mixture too: five datagrams of 9216 bytes, then
+    1737 of 257, keep 1741.
+- **Release** of both budgets is immediate (F5).
 
 ### 2.5 `FIONREAD` (F)
 
 | queue | L | D |
 |---|---|---|
 | empty | 0 | 0 |
-| 10, 20, 30 | **10** (the first datagram's length) | **140** (`sb_cc`: 60 bytes, plus 32 for each datagram, less 16 for the socket's first) |
+| 10, 20, 30 | **10** (the first datagram's length) | **140** (`sb_cc`: 60 bytes, plus 32 for each datagram, less 16 for the first, which arrived at a fresh socket) |
 | after taking the 10 | 20 | 114 |
 | 0, then 10 | 0 | 74 |
 
@@ -429,28 +464,24 @@ behind accessors.
 Section 2.4 shows both flavours' capacity is a deterministic function of the
 sizes and of the takes, with a rule small enough to state.
 
-- **(A) Reproduce each flavour's accounting.**
+- **(A) Reproduce each flavour's accounting**, as section 2.4 read it from
+  each kernel.
   - **Linux**: the truesize table, admission at "held + own ≤ 212992", and the
-    forward-deficit release, with its reader queue and arrival queue.
-  - **Darwin**: the byte budget, with its first-datagram discount, released
-    at once, and the mbuf budget.
+    forward-deficit release, with its reader queue and arrival queue, and the
+    calls that refill the reader queue.
+  - **Darwin**: the byte budget and the mbuf budget, each charge with its
+    cheaper form for a socket that has neither sent, received, nor connected,
+    both released at once.
 
-  `FIONREAD` then falls out on Darwin (it is the byte budget). A randomised
-  test of interleaved sends and takes against the host checks the rule, on
-  Linux in CI and Darwin locally.
+  `FIONREAD` then falls out on Darwin, since it is the byte budget. A
+  randomised test of interleaved sends and takes against the host checks both
+  rules, on Linux in CI and on Darwin locally.
 
-  For Darwin's mbuf budget, whose charges are inferred rather than read, there
-  are two choices:
-  - **(A1)** model it with the inferred charges, and let the randomised host
-    test confirm or refute them on mixed sizes;
-  - **(A2)** refuse (`UnmodelledException`) an arrival at a Darwin queue
-    already holding 1757 datagrams, the smallest cap measured. Below that
-    count the mbuf budget cannot bind, if no datagram costs more than the
-    largest inferred charge.
-
-  **Recommend (A2)** for U1: it is exact wherever it answers, and a program
-  must queue 1757 unread datagrams to reach it. (A1) can follow once the host
-  test has a mixed-size Darwin corpus to hold it to.
+  An earlier draft refused an arrival at a Darwin queue holding 1757
+  datagrams, because Darwin's mbuf charges were then inferred from three caps
+  rather than read. Review showed that refusal was unsafe: datagrams of mixed
+  sizes are dropped below it. The charges are now read for every size, and
+  the rule predicted every arrival in mixed trials, so the refusal is gone.
 - **(B) Count payload bytes against `SO_RCVBUF`.** This is simple, but an
   unread Linux receiver would then hold 2129 datagrams of 100 bytes where the
   kernel holds 256. A program that floods an unread socket would see every
@@ -458,16 +489,16 @@ sizes and of the takes, with a rule small enough to state.
 - **(C) No capacity.** No drops at all. This violates "bound uncertainty", and
   a dropped datagram is precisely what UDP programs are written to survive.
 
-**Recommend (A).** Both rules are a handful of integers and one comparison,
-the probes give exact expected answers, and the host test makes a wrong
-reconstruction fail loudly.
+**Recommend (A).** Each rule is a table and one or two comparisons, the probes
+give exact expected answers, and the host test makes a wrong reconstruction
+fail loudly.
 
 **The sysctls are configuration.** Linux's `net.core.rmem_default` (212992) and
 Darwin's `net.inet.udp.recvspace` (786896) and `net.inet.udp.maxdgram` (9216)
 are values an administrator sets. So, by the `emulated-posix-kernel` skill's
 rule, they are boot configuration with these defaults, as `TcpSendSpace` is.
-The truesize table and the 832, 32 and 16 are the kernel's own, and so are
-platform facts. **Recommend** adding the three as machine settings now, with
+The truesize table, Darwin's mbuf table, and its 32, 16 and factor of 8 are
+the kernel's own, and so are platform facts. **Recommend** adding the three as machine settings now, with
 setters only once a client needs to change one. A setter is additive.
 
 ### 3.3 Which socket receives
@@ -593,6 +624,10 @@ unmeasured bit, as today, rather than ignoring it as both kernels do.
 
 - `socketReadinessLevel` gains IN while the queue is non-empty, and ERR while
   the error is pending, independently (2.6).
+- A `poll`, `epoll_ctl(ADD)` or `epoll_wait` of a blocking socket refills its
+  reader queue (2.4). So for a UDP socket, Linux's poll changes the receiver,
+  as `LinuxReadiness.polled` already lets a poll change a TCP socket's send
+  state.
 - `SocketWake.DataArrived` already exists. A delivery raises it on the
   receiver for each datagram.
 - A new `SocketWake.DatagramSent` raises an OUT edge on the sender after each
@@ -662,8 +697,6 @@ blocking receives first can have U4 before U3.
 - **Buffer-size options**: `SO_RCVBUF` and `SO_SNDBUF` are refused, so
   capacities are the configured defaults.
 - **Unknown flags**: refused, where both kernels ignore them.
-- **Darwin's mbuf budget** (3.2, A2): an arrival at a queue holding 1757
-  datagrams is refused.
 
 ## Decisions
 
@@ -671,7 +704,10 @@ Patrick, 2026-10-18:
 
 - **3.1**: (A), a machine map of datagram receivers.
 - **3.2**: (A), each flavour's accounting reproduced, with (A2): an arrival at
-  a Darwin queue holding 1757 datagrams is refused.
+  a Darwin queue holding 1757 datagrams is refused. **Superseded, for Patrick
+  to confirm**: review found (A2) unsafe for mixed sizes, and Darwin's mbuf
+  charges are now measured, so (A) models both of Darwin's budgets exactly,
+  and nothing is refused (3.2).
 - **3.3**: ties are refused; U1 delivers by a scan, and U2 adds the port index.
 - **Staging**: as section 4, U1 to U6 in order.
 

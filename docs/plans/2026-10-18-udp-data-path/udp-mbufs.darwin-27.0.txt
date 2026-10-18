@@ -1,0 +1,42 @@
+ProductName:		macOS ProductVersion:		27.0.1 BuildVersion:		26A434 
+Darwin 27.0.0 arm64
+uid=501
+0 a fresh receiver: cc 0 hiwat 786896 mbcnt 0 mbmax 6295168
+0 one datagram of 10: cc 26 mbcnt 1024; FIONREAD 26
+0 after taking it: cc 0 mbcnt 0
+1 sizes 0..0: first datagram cc +size+16 mbcnt +1536; second cc +size+32 mbcnt +2048
+1 sizes 1..256: first datagram cc +size+16 mbcnt +1024; second cc +size+32 mbcnt +1536
+1 sizes 257..288: first datagram cc +size+16 mbcnt +1536; second cc +size+32 mbcnt +3584
+1 sizes 289..2016: first datagram cc +size+16 mbcnt +3584; second cc +size+32 mbcnt +3584
+1 sizes 2017..2048: first datagram cc +size+16 mbcnt +3584; second cc +size+32 mbcnt +5632
+1 sizes 2049..4064: first datagram cc +size+16 mbcnt +5632; second cc +size+32 mbcnt +5632
+1 sizes 4065..4096: first datagram cc +size+16 mbcnt +5632; second cc +size+32 mbcnt +10240
+1 sizes 4097..8160: first datagram cc +size+16 mbcnt +10240; second cc +size+32 mbcnt +10240
+1 sizes 8161..8192: first datagram cc +size+16 mbcnt +10240; second cc +size+32 mbcnt +14848
+1 sizes 8193..9216: first datagram cc +size+16 mbcnt +14848; second cc +size+32 mbcnt +14848
+2 nothing: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 connect to a bound socket: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 connect, then AF_UNSPEC: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 sendto another socket: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 sendto itself (the datagram it then receives): first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 getsockname: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 SO_REUSEADDR: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 a non-blocking recv on its empty queue: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 poll: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 FIONREAD: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 connect to the sender, which sends: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 the sender connected to it first: first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+2 a datagram from another sender, taken: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 sendto another socket, then AF_UNSPEC: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 a datagram taken, then AF_UNSPEC: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 connect, send, then AF_UNSPEC: first datagram arrived, cc +36 mbcnt +1536; the next arrived, cc +36 mbcnt +1536
+2 bind only (the fresh receiver is bound): first datagram arrived, cc +20 mbcnt +1024; the next arrived, cc +36 mbcnt +1536
+3 trial 0: sent 775, arrived 765, dropped 10, taken 67; arrivals against the rule 0; ended at cc 786767 mbcnt 2521600
+3 trial 1: sent 814, arrived 804, dropped 10, taken 85; arrivals against the rule 0; ended at cc 786846 mbcnt 2518016
+3 trial 2: sent 785, arrived 775, dropped 10, taken 82; arrivals against the rule 0; ended at cc 786527 mbcnt 2530816
+3 trial 3: sent 762, arrived 752, dropped 10, taken 86; arrivals against the rule 0; ended at cc 786869 mbcnt 2411520
+3 trial 4: sent 793, arrived 783, dropped 10, taken 78; arrivals against the rule 0; ended at cc 786827 mbcnt 2557952
+3 trial 5: sent 784, arrived 774, dropped 10, taken 95; arrivals against the rule 0; ended at cc 786796 mbcnt 2499072
+3 trial 6: sent 817, arrived 807, dropped 10, taken 105; arrivals against the rule 0; ended at cc 786573 mbcnt 2533888
+3 trial 7: sent 727, arrived 717, dropped 10, taken 74; arrivals against the rule 0; ended at cc 786717 mbcnt 2428928
+3 five of 9216 then 1737 of 257: 1741 arrived; cc 547928 mbcnt 6296064
