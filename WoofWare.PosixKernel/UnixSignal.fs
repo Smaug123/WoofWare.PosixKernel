@@ -4,10 +4,9 @@ namespace WoofWare.PosixKernel
 /// rather than an error a kernel would report.
 [<RequireQualifiedAccess>]
 type internal KillRefusal =
-    /// A positive process ID other than the calling process's own. A real
-    /// kernel's answer depends on whether that process exists and on what the
-    /// signal does to it, and sending a signal to another process is not
-    /// modelled.
+    /// The process ID of another process on the machine, or under Linux the
+    /// thread ID of one of its threads. Sending a signal to another process is
+    /// not modelled.
     | OtherProcess of pid : int32
     /// Zero or a negative number: a process group, or every process the caller
     /// may signal.
@@ -21,6 +20,16 @@ type internal KillRefusal =
     | Receiver of SignalReceiverRefusal
     /// The signal ends the calling process, and the process's end is refused.
     | ProcessEnd of ProcessEndRefusal
+    /// Process ID 1, which no process on the machine has. Every real machine
+    /// has a process 1, its init, which this library's machine never holds,
+    /// so the answer a real kernel gives (0 or EPERM, by the credentials)
+    /// would be about a process this library does not know.
+    | ProcessOne
+    /// Under Linux, the thread ID of one of the calling process's threads other
+    /// than its leader. Linux sends the signal to the process with that thread
+    /// preferred to take it, and this library delivers a process's own signals
+    /// to its leader only.
+    | OwnThread of tid : int32
 
 [<RequireQualifiedAccess>]
 module internal KillRefusal =
@@ -29,7 +38,7 @@ module internal KillRefusal =
     let describe (refusal : KillRefusal) : string =
         match refusal with
         | KillRefusal.OtherProcess pid ->
-            $"the signal is sent to process %d{pid}, which is not the calling process. A real kernel's answer depends on whether that process exists and on what the signal does to it, and sending a signal to another process is not modelled."
+            $"the signal is sent to process %d{pid}, another process on the machine (or one of its threads), and sending a signal to another process is not modelled."
         | KillRefusal.ProcessGroup pid ->
             $"the signal is sent to process ID %d{pid}, which names a process group or every process the caller may signal, and neither is modelled."
         | KillRefusal.InitProcess ->
@@ -37,6 +46,10 @@ module internal KillRefusal =
         | KillRefusal.Receiver refusal -> SignalReceiverRefusal.describe refusal
         | KillRefusal.ProcessEnd refusal ->
             $"the signal ends the calling process; %s{ProcessEndRefusal.describe refusal}"
+        | KillRefusal.ProcessOne ->
+            "the signal is sent to process ID 1. Every real machine has a process 1, its init, and this kernel's machine never holds one, so a real kernel's answer would be about a process this kernel does not know."
+        | KillRefusal.OwnThread tid ->
+            $"the signal is sent to %d{tid}, the thread ID of one of the calling process's threads other than its leader. Linux sends it to the process with that thread preferred to take it, and this kernel delivers a process's own signals to its leader only."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : KillRefusal) : RefusalKind =
@@ -46,6 +59,8 @@ module internal KillRefusal =
         | KillRefusal.InitProcess -> RefusalKind.Unmodelled
         | KillRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
         | KillRefusal.ProcessEnd inner -> ProcessEndRefusal.kind inner
+        | KillRefusal.ProcessOne -> RefusalKind.Unmodelled
+        | KillRefusal.OwnThread _ -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `pthread_kill(3)`: something it does not
 /// model, rather than an error a kernel would report.
@@ -288,24 +303,49 @@ module UnixSignal =
         : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, UnixError>, KillRefusal>
         =
         let self = ProcessId.toInt32 system.Process.ProcessId
+        let numbering = UnixSystemState.signalNumbering system
 
-        // The target is screened before the number. Linux looks the target up
-        // first, so a pid naming no process is ESRCH whatever the number, where
-        // Darwin checks the number first and says EINVAL (measured,
-        // `docs/plans/2026-08-23-posix-kernel-extraction/kill-arguments.c`).
-        // Whether a pid names a process is what this kernel cannot know, so
-        // every other target is refused before the number is looked at.
+        let isThreadOf (threads : Map<'Thread, UnixThreadState>) : bool =
+            threads
+            |> Map.exists (fun _ thread -> OsThreadId.toUInt64 thread.OsThreadId = uint64 pid)
+
+        // Linux's thread IDs come from the counter its process IDs do, and its
+        // `kill` finds a thread by its ID; Darwin's `kill` looks up process IDs
+        // alone.
+        let linux =
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux -> true
+            | SimulatedUnixFlavour.Darwin -> false
+
+        // A pid that names nothing is ESRCH. Linux looks the target up before
+        // it reads the number, so it says ESRCH whatever the number; Darwin
+        // checks the number first and says EINVAL (measured,
+        // `docs/plans/2026-08-23-posix-kernel-extraction/kill-arguments.c` and
+        // `docs/probes/kill-targets`). A target the model holds no rule for is
+        // refused before the number is read.
         if pid <= 0 then
             Error (KillRefusal.ProcessGroup pid)
         elif pid <> self then
-            Error (KillRefusal.OtherProcess pid)
+            if
+                Map.containsKey pid system.Others
+                || (linux && system.Others |> Map.exists (fun _ slot -> isThreadOf slot.Threads))
+            then
+                Error (KillRefusal.OtherProcess pid)
+            elif pid = 1 then
+                Error KillRefusal.ProcessOne
+            elif linux && isThreadOf system.Threads then
+                Error (KillRefusal.OwnThread pid)
+            elif not linux && signo <> 0 && (Signal.ofRawSignoUnder numbering signo).IsNone then
+                Ok (Error UnixError.EINVAL)
+            else
+                Ok (Error UnixError.ESRCH)
         elif ProcessSignal.isInit system then
             Error KillRefusal.InitProcess
         elif signo = 0 then
             Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system)))
         else
 
-        match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
+        match Signal.ofRawSignoUnder numbering signo with
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
             let entry =
@@ -314,10 +354,13 @@ module UnixSignal =
                     Target = ValueNone
                 }
 
-            match ProcessSignal.generate entry system with
+            match ProcessSignal.generate SignalSender.Kill entry system with
             | Error refusal -> Error (KillRefusal.Receiver refusal)
-            | Ok (Error refusal) -> Error (KillRefusal.ProcessEnd refusal)
-            | Ok (Ok fate) -> Ok (Ok fate)
+            | Ok (SignalSent.EndRefused refusal) -> Error (KillRefusal.ProcessEnd refusal)
+            | Ok SignalSent.QueueFull ->
+                failwith
+                    $"UnixSignal.kill: %O{signal} found the queue full, which only a signal sent by tgkill can (this is a bug in this library)."
+            | Ok (SignalSent.Fate fate) -> Ok (Ok fate)
 
     /// `kill`, with a refusal answered as the `Error` rather than raised.
     let internal tryKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -362,6 +405,15 @@ module UnixSignal =
     ///     thread it is deliverable to, if any, owes that return at once, and
     ///     makes no other call before it.
     ///
+    /// Under Linux a pending signal counts against the receiving process's
+    /// `RLIMIT_SIGPENDING` (`ProcessLaunch.withPendingSignalLimit`), which
+    /// bounds the signals queued for its real user in all that user's
+    /// processes. A signal sent by `kill` past the limit is pending all the
+    /// same if it is a standard one; a real-time one is lost if an instance of
+    /// it is pending in its set already, and is otherwise pending without the
+    /// information it was sent with, counting against nothing, until an
+    /// instance sent within the limit replaces it.
+    ///
     /// Before any of that, under Darwin's numbering an ignored signal other
     /// than SIGCONT is discarded, whatever any mask says; under Linux's, an
     /// ignored signal that every receiver blocks stays pending until one can
@@ -378,14 +430,30 @@ module UnixSignal =
     ///
     /// Refuses a signal sent to the process that only
     /// a thread other than the leader could receive, where it is caught, or,
-    /// under Linux's numbering, ignored; and, under
+    /// under Linux's numbering, ignored; under Linux's numbering, a caught one
+    /// sent while the leader is not running (it is asleep in a call, or
+    /// `UnixScheduling.runningOn` answers `None`) and already has a signal to
+    /// take, where another
+    /// thread does not block it and it is not a standard signal already
+    /// pending on the process, which Linux would wake that thread for too; and, under
     /// Darwin's numbering, a standard signal it would leave pending on the
     /// process while an instance is pending on the leader alone, or the other
     /// way round, which Darwin holds as one instance where this library holds
     /// two.
     ///
-    /// Only a signal to the calling process itself is answered. Signal number 0
-    /// sends nothing, and a number that is neither 0 nor a signal is `EINVAL`.
+    /// Signal number 0 sends nothing, and a number that is neither 0 nor a
+    /// signal is `EINVAL`. A positive `pid` that names no process on the
+    /// machine, and under Linux no thread either, is `ESRCH`: under Linux
+    /// whatever the number, and under Darwin once the number is 0 or a signal.
+    /// A process that has ended is gone, as if its parent had reaped it.
+    ///
+    /// Every other target but the calling process is refused: zero or a
+    /// negative `pid` (a process group, or every process the caller may
+    /// signal); process ID 1, which every real machine has and this library's
+    /// machine never holds; another process on the machine, or under Linux one
+    /// of its threads; and under Linux one of the calling process's own
+    /// threads other than its leader, which Linux would prefer to take the
+    /// signal.
     let kill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (pid : int32)
@@ -770,10 +838,11 @@ module UnixSignal =
                     Target = ValueSome target
                 }
 
-            match ProcessSignal.generate entry system with
+            match ProcessSignal.generate SignalSender.ThreadKill entry system with
             | Error refusal -> Error (ThreadKillRefusal.Receiver refusal)
-            | Ok (Error refusal) -> Error (ThreadKillRefusal.ProcessEnd refusal)
-            | Ok (Ok fate) -> Ok (Ok fate)
+            | Ok (SignalSent.EndRefused refusal) -> Error (ThreadKillRefusal.ProcessEnd refusal)
+            | Ok SignalSent.QueueFull -> Ok (Error UnixError.EAGAIN)
+            | Ok (SignalSent.Fate fate) -> Ok (Ok fate)
 
     /// `pthreadKill`, with a refusal answered as the `Error` rather than raised.
     let internal tryPthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -806,6 +875,11 @@ module UnixSignal =
     /// signal is `EINVAL`. So, under Linux's numbering, are 32 and 33, which
     /// the C library keeps for its own threads and will not send this way,
     /// though `kill(2)` sends them.
+    ///
+    /// Under Linux, past the receiving user's `RLIMIT_SIGPENDING` (see `kill`),
+    /// a real-time signal is `EAGAIN`, and nothing is sent; a standard one is
+    /// pending without the information it was sent with, counting against
+    /// nothing.
     ///
     /// Fails loudly if `target` is not one of the process's threads, which is a
     /// bug in the client.

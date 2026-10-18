@@ -302,10 +302,6 @@ type internal WriteRefusal =
     /// binds to an ephemeral port before it fails: this kernel binds only IPv4
     /// sockets, so it cannot record the binding.
     | Inet6Binding of socket : SocketId
-    /// A datagram socket with no peer and no port, on Linux, which a write
-    /// binds to an ephemeral port before it fails, when every port in the
-    /// ephemeral range is taken. What the kernel answers then is not measured.
-    | EphemeralPortsExhausted of socket : SocketId * low : uint16 * high : uint16
     /// The write would leave the file longer than this kernel can represent.
     | ExceedsRepresentableLength of inode : InodeNumber * offset : int64 * count : int
     /// What writing to the file at `inode` would do to its set-ID bits has not
@@ -359,8 +355,6 @@ module internal WriteRefusal =
             $"the descriptor is socket %O{socket}, a connected stream socket with room for the write, and the buffer is not mapped. The copy would fault, and what the kernel answers then, and what it keeps of the write, has not been measured."
         | WriteRefusal.Inet6Binding socket ->
             $"the descriptor is socket %O{socket}, an unbound IPv6 datagram socket with no peer. Linux binds it to an ephemeral port before it answers the write, and this kernel binds only IPv4 sockets, so it cannot record that binding."
-        | WriteRefusal.EphemeralPortsExhausted (socket, low, high) ->
-            $"the descriptor is socket %O{socket}, an unbound datagram socket with no peer, which Linux binds to an ephemeral port before it answers the write; but every port in the ephemeral range %d{low}-%d{high} is taken, and what the kernel answers then is not measured."
         | WriteRefusal.SendBuffer socket ->
             $"the descriptor is socket %O{socket}, a Unix-domain datagram socket with no peer. Linux answers EMSGSIZE for a write larger than the socket's send buffer less 32 bytes, ahead of the ENOTCONN it gives otherwise, and the send buffer's size (SO_SNDBUF, and before that the net.core.wmem_default sysctl) is not modelled."
         | WriteRefusal.ExceedsRepresentableLength (inode, offset, count) ->
@@ -385,7 +379,6 @@ module internal WriteRefusal =
         | WriteRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
         | WriteRefusal.SendBuffer _ -> RefusalKind.Unmodelled
         | WriteRefusal.Inet6Binding _ -> RefusalKind.Unmodelled
-        | WriteRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
         | WriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | WriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | WriteRefusal.UnmeasuredFaultedWrite _ -> RefusalKind.Unmodelled
@@ -1288,13 +1281,16 @@ module UnixReadWrite =
                 Target = receiver
             }
 
-        match ProcessSignal.generate entry system with
+        match ProcessSignal.generate SignalSender.Kernel entry system with
         | Error refusal -> Error (WriteRefusal.SignalReceiver (target, refusal))
-        | Ok (Error refusal) -> Error (WriteRefusal.ProcessEnd (target, refusal))
-        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        | Ok (SignalSent.EndRefused refusal) -> Error (WriteRefusal.ProcessEnd (target, refusal))
+        | Ok SignalSent.QueueFull ->
+            failwith
+                "UnixReadWrite: SIGPIPE found the queue full, which only a real-time signal sent by tgkill can (this is a bug in this library)."
+        | Ok (SignalSent.Fate (ViewFate.Continues (KillOutcome.ProcessRuns, system))) ->
             Ok (WriteStep.ReturnsRaising (answer, entry, system))
-        | Ok (Ok (ViewFate.ProcessEnded (ended, dead))) -> Ok (WriteStep.ProcessEnded (ended, dead))
-        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _))) ->
+        | Ok (SignalSent.Fate (ViewFate.ProcessEnded (ended, dead))) -> Ok (WriteStep.ProcessEnded (ended, dead))
+        | Ok (SignalSent.Fate (ViewFate.Continues (KillOutcome.ProcessStopped signal, _))) ->
             failwith
                 $"UnixReadWrite: generating %O{signal} for a write into %s{BrokenWriteTarget.describe target} stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
 
@@ -1341,11 +1337,13 @@ module UnixReadWrite =
             // and dropped its port) keeps its address and locks, as connect's
             // implicit bind does. Measured on Linux, socket-unconnected-autobind.c:
             // `127.0.0.1:0` reads back `127.0.0.1:<ephemeral>` after the
-            // failed write.
-            let bound : Result<ProcessView<'Thread, 'Handler>, WriteRefusal> =
+            // failed write. A bind that finds no port answers the write
+            // itself (`Ok (Error errno)`), leaving the socket unbound.
+            let bound : Result<Result<ProcessView<'Thread, 'Handler>, UnixError>, WriteRefusal> =
                 match socket.Ipv4Binding with
-                | Some binding when binding.Endpoint.Port <> 0us -> Ok system
-                | _ when not (UnconnectedSocketRules.writeBindsFirst flavour socket.Domain socket.Kind) -> Ok system
+                | Some binding when binding.Endpoint.Port <> 0us -> Ok (Ok system)
+                | _ when not (UnconnectedSocketRules.writeBindsFirst flavour socket.Domain socket.Kind) ->
+                    Ok (Ok system)
                 | _ ->
 
                 match socket.Addressing with
@@ -1388,8 +1386,18 @@ module UnixReadWrite =
                     failwith
                         $"UnixReadWrite: datagram socket %O{socketId}'s search for a port met an end in TIME_WAIT (this is a bug in this library): %s{TimeWaitRefusal.describe refusal}"
                 | Ok None ->
-                    let low, high = system.Machine.EphemeralPortRange
-                    Error (WriteRefusal.EphemeralPortsExhausted (socketId, low, high))
+                    // Measured on Linux, the one flavour whose write binds
+                    // first: EAGAIN (`docs/probes/port-sharing`, the write
+                    // rows).
+                    match
+                        SimulatedUnixPlatform.ephemeralPortsExhausted
+                            system.Machine.UnixPlatform
+                            EphemeralSearchCall.DatagramAutobind
+                    with
+                    | Some error -> Ok (Error error)
+                    | None ->
+                        failwith
+                            $"UnixReadWrite: a write on datagram socket %O{socketId} binds it first, on a flavour with no answer for a datagram autobind that finds no port (this is a bug in this library)."
                 | Ok (Some (binding, machine)) ->
                     Ok
                         { system with
@@ -1404,11 +1412,13 @@ module UnixReadWrite =
                                             machine.Sockets
                                 }
                         }
+                    |> Ok
 
             match UnconnectedSocketRules.write flavour socket.Domain socket.Kind count, bound with
             | UnconnectedSocketWrite.DependsOnSendBuffer, _ -> Error (WriteRefusal.SendBuffer socketId)
             | _, Error refusal -> Error refusal
-            | answer, Ok system ->
+            | _, Ok (Error error) -> Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed error), system))
+            | answer, Ok (Ok system) ->
 
             match answer with
             | UnconnectedSocketWrite.Fails error ->
@@ -1606,6 +1616,11 @@ module UnixReadWrite =
     ///
     /// The buffer screen has already had its say by here, so this is reached
     /// only with an address the flavour accepted.
+    ///
+    /// A read of a regular file of at least one byte moves its access time
+    /// where its filesystem's rule says (`UnixMachineState.afterRead`), even
+    /// one that answers 0 at end-of-file or EFAULT: measured,
+    /// `docs/probes/atime`. A read of no bytes moves nothing.
     let private readFileAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
         (fd : int)
@@ -1614,7 +1629,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
+        : Result<Result<ImmutableArray<byte>, UnixError> * ProcessView<'Thread, 'Handler>, BufferRefusal>
         =
         let entry =
             VirtualFileSystem.get "UnixReadWrite: the inode a read's descriptor names" inode system.Machine.FileSystem
@@ -1624,7 +1639,8 @@ module UnixReadWrite =
             // EISDIR on both, and behind the buffer screen rather than ahead of
             // it: measured, `read(dir, NULL, 5)` is EISDIR while
             // `read(dir, (void*)-1, 5)` is EFAULT under a screening flavour.
-            Ok (Error UnixError.EISDIR)
+            // It moves no time (measured, `docs/probes/atime`).
+            Ok (Error UnixError.EISDIR, system)
         | InodeContent.CharacterDevice _ ->
             failwith
                 $"UnixSystem.%s{syscall}: fd %d{fd} names inode %O{inode}, which is a character device, through a description of a regular file. A description of a device is OpenFileTarget.CharacterDevice, and UnixSystem.checkInvariants reports this one as DescriptionKindMismatch (this is a bug in this library)."
@@ -1641,12 +1657,24 @@ module UnixReadWrite =
 
         let transfer = VirtualFileSystem.readTransferCount offset count contents.Length
 
+        let accessed () : ProcessView<'Thread, 'Handler> =
+            if count = 0 then
+                system
+            else
+                { system with
+                    Machine =
+                        UnixMachineState.afterRead
+                            inode
+                            (UnixMachineState.realtime system.Scheduling system.Machine)
+                            system.Machine
+                }
+
         if transfer = 0 then
-            // Nothing moves, so the buffer is not consulted: measured,
+            // No byte moves, so the buffer is not consulted: measured,
             // `read(f, NULL, 5)` at end-of-file is 0 on both platforms rather
             // than EFAULT. A null pointer is an ordinary user address, so it
             // reaches here rather than being screened above.
-            Ok (Ok ImmutableArray.Empty)
+            Ok (Ok ImmutableArray.Empty, accessed ())
         else
 
         // The one point at which the buffer must actually hold bytes.
@@ -1655,14 +1683,14 @@ module UnixReadWrite =
             // Measured: an EFAULT leaves the file's contents and the caller's
             // offset alone. A kernel faults in `copy_to_user`, after deciding
             // what it would have transferred but before consuming anything.
-            Ok (Error UnixError.EFAULT)
+            Ok (Error UnixError.EFAULT, accessed ())
         | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
         | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
         | UserBuffer.Mapped ->
 
         // A range copy rather than an enumeration: one call can move nearly two
         // gigabytes.
-        Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)))
+        Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)), accessed ())
 
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
@@ -2114,8 +2142,8 @@ module UnixReadWrite =
         // same operation, so the two share it.
         match readFileAt "read" fd inode offset buffer (oneCallsWorth platform count) system with
         | Error refusal -> Error (ReadRefusal.Buffer refusal)
-        | Ok (Error error) -> answered (ReadAnswer.Failed error) system
-        | Ok (Ok bytes) ->
+        | Ok (Error error, system) -> answered (ReadAnswer.Failed error) system
+        | Ok (Ok bytes, system) ->
 
         if bytes.IsEmpty then
             // Nothing moved, so the offset stays exactly where it was rather
@@ -2162,6 +2190,11 @@ module UnixReadWrite =
     ///
     /// The buffer is consulted at three points and *not* consulted at three
     /// others, and both sets are measured; see the comments inline.
+    ///
+    /// A read of at least one byte from a regular file moves the file's
+    /// access time as its filesystem's mount says: on Darwin's APFS, to now
+    /// when it is before the modification time, even for a read that answers
+    /// 0 at end-of-file or EFAULT; on Linux's tmpfs, mounted `noatime`, never.
     ///
     /// A socket with no peer (fresh from `socket(2)`, bound, or listening)
     /// answers without the buffer, with the errno its flavour gives its domain
@@ -2914,8 +2947,8 @@ module UnixReadWrite =
 
         match readFileAt "pread" fd inode offset buffer (oneCallsWorth platform count) system with
         | Error refusal -> Error (PReadRefusal.Buffer refusal)
-        | Ok (Error error) -> Ok (ReadAnswer.Failed error, system)
-        | Ok (Ok bytes) -> Ok (ReadAnswer.Completed bytes, system)
+        | Ok (Error error, system) -> Ok (ReadAnswer.Failed error, system)
+        | Ok (Ok bytes, system) -> Ok (ReadAnswer.Completed bytes, system)
 
     /// `pread`, with a refusal answered as the `Error` rather than raised.
     let internal tryPread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2945,9 +2978,10 @@ module UnixReadWrite =
     /// EINVAL. Where in the order it is answered differs between the flavours,
     /// which is what makes this more than `read` with an extra argument.
     ///
-    /// It moves no file offset, and nothing in this kernel moves `atime`, so the
-    /// system that comes back is the one that arrived unless the read drew from
-    /// the entropy pool (`ReadAnswer.Drawn`).
+    /// It moves no file offset. It moves a regular file's access time as
+    /// `read` does, so the system that comes back is the one that arrived
+    /// unless the read moved that time or drew from the entropy pool
+    /// (`ReadAnswer.Drawn`).
     ///
     /// `caller` is the thread making the call, which must be one of the
     /// system's process's and not asleep in another.
@@ -4157,7 +4191,6 @@ module UnixReadWrite =
         | WriteRefusal.ConnectionBecameNonBlocking _
         | WriteRefusal.SendBuffer _
         | WriteRefusal.Inet6Binding _
-        | WriteRefusal.EphemeralPortsExhausted _
         | WriteRefusal.ExceedsRepresentableLength _
         | WriteRefusal.UnmeasuredSetIdChange _
         | WriteRefusal.UnmeasuredFaultedWrite _

@@ -1,0 +1,34 @@
+Darwin 27.0.0 arm64
+listener at 127.0.0.1:45201
+C1 fresh | IPV6_V6ONLY=1 -> OK, reads 1
+C2 bind=OK getsockname=[::ffff:127.0.0.1]:64113 | IPV6_V6ONLY=1 -> EINVAL, reads 0
+Ib1 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64114 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64114
+Ib0 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64115 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64115
+In1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64116 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64116
+In0 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64117 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64117
+Is1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64118 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64118
+Is0 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64119 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64119
+Zb1 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64120 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64120
+Zb0 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64121 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64121
+Zn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64122 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64122
+Zn0 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64123 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64123
+Zs1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64124 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64124
+Zs0 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64125 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64125
+Wb1 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64126 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64126
+Wb0 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:64127 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64127
+Wn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64128 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64128
+Wn0 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:64129 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64129
+Ws1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64130 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64130
+Ws0 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:64131 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:64131
+Xb1 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:45301 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45301
+Xb0 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:45302 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45302
+Xn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:45303 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45303
+Xn0 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:45304 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45304
+Xs1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:45305 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45305
+Xs0 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:45306 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45306
+Yb1 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:45307 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45307
+Yb0 bind=OK connect=ECONNREFUSED getsockname=[::127.0.0.1]:45308 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45308
+Yn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:45309 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45309
+Yn0 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=[::127.0.0.1]:45310 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45310
+Ys1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:45311 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45311
+Ys0 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=[::127.0.0.1]:45312 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::127.0.0.1]:45312

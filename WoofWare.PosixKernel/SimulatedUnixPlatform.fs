@@ -275,8 +275,11 @@ type internal EphemeralSearchCall =
     | Bind
     /// `listen(2)` on a socket holding no port.
     | Listen
-    /// `connect(2)` on a socket holding no port.
+    /// `connect(2)` on a stream socket holding no port.
     | Connect
+    /// `connect(2)` or `write(2)` on a datagram socket holding no port, which
+    /// Linux binds as `bind(2)` of port 0 would before the call goes on.
+    | DatagramAutobind
 
 [<RequireQualifiedAccess>]
 module SimulatedUnixPlatform =
@@ -1439,12 +1442,16 @@ module SimulatedUnixPlatform =
     /// What `call` on a TCP socket answers when its search for an ephemeral
     /// port finds every port of the range taken, or `None` where this library
     /// does not answer. Linux answers `EADDRINUSE` to `bind(2)` and `listen(2)`
-    /// (`inet_csk_get_port`) and `EADDRNOTAVAIL` to `connect(2)`
-    /// (`__inet_hash_connect`), leaving the socket unbound. Darwin answers
-    /// `EADDRNOTAVAIL` to all three, but this library's search can pass over a
-    /// port Darwin's would take, one an established socket holds for a search
-    /// carrying `SO_REUSEADDR` being unmeasured, so it is not answered. Both
-    /// measured (`docs/probes/ephemeral-search`).
+    /// (`inet_csk_get_port`, and `udp_lib_get_port` for a datagram socket's
+    /// bind), `EADDRNOTAVAIL` to a stream `connect(2)`
+    /// (`__inet_hash_connect`), and `EAGAIN` to a datagram socket's
+    /// `connect(2)` or `write(2)` (`inet_autobind`), leaving the socket
+    /// unbound. Darwin answers `EADDRNOTAVAIL` to all three stream calls, but
+    /// this library's search can pass over a port Darwin's would take, one an
+    /// established socket holds for a search carrying `SO_REUSEADDR` being
+    /// unmeasured, so it is not answered. Measured
+    /// (`docs/probes/ephemeral-search`, and for a datagram socket's calls on
+    /// Linux `docs/probes/port-sharing`).
     let internal ephemeralPortsExhausted
         (platform : SimulatedUnixPlatform)
         (call : EphemeralSearchCall)
@@ -1454,6 +1461,7 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Bind
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Listen -> Some UnixError.EADDRINUSE
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Connect -> Some UnixError.EADDRNOTAVAIL
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.DatagramAutobind -> Some UnixError.EAGAIN
         | SimulatedUnixFlavour.Darwin, _ -> None
 
     /// Where this platform keeps a socket address's family, and how wide it is.
@@ -1473,19 +1481,8 @@ module SimulatedUnixPlatform =
     /// own numbering.
     let internetAddressFamily : int = 2
 
-    /// Ports below this one a process may bind only as root, at the addresses
-    /// `privilegedPortGuards` says the limit covers.
-    ///
-    /// Measured as 1024 on both: binding 1023 to loopback is `EACCES` for an
-    /// unprivileged caller and 1024 succeeds. A constant rather than a function
-    /// of the platform because the two agree, and not configuration though
-    /// Linux does expose it as `ip_unprivileged_port_start` -- nothing needs to
-    /// vary it yet, and a knob with no consumer is a knob no test covers.
-    /// Darwin has no such setting: it has no `net.inet.ip.portrange.reservedhigh`.
-    let privilegedPortCeiling : uint16 = 1024us
-
-    /// Whether this platform's `bind(2)` keeps a port below
-    /// `privilegedPortCeiling` for root when the address is, or is not, the
+    /// Whether this platform's `bind(2)` keeps a port below the machine's
+    /// unprivileged port start for root when the address is, or is not, the
     /// wildcard (`0.0.0.0` or `::`). Linux keeps it at every address; Darwin
     /// keeps it only at an address other than the wildcard, so an unprivileged
     /// process binds `0.0.0.0:80` there.

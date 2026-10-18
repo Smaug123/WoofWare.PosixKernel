@@ -153,7 +153,7 @@ module internal BindRefusal =
         | BindRefusal.UnmodelledMulticast (socket, address) ->
             $"socket %O{socket} asked to bind %s{Ipv4Address.toString address}, a broadcast or multicast address, and the bind would succeed. This kernel models no group membership and no interface to receive or broadcast on, so nothing could honour such a binding. Model multicast and broadcast before binding either."
         | BindRefusal.EphemeralPortsExhausted (low, high) ->
-            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a datagram socket's bind answers is unmeasured. Widen the range."
+            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a Darwin datagram socket's bind answers is unmeasured. Widen the range."
         | BindRefusal.UnmodelledIpv6Address (socket, address) ->
             $"IPv6 socket %O{socket} asked to bind [%s{Ipv6Address.toString address}]. This kernel has no IPv6 transport, so it binds an IPv6 socket only to a specific v4-mapped address (::ffff:a.b.c.d). A native address needs IPv6, and the mapped wildcard ::ffff:0.0.0.0 (and ::, which also takes it) conflicts with other sockets by rules Darwin does not share with the IPv4 wildcard."
         | BindRefusal.TimeWait refusal -> TimeWaitRefusal.describe refusal
@@ -325,6 +325,15 @@ type internal SocketOptionRefusal =
     /// and its `TIME_WAIT` record holding the port, and with this refusal
     /// their flags agree; that is inferred from Linux's source, not measured.
     | LinuxReuseAddressInTimeWait of socket : SocketId
+    /// A Linux `IPV6_V6ONLY` set turning on a dual-mode socket whose refused
+    /// connect gave back a port no `bind(2)` chose.
+    ///
+    /// Linux takes it (measured, `docs/probes/v6only-after-refusal`), and the
+    /// socket it leaves is IPv6-only while it still reports, and keeps the
+    /// address of, the v4-mapped binding its connect resolved. This kernel
+    /// keeps an IPv6-only socket's binding only for an address it could bind,
+    /// so it cannot represent that socket.
+    | Ipv6OnlyOnGivenBackPort of socket : SocketId
 
 [<RequireQualifiedAccess>]
 module internal SocketOptionRefusal =
@@ -337,6 +346,8 @@ module internal SocketOptionRefusal =
             $"socket %O{socket} was asked about option %d{optionName} at level %d{level}. This kernel models SO_REUSEADDR, SO_LINGER (and Darwin's SO_LINGER_SEC) at SOL_SOCKET, TCP_NODELAY at IPPROTO_TCP and IPV6_V6ONLY at IPPROTO_IPV6 for setsockopt(2) and getsockopt(2), and SO_ERROR at SOL_SOCKET for getsockopt(2) alone. A real kernel either knows this option, in which case its value is socket state nothing here holds, or answers an errno nobody has measured for it; ENOPROTOOPT would be a guess either way. Model the option before asking for it."
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait socket ->
             $"socket %O{socket} is one end of a TCP connection in TIME_WAIT, and the call would change its SO_REUSEADDR. Measured on Linux, a bind of the endpoint is judged by the flag the end had when it entered TIME_WAIT, whether the socket stays open or closes, and a later change does not reach it. This kernel does not keep that copy: it judges the end by the socket's flag, which agrees only while the flag is unchanged."
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socket ->
+            $"socket %O{socket} is a dual-mode IPv6 socket whose refused connect gave back a port no bind(2) chose, and the call would set IPV6_V6ONLY. Linux takes it (measured), leaving an IPv6-only socket that still holds the v4-mapped address its connect resolved, which this kernel cannot represent."
         | SocketOptionRefusal.NegativeLingerTime (socket, seconds) ->
             $"socket %O{socket} was asked to linger for %d{seconds} seconds. Linux reads l_linger as unsigned and stores its largest timeout for this, and what getsockopt(2) then reads back is that timeout over the kernel's tick rate, CONFIG_HZ, which this library does not model."
 
@@ -347,6 +358,7 @@ module internal SocketOptionRefusal =
         | SocketOptionRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SocketOptionRefusal.NegativeLingerTime _ -> RefusalKind.Unmodelled
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait _ -> RefusalKind.Unmodelled
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort _ -> RefusalKind.Unmodelled
 
 /// Whether a `setsockopt(2)` reaches the point at which the kernel copies the
 /// option's value in, as `UnixSocket.tryAdmitSetSockOpt` answers it: the step
@@ -1303,8 +1315,10 @@ module UnixSocket =
         )
 
     /// Whether `bind(2)` keeps `port` from an unprivileged caller, at the
-    /// wildcard address or another (`wildcard`). Port 0 asks for an allocation
-    /// rather than a number, so no limit applies to it.
+    /// wildcard address or another (`wildcard`): a port below the machine's
+    /// unprivileged port start, measured on Linux at every value from 0 to
+    /// 32768 (`docs/probes/unprivileged-port-start`). Port 0 asks for an
+    /// allocation rather than a number, so no limit applies to it.
     let private privilegedPortFault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : ProcessView<'Thread, 'Handler>)
         (port : uint16)
@@ -1312,7 +1326,7 @@ module UnixSocket =
         : bool
         =
         port > 0us
-        && port < SimulatedUnixPlatform.privilegedPortCeiling
+        && port < system.Machine.UnprivilegedPortStart
         && SimulatedUnixPlatform.privilegedPortGuards system.Machine.UnixPlatform wildcard
         && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
 
@@ -1371,11 +1385,10 @@ module UnixSocket =
         | Error refusal -> Error (BindRefusal.TimeWait refusal)
         | Ok None ->
             match
-                socket.Kind,
                 SimulatedUnixPlatform.ephemeralPortsExhausted system.Machine.UnixPlatform EphemeralSearchCall.Bind
             with
-            | SocketKind.Stream, Some error -> Ok (BindAnswer.Failed error, system)
-            | _ -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+            | Some error -> Ok (BindAnswer.Failed error, system)
+            | None -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
         | Ok (Some (bound, machine)) ->
 
         // From `machine` rather than `system.Machine`: the ephemeral allocator
@@ -2599,7 +2612,24 @@ module UnixSocket =
                            // A connect binds its source before it sends.
                            | SocketPhase.Connecting _ -> true
 
+                    // A port a refused connect gave back. Linux judges the
+                    // option by the port the socket holds (`inet_num`), so it
+                    // takes the option then (measured,
+                    // `docs/probes/v6only-after-refusal`); Darwin answers
+                    // EINVAL there too, but at the admission, which refuses
+                    // every option on a refused socket, so only a Linux
+                    // socket reaches here with such a port.
+                    let portGivenBack =
+                        socket.Ipv4Binding
+                        |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
+
                     match socket.Addressing with
+                    | SocketAddressing.Inet6DualMode _ when portGivenBack ->
+                        if field 0 <> 0 then
+                            Error (Error (SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socketId))
+                        else
+                            // Dual-mode it was, and dual-mode it stays.
+                            Ok socket
                     | SocketAddressing.Inet6DualMode _
                     | SocketAddressing.Inet6V6Only _ when hasAddress -> Error (Ok UnixError.EINVAL)
                     // Unbound, so the move between the two cases carries no

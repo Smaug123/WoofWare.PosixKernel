@@ -1,0 +1,19 @@
+# Darwin 27.0.0 arm64, uid 501, sizeof(long)=8 sizeof(time_t)=8, CLOCK_MONOTONIC at start 918828.623761000 s
+# watch 2000 ms
+poll ender=write timeout=1500 ret=0 errno=0 at=1501
+poll ender=write timeout=100000000 asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=1073741824 asleep-at=2000 ret=1 errno=0 at=2001
+poll ender=write timeout=INT_MAX asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=-1 asleep-at=2000 ret=1 errno=0 at=2001
+poll ender=write timeout=INT_MIN asleep-at=2000 ret=1 errno=0 at=2000
+kevent ender=write timeout=1,500000000 ret=0 errno=0 at=1500
+kevent ender=write timeout=100000000,0 asleep-at=2000 ret=1 errno=0 at=2001
+kevent ender=write timeout=100000001,0 asleep-at=2000 ret=1 errno=0 at=2001
+kevent ender=write timeout=2147483647,0 asleep-at=2000 ret=1 errno=0 at=2001
+kevent ender=write timeout=2147483647,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+kevent ender=write timeout=2147483647,1000000000 asleep-at=2000 ret=1 errno=0 at=2001
+kevent ender=write timeout=2147483648,0 ret=-1 errno=EINVAL at=0
+kevent ender=write timeout=9223372036,0 ret=-1 errno=EINVAL at=0
+kevent ender=write timeout=INT64_MAX,0 ret=-1 errno=EINVAL at=0
+kevent ender=write timeout=-1,0 ret=-1 errno=EINVAL at=0
+kevent ender=write timeout=0,1000000001 ret=-1 errno=EINVAL at=0

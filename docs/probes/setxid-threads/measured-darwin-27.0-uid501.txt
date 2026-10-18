@@ -1,0 +1,64 @@
+# Darwin 27.0.0 arm64, uid 501, 18 CPUs, 20 trials per interrupt row
+# start uid=501/501 gid=20/12 (real/effective)
+dscope call=setegid(rgid) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setegid(rgid) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setegid(rgid);setegid(sgid) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setegid(rgid);setegid(sgid) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setgid(rgid) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setgid(rgid) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setregid(-1,rgid) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setregid(-1,rgid) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=20/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=20/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setregid(egid,rgid) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=12/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=12/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=12/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setregid(egid,rgid) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=12/20 groups=[20,12,61,100,701] | w1 uid=501/501 gid=12/20 groups=[20,12,61,100,701] | w2 uid=501/501 gid=12/20 groups=[20,12,61,100,701] end=exit0
+dscope call=setuid(getuid()) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setuid(getuid()) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=seteuid(geteuid()) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=seteuid(geteuid()) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setreuid(-1,-1) caller=main ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setreuid(-1,-1) caller=w1 ret=0 errno=0 cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setuid(0) caller=main ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setuid(0) caller=w1 ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=seteuid(0) caller=main ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=seteuid(0) caller=w1 ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setgroups(getgroups()) caller=main ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+dscope call=setgroups(getgroups()) caller=w1 ret=-1 errno=EPERM cmd-eintr=0 | main uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w1 uid=501/501 gid=20/12 groups=[12,20,61,100,701] | w2 uid=501/501 gid=20/12 groups=[12,20,61,100,701] end=exit0
+interrupt call=poll action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=224..230
+interrupt call=poll action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=74..76
+interrupt call=poll action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=224..228
+interrupt call=poll action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=223..228
+interrupt call=poll action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=1:errno=0*20:took=223..231
+interrupt call=poll-timeout action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=400..408
+interrupt call=poll-timeout action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=73..76
+interrupt call=poll-timeout action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=400..403
+interrupt call=poll-timeout action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=400..402
+interrupt call=poll-timeout action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=0:errno=0*20:took=401..403
+interrupt call=kevent action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=223..228
+interrupt call=kevent action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=72..76
+interrupt call=kevent action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=224..228
+interrupt call=kevent action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=224..232
+interrupt call=kevent action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=1:errno=0*20:took=223..230
+interrupt call=sigsuspend action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=223..229
+interrupt call=sigsuspend action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=73..76
+interrupt call=sigsuspend action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=224..228
+interrupt call=sigsuspend action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=224..229
+interrupt call=sigsuspend action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=-1:errno=EINTR*20:took=224..238
+interrupt call=pause action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=223..234
+interrupt call=pause action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=72..78
+interrupt call=pause action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=224..234
+interrupt call=pause action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=-1:errno=EINTR*20:took=223..232
+interrupt call=pause action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=-1:errno=EINTR*20:took=223..233
+interrupt call=read-pipe action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=223..228
+interrupt call=read-pipe action=signal as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=224..228
+interrupt call=read-pipe action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=223..228
+interrupt call=read-pipe action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=1:errno=0*20:took=223..231
+interrupt call=read-pipe action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=1:errno=0*20:took=224..232
+interrupt call=accept action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=8:errno=0*20:took=223..232
+interrupt call=accept action=signal as=self trials=20 action-ret=0/0 outcomes=after-release:ret=8:errno=0*20:took=224..228
+interrupt call=accept action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=8:errno=0*20:took=224..229
+interrupt call=accept action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=8:errno=0*20:took=225..228
+interrupt call=accept action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=8:errno=0*20:took=224..230
+interrupt call=nanosleep action=none as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=401..412
+interrupt call=nanosleep action=signal as=self trials=20 action-ret=0/0 outcomes=before-release:ret=-1:errno=EINTR*20:took=73..76
+interrupt call=nanosleep action=setegid as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=400..410
+interrupt call=nanosleep action=seteuid-noop as=self trials=20 action-ret=0/0 outcomes=after-release:ret=0:errno=0*20:took=402..410
+interrupt call=nanosleep action=setgroups-eperm as=self trials=20 action-ret=-1/EPERM outcomes=after-release:ret=0:errno=0*20:took=401..411

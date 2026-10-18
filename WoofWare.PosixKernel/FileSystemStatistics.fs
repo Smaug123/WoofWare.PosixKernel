@@ -348,11 +348,14 @@ module FileSystemStatistics =
                     // count as 0 however full it is.
                     CapacityResult = Ok FileSystemCapacity.unlimited
                     FileSystemIdResult = Ok tmpfs.FileSystemId
-                    // `ST_VALID` is on every mount. `ST_NOATIME` because nothing
-                    // in this kernel moves an access time, which is what a
-                    // `noatime` mount does; tmpfs's own default is `relatime`,
-                    // which this kernel does not implement.
-                    FlagsResult = Ok (linuxValid ||| linuxNoAccessTime)
+                    // `ST_VALID` is on every mount, and the access-time option
+                    // is the one the mount's reads obey.
+                    FlagsResult =
+                        match AccessTimeUpdate.ofMount mount with
+                        | AccessTimeUpdate.Never -> Ok (linuxValid ||| linuxNoAccessTime)
+                        | AccessTimeUpdate.WhenBeforeModification ->
+                            failwith
+                                "FileSystemStatistics.ofMount: a Linux tmpfs whose reads move an access time as APFS's do, which no Linux mount option makes (this is a bug in this library)."
                 }
         | FileSystemTypeFields.Darwin (fType, name), EmulatedMount.Apfs apfs ->
             // Measured 2026-09-26 on Darwin 27.0.0, nine APFS volumes in three
@@ -383,15 +386,20 @@ module FileSystemStatistics =
                                 Owner = apfs.Owner
                                 // Local, journaled, volfs and multilabel were set on
                                 // every APFS volume measured. Root, because this
-                                // filesystem is mounted at `/`. No-atime, because
-                                // nothing in this kernel moves an access time.
+                                // filesystem is mounted at `/`. The access-time
+                                // option is the one the mount's reads obey: APFS's
+                                // default is neither `noatime` nor `strictatime`.
                                 Flags =
                                     darwinLocal
                                     ||| darwinJournaled
                                     ||| darwinVolumeFileSystem
                                     ||| darwinMultiLabel
                                     ||| darwinRootFileSystem
-                                    ||| darwinNoAccessTime
+                                    ||| (
+                                        match AccessTimeUpdate.ofMount mount with
+                                        | AccessTimeUpdate.Never -> darwinNoAccessTime
+                                        | AccessTimeUpdate.WhenBeforeModification -> 0u
+                                    )
                                 // 0 on every volume measured but the root data
                                 // volume, which this filesystem is not.
                                 ExtendedFlags = 0u

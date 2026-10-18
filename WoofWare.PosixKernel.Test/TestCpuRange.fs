@@ -109,7 +109,9 @@ module TestCpuRange =
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
-                refusal |> shouldEqual (LaunchRefusal.LeaderCpuBeyondMachine (CpuId cpu, count))
+
+                refusal
+                |> shouldEqual (BootRefusal.Launch (LaunchRefusal.LeaderCpuBeyondMachine (CpuId cpu, count)))
             | other, expected -> failwith $"%O{CpuId cpu} on %d{count} processors: got %A{other}, in range %b{expected}"
 
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property

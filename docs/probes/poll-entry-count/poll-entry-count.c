@@ -17,6 +17,11 @@
 //      above it, to RLIM_INFINITY, and to it; nfds is screened there; then
 //      fs.nr_open is put back, and nfds screened again under the limit the
 //      process still holds.
+//   D  Darwin: the soft limit at 256 again, nfds either side of 256, of
+//      FD_SETSIZE (1024) and of OPEN_MAX (10240), with a buffer of fd -1
+//      entries, as the process's own uid; and, when that is root, again in a
+//      child that has taken uid 501, so one run gives both. Labels name the
+//      uid. docs/probes/darwin-root/run.sh runs it as root.
 //
 // Every row is `section label nfds=N rv=R errno=E` plus what else it names;
 // errno is `-` when the call succeeded, and revents0 is the first entry's.
@@ -75,7 +80,9 @@
 #include <sys/epoll.h>
 #include <sys/mount.h>
 #else
+#include <grp.h>
 #include <sys/event.h>
+#include <sys/wait.h>
 #endif
 
 static void on_alarm(int sig) { (void)sig; }
@@ -193,6 +200,46 @@ static void section_b(rlim_t hard)
     }
 }
 
+#ifndef __linux__
+static void section_d_rows(void)
+{
+    const unsigned int counts[] = {256, 257, 1023, 1024, 1025, 4096, 10240, 10241};
+    char label[64];
+    snprintf(label, sizeof label, "uid%d-idle-buffer", (int)geteuid());
+    for (size_t i = 0; i < sizeof counts / sizeof counts[0]; i++)
+    {
+        struct pollfd *p = idle_entries(counts[i]);
+        row("D", label, p, counts[i], 0);
+        release(p, counts[i]);
+    }
+}
+
+// Whether section D's child failed; it makes the probe exit 1.
+static int section_d_failed;
+
+static void section_d(rlim_t hard)
+{
+    set_soft(256, hard);
+    printf("D soft limit set to 256 (hard %llu)\n", (unsigned long long)hard);
+    section_d_rows();
+    if (geteuid() != 0) return;
+    pid_t pid = fork();
+    if (pid == 0)
+    {
+        gid_t g = 20;
+        if (setgroups(1, &g) != 0 || setgid(20) != 0 || setuid(501) != 0) { perror("D become uid 501"); _exit(1); }
+        section_d_rows();
+        _exit(0);
+    }
+    int st = 0;
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)
+    {
+        printf("D CHILD-FAILED status=0x%x\n", st);
+        section_d_failed = 1;
+    }
+}
+#endif
+
 #ifdef __linux__
 static long read_nr_open(void)
 {
@@ -290,6 +337,9 @@ int main(void)
     section_b(rl.rlim_max);
 #ifdef __linux__
     section_c();
+#else
+    section_d(rl.rlim_max);
+    if (section_d_failed) return 1;
 #endif
     return 0;
 }

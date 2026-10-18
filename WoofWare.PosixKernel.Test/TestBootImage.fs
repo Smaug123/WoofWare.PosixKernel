@@ -111,6 +111,7 @@ module TestBootImage =
                     "withTcpReceiveSpace"
                     "withTcpSendSpace"
                     "withTcpSendSpaceMax"
+                    "withUnprivilegedPortStart"
                     "withUserAddressLimit"
                 ]
         )
@@ -125,6 +126,7 @@ module TestBootImage =
                     "withCredentials"
                     "withCurrentDirectory"
                     "withEnvironment"
+                    "withPendingSignalLimit"
                     "withProcessPath"
                     "withUmask"
                 ]

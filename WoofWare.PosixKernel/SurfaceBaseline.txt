@@ -1468,6 +1468,28 @@ WoofWare.PosixKernel.FlockMode.IsExclusive [property]: [read-only] bool
 WoofWare.PosixKernel.FlockMode.IsShared [property]: [read-only] bool
 WoofWare.PosixKernel.FlockMode.Shared [static property]: [read-only] WoofWare.PosixKernel.FlockMode
 WoofWare.PosixKernel.FlockMode.Tag [property]: [read-only] int
+WoofWare.PosixKernel.FutexTimeout inherit obj, implements WoofWare.PosixKernel.FutexTimeout System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.FutexTimeout System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.FutexTimeout+Tags inherit obj
+WoofWare.PosixKernel.FutexTimeout+Tags.Unbounded [static field]: int = 2
+WoofWare.PosixKernel.FutexTimeout+Tags.Until [static field]: int = 1
+WoofWare.PosixKernel.FutexTimeout+Tags.Untimed [static field]: int = 0
+WoofWare.PosixKernel.FutexTimeout+Until inherit WoofWare.PosixKernel.FutexTimeout
+WoofWare.PosixKernel.FutexTimeout+Until.get_nanosecondsSinceBoot [method]: unit -> System.Int64
+WoofWare.PosixKernel.FutexTimeout+Until.nanosecondsSinceBoot [property]: [read-only] System.Int64
+WoofWare.PosixKernel.FutexTimeout.Equals [method]: (WoofWare.PosixKernel.FutexTimeout, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.FutexTimeout.get_IsUnbounded [method]: unit -> bool
+WoofWare.PosixKernel.FutexTimeout.get_IsUntil [method]: unit -> bool
+WoofWare.PosixKernel.FutexTimeout.get_IsUntimed [method]: unit -> bool
+WoofWare.PosixKernel.FutexTimeout.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.FutexTimeout.get_Unbounded [static method]: unit -> WoofWare.PosixKernel.FutexTimeout
+WoofWare.PosixKernel.FutexTimeout.get_Untimed [static method]: unit -> WoofWare.PosixKernel.FutexTimeout
+WoofWare.PosixKernel.FutexTimeout.IsUnbounded [property]: [read-only] bool
+WoofWare.PosixKernel.FutexTimeout.IsUntil [property]: [read-only] bool
+WoofWare.PosixKernel.FutexTimeout.IsUntimed [property]: [read-only] bool
+WoofWare.PosixKernel.FutexTimeout.NewUntil [static method]: System.Int64 -> WoofWare.PosixKernel.FutexTimeout
+WoofWare.PosixKernel.FutexTimeout.Tag [property]: [read-only] int
+WoofWare.PosixKernel.FutexTimeout.Unbounded [static property]: [read-only] WoofWare.PosixKernel.FutexTimeout
+WoofWare.PosixKernel.FutexTimeout.Untimed [static property]: [read-only] WoofWare.PosixKernel.FutexTimeout
 WoofWare.PosixKernel.GetCpuAnswer inherit obj, implements WoofWare.PosixKernel.GetCpuAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GetCpuAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.GetCpuAnswer..ctor [constructor]: (WoofWare.PosixKernel.CpuId, WoofWare.PosixKernel.NumaNode)
 WoofWare.PosixKernel.GetCpuAnswer.Cpu [property]: [read-only] WoofWare.PosixKernel.CpuId
@@ -2943,12 +2965,12 @@ WoofWare.PosixKernel.ParkedFlock.get_Requester [method]: unit -> WoofWare.PosixK
 WoofWare.PosixKernel.ParkedFlock.Mode [property]: [read-only] WoofWare.PosixKernel.FlockMode
 WoofWare.PosixKernel.ParkedFlock.Requester [property]: [read-only] WoofWare.PosixKernel.OpenFileDescriptionId
 WoofWare.PosixKernel.ParkedFutex inherit obj, implements WoofWare.PosixKernel.ParkedFutex System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ParkedFutex System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.ParkedFutex..ctor [constructor]: (System.UInt64, System.Int64 option, bool)
+WoofWare.PosixKernel.ParkedFutex..ctor [constructor]: (System.UInt64, WoofWare.PosixKernel.FutexTimeout, bool)
 WoofWare.PosixKernel.ParkedFutex.Equals [method]: (WoofWare.PosixKernel.ParkedFutex, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.ParkedFutex.FutexAddress [property]: [read-only] System.UInt64
-WoofWare.PosixKernel.ParkedFutex.FutexDeadline [property]: [read-only] System.Int64 option
+WoofWare.PosixKernel.ParkedFutex.FutexTimeout [property]: [read-only] WoofWare.PosixKernel.FutexTimeout
 WoofWare.PosixKernel.ParkedFutex.get_FutexAddress [method]: unit -> System.UInt64
-WoofWare.PosixKernel.ParkedFutex.get_FutexDeadline [method]: unit -> System.Int64 option
+WoofWare.PosixKernel.ParkedFutex.get_FutexTimeout [method]: unit -> WoofWare.PosixKernel.FutexTimeout
 WoofWare.PosixKernel.ParkedFutex.get_TakenByWake [method]: unit -> bool
 WoofWare.PosixKernel.ParkedFutex.TakenByWake [property]: [read-only] bool
 WoofWare.PosixKernel.ParkedInotifyRead inherit obj, implements WoofWare.PosixKernel.ParkedInotifyRead System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ParkedInotifyRead System.IComparable, System.IComparable, System.Collections.IStructuralComparable
@@ -3585,6 +3607,7 @@ WoofWare.PosixKernel.ProcessLaunch.withCoreDumps [static method]: WoofWare.Posix
 WoofWare.PosixKernel.ProcessLaunch.withCredentials [static method]: WoofWare.PosixKernel.Credentials -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withCurrentDirectory [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withEnvironment [static method]: string -> WoofWare.PosixKernel.UnixByteString list -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
+WoofWare.PosixKernel.ProcessLaunch.withPendingSignalLimit [static method]: System.UInt64 -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withProcessPath [static method]: string -> WoofWare.PosixKernel.AbsoluteUnixPath option -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withUmask [static method]: WoofWare.PosixKernel.PermissionBits -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch`1 inherit obj, implements 'Thread WoofWare.PosixKernel.ProcessLaunch System.IEquatable, System.Collections.IStructuralEquatable
@@ -4456,7 +4479,6 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_macOsArm64 [static method]:
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_maximumDarwinSocketAddressLength [static method]: unit -> int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_maximumSocketAddressSize [static method]: unit -> int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_minimumInternetV6SocketAddressLength [static method]: unit -> int
-WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_privilegedPortCeiling [static method]: unit -> System.UInt16
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.getCwdDestinationFault [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.GetCwdDestinationFault
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.getCwdOrphanAnswer [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.GetCwdOrphanAnswer
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.getSockNameFaultLength [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.GetSockNameFaultLength
@@ -4491,7 +4513,6 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.pathLimits [static method]: Woo
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.presentedIpv6Address [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool -> WoofWare.PosixKernel.Ipv4Address -> WoofWare.PosixKernel.Ipv6Address
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.privilegedExecution [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.privilegedModeChange [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PrivilegedModeChange
-WoofWare.PosixKernel.SimulatedUnixPlatformModule.privilegedPortCeiling [static property]: [read-only] System.UInt16
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.providesPosixFadvise [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.rawErrnoNumbering [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.RawErrnoNumbering
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.readlinkEmptyPath [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.EmptyPathMeaning
@@ -7301,6 +7322,7 @@ WoofWare.PosixKernel.UnixBootImage.withSoMaxConn [static method]: int option -> 
 WoofWare.PosixKernel.UnixBootImage.withTcpReceiveSpace [static method]: int option -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withTcpSendSpace [static method]: int option -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withTcpSendSpaceMax [static method]: int option -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixBootImage.withUnprivilegedPortStart [static method]: System.UInt16 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withUserAddressLimit [static method]: System.UInt64 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage`2 inherit obj, implements WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.UnixBootImage`2.Equals [method]: (WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
@@ -8362,12 +8384,14 @@ WoofWare.PosixKernel.UnixSystem.defaultGroupId [static method]: WoofWare.PosixKe
 WoofWare.PosixKernel.UnixSystem.defaultInotifyLimits [static property]: [read-only] WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.defaultLocalIpv4Addresses [static property]: [read-only] WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.defaultLocalRoutes [static property]: [read-only] WoofWare.PosixKernel.Ipv4Prefix list
+WoofWare.PosixKernel.UnixSystem.defaultPendingSignalLimit [static property]: [read-only] System.UInt64
 WoofWare.PosixKernel.UnixSystem.defaultPidMax [static property]: [read-only] int
 WoofWare.PosixKernel.UnixSystem.defaultProcessId [static property]: [read-only] WoofWare.PosixKernel.ProcessId
 WoofWare.PosixKernel.UnixSystem.defaultProcessorCount [static field]: int = 1
 WoofWare.PosixKernel.UnixSystem.defaultProcessPath [static property]: [read-only] WoofWare.PosixKernel.AbsoluteUnixPath option
 WoofWare.PosixKernel.UnixSystem.defaultUmask [static property]: [read-only] WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.UnixSystem.defaultUnixPlatform [static property]: [read-only] WoofWare.PosixKernel.SimulatedUnixPlatform
+WoofWare.PosixKernel.UnixSystem.defaultUnprivilegedPortStart [static property]: [read-only] System.UInt16
 WoofWare.PosixKernel.UnixSystem.defaultUserBufferCheck [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.UserBufferCheck
 WoofWare.PosixKernel.UnixSystem.defaultUserId [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.UnixSystem.delivered [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.DeliveryLog
@@ -8384,11 +8408,13 @@ WoofWare.PosixKernel.UnixSystem.get_defaultEntropySeed [static method]: unit -> 
 WoofWare.PosixKernel.UnixSystem.get_defaultInotifyLimits [static method]: unit -> WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalIpv4Addresses [static method]: unit -> WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalRoutes [static method]: unit -> WoofWare.PosixKernel.Ipv4Prefix list
+WoofWare.PosixKernel.UnixSystem.get_defaultPendingSignalLimit [static method]: unit -> System.UInt64
 WoofWare.PosixKernel.UnixSystem.get_defaultPidMax [static method]: unit -> int
 WoofWare.PosixKernel.UnixSystem.get_defaultProcessId [static method]: unit -> WoofWare.PosixKernel.ProcessId
 WoofWare.PosixKernel.UnixSystem.get_defaultProcessPath [static method]: unit -> WoofWare.PosixKernel.AbsoluteUnixPath option
 WoofWare.PosixKernel.UnixSystem.get_defaultUmask [static method]: unit -> WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.UnixSystem.get_defaultUnixPlatform [static method]: unit -> WoofWare.PosixKernel.SimulatedUnixPlatform
+WoofWare.PosixKernel.UnixSystem.get_defaultUnprivilegedPortStart [static method]: unit -> System.UInt16
 WoofWare.PosixKernel.UnixSystem.get_pipedStandardStreams [static method]: unit -> Map<int, WoofWare.PosixKernel.LaunchDescriptor>
 WoofWare.PosixKernel.UnixSystem.initial [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem.launch [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ProcessId * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
@@ -8412,6 +8438,7 @@ WoofWare.PosixKernel.UnixSystem.soMaxConn [static method]: WoofWare.PosixKernel.
 WoofWare.PosixKernel.UnixSystem.step [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem.threads [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> Map<'Thread, WoofWare.PosixKernel.UnixThreadState>
 WoofWare.PosixKernel.UnixSystem.umask [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PermissionBits * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixSystem.unprivilegedPortStart [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.UInt16
 WoofWare.PosixKernel.UnixSystem.userBufferCheck [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UserBufferCheck
 WoofWare.PosixKernel.UnixSystem.writePidMaxSysctl [static method]: string -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem`2 inherit obj, implements WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable

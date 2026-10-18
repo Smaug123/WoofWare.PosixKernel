@@ -295,7 +295,7 @@ module internal ConnectRefusal =
             else
                 $"socket %O{socket} is unbound and is connecting to %s{SocketAddress.toString destination}, and which source address a kernel picks for a destination other than 127.0.0.1 is unmeasured. Bind the socket first, or connect to 127.0.0.1."
         | ConnectRefusal.EphemeralPortsExhausted (low, high) ->
-            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this implicit bind has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a datagram socket's connect answers is unmeasured. Widen the machine's EphemeralPortRange."
+            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this implicit bind has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take; what a Darwin datagram socket's connect answers is unmeasured, as is what a Linux one answers when its address is of the wrong family or length. Widen the machine's EphemeralPortRange."
         | ConnectRefusal.DestinationNotLocal (destination, kind) ->
             let carried =
                 match kind with
@@ -713,9 +713,9 @@ module UnixConnection =
             | None -> Error (ConnectRefusal.SourceForNonLoopbackDestination (socketId, SocketAddress.Inet dest, false))
             | Some source ->
 
-            let candidate (port : uint16) : Ipv4Binding =
+            let candidateAt (address : Ipv4Address) (port : uint16) : Ipv4Binding =
                 {
-                    Endpoint = Ipv4Endpoint.ofParts source port
+                    Endpoint = Ipv4Endpoint.ofParts address port
                     // No bind(2) ran: a Linux refusal delivery reverts the
                     // address all the way to the wildcard.
                     LockedAddress = None
@@ -727,18 +727,34 @@ module UnixConnection =
                         | SocketKind.SeqPacket -> PortHold.Reserved
                 }
 
+            // Linux binds a datagram socket to the wildcard and a port, as
+            // bind(2) of port 0 would, before it resolves the source, so the
+            // search for the port is made at the wildcard (measured,
+            // `docs/probes/port-sharing`, the connect rows: a holder at
+            // 127.0.0.2 stands in the way of a connect to 127.0.0.1).
+            let searchedAtWildcard =
+                flavour = SimulatedUnixFlavour.Linux && sock.Kind = SocketKind.Datagram
+
+            let purpose, searchedAt =
+                if searchedAtWildcard then
+                    EphemeralPortUse.Reserve, Ipv4Address.any
+                else
+                    EphemeralPortUse.ConnectTo dest, Ipv4Address.loopback
+
             match
                 UnixMachineState.allocateEphemeralPort
                     system.Scheduling.NanosecondsSinceBoot
-                    (EphemeralPortUse.ConnectTo dest)
+                    purpose
                     socketId
                     sock
-                    candidate
+                    (candidateAt searchedAt)
                     system.Machine
             with
             | Ok (Some (binding, machine)) ->
                 Ok (
-                    binding,
+                    { binding with
+                        Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback binding.Endpoint.Port
+                    },
                     { system with
                         Machine = machine
                     }
@@ -1683,6 +1699,14 @@ module UnixConnection =
                 (UnixMachineState.socket socketId disconnectedFirst.Machine).Ipv4Binding
 
             match ensureBoundFrom current dest disconnectedFirst with
+            | Error (ConnectRefusal.EphemeralPortsExhausted (low, high)) ->
+                match
+                    SimulatedUnixPlatform.ephemeralPortsExhausted
+                        system.Machine.UnixPlatform
+                        EphemeralSearchCall.DatagramAutobind
+                with
+                | Some error -> failed error disconnectedFirst
+                | None -> Error (ConnectRefusal.EphemeralPortsExhausted (low, high))
             | Error refusal -> Error refusal
             | Ok (binding, system) ->
 

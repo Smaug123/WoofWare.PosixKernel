@@ -521,6 +521,7 @@ module TestSigsuspend =
     let private parentKill (r : Replay) (signal : Signal) : Result<ProcessFate<KillOutcome, int, string>, UnixError> =
         match
             Lone.ProcessSignal.generate
+                SignalSender.Kill
                 {
                     Signal = signal
                     Target = ValueNone

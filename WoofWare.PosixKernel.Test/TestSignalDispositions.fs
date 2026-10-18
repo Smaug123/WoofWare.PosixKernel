@@ -48,7 +48,7 @@ module TestSignalDispositions =
         (s : SignalState<Thread, Handler>)
         : SignalGeneration<Thread, Handler>
         =
-        match SignalState.generate numbering CoreDumps.Suppressed t0 threads entry s with
+        match SignalState.generate numbering CoreDumps.Suppressed QueueAccount.Unbounded t0 true threads entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
@@ -87,7 +87,8 @@ module TestSignalDispositions =
         match generation with
         | SignalGeneration.ProcessContinues state
         | SignalGeneration.ProcessStopped (_, state) -> state
-        | SignalGeneration.ProcessTerminated _ -> failwith $"expected the process to survive, got %A{generation}"
+        | SignalGeneration.ProcessTerminated _
+        | SignalGeneration.QueueFull -> failwith $"expected the process to survive, got %A{generation}"
 
     let private everyNumbering : SignalNumbering list =
         [ SignalNumbering.Linux ; SignalNumbering.Darwin ]

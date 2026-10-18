@@ -178,7 +178,9 @@ module TestPthreadKill =
                             SignalState.generate
                                 (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
+                                (QueueAccounts.ofLone SignalSender.ThreadKill system)
                                 leader
+                                false
                                 (Set.ofList [ leader ; worker ])
                                 {
                                     Signal =
