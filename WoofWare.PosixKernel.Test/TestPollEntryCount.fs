@@ -127,9 +127,12 @@ module TestPollEntryCount =
                     let privileged, label =
                         let label = row.Groups.[2].Value
 
-                        if label.StartsWith "uid0-" then true, label.Substring 5
-                        elif label.StartsWith "uid501-" then false, label.Substring 7
-                        else run.Privileged, label
+                        if label.StartsWith "uid0-" then
+                            true, label.Substring 5
+                        elif label.StartsWith "uid501-" then
+                            false, label.Substring 7
+                        else
+                            run.Privileged, label
 
                     let parsed =
                         {
@@ -155,12 +158,16 @@ module TestPollEntryCount =
     /// `EINVAL` before reading any entry, for a process whose soft limit is
     /// `softLimit`, and is root if `privileged`: the rule the probe measured.
     /// Darwin lets root past its soft limit up to `FD_SETSIZE` (1024).
-    let private failsEinval (flavour : SimulatedUnixFlavour) (privileged : bool) (softLimit : int64) (count : int64) : bool =
+    let private failsEinval
+        (flavour : SimulatedUnixFlavour)
+        (privileged : bool)
+        (softLimit : int64)
+        (count : int64)
+        : bool
+        =
         match flavour with
         | SimulatedUnixFlavour.Linux -> count > softLimit
-        | SimulatedUnixFlavour.Darwin ->
-            count > 10240L
-            || count > softLimit && (not privileged || count > 1024L)
+        | SimulatedUnixFlavour.Darwin -> count > 10240L || count > softLimit && (not privileged || count > 1024L)
 
     /// `CallerPrivilege.Privileged` if `privileged`.
     let private privilegeOf (privileged : bool) : CallerPrivilege =

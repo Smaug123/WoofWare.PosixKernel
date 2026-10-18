@@ -123,7 +123,12 @@ module internal PollEntryCount =
     /// The errno a `poll(2)` of `count` entries, by a process with `privilege`,
     /// fails with before it reads any entry, if any; or the refusal, where
     /// that depends on the process's `RLIMIT_NOFILE` soft limit.
-    let screen (platform : SimulatedUnixPlatform) (privilege : CallerPrivilege) (count : int) : Result<UnixError option, PollRefusal> =
+    let screen
+        (platform : SimulatedUnixPlatform)
+        (privilege : CallerPrivilege)
+        (count : int)
+        : Result<UnixError option, PollRefusal>
+        =
         let flavour = SimulatedUnixPlatform.flavour platform
         let assumedLimit = SimulatedUnixPlatform.descriptorBound platform
 
@@ -1014,7 +1019,12 @@ module UnixPoll =
         =
         // Measured (`docs/probes/poll-entry-count`, section A): ahead of the
         // scan, and of the timeout.
-        match PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) (List.length entries) with
+        match
+            PollEntryCount.screen
+                system.Machine.UnixPlatform
+                (UnixProcessState.callerPrivilege system.Process)
+                (List.length entries)
+        with
         | Error refusal -> Error refusal
         | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
         | Ok None ->
@@ -1293,7 +1303,9 @@ module UnixPoll =
 
         // Measured (`docs/probes/poll-entry-count`, and `poll-darwin.c`
         // section N): ahead of the registrations, and of the copy-in's EFAULT.
-        match PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) count with
+        match
+            PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) count
+        with
         | Error refusal -> Error refusal
         | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
         | Ok None ->
