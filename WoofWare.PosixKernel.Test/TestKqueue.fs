@@ -335,6 +335,7 @@ module TestKqueue =
                     ReuseAddress = false
                     Options = SocketOptions.initial
                     Phase = SocketPhase.Idle
+                    Uid = UserId.root
                 }
 
             let fd, registry =

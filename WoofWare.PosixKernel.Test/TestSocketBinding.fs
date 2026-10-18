@@ -149,6 +149,7 @@ module TestSocketBinding =
             Claim = PortClaim.Reserved
             ReuseAddress = reuse
             Peer = None
+            Owner = PortHolderOwner.Socket UserId.root
         }
 
     /// The measured conflict matrix, row by row: `(first address, first phase,
@@ -195,12 +196,12 @@ module TestSocketBinding =
             let existing = holderAt firstAddress 40000us firstPhase firstReuse
             let candidate = endpoint secondAddress 40000us
 
-            PortHolderRules.bindMeets SimulatedUnixFlavour.Linux existing candidate secondReuse
+            PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Linux existing candidate secondReuse
             |> fun actual ->
                 if actual <> linuxConflicts then
                     failwith $"linux, %s{name}: expected conflict=%b{linuxConflicts} but the model said %b{actual}"
 
-            PortHolderRules.bindMeets SimulatedUnixFlavour.Darwin existing candidate secondReuse
+            PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Darwin existing candidate secondReuse
             |> fun actual ->
                 if actual <> darwinConflicts then
                     failwith $"darwin, %s{name}: expected conflict=%b{darwinConflicts} but the model said %b{actual}"
@@ -220,7 +221,7 @@ module TestSocketBinding =
             let candidate = endpoint loopback secondPort
 
             [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
-            |> List.forall (fun flavour -> not (PortHolderRules.bindMeets flavour existing candidate reuse))
+            |> List.forall (fun flavour -> not (PortHolderRules.bindMeetsAtOneUid flavour existing candidate reuse))
 
         Check.One (propertyConfig, property)
 
@@ -328,7 +329,7 @@ module TestSocketBinding =
         let specific = holderAt loopback 40000us idle true
         let wildcardEndpoint = endpoint wildcard 40000us
 
-        PortHolderRules.bindMeets SimulatedUnixFlavour.Darwin specific wildcardEndpoint false
+        PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Darwin specific wildcardEndpoint false
         |> shouldEqual true
 
         PortHolderRules.listenMeets SimulatedUnixFlavour.Darwin specific wildcardEndpoint false
@@ -337,7 +338,9 @@ module TestSocketBinding =
         // Linux asks its bind question again, whichever way it answers.
         for reuse in [ false ; true ] do
             PortHolderRules.listenMeets SimulatedUnixFlavour.Linux specific wildcardEndpoint reuse
-            |> shouldEqual (PortHolderRules.bindMeets SimulatedUnixFlavour.Linux specific wildcardEndpoint reuse)
+            |> shouldEqual (
+                PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Linux specific wildcardEndpoint reuse
+            )
 
         PortHolderRules.listenMeets SimulatedUnixFlavour.Linux specific wildcardEndpoint false
         |> shouldEqual true
@@ -352,6 +355,7 @@ module TestSocketBinding =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = SocketPhase.Idle
+            Uid = UserId.root
         }
 
     let private requester : SocketId = SocketId 0L

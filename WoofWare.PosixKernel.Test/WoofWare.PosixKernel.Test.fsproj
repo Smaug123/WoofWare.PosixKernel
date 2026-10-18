@@ -268,6 +268,7 @@
     <Compile Include="TestPrivilegedPortMeasured.fs" />
     <Compile Include="TestPortRangeSysctlsMeasured.fs" />
     <Compile Include="TestBindUidsMeasured.fs" />
+    <Compile Include="TestSocketUid.fs" />
     <Compile Include="TestDualMode.fs" />
     <Compile Include="TestConnectLadderMeasured.fs" />
     <Compile Include="TestBindLadderMeasured.fs" />
@@ -512,6 +513,9 @@
     <EmbeddedResource Include="..\docs\probes\darwin-root\port-range.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.port-range.txt" />
     <!-- docs/probes/darwin-root/bind-uids.c, as root. `TestBindUidsMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\darwin-root\bind-uids.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.bind-uids.txt" />
+    <!-- docs/probes/socket-creator-uid: which uid a TCP socket carries, made and accepted. `TestSocketUid` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.darwin-root.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
          name another way, measured by docs/probes/name-equivalence/name-equivalence.c
          on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.

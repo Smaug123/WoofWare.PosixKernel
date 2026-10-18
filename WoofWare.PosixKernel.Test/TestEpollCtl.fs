@@ -81,6 +81,7 @@ module TestEpollCtl =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Uid = UserId.root
             }
 
         let fd, registry =

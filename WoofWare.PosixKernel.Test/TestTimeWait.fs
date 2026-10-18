@@ -146,6 +146,7 @@ module TestTimeWait =
             Remote = loopbackAt remote
             ReuseAddress = false
             PortHold = PortHold.Connected
+            SocketUid = UserId.root
             EnteredAt = enteredAt
         }
 
@@ -191,6 +192,7 @@ module TestTimeWait =
 
         withTimeWait
             { timeWait with
+                SocketUid = UserId.root
                 EnteredAt = 6_000_000_000L
             }
             key
@@ -334,6 +336,7 @@ module TestTimeWait =
                     Remote = remote
                     ReuseAddress = false
                     PortHold = PortHold.Connected
+                    SocketUid = UserId.root
                     EnteredAt = enteredAt
                 }
 

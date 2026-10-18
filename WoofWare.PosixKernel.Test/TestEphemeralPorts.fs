@@ -694,6 +694,7 @@ module TestEphemeralPorts =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Uid = UserId.root
             }
 
         let low, high = machine.EphemeralPortRange

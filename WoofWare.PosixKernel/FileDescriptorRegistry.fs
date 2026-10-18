@@ -565,6 +565,17 @@ type SocketDescription =
         /// conflicts with a second bind on both flavours, where a merely-bound
         /// one may not.
         Phase : SocketPhase
+        /// The uid the kernel holds this socket to, fixed for its life: XNU's
+        /// `so_cred`, Linux's `sk_uid`. It is the effective uid of the process
+        /// that made the socket with `socket(2)`, whatever that process's
+        /// credentials become later. An accepted socket carries its
+        /// listener's uid on Darwin, and on Linux the effective uid of the
+        /// process that accepted it, as it was then.
+        ///
+        /// Darwin's `bind(2)` consults it: see `UnixSocket.bind`. Linux
+        /// consults it only for `SO_REUSEPORT`, which this kernel does not
+        /// model.
+        Uid : UserId
     }
 
     /// The domain given to `socket(2)`.

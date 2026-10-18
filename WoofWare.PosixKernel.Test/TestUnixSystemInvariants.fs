@@ -110,6 +110,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = phase
+                                            Uid = UserId.root
                                         }
                                     ]
                             NextSocketId = SocketId 1L
@@ -291,6 +292,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = SocketPhase.Established (connection, ConnectionEnd.Client)
+                                            Uid = UserId.root
                                         }
                                     ]
                             NextSocketId = SocketId 1L
@@ -305,7 +307,11 @@ module TestUnixSystemInvariants =
                                             // No socket is the server end: it has closed.
                                             Transfer =
                                                 TcpBufferSizing.newTransfer SocketDomain.Inet unlaunched.Machine
-                                                |> TcpTransfer.close ConnectionEnd.Server false PortHold.Reserved
+                                                |> TcpTransfer.close
+                                                    ConnectionEnd.Server
+                                                    false
+                                                    PortHold.Reserved
+                                                    UserId.root
                                                 |> snd
                                         }
                                     ]
@@ -718,6 +724,7 @@ module TestUnixSystemInvariants =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     /// `system` holding one socket, open on a descriptor so that the socket

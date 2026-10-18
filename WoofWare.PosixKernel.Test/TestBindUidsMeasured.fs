@@ -7,16 +7,9 @@ open WoofWare.PosixKernel
 
 /// Darwin's `bind(2)` against a port another socket holds, replayed from
 /// `docs/probes/darwin-root/bind-uids.c`, which measured it as root on Darwin
-/// 27.0 between sockets of uids 501, 502, 504 and 0.
-///
-/// This kernel keeps no owner for a socket, so it answers as if every socket
-/// were its binder's. That is right wherever Darwin does not consult the
-/// owner: the holder is the binder's own uid, or the binder is root. Those
-/// rows are replayed here. Where a binder that is not root meets a holder of
-/// another uid at an overlapping address that is not the wildcard on both
-/// sides, Darwin answers `EADDRINUSE` even with `SO_REUSEADDR`; the last test
-/// pins those rows, which the model answers as if the holder were the
-/// binder's own.
+/// 27.0 between sockets of uids 501, 502, 504 and 0: each row's holder and
+/// binder are processes of those uids on one machine, and every socket
+/// carries the uid of the process that made it (`SocketDescription.Uid`).
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestBindUidsMeasured =
@@ -98,59 +91,133 @@ module TestBindUidsMeasured =
         && row.Holder <> row.Binder
         && (row.HolderAddress <> Ipv4Address.any || row.BinderAddress <> Ipv4Address.any)
 
-    /// What the model answers for `row`, as the probe prints it: the holder
-    /// bound at its address and a port, listening if the row says so, then a
-    /// second socket bound at its own address and the same port.
-    let private answer (row : Row) : string =
-        let platform = SimulatedUnixPlatform.macOsArm64
-        let port = 40000us
+    let private context : string = "TestBindUidsMeasured"
 
-        let system =
-            UnixSystem.initial<int, string> platform
-            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    /// The credentials the probe's processes took: root, or the uid in the
+    /// name with group 20.
+    let private credentialsOf (name : string) : Credentials =
+        match name with
+        | "root" -> Credentials.ofIds UserId.root (GroupId.parseOrFail context 0u) []
+        | name ->
+            Credentials.ofIds
+                (UserId.parseOrFail context (uint32 (name.Substring 1)))
+                (GroupId.parseOrFail context 20u)
+                []
+
+    /// A Darwin machine of two processes, the first of `holder`'s
+    /// credentials and the second of `binder`'s, and their process IDs.
+    let private machine (holder : string) (binder : string) : ProcessId * ProcessId * UnixSystem<int, string> =
+        let platform = SimulatedUnixPlatform.macOsArm64
+
+        let first : UnixSystem<int, string> =
+            UnixSystem.initial platform
+            |> Launched.bootWith
+                (Launched.credentials (credentialsOf holder))
+                UnixSystem.pipedStandardStreams
+                0
+                (CpuId 0)
+
+        let launch =
+            Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            |> Launched.credentials (credentialsOf binder)
+
+        match UnixSystem.tryLaunch launch first with
+        | Ok (binderPid, system) -> Lone.pid first, binderPid, system
+        | Error refusal -> failwith $"launching the binder: %s{ProcessCreationRefusal.describe refusal}"
+
+    /// `call`, made by the leader of `pid`, failing the test if it is refused.
+    let private step
+        (pid : ProcessId)
+        (call : Syscall<int, string>)
+        (system : UnixSystem<int, string>)
+        : SteppedCall<int, string>
+        =
+        match UnixSystem.tryStep (Caller.make pid 0) call system with
+        | Ok stepped -> stepped
+        | Error refusal -> failwith $"%A{call} by %O{pid} was refused: %A{refusal}"
+
+    /// A socket of `kind`, made by `pid`, with `SO_REUSEADDR` if `reuse`.
+    let private socketOf
+        (pid : ProcessId)
+        (kind : SocketKind)
+        (reuse : bool)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        let platform = system.Machine.UnixPlatform
 
         let protocol =
-            match row.Kind with
+            match kind with
             | SocketKind.Stream -> SocketProtocol.Tcp
             | _ -> SocketProtocol.Udp
 
-        let holder, system = NewSocket.create SocketDomain.Inet row.Kind protocol system
-        let system = ReuseAddress.set row.HolderReuseAddress holder system
+        let domain, rawKind, rawProtocol =
+            NewSocket.arguments platform SocketDomain.Inet kind protocol
+
+        let fd, system =
+            match step pid (Syscall.Socket (domain, rawKind, rawProtocol)) system with
+            | SteppedCall.Socket (Ok made) -> made
+            | other -> failwith $"socket by %O{pid}: %A{Stepped.view other}"
+
+        if not reuse then
+            fd, system
+        else
+
+        let call =
+            Syscall.SetSockOpt (
+                fd,
+                SimulatedUnixPlatform.socketOptionLevel platform,
+                SimulatedUnixPlatform.reuseAddressOption platform,
+                CopiedArgument.Readable (OptionValue.ofInt 1),
+                4u
+            )
+
+        match step pid call system with
+        | SteppedCall.SetSockOpt (SetSockOptAnswer.Set, system) -> fd, system
+        | other -> failwith $"setsockopt by %O{pid}: %A{Stepped.view other}"
+
+    /// `bind(2)` of `fd` at `endpoint`, made by `pid`.
+    let private bindOf
+        (pid : ProcessId)
+        (fd : int)
+        (endpoint : Ipv4Endpoint)
+        (system : UnixSystem<int, string>)
+        : BindAnswer * UnixSystem<int, string>
+        =
+        let blob = CopyIn.inetCopy system.Machine.UnixPlatform endpoint
+
+        match step pid (Syscall.Bind (fd, CopiedArgument.Readable blob, uint32 blob.Length)) system with
+        | SteppedCall.Bind (answer, system) -> answer, system
+        | other -> failwith $"bind by %O{pid}: %A{Stepped.view other}"
+
+    /// What the model answers for `row`, as the probe prints it: the holder's
+    /// process makes its socket and binds it at its address and a port,
+    /// listening if the row says so, then the binder's process makes a second
+    /// socket and binds it at its own address and the same port.
+    let private answer (row : Row) : string =
+        let port = 40000us
+        let holderPid, binderPid, system = machine row.Holder row.Binder
+
+        let holder, system = socketOf holderPid row.Kind row.HolderReuseAddress system
 
         let system =
-            match
-                CopyIn.bind
-                    holder
-                    UserBuffer.Mapped
-                    16u
-                    (CopyIn.inet platform (Ipv4Endpoint.ofParts row.HolderAddress port))
-                    system
-            with
-            | Ok (BindAnswer.Bound _, system) -> system
-            | other -> failwith $"%s{row.Line}: the holder's bind answered %A{other}"
+            match bindOf holderPid holder (Ipv4Endpoint.ofParts row.HolderAddress port) system with
+            | BindAnswer.Bound _, system -> system
+            | other -> failwith $"%s{row.Line}: the holder's bind answered %A{fst other}"
 
         let system =
             if row.Listening then
-                match UnixSocket.tryListen (Callers.leader system) holder 8 system with
-                | Ok (ListenAnswer.Listening _, system) -> system
-                | other -> failwith $"%s{row.Line}: the holder's listen answered %A{other}"
+                match step holderPid (Syscall.Listen (holder, 8)) system with
+                | SteppedCall.Listen (ListenAnswer.Listening _, system) -> system
+                | other -> failwith $"%s{row.Line}: the holder's listen answered %A{Stepped.view other}"
             else
                 system
 
-        let binder, system = NewSocket.create SocketDomain.Inet row.Kind protocol system
-        let system = ReuseAddress.set row.BinderReuseAddress binder system
+        let binder, system = socketOf binderPid row.Kind row.BinderReuseAddress system
 
-        match
-            CopyIn.bind
-                binder
-                UserBuffer.Mapped
-                16u
-                (CopyIn.inet platform (Ipv4Endpoint.ofParts row.BinderAddress port))
-                system
-        with
-        | Ok (BindAnswer.Bound _, _) -> "ok"
-        | Ok (BindAnswer.Failed error, _) -> $"%A{error}"
-        | Error refusal -> $"REFUSED (%s{BindRefusal.describe refusal})"
+        match bindOf binderPid binder (Ipv4Endpoint.ofParts row.BinderAddress port) system with
+        | BindAnswer.Bound _, _ -> "ok"
+        | BindAnswer.Failed error, _ -> $"%A{error}"
 
     [<Test>]
     let ``every row's control bind succeeded, so only the holder stood in the way`` () : unit =
@@ -161,13 +228,22 @@ module TestBindUidsMeasured =
                 failwith $"control not ok: %s{row.Line}"
 
     [<Test>]
-    let ``every row where Darwin does not consult the holder's owner is replayed`` () : unit =
+    let ``every row without SO_REUSEPORT answers as measured, between processes of the row's uids`` () : unit =
         // This kernel does not model SO_REUSEPORT, so its rows are left out.
         let replayed =
             rows
-            |> List.filter (fun row -> not row.HolderReusePort && not row.BinderReusePort && not (ownerConsulted row))
+            |> List.filter (fun row -> not row.HolderReusePort && not row.BinderReusePort)
 
-        replayed.Length |> shouldEqual 144
+        replayed.Length |> shouldEqual 240
+
+        // Among them, the rows where Darwin consults the holder's owner: a
+        // binder that is not root meeting another uid's holder at addresses
+        // that are not both the wildcard, EADDRINUSE even with SO_REUSEADDR.
+        let consulted = replayed |> List.filter ownerConsulted
+        consulted.Length |> shouldEqual 96
+
+        for row in consulted do
+            row.Answer |> shouldEqual "EADDRINUSE"
 
         let mismatches =
             [
@@ -179,18 +255,4 @@ module TestBindUidsMeasured =
             ]
 
         if not mismatches.IsEmpty then
-            failwith (String.Join ("\n", mismatches))
-
-    [<Test>]
-    let ``where Darwin consults the holder's owner, SO_REUSEADDR does not get a binder past another uid's holder``
-        ()
-        : unit
-        =
-        let consulted =
-            rows
-            |> List.filter (fun row -> not row.HolderReusePort && not row.BinderReusePort && ownerConsulted row)
-
-        consulted.Length |> shouldEqual 96
-
-        for row in consulted do
-            row.Answer |> shouldEqual "EADDRINUSE"
+            failwith $"%d{mismatches.Length} rows differ:\n%s{String.Join ('\n', mismatches)}"
