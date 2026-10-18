@@ -54,7 +54,11 @@ module TestKeventMeasured =
                     changes
                     nevents
                     UserBuffer.Mapped
-                    (KeventTimeout.Readable (0L, 0L))
+                    (TimespecArgument.Readable
+                        {
+                            Seconds = 0L
+                            Nanoseconds = 0L
+                        })
                     this.System
             with
             | Ok (outcome, system) ->
@@ -929,7 +933,15 @@ module TestKeventMeasured =
 
             s.Step (fun system ->
                 match
-                    UnixKqueue.tryKevent (Callers.thread 2 system) k 0 [] 4 UserBuffer.Mapped KeventTimeout.Null system
+                    UnixKqueue.tryKevent
+                        (Callers.thread 2 system)
+                        k
+                        0
+                        []
+                        4
+                        UserBuffer.Mapped
+                        TimespecArgument.Null
+                        system
                 with
                 | Ok (KeventOutcome.WouldBlock _, parked) -> parked
                 | other -> failwith $"expected the sleeper to park, got %A{other}"
@@ -1181,7 +1193,11 @@ module TestKeventMeasured =
                 [ change l read (addClear ||| receipt) 1UL ; change c write addClear 2UL ]
                 4
                 (UserBuffer.Unmapped 0x1000UL)
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
         with
         | Ok (KeventOutcome.Failed UnixError.EFAULT, after) ->

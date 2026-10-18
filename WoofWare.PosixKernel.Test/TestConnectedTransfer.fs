@@ -1928,7 +1928,7 @@ module TestConnectedTransfer =
                             []
                             2
                             UserBuffer.Mapped
-                            KeventTimeout.Null
+                            TimespecArgument.Null
                             view
                     with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view

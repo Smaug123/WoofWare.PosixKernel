@@ -469,7 +469,7 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
         nchanges : int *
         eventlist : UserBuffer *
         nevents : int *
-        timeout : KeventTimeout
+        timeout : TimespecArgument
     /// `inotify_init1(2)`, as `UnixInotify.inotifyInit1` makes it. `flags` is
     /// raw, in Linux's numbering.
     | InotifyInit1 of flags : int

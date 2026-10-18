@@ -1,17 +1,5 @@
 namespace WoofWare.PosixKernel
 
-/// A `struct timespec` as the caller's memory held it: `tv_sec` and
-/// `tv_nsec`, both raw, before this kernel decides what they say.
-[<Struct>]
-type TimespecFields =
-    {
-        /// `tv_sec`.
-        Seconds : int64
-        /// `tv_nsec`, which may be any value the caller stored, the flavour's
-        /// `UTIME_NOW` and `UTIME_OMIT` among them.
-        Nanoseconds : int64
-    }
-
 /// The `times` argument of `utimensat(2)`, as the caller found it.
 [<RequireQualifiedAccess>]
 type TimesArgument =

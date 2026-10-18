@@ -632,7 +632,11 @@ module TestKeventRegistration =
                 changes
                 8
                 UserBuffer.Mapped
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
         with
         | Error refusal -> refusal
@@ -704,7 +708,11 @@ module TestKeventRegistration =
                             [ change ]
                             8
                             UserBuffer.Mapped
-                            (KeventTimeout.Readable (0L, 0L))
+                            (TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                })
                             system
                     with
                     | Ok _
@@ -779,7 +787,11 @@ module TestKeventRegistration =
                 changes
                 4
                 eventlist
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
 
         let receipt =
@@ -832,7 +844,7 @@ module TestKeventRegistration =
     let private parkIn
         (thread : int)
         (kq : int)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
@@ -850,7 +862,7 @@ module TestKeventRegistration =
             let kqueueId = KeventWorld.idOf kq system
 
             let system =
-                system |> parkIn 1 kq KeventTimeout.Null |> parkIn 2 kq KeventTimeout.Null
+                system |> parkIn 1 kq TimespecArgument.Null |> parkIn 2 kq TimespecArgument.Null
 
             Lone.wakes system |> shouldEqual []
 
@@ -912,7 +924,7 @@ module TestKeventRegistration =
 
         let system =
             match
-                UnixKqueue.tryKevent (Callers.thread 1 system) kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent (Callers.thread 1 system) kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null system
             with
             | Ok (KeventOutcome.WouldBlock _, parked) -> parked
             | other -> failwith $"expected a park, got %A{other}"
@@ -944,7 +956,17 @@ module TestKeventRegistration =
         let system =
             KeventWorld.register kq listener KeventFilter.Read (KeventFlags.Add ||| KeventFlags.Clear) 1UL system
 
-        let parked = parkIn 1 kq (KeventTimeout.Readable (0L, 5L)) system
+        let parked =
+            parkIn
+                1
+                kq
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 5L
+                    })
+                system
+
         let withEvent = KeventWorld.client 5000us parked |> snd
 
         // A drain and an event both end the wait with EBADF, whichever came
@@ -999,7 +1021,7 @@ module TestKeventRegistration =
         let system =
             KeventWorld.register kq listener KeventFilter.Read (KeventFlags.Add ||| KeventFlags.Clear) 1UL system
 
-        let system = parkIn 1 kq KeventTimeout.Null system |> KeventWorld.close kq
+        let system = parkIn 1 kq TimespecArgument.Null system |> KeventWorld.close kq
 
         let system =
             match UnixKqueue.tryFinishKevent (Callers.thread 1 system) (Woken.thread 1 system) with
@@ -1040,7 +1062,7 @@ module TestKeventRegistration =
         let system =
             KeventWorld.register kq listener KeventFilter.Read (KeventFlags.Add ||| KeventFlags.Clear) 1UL system
 
-        let closed = parkIn 1 kq KeventTimeout.Null system |> KeventWorld.close kq
+        let closed = parkIn 1 kq TimespecArgument.Null system |> KeventWorld.close kq
         UnixSystem.checkInvariants closed |> shouldEqual []
 
         match Map.tryFind kqueueId (OpenFileTable.descriptions (UnixSystem.openFiles closed)) with

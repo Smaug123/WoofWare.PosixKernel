@@ -2238,30 +2238,6 @@ WoofWare.PosixKernel.KeventOutcome.NewFailed [static method]: WoofWare.PosixKern
 WoofWare.PosixKernel.KeventOutcome.NewFailedAfterEchoing [static method]: (WoofWare.PosixKernel.UnixError, WoofWare.PosixKernel.Kevent list) -> WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome.Tag [property]: [read-only] int
-WoofWare.PosixKernel.KeventTimeout inherit obj, implements WoofWare.PosixKernel.KeventTimeout System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.KeventTimeout System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
-WoofWare.PosixKernel.KeventTimeout+Readable inherit WoofWare.PosixKernel.KeventTimeout
-WoofWare.PosixKernel.KeventTimeout+Readable.get_nanoseconds [method]: unit -> System.Int64
-WoofWare.PosixKernel.KeventTimeout+Readable.get_seconds [method]: unit -> System.Int64
-WoofWare.PosixKernel.KeventTimeout+Readable.nanoseconds [property]: [read-only] System.Int64
-WoofWare.PosixKernel.KeventTimeout+Readable.seconds [property]: [read-only] System.Int64
-WoofWare.PosixKernel.KeventTimeout+Tags inherit obj
-WoofWare.PosixKernel.KeventTimeout+Tags.Null [static field]: int = 0
-WoofWare.PosixKernel.KeventTimeout+Tags.Readable [static field]: int = 1
-WoofWare.PosixKernel.KeventTimeout+Tags.Unreadable [static field]: int = 2
-WoofWare.PosixKernel.KeventTimeout.Equals [method]: (WoofWare.PosixKernel.KeventTimeout, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.KeventTimeout.get_IsNull [method]: unit -> bool
-WoofWare.PosixKernel.KeventTimeout.get_IsReadable [method]: unit -> bool
-WoofWare.PosixKernel.KeventTimeout.get_IsUnreadable [method]: unit -> bool
-WoofWare.PosixKernel.KeventTimeout.get_Null [static method]: unit -> WoofWare.PosixKernel.KeventTimeout
-WoofWare.PosixKernel.KeventTimeout.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.KeventTimeout.get_Unreadable [static method]: unit -> WoofWare.PosixKernel.KeventTimeout
-WoofWare.PosixKernel.KeventTimeout.IsNull [property]: [read-only] bool
-WoofWare.PosixKernel.KeventTimeout.IsReadable [property]: [read-only] bool
-WoofWare.PosixKernel.KeventTimeout.IsUnreadable [property]: [read-only] bool
-WoofWare.PosixKernel.KeventTimeout.NewReadable [static method]: (System.Int64, System.Int64) -> WoofWare.PosixKernel.KeventTimeout
-WoofWare.PosixKernel.KeventTimeout.Null [static property]: [read-only] WoofWare.PosixKernel.KeventTimeout
-WoofWare.PosixKernel.KeventTimeout.Tag [property]: [read-only] int
-WoofWare.PosixKernel.KeventTimeout.Unreadable [static property]: [read-only] WoofWare.PosixKernel.KeventTimeout
 WoofWare.PosixKernel.KillOutcome inherit obj, implements WoofWare.PosixKernel.KillOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.KillOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.KillOutcome+ProcessStopped inherit WoofWare.PosixKernel.KillOutcome
 WoofWare.PosixKernel.KillOutcome+ProcessStopped.get_signal [method]: unit -> WoofWare.PosixKernel.Signal
@@ -6237,11 +6213,11 @@ WoofWare.PosixKernel.Syscall`2+Kevent.get_eventlist [method]: unit -> WoofWare.P
 WoofWare.PosixKernel.Syscall`2+Kevent.get_kq [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Kevent.get_nchanges [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Kevent.get_nevents [method]: unit -> int
-WoofWare.PosixKernel.Syscall`2+Kevent.get_timeout [method]: unit -> WoofWare.PosixKernel.KeventTimeout
+WoofWare.PosixKernel.Syscall`2+Kevent.get_timeout [method]: unit -> WoofWare.PosixKernel.TimespecArgument
 WoofWare.PosixKernel.Syscall`2+Kevent.kq [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+Kevent.nchanges [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+Kevent.nevents [property]: [read-only] int
-WoofWare.PosixKernel.Syscall`2+Kevent.timeout [property]: [read-only] WoofWare.PosixKernel.KeventTimeout
+WoofWare.PosixKernel.Syscall`2+Kevent.timeout [property]: [read-only] WoofWare.PosixKernel.TimespecArgument
 WoofWare.PosixKernel.Syscall`2+Kill inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+Kill.get_pid [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Kill.get_signo [method]: unit -> int
@@ -7010,7 +6986,7 @@ WoofWare.PosixKernel.Syscall`2.NewGetSockOpt [static method]: (int, int, int, Wo
 WoofWare.PosixKernel.Syscall`2.NewInotifyAddWatch [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewInotifyInit1 [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewInotifyRmWatch [static method]: (int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewKevent [static method]: (int, WoofWare.PosixKernel.Kevent list, int, WoofWare.PosixKernel.UserBuffer, int, WoofWare.PosixKernel.KeventTimeout) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewKevent [static method]: (int, WoofWare.PosixKernel.Kevent list, int, WoofWare.PosixKernel.UserBuffer, int, WoofWare.PosixKernel.TimespecArgument) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewKill [static method]: (int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewLChOwn [static method]: (WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserId option, WoofWare.PosixKernel.GroupId option) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewLink [static method]: (WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.PathArgumentBytes) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -7217,10 +7193,8 @@ WoofWare.PosixKernel.TimesArgument.Tag [property]: [read-only] int
 WoofWare.PosixKernel.TimesArgument.Unreadable [static property]: [read-only] WoofWare.PosixKernel.TimesArgument
 WoofWare.PosixKernel.TimespecArgument inherit obj, implements WoofWare.PosixKernel.TimespecArgument System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.TimespecArgument System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.TimespecArgument+Readable inherit WoofWare.PosixKernel.TimespecArgument
-WoofWare.PosixKernel.TimespecArgument+Readable.get_nanoseconds [method]: unit -> System.Int64
-WoofWare.PosixKernel.TimespecArgument+Readable.get_seconds [method]: unit -> System.Int64
-WoofWare.PosixKernel.TimespecArgument+Readable.nanoseconds [property]: [read-only] System.Int64
-WoofWare.PosixKernel.TimespecArgument+Readable.seconds [property]: [read-only] System.Int64
+WoofWare.PosixKernel.TimespecArgument+Readable.fields [property]: [read-only] WoofWare.PosixKernel.TimespecFields
+WoofWare.PosixKernel.TimespecArgument+Readable.get_fields [method]: unit -> WoofWare.PosixKernel.TimespecFields
 WoofWare.PosixKernel.TimespecArgument+Tags inherit obj
 WoofWare.PosixKernel.TimespecArgument+Tags.Null [static field]: int = 0
 WoofWare.PosixKernel.TimespecArgument+Tags.Readable [static field]: int = 1
@@ -7235,7 +7209,7 @@ WoofWare.PosixKernel.TimespecArgument.get_Unreadable [static method]: unit -> Wo
 WoofWare.PosixKernel.TimespecArgument.IsNull [property]: [read-only] bool
 WoofWare.PosixKernel.TimespecArgument.IsReadable [property]: [read-only] bool
 WoofWare.PosixKernel.TimespecArgument.IsUnreadable [property]: [read-only] bool
-WoofWare.PosixKernel.TimespecArgument.NewReadable [static method]: (System.Int64, System.Int64) -> WoofWare.PosixKernel.TimespecArgument
+WoofWare.PosixKernel.TimespecArgument.NewReadable [static method]: WoofWare.PosixKernel.TimespecFields -> WoofWare.PosixKernel.TimespecArgument
 WoofWare.PosixKernel.TimespecArgument.Null [static property]: [read-only] WoofWare.PosixKernel.TimespecArgument
 WoofWare.PosixKernel.TimespecArgument.Tag [property]: [read-only] int
 WoofWare.PosixKernel.TimespecArgument.Unreadable [static property]: [read-only] WoofWare.PosixKernel.TimespecArgument
@@ -8196,7 +8170,7 @@ WoofWare.PosixKernel.UnixInotify.inotifyInit1 [static method]: 'Thread WoofWare.
 WoofWare.PosixKernel.UnixInotify.inotifyRmWatch [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixKqueue inherit obj
 WoofWare.PosixKernel.UnixKqueue.finishKevent [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.KeventOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixKqueue.kevent [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.Kevent list -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.KeventTimeout -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.KeventOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixKqueue.kevent [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.Kevent list -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.TimespecArgument -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.KeventOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixKqueue.kqueue [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (int * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixMachineStateModule inherit obj
 WoofWare.PosixKernel.UnixMachineStateModule.darwinLoopbackReceivePipe [static property]: [read-only] int

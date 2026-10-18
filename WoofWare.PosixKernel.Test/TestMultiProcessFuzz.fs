@@ -1381,7 +1381,11 @@ module TestMultiProcessFuzz =
                         [ KeventWorld.change fd filter (KeventFlags.Add ||| KeventFlags.Clear) 0UL ]
                         0
                         UserBuffer.Mapped
-                        (KeventTimeout.Readable (0L, 0L))
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
                         view
                     |> logged log
                 with
@@ -1398,9 +1402,13 @@ module TestMultiProcessFuzz =
             | Some kqueue ->
                 let timeout =
                     if milliseconds < 0 then
-                        KeventTimeout.Null
+                        TimespecArgument.Null
                     else
-                        KeventTimeout.Readable (0L, int64 milliseconds * 1_000_000L)
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = int64 milliseconds * 1_000_000L
+                            }
 
                 match
                     UnixKqueue.tryKevent (Caller.make pid thread) kqueue 0 [] 8 UserBuffer.Mapped timeout view
@@ -1971,7 +1979,11 @@ module TestMultiProcessFuzz =
                         ]
                         0
                         UserBuffer.Mapped
-                        (KeventTimeout.Readable (0L, 0L))
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
                         view
                 with
                 | Ok (KeventOutcome.Answered [], view) -> view

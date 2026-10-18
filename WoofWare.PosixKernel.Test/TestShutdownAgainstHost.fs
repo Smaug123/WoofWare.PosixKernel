@@ -2246,7 +2246,11 @@ module TestShutdownAgainstHost =
                                     changes
                                     2
                                     UserBuffer.Mapped
-                                    (KeventTimeout.Readable (0L, 0L))
+                                    (TimespecArgument.Readable
+                                        {
+                                            Seconds = 0L
+                                            Nanoseconds = 0L
+                                        })
                                     s
                             with
                             | Ok (KeventOutcome.Answered events, s) -> events, s
@@ -2332,7 +2336,11 @@ module TestShutdownAgainstHost =
                                 changes
                                 0
                                 UserBuffer.Mapped
-                                (KeventTimeout.Readable (0L, 0L))
+                                (TimespecArgument.Readable
+                                    {
+                                        Seconds = 0L
+                                        Nanoseconds = 0L
+                                    })
                                 s
                         with
                         | Ok (KeventOutcome.Answered [], s) -> s
@@ -2372,7 +2380,11 @@ module TestShutdownAgainstHost =
                             []
                             4
                             UserBuffer.Mapped
-                            (KeventTimeout.Readable (0L, 0L))
+                            (TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                })
                             system
                     with
                     | Ok (KeventOutcome.Answered [], after) ->

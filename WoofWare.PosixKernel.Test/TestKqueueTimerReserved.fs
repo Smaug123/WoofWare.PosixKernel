@@ -117,7 +117,11 @@ module TestKqueueTimerReserved =
                         [ change ]
                         1
                         UserBuffer.Mapped
-                        (KeventTimeout.Readable (0L, 0L))
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
                         system
                 with
                 | Error (KeventRefusal.UnmodelledFilter refused) -> refused |> shouldEqual change
@@ -176,7 +180,11 @@ module TestKqueueTimerReserved =
                             changes
                             room
                             UserBuffer.Mapped
-                            (KeventTimeout.Readable (0L, 0L))
+                            (TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                })
                             system
                     with
                     | Ok (KeventOutcome.Answered events, after) ->

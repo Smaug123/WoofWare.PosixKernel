@@ -136,7 +136,15 @@ module TestSocketWait =
             | other -> failwith $"unexpected epoll_wait answer %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             match
-                UnixKqueue.tryKevent (Callers.thread thread system) fd 0 [] maxEvents buffer KeventTimeout.Null system
+                UnixKqueue.tryKevent
+                    (Callers.thread thread system)
+                    fd
+                    0
+                    []
+                    maxEvents
+                    buffer
+                    TimespecArgument.Null
+                    system
             with
             | Ok (KeventOutcome.Failed error, after) ->
                 after |> shouldEqual system
