@@ -47,7 +47,7 @@ module TestMachineSetterRefusals =
     let private anyPort : Gen<uint16> =
         Gen.oneof
             [
-                Gen.elements [ 0us ; 1us ; 2us ; UInt16.MaxValue - 1us ; UInt16.MaxValue ]
+                Gen.elements [ 0us ; 1us ; 2us ; 1023us ; 1024us ; UInt16.MaxValue - 1us ; UInt16.MaxValue ]
                 ArbMap.defaults |> ArbMap.generate<uint16>
             ]
 
@@ -111,13 +111,21 @@ module TestMachineSetterRefusals =
     // ------------------------------------------------ ephemeral port range
 
     [<Test>]
-    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0`` () : unit =
+    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and under Linux the privileged ports``
+        ()
+        : unit
+        =
         let property (platform : SimulatedUnixPlatform, low : uint16, high : uint16) : unit =
             let expected : Result<unit, EphemeralPortRangeRefusal> =
                 if low = 0us then
                     Error (EphemeralPortRangeRefusal.LowIsZero high)
                 elif low > high then
                     Error (EphemeralPortRangeRefusal.Empty (low, high))
+                elif
+                    SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
+                    && low < SimulatedUnixPlatform.privilegedPortCeiling
+                then
+                    Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low)
                 else
                     Ok ()
 
@@ -163,7 +171,13 @@ module TestMachineSetterRefusals =
         outcome (2us, 1us)
         |> shouldEqual (Error (EphemeralPortRangeRefusal.Empty (2us, 1us)))
 
-        outcome (1us, 1us) |> shouldEqual (Ok ())
+        outcome (1us, 1us)
+        |> shouldEqual (Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart 1us))
+
+        outcome (1023us, 2000us)
+        |> shouldEqual (Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart 1023us))
+
+        outcome (1024us, 1024us) |> shouldEqual (Ok ())
         outcome (UInt16.MaxValue, UInt16.MaxValue) |> shouldEqual (Ok ())
 
     // ------------------------------------------------------------ pipe device
