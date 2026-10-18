@@ -295,6 +295,7 @@ module TestUnixSystemStep =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
         }
@@ -683,6 +684,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = refused
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }
@@ -789,6 +791,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = SocketPhase.Idle
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }

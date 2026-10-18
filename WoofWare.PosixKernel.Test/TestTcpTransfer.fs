@@ -900,13 +900,17 @@ module TestTcpTransfer =
             if TcpTransfer.closeRefused e transfer then
                 TcpTransferSeen.Refused, [], transfer
             else
-                let wakes, transfer = TcpTransfer.close e false PortHold.Reserved transfer
+                let wakes, transfer =
+                    TcpTransfer.close e false PortHold.Reserved UserId.root transfer
+
                 TcpTransferSeen.Closed, wakes, transfer
         | TcpTransferOp.Abort e ->
             if TcpTransfer.abortRefused e transfer then
                 TcpTransferSeen.Refused, [], transfer
             else
-                let wakes, transfer = TcpTransfer.abort e false PortHold.Reserved transfer
+                let wakes, transfer =
+                    TcpTransfer.abort e false PortHold.Reserved UserId.root transfer
+
                 TcpTransferSeen.Closed, wakes, transfer
         | TcpTransferOp.Shutdown (e, how) ->
             match TcpTransfer.shutdown e how transfer with
@@ -1364,7 +1368,7 @@ module TestTcpTransfer =
             | other, _ -> failwith $"the write of 20 was %A{other}"
 
         let wakes, transfer =
-            TcpTransfer.close ConnectionEnd.Client false PortHold.Reserved transfer
+            TcpTransfer.close ConnectionEnd.Client false PortHold.Reserved UserId.root transfer
 
         wakes |> shouldEqual []
 

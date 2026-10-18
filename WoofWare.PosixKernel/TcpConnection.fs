@@ -47,6 +47,8 @@ type internal TcpTimeWait =
         ReuseAddress : bool
         /// How the end's socket held its port.
         PortHold : PortHold
+        /// The uid the end's socket carried (`SocketDescription.Uid`).
+        SocketUid : UserId
         /// When the end entered TIME_WAIT, by the kernel clock: when both of
         /// the connection's FINs had arrived.
         EnteredAt : int64

@@ -2143,6 +2143,15 @@ module UnixConnection =
                     ReuseAddress = queued.ReuseAddress
                     Options = queued.Options
                     Phase = SocketPhase.Established (connectionId, ConnectionEnd.Server)
+                    // Measured by `docs/probes/socket-creator-uid` (ACCEPT
+                    // rows), with the listener made under one uid and the
+                    // accept made under another: Darwin's accepted socket
+                    // carries the listener's uid, and Linux's the accepting
+                    // process's effective uid at accept(2).
+                    Uid =
+                        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                        | SimulatedUnixFlavour.Darwin -> listener.Uid
+                        | SimulatedUnixFlavour.Linux -> system.Process.Credentials.EffectiveUser
                 }
 
             fd,
@@ -2232,14 +2241,17 @@ module UnixConnection =
         // returns); that a dropped connection's end keeps it too is inferred
         // from Linux's source (`sk_clone_lock` in `tcp_create_openreq_child`),
         // not measured. It holds the listener's port as an accepted socket
-        // would.
+        // would, and carries the listener's uid: what Darwin's accepted socket
+        // carries, and on Linux what the end carries until an accept takes it,
+        // inferred from the same source; no rule of Linux's this kernel models
+        // reads it.
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
         let wakes, transfer =
             if queued.Options.Linger.Enabled && queued.Options.Linger.Hundredths = 0L then
-                TcpTransfer.abort ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved transfer
+                TcpTransfer.abort ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved listener.Uid transfer
             else
-                TcpTransfer.close ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved transfer
+                TcpTransfer.close ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved listener.Uid transfer
 
         let system =
             { system with

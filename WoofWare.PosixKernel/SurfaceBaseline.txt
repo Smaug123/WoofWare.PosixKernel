@@ -4703,7 +4703,7 @@ WoofWare.PosixKernel.SocketAddressingModule.initial [static method]: WoofWare.Po
 WoofWare.PosixKernel.SocketAddressModule inherit obj
 WoofWare.PosixKernel.SocketAddressModule.toString [static method]: WoofWare.PosixKernel.SocketAddress -> string
 WoofWare.PosixKernel.SocketDescription inherit obj, implements WoofWare.PosixKernel.SocketDescription System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SocketDescription System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase)
+WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase, WoofWare.PosixKernel.UserId)
 WoofWare.PosixKernel.SocketDescription.Addressing [property]: [read-only] WoofWare.PosixKernel.SocketAddressing
 WoofWare.PosixKernel.SocketDescription.Domain [property]: [read-only] WoofWare.PosixKernel.SocketDomain
 WoofWare.PosixKernel.SocketDescription.Equals [method]: (WoofWare.PosixKernel.SocketDescription, System.Collections.IEqualityComparer) -> bool
@@ -4714,11 +4714,13 @@ WoofWare.PosixKernel.SocketDescription.get_Options [method]: unit -> WoofWare.Po
 WoofWare.PosixKernel.SocketDescription.get_Phase [method]: unit -> WoofWare.PosixKernel.SocketPhase
 WoofWare.PosixKernel.SocketDescription.get_Protocol [method]: unit -> WoofWare.PosixKernel.SocketProtocol
 WoofWare.PosixKernel.SocketDescription.get_ReuseAddress [method]: unit -> bool
+WoofWare.PosixKernel.SocketDescription.get_Uid [method]: unit -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.SocketDescription.Kind [property]: [read-only] WoofWare.PosixKernel.SocketKind
 WoofWare.PosixKernel.SocketDescription.Options [property]: [read-only] WoofWare.PosixKernel.SocketOptions
 WoofWare.PosixKernel.SocketDescription.Phase [property]: [read-only] WoofWare.PosixKernel.SocketPhase
 WoofWare.PosixKernel.SocketDescription.Protocol [property]: [read-only] WoofWare.PosixKernel.SocketProtocol
 WoofWare.PosixKernel.SocketDescription.ReuseAddress [property]: [read-only] bool
+WoofWare.PosixKernel.SocketDescription.Uid [property]: [read-only] WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.SocketDomain inherit obj, implements WoofWare.PosixKernel.SocketDomain System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SocketDomain System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.SocketDomain+Tags inherit obj
 WoofWare.PosixKernel.SocketDomain+Tags.Inet [static field]: int = 0

@@ -422,12 +422,15 @@ module ObjectLifetime =
                 |> List.map (fun queued ->
                     // The server end keeps the SO_REUSEADDR its socket would
                     // have held: the listener's when the connection completed.
-                    // It holds the listener's port as an accepted socket would.
+                    // It holds the listener's port as an accepted socket would,
+                    // and carries the listener's uid (see
+                    // `UnixConnection.dropConnection`).
                     let wakes, transfer =
                         TcpTransfer.abort
                             ConnectionEnd.Server
                             queued.ReuseAddress
                             PortHold.Reserved
+                            dying.Uid
                             (UnixMachineState.connection queued.Connection system.Machine).Transfer
 
                     queued.Connection, wakes, transfer
@@ -457,7 +460,7 @@ module ObjectLifetime =
                     Error (DescriptionReleaseRefusal.DarwinAbortBehindQueuedFin (socketId, connection))
                 else
                     let wakes, transfer =
-                        TcpTransfer.abort connectionEnd dying.ReuseAddress (portHold ()) transfer
+                        TcpTransfer.abort connectionEnd dying.ReuseAddress (portHold ()) dying.Uid transfer
 
                     Ok [ connection, wakes, transfer ]
             | Some (connection, connectionEnd) ->
@@ -485,7 +488,7 @@ module ObjectLifetime =
                     Error (DescriptionReleaseRefusal.DarwinCloseBehindQueuedFin (socketId, connection))
                 else
                     let wakes, transfer =
-                        TcpTransfer.close connectionEnd dying.ReuseAddress (portHold ()) transfer
+                        TcpTransfer.close connectionEnd dying.ReuseAddress (portHold ()) dying.Uid transfer
 
                     Ok [ connection, wakes, transfer ]
 
