@@ -21,7 +21,7 @@ Six things have to change, and each has a decision for Patrick in §3:
 6. **Stops.** A stop of another process leaves a stopped process that the caller can go on talking to, and the model holds no stopped state. (Decision E.)
 
 Recommended, in short:
-- a fatal signal from outside marks its target as exiting; every thread of the target then owes a return to user mode, and the target ends at the first of those returns the client makes (T2a);
+- a fatal signal from outside marks its target as exiting where the flavour commits the death at generation (Linux, and `SIGKILL` on Darwin, if the probes agree); every thread of the target then owes a return to user mode, and the target ends at the first of those returns the client makes (T2a). A Darwin `SIGTERM` stays pending on its receiver instead, whose return applies whatever disposition holds then;
 - so `kill`'s answer type does not change, since the target's end is reported where a process's end already is: by the return to user mode that ends it (A0);
 - kill's body running over the whole kernel through one new entry point, with every other call machine-checked to leave other processes alone (B2);
 - `SIGCONT` refused where only a session could permit it (C1);
