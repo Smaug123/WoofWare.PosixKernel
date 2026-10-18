@@ -489,8 +489,8 @@ module TestStepOracle =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> CallProgress.resumeWith (fun paused -> UnixFutex.tryFutexWithWord (cell word) paused)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
@@ -1776,7 +1776,14 @@ module TestStepOracle =
                         [
                             4, Gen.constant UnixFutex.FutexWaitPrivate
                             3, Gen.constant UnixFutex.FutexWakePrivate
-                            1, Gen.elements [ 0 ; 9 ; 384 ]
+                            3,
+                            Gen.elements
+                                [
+                                    UnixFutex.FutexWaitBitsetPrivate
+                                    UnixFutex.FutexWaitBitsetPrivate ||| UnixFutex.FutexClockRealtime
+                                    UnixFutex.FutexWakeBitsetPrivate
+                                ]
+                            1, Gen.elements [ 0 ; 9 ; 384 ; 2 ; 6 ]
                         ]
 
                 let! value = Gen.elements [ 0 ; 0 ; 1 ; -1 ]
@@ -1793,7 +1800,8 @@ module TestStepOracle =
                             TimespecArgument.Unreadable
                         ]
 
-                return Syscall.Futex (address, op, value, word, timeout)
+                let! val3 = Gen.elements [ UnixFutex.FutexBitsetMatchAny ; 1u ; 2u ; 0u ]
+                return Syscall.Futex (address, op, value, word, timeout, val3)
             }
         ]
 
@@ -1840,8 +1848,8 @@ module TestStepOracle =
         | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
             UnixSocket.tryGetsockopt caller fd level optionName value (bufferOf length) system
             |> stopped
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> stopped
         | other -> failwith $"%s{UnionCaseName.ofValue other} copies no buffer in"
 

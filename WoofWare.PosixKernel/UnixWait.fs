@@ -150,8 +150,7 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     | DatagramSend of finished : FinishedDatagramSend<'Thread, 'Handler>
     /// A blocking `connect(2)`. Reserved: see `FinishedConnect`.
     | Connect of finished : FinishedConnect<'Thread, 'Handler>
-    /// A Linux `futex(2)` `FUTEX_WAIT_PRIVATE`, as `UnixFutex.finishFutexWait`
-    /// answers it.
+    /// A Linux `futex(2)` wait, as `UnixFutex.finishFutexWait` answers it.
     | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
 
 /// What a woken call's finishing body answered, before `Entry` makes a kernel
