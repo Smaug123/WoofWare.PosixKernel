@@ -20,6 +20,8 @@
 //   bare  - a send whose allocation failed leaves the pending bit alone: what
 //           that instance counts against the limit, and what an allocated
 //           instance of the same signal does beside it.
+//   ignored - a real-time signal under SIG_IGN sent at a limit of 0, blocked
+//           and not: discarded before the allocation, or refused by it?
 //   other - the queue of a different user: as root only, a child that becomes
 //           uid 1000 (with its limit lowered) and holds `limit` signals queued
 //           is sent sigqueue by root, and root's own queue is empty.
@@ -342,6 +344,37 @@ static void bare_body(int fd, void *arg)
     write(fd, out, len);
 }
 
+/* A real-time signal under SIG_IGN, sent at a limit of 0, blocked or not:
+ * is it discarded before the allocation could fail? */
+static void ignored_body(int fd, void *arg)
+{
+    int blocked = (int)(long)arg;
+    block_all();
+    set_limit(0);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGRTMIN, &sa, NULL);
+    if (!blocked) {
+        sigset_t one;
+        sigemptyset(&one);
+        sigaddset(&one, SIGRTMIN);
+        sigprocmask(SIG_UNBLOCK, &one, NULL);
+    }
+    char out[1024] = "";
+    int len = snprintf(out, sizeof out, "section=ignored limit=0 sig=RTMIN(SIG_IGN) %s pthread_kill=%s", blocked ? "blocked" : "unblocked", errname(send_by("pthread_kill", SIGRTMIN)));
+    len += snprintf(out + len, sizeof out - len, " kill=%s", errname(send_by("kill", SIGRTMIN)));
+    sigq_into(out, sizeof out);
+    sigset_t pending;
+    sigpending(&pending);
+    len = (int)strlen(out);
+    len += snprintf(out + len, sizeof out - len, " pending=%d drained:", sigismember(&pending, SIGRTMIN));
+    int count = drain(out, sizeof out);
+    len = (int)strlen(out);
+    len += snprintf(out + len, sizeof out - len, " count=%d\n", count);
+    write(fd, out, len);
+}
+
 static void other_body(int fd, void *arg)
 {
     (void)arg;
@@ -462,6 +495,7 @@ int main(void)
     }
     for (int m = 0; m < 3; m++) in_child(user_body, (void *)methods[m]);
     for (long row = 0; row < 4; row++) in_child(bare_body, (void *)row);
+    for (long blocked = 0; blocked < 2; blocked++) in_child(ignored_body, (void *)blocked);
     if (geteuid() == 0) in_child(other_body, NULL);
     else printf("# not root: section other skipped\n");
 #endif

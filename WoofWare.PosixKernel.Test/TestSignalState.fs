@@ -1200,11 +1200,27 @@ module TestSignalState =
                 Target = ValueNone
             }
 
-        SignalState.generate numbering CoreDumps.Suppressed QueueAccount.Unbounded t0 true (Set.ofList [ t0 ; t1 ; t2 ]) entry s
+        SignalState.generate
+            numbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ; t2 ])
+            entry
+            s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGINT))
 
         // Once every thread blocks it, it is simply pending.
-        SignalState.generate numbering CoreDumps.Suppressed QueueAccount.Unbounded t0 true (Set.ofList [ t0 ; t1 ]) entry s
+        SignalState.generate
+            numbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ])
+            entry
+            s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
@@ -1261,7 +1277,15 @@ module TestSignalState =
                 (SignalMask.ofSignals darwinNumbering (Set.singleton Signal.SIGCONT))
                 t0
 
-        SignalState.generate darwinNumbering CoreDumps.Suppressed QueueAccount.Unbounded t0 true (Set.ofList [ t0 ; t1 ]) entry darwin
+        SignalState.generate
+            darwinNumbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ])
+            entry
+            darwin
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [])
@@ -2242,7 +2266,15 @@ module TestSignalState =
         | Op.Enqueue e -> SignalState.enqueue numbering e s, referenceEnqueue numbering e r, threads
         | Op.Generate (coreDumps, leaderRunning, e) ->
             let actual =
-                SignalState.generate numbering coreDumps QueueAccount.Unbounded referenceLeader leaderRunning threads e s
+                SignalState.generate
+                    numbering
+                    coreDumps
+                    QueueAccount.Unbounded
+                    referenceLeader
+                    leaderRunning
+                    threads
+                    e
+                    s
 
             let expected = referenceGenerate numbering coreDumps leaderRunning threads e r
 

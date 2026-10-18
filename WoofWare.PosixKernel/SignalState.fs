@@ -987,9 +987,7 @@ module SignalState =
 
         match
             state.Pending
-            |> List.tryFind (fun queued ->
-                takesFrom queued.Entry && not (SignalMask.contains queued.Entry.Signal mask)
-            )
+            |> List.tryFind (fun queued -> takesFrom queued.Entry && not (SignalMask.contains queued.Entry.Signal mask))
         with
         | Some queued -> ValueSome queued.Entry.Signal
         | None -> ValueNone
@@ -1042,7 +1040,10 @@ module SignalState =
         // lost it, beside an instance of its signal); tgkill kept a standard
         // signal as the bare bit and failed a real-time one with EAGAIN; a bare
         // instance counted against nothing. A discarded or coalesced signal is
-        // never allocated, so the count is read once `beginGeneration` has run.
+        // never allocated, so the count is read once `beginGeneration` has run;
+        // and an ignored signal its receiver does not block is discarded
+        // before the allocation (section `ignored`: at a limit of 0, tgkill of
+        // an ignored real-time signal answered 0 unblocked and EAGAIN blocked).
         let charge : PendingCharge voption =
             match queue with
             | QueueAccount.Unbounded -> ValueSome PendingCharge.Unbounded
@@ -1075,9 +1076,24 @@ module SignalState =
                     | SignalSender.Kill
                     | SignalSender.Kernel -> ValueSome PendingCharge.Bare
 
+        let receiver = receiverFor leader threads entry state
+
+        let effect =
+            effectOf numbering (disposition numbering entry.Signal state) entry.Signal
+
+        let discardedAsIgnored =
+            match receiver, effect with
+            | Receiver.Thread _, Effect.Ignored -> true
+            | _, _ -> false
+
         match charge with
-        | ValueNone -> Ok SignalGeneration.QueueFull
-        | ValueSome charge ->
+        | ValueNone when not discardedAsIgnored -> Ok SignalGeneration.QueueFull
+        | ValueNone
+        | ValueSome _ ->
+
+        // Reached with no charge only for a signal discarded as ignored, which
+        // is never admitted.
+        let charge = charge |> ValueOption.defaultValue PendingCharge.Bare
 
         // Linux decides this at generation (`complete_signal` takes the whole
         // thread group down for a fatal signal as soon as it has found a thread
@@ -1120,8 +1136,6 @@ module SignalState =
             else
                 Ok (SignalGeneration.ProcessContinues (admit numbering entry charge state))
 
-        let receiver = receiverFor leader threads entry state
-
         // Linux's `complete_signal` hands a signal sent to the process to the
         // leader only while the leader wants it (`wants_signal`): it is running,
         // or it has no signal to take already (`TIF_SIGPENDING`). Otherwise it
@@ -1160,7 +1174,7 @@ module SignalState =
                        thread <> leader && not (SignalMask.contains entry.Signal (maskOf thread state))
                    )
 
-        match receiver, effectOf numbering (disposition numbering entry.Signal state) entry.Signal with
+        match receiver, effect with
         | Receiver.Nobody, _ -> leftPending ()
         | Receiver.BeyondLeader, Effect.Caught -> Error (SignalReceiverRefusal.LeaderBlocks entry.Signal)
         | Receiver.Thread _, Effect.Caught when wokenBeyondLeader () ->

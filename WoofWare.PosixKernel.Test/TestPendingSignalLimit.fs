@@ -287,6 +287,63 @@ module TestPendingSignalLimit =
             Prop.forAll (Arb.fromGen (Gen.listOf opGen |> Gen.map (List.truncate 40))) property
         )
 
+    /// Linux allocates a queue entry before it chooses the thread to wake: a
+    /// real-time `tgkill` past the limit is `EAGAIN`, wherever the leader is,
+    /// and a real-time `kill` past it, kept bare or lost, still chooses, so
+    /// `SignalReceiverRefusal.LeaderAlreadySignalled` holds for it as for any
+    /// other signal sent to the process.
+    [<Test>]
+    let ``the limit is consulted before the receiving thread is chosen`` () : unit =
+        let t1 = 1
+        let threads = Set.ofList [ t0 ; t1 ]
+        let user = List.head users
+        let signal = Signal.RealTime 2
+
+        let generate
+            (sender : SignalSender)
+            (leaderRunning : bool)
+            (target : int voption)
+            (state : SignalState<int, string>)
+            =
+            SignalState.generate
+                numbering
+                CoreDumps.Suppressed
+                (QueueAccount.Limited (user, 0, 1UL, sender))
+                t0
+                leaderRunning
+                threads
+                {
+                    Signal = signal
+                    Target = target
+                }
+                state
+
+        // A caught real-time signal pending on the process, which the leader,
+        // blocking nothing, has to take: the user's queue is now full.
+        let pending =
+            match
+                SignalState.initial numbering Set.empty
+                |> SignalState.setDisposition numbering signal caught
+                |> generate SignalSender.Kill false ValueNone
+            with
+            | Ok (SignalGeneration.ProcessContinues state) -> state
+            | other -> failwith $"the first kill: %A{other}"
+
+        match generate SignalSender.Kill false ValueNone pending with
+        | Error (SignalReceiverRefusal.LeaderAlreadySignalled refused) -> refused |> shouldEqual signal
+        | other -> failwith $"a second kill past the limit, the leader asleep: %A{other}"
+
+        // Running, the leader is the one woken; the instance past the limit is
+        // lost beside the one pending.
+        match generate SignalSender.Kill true ValueNone pending with
+        | Ok (SignalGeneration.ProcessContinues state) -> state |> shouldEqual pending
+        | other -> failwith $"a second kill past the limit, the leader running: %A{other}"
+
+        for leaderRunning in [ false ; true ] do
+            match generate SignalSender.ThreadKill leaderRunning (ValueSome t1) pending with
+            | Ok SignalGeneration.QueueFull -> ()
+            | other -> failwith $"a tgkill past the limit (leader running: %b{leaderRunning}): %A{other}"
+
     // ---------------- Calls, held to the probe ---------------- //
 
     let private output (uid : int) : string =
@@ -603,6 +660,48 @@ module TestPendingSignalLimit =
         let killed, system = send pid "kill" Signal.SIGUSR1 system
         [ first ; second ; killed ] |> shouldEqual [ "0" ; "0" ; "0" ]
         row.Contains $" %s{sigq pid 0UL system} drained:" |> shouldEqual true
+        drained pid system |> shouldEqual (drainedOf row)
+
+    [<TestCase false>]
+    [<TestCase true>]
+    let ``an ignored real-time signal is discarded before the limit is consulted, unless it is blocked``
+        (blocked : bool)
+        : unit
+        =
+        let row =
+            measuredRow
+                $"""section=ignored limit=0 sig=RTMIN(SIG_IGN) %s{if blocked then "blocked" else "unblocked"} """
+
+        let system = bootWith 0UL
+        let pid = Lone.pid system
+        let leader = Caller.make pid 0
+        let only = SignalMask.ofSignals numbering (Set.singleton rtmin)
+
+        let system =
+            match
+                UnixSignal.sigaction
+                    leader
+                    (Signal.toRawSignoUnder numbering rtmin)
+                    (Some SignalDisposition.Ignore)
+                    system
+            with
+            | Ok (_, system) -> ReturnsToUser.untilResumed leader system
+            | Error errno -> failwith $"sigaction: %O{errno}"
+
+        let system =
+            if blocked then
+                system
+            else
+                match UnixSignal.pthreadSigmask leader (MaskHow.unblock numbering) (Some only) system with
+                | Ok (_, system) -> ReturnsToUser.untilResumed leader system
+                | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+
+        let threadKilled, system = send pid "pthread_kill" rtmin system
+        let killed, system = send pid "kill" rtmin system
+
+        row.Contains $"pthread_kill=%s{threadKilled} kill=%s{killed} %s{sigq pid 0UL system} "
+        |> shouldEqual true
+
         drained pid system |> shouldEqual (drainedOf row)
 
     // ---------------- The launch setting ---------------- //

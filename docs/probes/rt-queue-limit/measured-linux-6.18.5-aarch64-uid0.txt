@@ -26,4 +26,6 @@ section=bare row=rt-bare-then-allocated limit=1 sigqueue(RTMIN)=0 kill(RTMIN+1)=
 section=bare row=rt-allocated-then-bare limit=1 sigqueue(RTMIN+1)=0 kill(RTMIN+1)=0 sigq=1/1 drained: RTMIN+1/SI_QUEUE/pid=own count=1
 section=bare row=standard-bare-counts limit=1 sigqueue(RTMIN)=0 pthread_kill(USR1)=0 sigq=1/1 took-RTMIN+0:SI_QUEUE/pid=own sigq=0/1 sigqueue(RTMIN+1)=0 sigq=1/1 drained: USR1/SI_USER/pid=0 RTMIN+1/SI_QUEUE/pid=own count=2
 section=bare row=standard-bare-twice-then-kill limit=0 pthread_kill(USR1)=0 pthread_kill(USR1)=0 kill(USR1)=0 sigq=1/0 drained: USR1/SI_USER/pid=0 USR1/SI_USER/pid=own count=2
+section=ignored limit=0 sig=RTMIN(SIG_IGN) unblocked pthread_kill=0 kill=0 sigq=0/0 pending=0 drained: count=0
+section=ignored limit=0 sig=RTMIN(SIG_IGN) blocked pthread_kill=EAGAIN kill=0 sigq=0/0 pending=1 drained: RTMIN+0/SI_USER/pid=0 count=1
 section=other limit=4 target=uid1000-holding-4 sender=uid0 sigqueue(RTMIN)=EAGAIN kill(RTMIN+1)=0 target-sigq-after=4/4 target-drained: RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+1/SI_USER/pid=0 count=5
