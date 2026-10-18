@@ -38,15 +38,42 @@ type LinuxKernelVersion =
     override this.ToString () : string =
         $"%d{this.Major}.%d{this.Minor}.%d{this.Patch}"
 
-/// Which kernel a `SimulatedUnixPlatform` runs, with whatever the facts this
-/// library derives from that kernel's source vary over.
+/// A Darwin kernel's version: the major, minor and revision numbers of the XNU
+/// source tree it was built from (its `config/MasterVersion`, which
+/// `<libkern/version.h>` exposes as `version_major`, `version_minor` and
+/// `version_revision`), and which a real `uname -r` prints: 27.0.0 on macOS 27.0.
+///
+/// This is the Darwin version, not the macOS product version and not XNU's
+/// project tag (`xnu-13432.1.9`), and it plays the part for Darwin that
+/// `LinuxKernelVersion` plays for Linux: a fact this library derives from
+/// Darwin's source that changed between versions follows this, never the
+/// platform's release string.
+///
+/// Ordered by `VersionMajor`, then `VersionMinor`, then `VersionRevision`,
+/// which is the order of the fields, so the structural comparison F# derives is
+/// the version order.
+type DarwinKernelVersion =
+    {
+        /// `version_major`: 27 in 27.0.0.
+        VersionMajor : uint32
+        /// `version_minor`: 0 in 27.0.0.
+        VersionMinor : uint32
+        /// `version_revision`: 0 in 27.0.0.
+        VersionRevision : uint32
+    }
+
+    override this.ToString () : string =
+        $"%d{this.VersionMajor}.%d{this.VersionMinor}.%d{this.VersionRevision}"
+
+/// Which kernel a `SimulatedUnixPlatform` runs, and the version of the source
+/// it was built from, which the facts this library derives from that source
+/// may vary over.
 [<RequireQualifiedAccess>]
 type SimulatedUnixKernel =
     /// Linux, built from this version's source.
     | Linux of LinuxKernelVersion
-    /// Darwin. No fact this library derives from Darwin's source varies between
-    /// its versions yet, so none is recorded.
-    | Darwin
+    /// Darwin, built from this version's source.
+    | Darwin of DarwinKernelVersion
 
 [<RequireQualifiedAccess>]
 module SimulatedUnixKernel =
@@ -54,7 +81,7 @@ module SimulatedUnixKernel =
     let flavour (kernel : SimulatedUnixKernel) : SimulatedUnixFlavour =
         match kernel with
         | SimulatedUnixKernel.Linux _ -> SimulatedUnixFlavour.Linux
-        | SimulatedUnixKernel.Darwin -> SimulatedUnixFlavour.Darwin
+        | SimulatedUnixKernel.Darwin _ -> SimulatedUnixFlavour.Darwin
 
 /// Why a combination of kernel, architecture, page size and release is not a
 /// `SimulatedUnixPlatform`.
@@ -81,8 +108,8 @@ type SimulatedUnixPlatformError =
 /// letting the host leak in here would change their *control flow* between
 /// runs.
 ///
-/// Modelled as a kernel (a flavour, and for Linux the version of the source it
-/// was built from), an architecture, a page size and a release string, each of
+/// Modelled as a kernel (a flavour, and the version of the source it was built
+/// from), an architecture, a page size and a release string, each of
 /// which a kernel image is built with, rather than as a bag of loose
 /// `utsname` fields, so that the facts we report stay mutually consistent as
 /// more of `utsname` gets modelled: its machine field would be a total
@@ -94,7 +121,8 @@ type SimulatedUnixPlatformError =
 /// combinations whose facts have been measured.
 ///
 /// The release string is identity alone: no fact follows from it. A fact that
-/// changed between Linux versions follows the kernel's `LinuxKernelVersion`.
+/// changed between versions of a kernel follows the kernel's version
+/// (`LinuxKernelVersion` or `DarwinKernelVersion`).
 ///
 /// Construct with `SimulatedUnixPlatform.linuxX64`, `linuxArm64`, `macOsArm64`,
 /// or `create` for a specific kernel and release string.
@@ -112,7 +140,7 @@ type SimulatedUnixPlatform =
         let kernel =
             match this.Kernel with
             | SimulatedUnixKernel.Linux version -> $"Linux %O{version}"
-            | SimulatedUnixKernel.Darwin -> "Darwin"
+            | SimulatedUnixKernel.Darwin version -> $"Darwin %O{version}"
 
         $"%s{kernel} %O{this.Architecture} %O{this.PageSize} %s{this.Release}"
 
@@ -336,8 +364,8 @@ module SimulatedUnixPlatform =
     /// A platform running `kernel`, built for `architecture` with pages of
     /// `pageSize`, reporting `release` from `uname -r`.
     ///
-    /// `release` need not agree with a Linux kernel's version: it is what a
-    /// process reads, and nothing else follows from it.
+    /// `release` need not agree with the kernel's version: it is what a process
+    /// reads, and nothing else follows from it.
     ///
     /// Validated here rather than when a fact is read, which is what makes
     /// every accessor below total: a value of this type is a platform some Unix
@@ -434,12 +462,18 @@ module SimulatedUnixPlatform =
             "6.18.5"
 
     /// 64-bit ARM macOS 27.0, whose pages are 16 KiB. The release is the
-    /// *Darwin* kernel's, so `27.0.0` rather than `27.0`; as for `linuxX64`, it
-    /// names the kernel the Darwin behaviour below was measured against.
+    /// *Darwin* kernel's, so `27.0.0` rather than `27.0`, and so is the kernel
+    /// version 27.0.0 the behaviour below follows; as for `linuxX64`, they name
+    /// the kernel the Darwin behaviour below was measured against.
     let macOsArm64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.macOsArm64"
-            SimulatedUnixKernel.Darwin
+            (SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                })
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.SixteenKiB
             "27.0.0"
@@ -448,8 +482,8 @@ module SimulatedUnixPlatform =
     let flavour (platform : SimulatedUnixPlatform) : SimulatedUnixFlavour =
         SimulatedUnixKernel.flavour platform.Kernel
 
-    /// Which kernel this platform runs, and for Linux the version of the source
-    /// it was built from.
+    /// Which kernel this platform runs, and the version of the source it was
+    /// built from.
     let kernel (platform : SimulatedUnixPlatform) : SimulatedUnixKernel = platform.Kernel
 
     /// The instruction set this platform's processes run as.
@@ -543,7 +577,7 @@ module SimulatedUnixPlatform =
                 GetSockNameFaultLength.AlreadyReported
             else
                 GetSockNameFaultLength.Untouched
-        | SimulatedUnixKernel.Darwin -> GetSockNameFaultLength.Untouched
+        | SimulatedUnixKernel.Darwin _ -> GetSockNameFaultLength.Untouched
 
     /// The number every descriptor this kernel hands out lies below: the soft
     /// `RLIMIT_NOFILE` it assumes the process has at least. A call that would

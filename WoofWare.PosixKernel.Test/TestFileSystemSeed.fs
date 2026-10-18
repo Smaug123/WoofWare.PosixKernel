@@ -444,7 +444,12 @@ module TestFileSystemSeed =
 
         SimulatedUnixPlatform.createOrFail
             "test"
-            SimulatedUnixKernel.Darwin
+            (SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                })
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.SixteenKiB
             "27.0.0"

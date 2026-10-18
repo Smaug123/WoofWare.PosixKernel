@@ -34,6 +34,27 @@ module LinuxRelease =
                     Patch = part 3
                 }
 
+/// Reading a Darwin kernel's version out of the release string `uname -r`
+/// prints.
+[<RequireQualifiedAccess>]
+module DarwinRelease =
+
+    /// The version a release such as `27.0.0` is, or `None` for one that is not
+    /// exactly `major.minor.revision`: Darwin's `uname -r` is its
+    /// `config/MasterVersion` and nothing else.
+    let version (release : string) : DarwinKernelVersion option =
+        let m = Regex.Match (release, @"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+
+        if not m.Success then
+            None
+        else
+            Some
+                {
+                    VersionMajor = UInt32.Parse m.Groups.[1].Value
+                    VersionMinor = UInt32.Parse m.Groups.[2].Value
+                    VersionRevision = UInt32.Parse m.Groups.[3].Value
+                }
+
 /// The kernel *this test process* is running on, in the vocabulary the emulated
 /// kernel uses for the kernel it impersonates.
 ///
@@ -114,15 +135,21 @@ module HostPlatform =
             | Some platform -> action platform
         )
 
-    /// This Linux host's `uname -r`. Linux's `struct utsname` is six 65-byte
-    /// fields, and the release is the third.
-    let private linuxRelease () : string =
-        let buffer = Array.zeroCreate<byte> (6 * 65)
+    /// This host's `uname -r`. The release is the third field of `struct
+    /// utsname`, whose fields are 65 bytes on Linux (six of them) and 256 on
+    /// Darwin (five).
+    let private release (flavour : SimulatedUnixFlavour) : string =
+        let fieldLength, fieldCount =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> 65, 6
+            | SimulatedUnixFlavour.Darwin -> 256, 5
+
+        let buffer = Array.zeroCreate<byte> (fieldCount * fieldLength)
 
         if HostCalls.uname buffer <> 0 then
             failwith $"uname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-        let field = ReadOnlySpan<byte> (buffer, 2 * 65, 65)
+        let field = ReadOnlySpan<byte> (buffer, 2 * fieldLength, fieldLength)
         let length = field.IndexOf 0uy
 
         if length < 0 then
@@ -132,25 +159,30 @@ module HostPlatform =
 
     /// Run `action` against a model of the kernel this host is running: the
     /// preset for its flavour and architecture, but running this host's own
-    /// Linux version and reporting its own release. For tests of a fact that
+    /// kernel version and reporting its own release. For tests of a fact that
     /// changed between kernel versions, which must hold on whichever kernel the
     /// suite runs on. Skips where `onUnixHostPreset` does.
     let onUnixHostKernel (action : SimulatedUnixPlatform -> unit) : unit =
         onUnixHostPreset (fun preset ->
-            match SimulatedUnixPlatform.kernel preset with
-            | SimulatedUnixKernel.Darwin -> action preset
-            | SimulatedUnixKernel.Linux _ ->
+            let flavour = SimulatedUnixPlatform.flavour preset
+            let release = release flavour
 
-            let release = linuxRelease ()
+            let kernel =
+                match flavour with
+                | SimulatedUnixFlavour.Linux ->
+                    match LinuxRelease.version release with
+                    | None -> failwith $"this host's release %s{release} does not begin with a Linux version"
+                    | Some version -> SimulatedUnixKernel.Linux version
+                | SimulatedUnixFlavour.Darwin ->
+                    match DarwinRelease.version release with
+                    | None -> failwith $"this host's release %s{release} is not a Darwin version"
+                    | Some version -> SimulatedUnixKernel.Darwin version
 
-            match LinuxRelease.version release with
-            | None -> failwith $"this host's release %s{release} does not begin with a Linux version"
-            | Some version ->
-                SimulatedUnixPlatform.createOrFail
-                    "HostPlatform.onUnixHostKernel"
-                    (SimulatedUnixKernel.Linux version)
-                    (SimulatedUnixPlatform.architecture preset)
-                    (SimulatedUnixPlatform.pageSize preset)
-                    release
-                |> action
+            SimulatedUnixPlatform.createOrFail
+                "HostPlatform.onUnixHostKernel"
+                kernel
+                (SimulatedUnixPlatform.architecture preset)
+                (SimulatedUnixPlatform.pageSize preset)
+                release
+            |> action
         )
