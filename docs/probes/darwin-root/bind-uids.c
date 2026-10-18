@@ -148,7 +148,7 @@ static int bind_as(uid_t uid, int socket_first, int type, const char *addr, int 
     if (read(pfd[0], &a, sizeof a) != sizeof a) a.err = -1;
     close(pfd[0]);
     int st = 0;
-    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) a.err = -1;
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) a.err = -1;
     return a.err;
 }
 

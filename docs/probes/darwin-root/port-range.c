@@ -187,6 +187,7 @@ static void take(uid_t uid, enum sock_kind k, int n, int listen_port, int *out) 
     int pfd[2];
     if (pipe(pfd) != 0) {
         for (int i = 0; i < n; i++) out[i] = -9999;
+        failures++;
         return;
     }
     fflush(stdout);
@@ -249,7 +250,7 @@ static void take(uid_t uid, enum sock_kind k, int n, int listen_port, int *out) 
         for (int i = 0; i < n; i++) out[i] = -9999;
     close(pfd[0]);
     int st = 0;
-    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)
         for (int i = 0; i < n; i++) out[i] = -9999;
     for (int i = 0; i < n; i++)
         if (out[i] == -9999 || (geteuid() == 0 && out[i] <= -100000 && out[i] > -200000)) {

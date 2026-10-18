@@ -92,7 +92,7 @@ static int failures;
 
 static void wait_child(pid_t pid) {
     int st = 0;
-    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
         failures++;
         printf("CHILD-FAILED\tstatus=0x%x\n", st);
         fflush(stdout);

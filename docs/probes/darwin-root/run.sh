@@ -161,7 +161,8 @@ on_exit() {
     done
     restore_sysctls
     if [ "$AS_ROOT" = 1 ]; then
-        for f in $LOG $FINALS; do
+        printf '%s\n%s' "$LOG" "$FINALS" | while IFS= read -r f; do
+            [ -n "$f" ] || continue
             [ -e "$f" ] && chown "$OWNER_UID:$OWNER_GID" "$f"
             g=$(failed_name "$f")
             [ -e "$g" ] && chown "$OWNER_UID:$OWNER_GID" "$g"
@@ -222,8 +223,17 @@ LOG="$OUT_ROOT/run.darwin-$DARWIN-$SUFFIX.log"
 # FAILED or .running file beside it from an earlier run, is removed before
 # anything runs, so whatever is under a final name afterwards is this run's.
 PROBES="root-files credentials bind-uids port-range faulting-file-write poll-entry-count privileged-port setresid"
-FINALS="$OUT_ROOT/root-files.darwin-$DARWIN-$SUFFIX.txt $OUT_ROOT/credentials.darwin-$DARWIN-$SUFFIX.txt $OUT_ROOT/bind-uids.darwin-$DARWIN-$SUFFIX.txt $OUT_ROOT/port-range.darwin-$DARWIN-$SUFFIX.txt $OUT_FW/darwin-$RELEASE-$ARCH-apfs-$SUFFIX.txt $POLL_OUT $OUT_PP/measured-darwin-$DARWIN-$SUFFIX.txt $OUT_SR/setresid.darwin-$DARWIN-$SUFFIX.txt"
-for f in $FINALS; do
+# One path per line, so that a path with a space in it stays one path.
+FINALS="$OUT_ROOT/root-files.darwin-$DARWIN-$SUFFIX.txt
+$OUT_ROOT/credentials.darwin-$DARWIN-$SUFFIX.txt
+$OUT_ROOT/bind-uids.darwin-$DARWIN-$SUFFIX.txt
+$OUT_ROOT/port-range.darwin-$DARWIN-$SUFFIX.txt
+$OUT_FW/darwin-$RELEASE-$ARCH-apfs-$SUFFIX.txt
+$POLL_OUT
+$OUT_PP/measured-darwin-$DARWIN-$SUFFIX.txt
+$OUT_SR/setresid.darwin-$DARWIN-$SUFFIX.txt
+"
+printf '%s' "$FINALS" | while IFS= read -r f; do
     rm -f "$f" "$(failed_name "$f")" "$f.running"
 done
 RAN=

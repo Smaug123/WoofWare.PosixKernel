@@ -7,7 +7,7 @@
 // the base directory and removes it afterwards:
 //   sudo sh docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/root-files root-files.c && sudo /tmp/root-files "$(mktemp -d /private/tmp/rootfiles.XXXXXX)" [SECTION...]
-// (as root it gives the base directory to root, mode 0711). It exits 1 if any
+// (as root it gives the base directory to root, mode 0700). It exits 1 if any
 // of its child processes failed (a CHILD-FAILED row says which), so that its
 // output is not taken for a complete measurement.
 // Run as an ordinary user it measures what that user can set up alone (its
@@ -169,13 +169,26 @@ static int failures;
 // Wait for `pid`, counting it as a failure (and saying so) unless it exited 0.
 static void wait_child(pid_t pid, const char *what) {
     int st = 0;
-    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
         failures++;
         p("CHILD-FAILED\t%s\tstatus=0x%x\n", what, st);
     }
 }
 
 // ---------------------------------------------------------------- callers
+
+// Every child first enters the directory it works in, while it is still root,
+// and then names its files relative to it. The base is root's, mode 0700, so
+// no process outside the probe can reach a fixture by path (in particular, a
+// script root executes cannot be rewritten by the user who owns it), and a
+// child that has become another user still reaches its own directory's
+// entries, since a relative lookup checks no ancestor.
+static void enter(const char *dir) {
+    if (chdir(dir) != 0) {
+        perror("chdir into the fixture directory");
+        _exit(3);
+    }
+}
 
 typedef struct {
     const char *name;
@@ -583,6 +596,7 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
     if (pid < 0) die("fork");
     if (pid == 0) {
         alarm(900);
+        enter(swdir);
         sh->become_err = become(s->caller);
         sh->uid = getuid();
         sh->euid = geteuid();
@@ -590,9 +604,9 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
         sh->egid = getegid();
         if (sh->become_err != 0) _exit(geteuid() == 0 ? 1 : 0);
         for (int m = 0; m < NMODES; m++) {
-            char pth[PATH_MAX];
-            nth(pth, m);
-            for (int i = 0; i < nops; i++) sh->res[i][m] = asked(ops[i].asks, m) ? ops[i].run(pth, m, &ops[i]) : -2;
+            char rel[16];
+            snprintf(rel, sizeof rel, "./%04o", m);
+            for (int i = 0; i < nops; i++) sh->res[i][m] = asked(ops[i].asks, m) ? ops[i].run(rel, m, &ops[i]) : -2;
         }
         _exit(0);
     }
@@ -711,6 +725,7 @@ static void cred_section(void) {
         fflush(stdout);
         pid_t pid = fork();
         if (pid == 0) {
+            enter(dir);
             int e = become(all[i]);
             if (e != 0) {
                 p("CRED\t%s\tbecome: %s (needs root)\n", all[i]->name, en(e));
@@ -723,7 +738,7 @@ static void cred_section(void) {
             if (can_chown && geteuid() != 0)
                 for (size_t j = 0; j < sizeof probe_groups / sizeof probe_groups[0]; j++) {
                     char f[PATH_MAX];
-                    snprintf(f, sizeof f, "%s/g%u", dir, (unsigned)probe_groups[j]);
+                    snprintf(f, sizeof f, "g%u", (unsigned)probe_groups[j]);
                     int fd = open(f, O_RDONLY);
                     printf("\tmember=%u:%s", (unsigned)probe_groups[j], fd >= 0 ? "ok" : en(errno));
                     if (fd >= 0) close(fd);
@@ -978,13 +993,14 @@ static void utimens_row(const cred *c, enum kind k, uid_t ou, gid_t og, int mode
     fflush(stdout);
     pid_t pid = fork();
     if (pid == 0) {
+        enter(dir);
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
             _exit(geteuid() == 0 ? 1 : 0);
         }
         sh->become_err = 0;
-        sh->res[0][0] = utimensat(AT_FDCWD, o, tcase == 0 ? NULL : ts, flags) == 0 ? 0 : errno;
+        sh->res[0][0] = utimensat(AT_FDCWD, "o", tcase == 0 ? NULL : ts, flags) == 0 ? 0 : errno;
         _exit(0);
     }
     wait_child(pid, __func__);
@@ -1118,6 +1134,7 @@ static void sticky_row(const cred *c, int smode, int dmode, enum st_op op, const
     fflush(stdout);
     pid_t pid = fork();
     if (pid == 0) {
+        enter(st);
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
@@ -1125,9 +1142,9 @@ static void sticky_row(const cred *c, int smode, int dmode, enum st_op op, const
         }
         sh->become_err = 0;
         int rr;
-        if (op == ST_UNLINK) rr = unlink(pa);
-        else if (op == ST_RMDIR) rr = rmdir(pa);
-        else rr = rename(pa, pb);
+        if (op == ST_UNLINK) rr = unlink(a);
+        else if (op == ST_RMDIR) rr = rmdir(a);
+        else rr = rename(a, b);
         sh->res[0][0] = rr == 0 ? 0 : errno;
         _exit(0);
     }
@@ -1205,23 +1222,18 @@ static void mknod_section(void) {
                         int pbits = perm ? 07777 : 0644;
                         int is_dev = types[ti] == S_IFCHR || types[ti] == S_IFBLK;
                         dev_t dev = is_dev ? devs[di] : 0;
-                        char dir[PATH_MAX], target[PATH_MAX];
+                        char dir[PATH_MAX];
                         if (fresh_dir(dir, sizeof dir, "mk", 0, 0, 0777) != 0) die("mk dir");
                         char e[PATH_MAX];
                         snprintf(e, sizeof e, "%s/existing", dir);
                         if (make_file(e, 0644) != 0) die("mk existing");
-                        const char *arg = target;
-                        switch (pi) {
-                        case 0: snprintf(target, sizeof target, "%s/new", dir); break;
-                        case 1: snprintf(target, sizeof target, "%s/existing", dir); break;
-                        case 2: snprintf(target, sizeof target, "%s/nx/new", dir); break;
-                        case 3: snprintf(target, sizeof target, "%s/new/", dir); break;
-                        case 4: target[0] = 0; break;
-                        default: arg = NULL; break;
-                        }
+                        // Relative to `dir`, which the child enters.
+                        static const char *const rels[] = {"new", "existing", "nx/new", "new/", ""};
+                        const char *arg = pi < 5 ? rels[pi] : NULL;
                         fflush(stdout);
                         pid_t pid = fork();
                         if (pid == 0) {
+                            enter(dir);
                             umask(022);
                             int be = become(callers[ci]);
                             if (be != 0) {
@@ -1322,6 +1334,7 @@ static void realeff_section(void) {
         fflush(stdout);
         pid_t pid = fork();
         if (pid == 0) {
+            enter(dir);
             sh->become_err = become_split(&splits[si]);
             sh->uid = getuid();
             sh->euid = geteuid();
@@ -1329,8 +1342,8 @@ static void realeff_section(void) {
             sh->egid = getegid();
             if (sh->become_err != 0) _exit(geteuid() == 0 ? 1 : 0);
             for (size_t i = 0; i < sizeof inodes / sizeof inodes[0]; i++) {
-                char q[PATH_MAX];
-                snprintf(q, sizeof q, "%s/%zu", dir, i);
+                char q[32];
+                snprintf(q, sizeof q, "%zu", i);
                 for (int k = 0; k < ncalls; k++) {
                     int r;
                     if (calls[k].oflags >= 0) {
@@ -1380,13 +1393,14 @@ static void ctime_row(const cred *c, uid_t ou, gid_t og, int mode, const char *w
     fflush(stdout);
     pid_t pid = fork();
     if (pid == 0) {
+        enter(dir);
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
             _exit(geteuid() == 0 ? 1 : 0);
         }
         sh->become_err = 0;
-        int rr = chmod_to >= 0 ? chmod(f, chmod_to) : chown(f, ru, rg);
+        int rr = chmod_to >= 0 ? chmod("f", chmod_to) : chown("f", ru, rg);
         sh->res[0][0] = rr == 0 ? 0 : errno;
         _exit(0);
     }
@@ -1433,12 +1447,13 @@ int main(int argc, char **argv) {
     snprintf(base, sizeof base, "%s", argv[1]);
     nsections = argc - 2;
     sections = argv + 2;
-    // As root, the base is given to root and made 0711: no other user may
-    // then change its entries, and the probe's other users can still reach
-    // their files in it by name.
+    // As root, the base is given to root and made 0700: no other user may
+    // then change its entries or reach anything under it by path; the
+    // probe's own children reach their directories by entering them first
+    // (see `enter`).
     int bfd = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (bfd < 0) die("base directory");
-    if (geteuid() == 0 && (fchown(bfd, 0, 0) != 0 || fchmod(bfd, 0711) != 0)) die("base directory to root, 0711");
+    if (geteuid() == 0 && (fchown(bfd, 0, 0) != 0 || fchmod(bfd, 0700) != 0)) die("base directory to root, 0700");
     struct stat bs;
     if (fstat(bfd, &bs) != 0) die("base directory");
     close(bfd);
