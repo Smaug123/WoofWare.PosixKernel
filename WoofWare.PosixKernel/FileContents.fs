@@ -61,10 +61,9 @@ type FileContents =
                    other.Pages
         | _ -> false
 
-    // Of the length and the number of pages alone, so that hashing a file
-    // costs nothing in proportion to its length; equal values agree on both.
-    override this.GetHashCode () : int =
-        hash this.Length * 31 + this.Pages.Count
+    // Of the length alone, so that hashing a file costs nothing in proportion
+    // to its length or its pages (`Map.Count` walks the map).
+    override this.GetHashCode () : int = hash this.Length
 
     interface IComparable with
         member this.CompareTo (other : obj) : int =
@@ -284,8 +283,9 @@ module FileContents =
 
         // Removed from the top down, each removal copying a path of the map,
         // until as many have gone as could be kept: no more than `firstGone`
-        // pages can be. From there a map built of the pages kept is cheaper,
-        // so the cost is in whichever of the two is smaller.
+        // pages can be. From there a map built of the pages kept, read in
+        // ascending order up to `firstGone`, is cheaper, so the cost is in
+        // whichever of the two is smaller.
         let rec drop (pages : Map<int64, ReadOnlyMemory<byte>>) (removed : int64) : Map<int64, ReadOnlyMemory<byte>> =
             if pages.IsEmpty then
                 pages
@@ -295,7 +295,9 @@ module FileContents =
                 if index < firstGone then
                     pages
                 elif removed >= firstGone then
-                    Map.filter (fun index _ -> index < firstGone) contents.Pages
+                    contents.Pages
+                    |> Seq.takeWhile (fun (KeyValue (index, _)) -> index < firstGone)
+                    |> Seq.fold (fun kept (KeyValue (index, page)) -> Map.add index page kept) Map.empty
                 else
                     drop (Map.remove index pages) (removed + 1L)
 
