@@ -171,15 +171,6 @@ module internal Parking =
         // has to choose among them.
         | WakePrimitive.FutexWakeTaken -> None
 
-    /// The queues the call `parked` sleeps on, under `machine`'s flavour, whose
-    /// waiters a real kernel wakes one at a time: those of the primitives of its
-    /// wake condition (`exclusiveQueueOf`).
-    let internal exclusiveQueuesOfPark (machine : UnixMachineState) (parked : ParkedSyscall) : ExclusiveWaitQueue list =
-        WakeCondition.ofPark parked
-        |> WakeCondition.primitives
-        |> List.choose (exclusiveQueueOf machine)
-        |> List.distinct
-
     /// Record that `thread` has parked in `parked`, asleep, placing it after
     /// every park made before it, and taking the holds the call keeps on the
     /// open file descriptions it names (`ParkedSyscall.descriptions`). A thread

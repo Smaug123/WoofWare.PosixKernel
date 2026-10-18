@@ -2585,12 +2585,16 @@ module TestMultiProcessFuzz =
                 if not woken.IsEmpty then
                     cover SweepLabel.WokenUnfinished
 
-                // The exclusive queues the woken threads' calls wait on.
+                // The exclusive queues the woken threads hold: those of what
+                // woke them.
                 let held =
                     woken
                     |> Seq.collect (fun (pid, thread) ->
                         match UnixThreadTable.parkOf thread (Proc.threads pid machine) with
-                        | Some park -> Parking.exclusiveQueuesOfPark machine.Machine park.Syscall
+                        | Some {
+                                   State = ParkState.Woken fired
+                               } -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine.Machine)
+                        | Some _
                         | None -> []
                     )
                     |> Set.ofSeq

@@ -828,8 +828,9 @@ module TestDarwinPoll =
         )
         |> ignore<System.InvalidOperationException>
 
-        // Something to report and an expired deadline at once: Darwin answers
-        // whichever reached the sleeper first.
+        // Something to report and an expired deadline at once, before the
+        // wake: Darwin answers whichever reached the sleeper first, which the
+        // wake does not say.
         let _, connected = KeventWorld.client 5106us (advanceTo (now + 7_000_000L) parked)
         finish connected |> shouldEqual (Error PollRefusal.EventsBesideDeadline)
 

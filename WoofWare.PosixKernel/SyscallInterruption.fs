@@ -12,9 +12,10 @@ type internal SyscallInterruptionRefusal =
     /// process, rather than caught.
     | DefaultAction of signal : Signal
     /// The syscall has its own answer to give and a signal with a handler is
-    /// deliverable to the thread too, under a flavour whose kernel answers
-    /// whichever of the two reached the sleeping thread first, which this
-    /// library does not record.
+    /// deliverable to the thread too, under a flavour whose kernel answers,
+    /// for this syscall, whichever of the two reached the sleeping thread
+    /// first; and both had reached it by the time `UnixWait.wake` woke it, or
+    /// the one that woke it does not say which came first.
     | SignalBesideCompletion of flavour : SimulatedUnixFlavour
     /// A signal woke the thread asleep in the syscall, and by the time the
     /// syscall is finished the thread would take no signal as it returned to
@@ -39,7 +40,7 @@ module internal SyscallInterruptionRefusal =
         | SyscallInterruptionRefusal.DefaultAction signal ->
             $"the first signal a thread asleep in a syscall would take is %O{signal}, at a default disposition that terminates, stops or continues the process, and what that does to the syscall is unmeasured."
         | SyscallInterruptionRefusal.SignalBesideCompletion flavour ->
-            $"a thread asleep in a syscall has both the syscall's own answer and a signal with a handler waiting for it. Under the %O{flavour} flavour the kernel answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
+            $"a thread asleep in a syscall has both the syscall's own answer and a signal with a handler waiting for it. Under the %O{flavour} flavour the kernel answers, for this syscall, whichever of the two reached the sleeping thread first, and what woke the thread does not say which did."
         | SyscallInterruptionRefusal.WakingSignalGone ->
             "a signal woke a thread asleep in a syscall, and by the time the syscall was finished the thread would take no signal as it returned to user mode: another thread had discarded the signal, or the thread blocked it. Whether the syscall then ends with EINTR or sleeps on is unmeasured."
         | SyscallInterruptionRefusal.FutexRestartKeepsDeadline ->
@@ -365,31 +366,6 @@ module SyscallInterruption =
         | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
         | Ok (delivery, _) -> Ok delivery.IsSome
 
-    /// Whether the syscall `thread` is asleep in may give its own answer, now that
-    /// it has one: a finishing call asks this before it answers, and refuses
-    /// what this refuses.
-    ///
-    /// Under Linux it may, whatever signal is pending: the handlers run as the
-    /// thread returns. Under Darwin it may only if no signal with a handler is
-    /// deliverable to the thread too.
-    let internal beforeCompleting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<unit, SyscallInterruptionRefusal>
-        =
-        // Measured (`signal-interrupt-requeue.c`): with the sleeper held off
-        // the CPU until both held, Linux 6.18.5 answered with the readiness
-        // every time, for epoll_wait, poll, accept and flock, whichever came
-        // first (section D); Darwin 27.0.0 answered whichever reached the
-        // sleeper first, for accept and flock (section F).
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-        | SimulatedUnixFlavour.Linux -> Ok ()
-        | SimulatedUnixFlavour.Darwin ->
-            match framesOnReturn thread system with
-            | Ok [] -> Ok ()
-            | Ok (_ :: _) -> Error (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)
-            | Error refusal -> Error refusal
-
     /// How the syscall `parked` records ends under `flavour` if a signal
     /// interrupted it and, by the time its thread returns to user mode, no
     /// handler runs: the signal has been discarded, or the thread blocks it.
@@ -540,6 +516,84 @@ module SyscallInterruption =
             Unhandled = withoutHandler flavour parked
             AtInterruption = atInterruption
         }
+
+    /// What a woken syscall that has its own answer to give does with it.
+    [<RequireQualifiedAccess>]
+    type internal Completion =
+        /// It gives the answer; any signal deliverable to the thread is taken
+        /// as the thread returns to user mode.
+        | Completes
+        /// A signal interrupts it instead.
+        | Interrupted of Interruption
+
+    /// Whether the syscall `thread` is asleep in gives its own answer, now that
+    /// it has one, or a signal interrupts it: a finishing call asks this before
+    /// it answers, and refuses what this refuses.
+    ///
+    /// Under Linux it gives the answer, whatever signal is pending: the handlers
+    /// run as the thread returns. Under Darwin a signal with a handler
+    /// deliverable to the thread interrupts it.
+    let internal beforeCompleting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Completion, SyscallInterruptionRefusal>
+        =
+        // Measured (`signal-interrupt-requeue.c`, section D): with the sleeper
+        // held off the CPU until both held, Linux 6.18.5 answered with the
+        // readiness every time, for epoll_wait, poll, accept and flock,
+        // whichever came first.
+        //
+        // Measured on Darwin 27.0.0 and Linux 6.18.5 (`docs/probes/first-wake`):
+        // with the sleeper held off the CPU from its wake until both held, a
+        // Darwin accept, flock, pipe read or write, or socket read or write
+        // answered EINTR in both orders of its own wake and the signal, and
+        // of the far end's close and the signal (Linux answering the wake, as
+        // here, but for a socket write; see `UnixReadWrite.finishWrite`).
+        // XNU's `_sleep` looks for a signal after any wake of a sleep that
+        // signals may end. `signal-interrupt-requeue.c` section F, and
+        // `pipe-blocking.c` section J, saw the order decide on Darwin with the
+        // process stopped; by XNU's source a stop takes effect only as a
+        // thread returns to user mode, so a sleeper the first wake woke ran
+        // its call to the end before the second came, and those rows agree
+        // with these.
+        //
+        // Darwin's `poll` and `kevent`, which answer what woke them, and its
+        // pipe write whose reader has gone, whose close waits for the writer
+        // to leave its call, decide for themselves.
+        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux -> Ok Completion.Completes
+        | SimulatedUnixFlavour.Darwin ->
+            match framesOnReturn thread system with
+            | Ok [] -> Ok Completion.Completes
+            | Ok frames ->
+                match UnixThreadTable.parkOf thread system.Threads with
+                | Some park ->
+                    Ok (
+                        Completion.Interrupted (
+                            interruptionOf SimulatedUnixFlavour.Darwin park.Syscall (SignalDelivery.RunHandlers frames)
+                        )
+                    )
+                | None ->
+                    failwith
+                        $"SyscallInterruption.beforeCompleting: thread %O{thread} is not asleep in a syscall, so it has no answer of one to give (this is a bug in the caller)."
+            | Error refusal -> Error refusal
+
+    /// What `UnixWait.wake` found holding of the wake condition of the call
+    /// `thread` is asleep in as it woke the thread (`ParkState.Woken`).
+    ///
+    /// Fails loudly if `thread` is not parked in a syscall, and woken.
+    let internal wokenBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Set<WakePrimitive>
+        =
+        match UnixThreadTable.parkOf thread system.Threads with
+        | Some {
+                   State = ParkState.Woken fired
+               } -> fired
+        | other ->
+            failwith
+                $"SyscallInterruption.wokenBy: thread %O{thread} is parked as %A{other}, and only a woken thread's call is finished (this is a bug in the caller)."
 
     /// How a signal interrupts the syscall `thread` is asleep in, if one does
     /// now: `None` when none does, and the finishing call goes on as if no

@@ -710,7 +710,7 @@ module TestSignalDue =
 
     /// Thread 1 asleep in a read that bytes and a signal reach before it is
     /// finished: Linux answers the bytes, and the thread leaves its sleep
-    /// owing a return for the signal (Darwin refuses to say which came first).
+    /// owing a return for the signal; Darwin's read is interrupted.
     let private sleeperOpening (numbering : SignalNumbering) : Step list =
         [
             Step.Call (1, read)

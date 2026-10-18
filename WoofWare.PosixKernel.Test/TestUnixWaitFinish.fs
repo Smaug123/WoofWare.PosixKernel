@@ -774,7 +774,7 @@ module TestUnixWaitFinish =
 
         labelled "owing SignalDue" |> shouldBeGreaterThan 60
         labelled "NeedsCopyIn" |> shouldBeGreaterThan 45
-        labelled "refused" |> shouldBeGreaterThan 90
+        labelled "refused" |> shouldBeGreaterThan 27
 
     /// A thread parked in each of the reserved calls, which nothing parks a
     /// thread in yet, as the tests of each reserved park forge one, the
