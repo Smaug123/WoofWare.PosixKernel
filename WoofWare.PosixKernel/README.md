@@ -319,7 +319,9 @@ The setters of the machine's boot configuration and of a process's launch refuse
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
 A call that a real kernel would not let happen at all is a bug in the client, and throws `InvalidOperationException`: a thread making a syscall while it is asleep in another, or while it owes a return to user mode (see "The return to user mode"), the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
-A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
+A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too.
+The functions that check for one, such as the setters, the functions that resume a paused call, and each type's `assertValid`, throw `ArgumentException` for it, or `ArgumentNullException` for a null reference, naming the parameter it was passed as.
+The parsers that throw rather than answer a `Result`, such as `DirectoryEntryName.parseOrFail`, throw `ArgumentException` or `ArgumentOutOfRangeException` naming the value they were handed.
 
 ### Unions that gain cases
 
@@ -783,7 +785,7 @@ Waking is pulled rather than pushed: nothing that makes a sleeping call able to 
 After each step, the client asks `UnixWait.wake`, which wakes every sleeping thread that may go on now, and answers each, by its `Caller`, in the order they parked, with the system in which they are woken.
 A woken thread stays parked until its call is finished, and the client finishes the call when it chooses, with `UnixWait.finish`; only a woken thread's call may be finished.
 A park records whether its thread has been woken (`ThreadPark.State`, `ParkState.Asleep` or `ParkState.Woken` with what woke it), so the client keeps no set of sleeping threads of its own; one it has woken and does not finish yet, it simply does not finish.
-A woken thread is not woken again, and where a kernel wakes one waiter of a queue at a time, as for an epoll instance, a listener or a Linux pipe, a woken thread that has not finished its call stands for whatever woke it, so no other waiter on that queue wakes meanwhile.
+A woken thread is not woken again, and where a kernel wakes one waiter of a queue at a time, as for an epoll instance, a listener or a Linux pipe, a woken thread that has not finished its call stands for whatever woke it, so no other waiter on that queue wakes meanwhile; one a signal or its deadline alone woke stands for nothing on the queue, and the next thing to take from it wakes another waiter.
 `UnixWait.satisfied` asks of one thread whether its call could get any further, and changes nothing: it is cheaper, but does not decide which of several waiters on one queue wakes, which only `wake` chooses.
 
 A client that asks `wake` after every step, as one that interleaves instructions does, mostly asks of a system in which nothing has changed, so that is made cheap.
@@ -1199,7 +1201,7 @@ printfn "processes left: %A" (UnixSystem.processIds remaining |> Seq.map Process
 
 A call asleep in one process wakes for what another process's call does: a connection queued on its listener, bytes arriving on its socket or room freed in its send buffer, a peer's FIN or reset, a lock let go of.
 `UnixWait.wake` wakes the sleeping threads of every process at once.
-Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order; a woken thread that has not finished its call holds such a queue, in whichever process.
+Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order; a woken thread that has not finished its call holds such a queue, in whichever process, if something to take from the queue woke it.
 A woken call is finished by `UnixWait.finish` of its own thread's caller, in whichever process.
 A kqueue registration, and a filter a sleeping Darwin `poll` registered, is attached to the socket its descriptor named, as XNU attaches a knote to the socket, so an event on the socket reaches it whichever process caused the event; a sleeping Darwin poll's kqueue (`PollQueue`) is the machine's for as long as the call sleeps.
 A client reads that kqueue through `UnixSystem.pollQueue`, then `PollQueue.registered`, `PollQueue.entry` and `PollQueue.activated`.

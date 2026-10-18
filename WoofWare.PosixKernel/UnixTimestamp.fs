@@ -78,12 +78,17 @@ module UnixTimestamp =
     /// <remarks>
     /// This is <c>create</c> except it throws (naming <c>context</c>) instead of returning <c>None</c>.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentOutOfRangeException"><c>nanoseconds</c> is not in <c>[0, 1e9)</c>.</exception>
     let createOrFail (context : string) (seconds : int64) (nanoseconds : int) : UnixTimestamp =
         match create seconds nanoseconds with
         | Some timestamp -> timestamp
         | None ->
-            failwith
-                $"%s{context}: %d{nanoseconds} is not a nanosecond part; it must lie in [0, %d{nanosecondsPerSecond}). A whole-second count belongs in the seconds field."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.OutOfRange "nanoseconds")
+                    $"%d{nanoseconds} is not a nanosecond part; it must lie in [0, %d{nanosecondsPerSecond}). A whole-second count belongs in the seconds field."
+            )
 
     /// <summary>
     /// A timestamp formed from "integer number of seconds since the epoch".

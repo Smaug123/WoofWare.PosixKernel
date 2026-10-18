@@ -1597,12 +1597,14 @@ module UnixDescriptor =
         // the description, which goes too if no descriptor names it any more
         // (`open-file-references.c` sections D and F: the lock it was granted
         // goes with it).
-        let finished () =
-            let unparked = (UnixParkState.unpark thread advanced)
+        let finishedFrom (system : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
+            let unparked = UnixParkState.unpark thread system
 
             // A socket has one description, so no other description's lock can
             // obstruct an `flock` of one, and such a call never sleeps.
             ObjectLifetime.releaseUnreferencedUnrefusable "UnixDescriptor.flockAcquire" [ requester ] unparked
+
+        let finished () = finishedFrom advanced
 
         match error with
         | Some FlockError.BadFd ->
@@ -1628,11 +1630,17 @@ module UnixDescriptor =
                 Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked advanced)
         | None ->
             // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, section
-            // D): a lock that can be granted beats a pending signal. Darwin
-            // answers whichever came first, which `beforeCompleting` refuses.
+            // D): a lock that can be granted beats a pending signal. On Darwin
+            // a pending signal beats it (`SyscallInterruption.beforeCompleting`),
+            // and the lock is not taken.
             match SyscallInterruption.beforeCompleting thread advanced with
             | Error refusal -> Error (FLockRefusal.Interruption refusal)
-            | Ok () -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), finished ())
+            | Ok SyscallInterruption.Completion.Completes ->
+                Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), finished ())
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                // Darwin refuses a conversion (`DarwinConversion`), so the
+                // description held no lock to have dropped, and takes none.
+                Ok (SyscallOutcome.Interrupted, OwedReturns.interrupt thread interruption (finishedFrom system))
 
     /// `flockAcquire`, with a refusal answered as the `Error` rather than raised.
     let internal tryFlockAcquire<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1667,8 +1675,9 @@ module UnixDescriptor =
     /// an edge one: a release wakes every waiter and they race, so all but one
     /// of them find it gone.
     ///
-    /// When the lock cannot be granted and the thread would take a signal as
-    /// it returned to user mode, the signal interrupts the call
+    /// When the lock cannot be granted, or under Darwin even when it can, and
+    /// the thread would take a signal as it returned to user mode, the signal
+    /// interrupts the call
     /// (`SyscallOutcome.Interrupted`): the park is cleared, a conversion's old
     /// lock stays dropped, as it is while the call sleeps, and the thread's
     /// return to user mode (`UnixSignal.onReturnToUser`) says whether the call

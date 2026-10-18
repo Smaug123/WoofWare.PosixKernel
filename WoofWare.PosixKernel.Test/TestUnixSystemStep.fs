@@ -2705,7 +2705,7 @@ module TestUnixSystemStep =
             Launched.processId Unchecked.defaultof<ProcessId> (imageOn SimulatedUnixPlatform.linuxX64)
             |> ignore<UnixBootImage<int, string>>
 
-        let exn = Assert.Throws<System.Exception> (TestDelegate apply)
+        let exn = Assert.Throws<System.ArgumentException> (TestDelegate apply)
 
         exn.Message |> shouldContainText "UnixBootImage.withProcessId"
 

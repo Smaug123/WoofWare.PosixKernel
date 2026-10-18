@@ -101,6 +101,16 @@ type internal AcceptRefusal =
     /// sleeps on through it. This kernel wakes a sleeping accept while a
     /// connection is queued, which would wake that second sleeper too.
     | DarwinDrainedListener of listener : SocketId
+    /// Under Darwin, the accept was woken by a connection on the listener the
+    /// open file description `listener` names, a signal with a handler is
+    /// now deliverable to its thread, and another thread is asleep in an
+    /// accept on the same listener.
+    ///
+    /// Darwin ends the woken accept with EINTR, and the connection whose wake
+    /// it took stays queued without waking the other (measured). This kernel
+    /// wakes a sleeping accept for as long as a connection is queued, so it
+    /// would wake the other.
+    | SignalBesideConsumedWake of listener : OpenFileDescriptionId
 
 [<RequireQualifiedAccess>]
 module internal AcceptRefusal =
@@ -118,6 +128,8 @@ module internal AcceptRefusal =
         | AcceptRefusal.UnmeasuredCopyOutFault listener ->
             $"socket %O{listener} has a connection to hand over, so this call takes it off the queue and copies the peer address out -- but the destination is unmapped, so that copy faults. Measured, Linux stores the untruncated length in the caller's length cell, answers EFAULT and loses the connection, while Darwin ignores the fault and succeeds; this kernel's accept has no outcome for either. (A NULL destination is not copied to at all, and neither is the length cell; that has no outcome here either.)"
         | AcceptRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
+        | AcceptRefusal.SignalBesideConsumedWake listener ->
+            $"an accept woken by a connection on the listener open file description %O{listener} names has a signal with a handler deliverable to its thread, and another thread is asleep in an accept on the same listener. Measured on Darwin (docs/probes/first-wake), the woken accept fails with EINTR and the connection stays queued without waking the other accepter. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake the other."
         | AcceptRefusal.DarwinDrainedListener listener ->
             $"socket %O{listener} is a listener on which a close of the descriptor an accept was asleep through has ended every accept, and this accept would sleep on it. Measured on Darwin (close-ends-call.c section A7), such a sleep answers ECONNABORTED as soon as anything wakes it, a connection or a signal, and one connection wakes one such sleeper, the connection staying queued, so a second sleeper sleeps on through it. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake every such sleeper for one connection."
 
@@ -131,6 +143,7 @@ module internal AcceptRefusal =
         | AcceptRefusal.UnmeasuredCopyOutFault _ -> RefusalKind.Unmodelled
         | AcceptRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | AcceptRefusal.DarwinDrainedListener _ -> RefusalKind.Unmodelled
+        | AcceptRefusal.SignalBesideConsumedWake _ -> RefusalKind.Unmodelled
 
 /// What `shutdown(2)` answered.
 [<RequireQualifiedAccess>]
@@ -2526,6 +2539,30 @@ module UnixConnection =
         tryAccept caller fd destination declaredLength system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
+    /// Whether a thread of any process on the machine but `thread` of this one
+    /// is asleep in an accept on the listener the open file description
+    /// `listener` names.
+    let private anotherAsleepOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (listener : OpenFileDescriptionId)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : bool
+        =
+        let asleepOnListener (state : UnixThreadState) : bool =
+            match state.Parked with
+            | Some {
+                       State = ParkState.Asleep
+                       Syscall = ParkedSyscall.Accept {
+                                                          Listener = SleepTarget.Waiting (waitingOn, _)
+                                                      }
+                   } -> waitingOn = listener
+            | _ -> false
+
+        (system.Threads
+         |> Map.exists (fun name state -> name <> thread && asleepOnListener state))
+        || (system.Others
+            |> Map.exists (fun _ slot -> slot.Threads |> Map.exists (fun _ state -> asleepOnListener state)))
+
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
@@ -2584,11 +2621,27 @@ module UnixConnection =
                                     Queue = _ :: _
                                 } ->
             // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, section
-            // D): a queued connection beats a pending signal. Darwin answers
-            // whichever came first, which `beforeCompleting` refuses.
+            // D): a queued connection beats a pending signal. On Darwin a
+            // pending signal beats it (`SyscallInterruption.beforeCompleting`).
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
-            | Ok () -> handOver socketId description.NonBlocking parked.Destination parked.DeclaredLength finished
+            | Ok SyscallInterruption.Completion.Completes ->
+                handOver socketId description.NonBlocking parked.Destination parked.DeclaredLength finished
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the
+                // two-sleeper accept rows): an accepter woken by a connection
+                // and then signalled fails with EINTR, and the connection stays
+                // queued without waking the accepter asleep behind it. This
+                // library wakes a sleeper from the state alone, so would wake
+                // that one for the connection, and refuses.
+                let wokenByConnection =
+                    SyscallInterruption.wokenBy thread system
+                    |> Set.contains (WakePrimitive.AcceptQueueNonEmpty listenerId)
+
+                if wokenByConnection && anotherAsleepOn listenerId thread system then
+                    Error (AcceptRefusal.SignalBesideConsumedWake listenerId)
+                else
+                    Ok (AcceptOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | SocketPhase.Listening {
                                     Queue = []
                                 } ->
@@ -2664,7 +2717,13 @@ module UnixConnection =
     /// thread's return (`UnixSignal.onReturnToUser`) says whether it fails
     /// with `EINTR` or restarts. Either way the thread leaves the listener's
     /// queue of accepters, and issuing the call again puts it at the back. An
-    /// answer, `Interrupted` included, clears the park.
+    /// answer, `Interrupted` included, clears the park. Under Linux a queued
+    /// connection beats such a signal; under Darwin the signal beats it, and
+    /// the connection stays queued. Under Darwin a call a connection woke is
+    /// refused where such a signal is pending and another thread is asleep in
+    /// an accept on the listener: Darwin leaves that thread asleep, the
+    /// connection whose wake the first took still queued, where this library
+    /// would wake it.
     ///
     /// The sleeping call holds the listener, so it outlives its last descriptor
     /// until the call returns. A listener no descriptor names goes as the call

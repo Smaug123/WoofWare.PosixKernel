@@ -260,7 +260,8 @@ module TestCallProgress =
             |> List.find (fun (candidate : string, _) -> candidate = name)
             |> snd
 
-        let exn = Assert.Throws<exn> (fun () -> resume ())
+        let exn = Assert.Throws<ArgumentNullException> (fun () -> resume ())
+        exn.ParamName |> shouldEqual "paused"
         exn.Message |> shouldContainText name
         exn.Message |> shouldContainText "Unchecked.defaultof"
 

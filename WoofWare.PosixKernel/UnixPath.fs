@@ -71,6 +71,9 @@ module DirectoryEntryName =
     ///
     /// Never reports `FileNameError.Text`: a `UnixByteString` has no text defects.
     let ofByteString (candidate : UnixByteString) : Result<DirectoryEntryName, FileNameError> =
+        let candidate =
+            UnixByteString.assertValidFor "DirectoryEntryName.ofByteString" "candidate" candidate
+
         let bytes = UnixByteString.toBytes candidate
 
         if bytes.Length = 0 then
@@ -115,10 +118,43 @@ module DirectoryEntryName =
 
     /// <summary>Parse a single directory-entry name, or throw.</summary>
     /// <remarks>This is <c>FileName.parse</c> except it throws instead of describing the error as a Result.</remarks>
+    /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not a directory-entry name. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : DirectoryEntryName =
         match parse candidate with
         | Ok name -> name
-        | Error error -> failwith $"%s{context}: %s{describe error} (got %s{candidate})"
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%s{describe error} (got %s{candidate})"
+            )
+
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the name was passed as.
+    let internal assertValidFor
+        (operation : string)
+        (parameter : string)
+        (name : DirectoryEntryName)
+        : DirectoryEntryName
+        =
+        // The only value this can reject is `Unchecked.defaultof` / C# `default`,
+        // whose payload is a forged `UnixByteString`: `private` on the union case,
+        // and the restrictions enforced by the constructors, stops every other route.
+        match name with
+        | DirectoryEntryName raw ->
+
+        let raw = UnixByteString.assertValidFor operation parameter raw
+
+        match ofByteString raw with
+        | Ok _ -> name
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    $"%s{describe error}. A FileName that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with FileName.parse instead."
+            )
 
     /// <summary>
     /// Re-check the invariant of a value that may not have come from <c>parse</c>,
@@ -129,20 +165,9 @@ module DirectoryEntryName =
     /// The <c>parse</c> constructor already ensures the invariant holds, so there's
     /// no need to call this if you know the input came from <c>parse</c>.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentException"><c>name</c> is a forged value, such as <c>Unchecked.defaultof</c>.</exception>
     let assertValid (context : string) (name : DirectoryEntryName) : DirectoryEntryName =
-        // The only value this can reject is `Unchecked.defaultof` / C# `default`,
-        // whose payload is a forged `UnixByteString`: `private` on the union case,
-        // and the restrictions enforced by the constructors, stops every other route.
-        match name with
-        | DirectoryEntryName raw ->
-
-        let raw = UnixByteString.assertValid context raw
-
-        match ofByteString raw with
-        | Ok _ -> name
-        | Error error ->
-            failwith
-                $"%s{context}: %s{describe error}. A FileName that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with FileName.parse instead."
+        assertValidFor context "name" name
 
 /// <summary>
 /// One component of a path a process supplies, between two separators; or one
@@ -504,7 +529,7 @@ module UnixPath =
     /// Stores the bytes verbatim, for the reasons `parse` gives.
     let ofByteString (bytes : UnixByteString) : UnixPath =
         {
-            Raw = UnixByteString.assertValid "UnixPath.ofByteString" bytes
+            Raw = UnixByteString.assertValidFor "UnixPath.ofByteString" "bytes" bytes
         }
 
     /// <summary>
@@ -550,10 +575,17 @@ module UnixPath =
     /// a process can legally pass a path which contains NULs; the kernel must
     /// then reply to the process with an error, rather than crashing.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not a path. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : UnixPath =
         match parse candidate with
         | Ok path -> path
-        | Error error -> failwith $"%s{context}: %s{describe error} (got %s{candidate})"
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%s{describe error} (got %s{candidate})"
+            )
 
     /// <summary>
     /// Widen a fully-resolved absolute path into the shape of a path a process supplies.

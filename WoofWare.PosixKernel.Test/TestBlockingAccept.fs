@@ -505,14 +505,17 @@ module TestBlockingAccept =
         }
 
     [<Test>]
-    let ``a connection wakes the accepter that parked first, unless a woken accepter of its listener has yet to finish``
+    let ``a connection wakes the accepter that parked first, unless an accepter of its listener a connection woke has yet to finish``
         ()
         : unit
         =
         // Up to three listeners, each with or without a queued connection; threads parking on
         // them in a generated order, some more than once, each re-park a woken thread's; and
-        // which parked threads are asleep, the rest having been woken and not yet finished.
-        // The oracle states the rule per thread, where `UnixWait.wake` groups by listener.
+        // which parked threads are asleep, the rest having been woken and not yet finished,
+        // each by a connection or by a signal alone. Measured (`docs/probes/first-wake`, the
+        // two-sleeper accept rows): an accepter a signal woke does not stand in the queue for
+        // the next connection. The oracle states the rule per thread, where `UnixWait.wake`
+        // groups by listener.
         let gen =
             gen {
                 let! platform = platformGen
@@ -533,11 +536,18 @@ module TestBlockingAccept =
 
                 let! parks = Gen.listOf park |> Gen.map (List.truncate 12)
                 let! asleepMask = Gen.listOfLength 6 (ArbMap.defaults |> ArbMap.generate<bool>)
-                return platform, queued, parks, asleepMask
+                let! byConnectionMask = Gen.listOfLength 6 (ArbMap.defaults |> ArbMap.generate<bool>)
+                return platform, queued, parks, asleepMask, byConnectionMask
             }
 
         let property
-            (platform : SimulatedUnixPlatform, queued : bool list, parks : GeneratedPark list, asleepMask : bool list)
+            (
+                platform : SimulatedUnixPlatform,
+                queued : bool list,
+                parks : GeneratedPark list,
+                asleepMask : bool list,
+                byConnectionMask : bool list
+            )
             : unit
             =
             let _, system = world platform
@@ -591,13 +601,21 @@ module TestBlockingAccept =
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
 
+            let byConnection (name : int) : bool = byConnectionMask.[name - 1]
+
             let system =
                 (system, parkedThreads)
-                ||> List.fold (fun system (name, _, _) ->
+                ||> List.fold (fun system (name, listener, _) ->
                     if Set.contains name asleep then
                         system
                     else
-                        ForgedPark.woken name system
+                        let fired =
+                            if byConnection name then
+                                WakePrimitive.AcceptQueueNonEmpty listener
+                            else
+                                WakePrimitive.SignalDeliverable
+
+                        system |> Lone.mapThreads (UnixThreadTable.markWoken name (Set.singleton fired))
                 )
 
             let isQueued (listener : OpenFileDescriptionId) : bool =
@@ -605,7 +623,9 @@ module TestBlockingAccept =
 
             let finishingOn (listener : OpenFileDescriptionId) : bool =
                 parkedThreads
-                |> List.exists (fun (name, on, _) -> not (Set.contains name asleep) && on = listener)
+                |> List.exists (fun (name, on, _) ->
+                    not (Set.contains name asleep) && byConnection name && on = listener
+                )
 
             let firstAsleepOn (listener : OpenFileDescriptionId) : int =
                 parkedThreads
@@ -1071,6 +1091,8 @@ module TestBlockingAccept =
             Ordinal : int
             /// The client has woken it, and not yet finished it.
             Woken : bool
+            /// A connection was queued as the client woke it.
+            WokenByConnection : bool
         }
 
     /// What has become of a client's connect.
@@ -1431,6 +1453,7 @@ module TestBlockingAccept =
                                             Through = Some fd
                                             Ordinal = reference.NextOrdinal
                                             Woken = false
+                                            WokenByConnection = false
                                         }
                                         reference.Parks
                                 NextOrdinal = reference.NextOrdinal + 1
@@ -1568,8 +1591,11 @@ module TestBlockingAccept =
                     let asleep =
                         reference.Parks |> Map.filter (fun _ park -> not park.Woken) |> Map.toList
 
+                    // A woken accepter holds the listener's queue only if a
+                    // connection woke it (`docs/probes/first-wake`).
                     let finishing =
-                        reference.Parks |> Map.exists (fun _ park -> park.Woken && park.Through.IsSome)
+                        reference.Parks
+                        |> Map.exists (fun _ park -> park.Woken && park.WokenByConnection)
 
                     let first =
                         if reference.Queue.IsEmpty || finishing then
@@ -1608,6 +1634,8 @@ module TestBlockingAccept =
                                         thread
                                         { parks.[thread] with
                                             Woken = true
+                                            WokenByConnection =
+                                                parks.[thread].Through.IsSome && not reference.Queue.IsEmpty
                                         }
                                         parks
                                 )
@@ -1628,6 +1656,19 @@ module TestBlockingAccept =
                         system <- returnToUser thread after
                         reference <- releasedIfUnheld r
 
+                    // A pending signal beats a queued connection on Darwin
+                    // (`docs/probes/first-wake`), and the connection whose wake
+                    // the accepter took stays queued without waking another
+                    // accepter asleep, which is refused.
+                    let consumedWake =
+                        park.Through.IsSome
+                        && not reference.Queue.IsEmpty
+                        && signalled
+                        && not linux
+                        && park.WokenByConnection
+                        && reference.Parks
+                           |> Map.exists (fun _ other -> not other.Woken && other.Through.IsSome)
+
                     match park.Through, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, after) ->
                         cover "Darwin finish: ECONNABORTED"
@@ -1639,10 +1680,10 @@ module TestBlockingAccept =
                             cover "Darwin finish: ECONNABORTED with a signal pending"
 
                         settle reference after
-                    | Some _, _ when not reference.Queue.IsEmpty ->
+                    | Some _, Error (AcceptRefusal.SignalBesideConsumedWake _) when consumedWake ->
+                        cover "Darwin finish: refused, a signal beside a connection's wake, another accepter asleep"
+                    | Some _, _ when not reference.Queue.IsEmpty && not (signalled && not linux) ->
                         match answer with
-                        | Error (AcceptRefusal.Interruption _) when signalled && not linux ->
-                            cover "Darwin finish: refused, a connection and a signal"
                         | Ok (AcceptOutcome.Accepted (accepted, _, _), after) ->
                             cover $"%s{flavourName} finish: a connection"
 
@@ -1650,7 +1691,10 @@ module TestBlockingAccept =
                                 (acceptedHead reference)
                                 (dropAccepted where (List.head reference.Queue) accepted after)
                         | other -> failwith $"%s{where ()}: %A{other}"
-                    | Some _, Ok (AcceptOutcome.Interrupted, after) when signalled ->
+                    | Some _, Ok (AcceptOutcome.Interrupted, after) when signalled && not consumedWake ->
+                        if not reference.Queue.IsEmpty then
+                            cover $"%s{flavourName} finish: EINTR beside a connection"
+
                         // The return to user mode ends the call as the
                         // handler's SA_RESTART says, and runs the handler;
                         // `settle` returns the thread again, taking nothing
@@ -1804,7 +1848,8 @@ module TestBlockingAccept =
                 "Darwin finish: ECONNABORTED"
                 "Darwin finish: ECONNABORTED with a connection queued"
                 "Darwin finish: ECONNABORTED with a signal pending"
-                "Darwin finish: refused, a connection and a signal"
+                "Darwin finish: refused, a signal beside a connection's wake, another accepter asleep"
+                "Darwin finish: EINTR beside a connection"
                 "Darwin finish: a connection"
                 "Darwin set: an option changed with connections queued"
                 "Darwin accept: an option changed since the connection completed"

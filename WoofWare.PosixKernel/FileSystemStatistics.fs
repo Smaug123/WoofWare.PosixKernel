@@ -316,12 +316,31 @@ module FileSystemStatistics =
             failwith
                 $"FileSystemStatistics.%s{context}: %s{text} is not a Unix string (%O{defect}) (this is a bug in this library)"
 
+    // Why no kernel of `platform` could have `mount`, if none could.
+    let private incoherence (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : string option =
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let fsType = EmulatedMount.fileSystemType mount
+
+        if EmulatedFileSystemType.isReportableUnder flavour fsType then
+            None
+        else
+            Some
+                $"asked what a %O{flavour} kernel reports on a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+
+    // The check `ofMount` and `ofObject` make of the platform and mount a
+    // client hands them.
+    let private requireCoherent (operation : string) (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : unit =
+        match incoherence platform mount with
+        | None -> ()
+        | Some description -> raise (Refusal.exceptionOf operation (RefusalKind.Contradictory "mount") description)
+
     /// What `statfs(2)` reports for any file or directory on the machine's one
     /// mount, under a kernel of this platform.
     ///
-    /// Refuses a platform and mount that do not describe one machine (see
-    /// `EmulatedFileSystemType.isReportableUnder`).
+    /// Throws `ArgumentException` for a platform and mount that do not
+    /// describe one machine (see `EmulatedFileSystemType.isReportableUnder`).
     let ofMount (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : FileSystemStatistics =
+        requireCoherent "FileSystemStatistics.ofMount" platform mount
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let pageSize =
@@ -485,12 +504,9 @@ module FileSystemStatistics =
     /// `UnixSystem.initial` and `UnixBootImage.withMount` keep the pair
     /// coherent, but a machine record assembled field by field bypasses both.
     let internal assertCoherent (context : string) (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : unit =
-        let flavour = SimulatedUnixPlatform.flavour platform
-        let fsType = EmulatedMount.fileSystemType mount
-
-        if not (EmulatedFileSystemType.isReportableUnder flavour fsType) then
-            failwith
-                $"%s{context}: asked what a %O{flavour} kernel reports on a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+        match incoherence platform mount with
+        | None -> ()
+        | Some description -> failwith $"%s{context}: %s{description} (this is a bug in this library)"
 
     /// What `fstatfs(2)` reports for a descriptor naming `target`, under a
     /// kernel of this platform whose root filesystem is `mount`.
@@ -499,8 +515,10 @@ module FileSystemStatistics =
     /// say which filesystem its inode is on, so this does not answer for one on
     /// the device filesystem. `UnixPathResolution.fstatfs` and `statfs` do.
     ///
-    /// Refuses a platform and mount that do not describe one machine (see
-    /// `EmulatedFileSystemType.isReportableUnder`), whatever the object.
+    /// Throws `ArgumentException` for a platform and mount that do not describe
+    /// one machine (see `EmulatedFileSystemType.isReportableUnder`), whatever
+    /// the object, and for a kqueue under a Linux platform, which only Darwin
+    /// has.
     let ofObject
         (platform : SimulatedUnixPlatform)
         (mount : EmulatedMount)
@@ -511,7 +529,7 @@ module FileSystemStatistics =
         // is answered from the flavour alone, so a pipe on a machine that is
         // Linux for its files and macOS for its pipes would otherwise get a
         // quietly wrong answer rather than a loud one.
-        assertCoherent "FileSystemStatistics.ofObject" platform mount
+        requireCoherent "FileSystemStatistics.ofObject" platform mount
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let pseudoFileSystem (fileSystem : PseudoFileSystem) : FileSystemStatisticsAnswer =
@@ -565,5 +583,9 @@ module FileSystemStatistics =
             // not on a mount.
             | SimulatedUnixFlavour.Darwin -> FileSystemStatisticsAnswer.Failed UnixError.EINVAL
             | SimulatedUnixFlavour.Linux ->
-                failwith
-                    "FileSystemStatistics.ofObject: a Linux-flavoured kernel holds a kqueue, which only Darwin has (this is a bug in the caller's state construction)."
+                raise (
+                    Refusal.exceptionOf
+                        "FileSystemStatistics.ofObject"
+                        (RefusalKind.Contradictory "target")
+                        "asked what a Linux-flavoured kernel reports for a kqueue, which only Darwin has."
+                )

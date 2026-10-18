@@ -244,7 +244,7 @@ module TestAbsoluteUnixPath =
         let forged = Unchecked.defaultof<AbsoluteUnixPath>
 
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 AbsoluteUnixPath.assertValid "ProcessLaunch.withCurrentDirectory" forged
                 |> ignore<AbsoluteUnixPath>
             )
@@ -256,7 +256,7 @@ module TestAbsoluteUnixPath =
     [<Test>]
     let ``parseOrFail names the offending knob`` () : unit =
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 AbsoluteUnixPath.parseOrFail "ProcessLaunch.withCurrentDirectory" "relative"
                 |> ignore<AbsoluteUnixPath>
             )
