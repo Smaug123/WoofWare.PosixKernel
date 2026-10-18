@@ -111,13 +111,23 @@ module TestMachineSetterRefusals =
     // ------------------------------------------------ ephemeral port range
 
     [<Test>]
-    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0`` () : unit =
+    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and on Darwin keep within 1024 to 65535``
+        ()
+        : unit
+        =
         let property (platform : SimulatedUnixPlatform, low : uint16, high : uint16) : unit =
+            let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+
             let expected : Result<unit, EphemeralPortRangeRefusal> =
                 if low = 0us then
                     Error (EphemeralPortRangeRefusal.LowIsZero high)
+                elif darwin && (low < 1024us || high < 1024us) then
+                    Error (EphemeralPortRangeRefusal.BelowDarwinFloor (low, high))
                 elif low > high then
-                    Error (EphemeralPortRangeRefusal.Empty (low, high))
+                    if darwin then
+                        Error (EphemeralPortRangeRefusal.Descending (low, high))
+                    else
+                        Error (EphemeralPortRangeRefusal.Empty (low, high))
                 else
                     Ok ()
 
@@ -135,6 +145,13 @@ module TestMachineSetterRefusals =
                         let! platform = Gen.elements platforms
                         let! port = anyPort
                         return platform, port, port
+                    }
+                    // Around Darwin's floor.
+                    gen {
+                        let! platform = Gen.elements platforms
+                        let! low = Gen.elements [ 1022us ; 1023us ; 1024us ; 1025us ]
+                        let! high = Gen.elements [ 1022us ; 1023us ; 1024us ; 1025us ; 65535us ]
+                        return platform, low, high
                     }
                 ]
 
@@ -177,12 +194,31 @@ module TestMachineSetterRefusals =
                     |> Result.mapError (fun refusal -> $"%A{refusal}")
                 )
 
+            // Darwin refuses whichever setter ran first and refused: the start
+            // always, and a range with an end below its floor.
+            let darwinRefusal : string option =
+                let fromRange =
+                    if low < 1024us then
+                        Some $"%A{EphemeralPortRangeRefusal.BelowDarwinFloor (low, high)}"
+                    else
+                        None
+
+                let fromStart =
+                    start
+                    |> Option.map (fun _ ->
+                        $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}"
+                    )
+
+                if rangeFirst then
+                    Option.orElse fromStart fromRange
+                else
+                    Option.orElse fromRange fromStart
+
             match SimulatedUnixPlatform.flavour platform, booted with
-            | SimulatedUnixFlavour.Darwin, Error refusal when start.IsSome ->
-                refusal
-                |> shouldEqual $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}"
+            | SimulatedUnixFlavour.Darwin, Error refusal when darwinRefusal.IsSome ->
+                Some refusal |> shouldEqual darwinRefusal
             | SimulatedUnixFlavour.Darwin, Ok system ->
-                start |> shouldEqual None
+                darwinRefusal |> shouldEqual None
                 UnixSystem.unprivilegedPortStart system |> shouldEqual 1024us
             | SimulatedUnixFlavour.Linux, Ok system ->
                 low >= effectiveStart |> shouldEqual true
@@ -334,6 +370,10 @@ module TestMachineSetterRefusals =
                 ProcessorCountRefusal.describe (ProcessorCountRefusal.NotPositive -7), "-7"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.LowIsZero 77us), "0-77"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Empty (9us, 8us)), "9-8"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.BelowDarwinFloor (77us, 2000us)),
+                "77-2000"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Descending (40003us, 40000us)),
+                "40003-40000"
                 BootTimeRefusal.describe (BootTimeRefusal.BeforeEpoch timestamp), string<UnixTimestamp> timestamp
                 BootTimeRefusal.describe (BootTimeRefusal.PastMaxBootTime (timestamp, 42L)), "42"
                 BootTimeRefusal.describe (BootTimeRefusal.FinerThanMicrosecond timestamp),

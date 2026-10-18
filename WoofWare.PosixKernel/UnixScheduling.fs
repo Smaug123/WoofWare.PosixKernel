@@ -74,8 +74,12 @@ module UnixScheduling =
         let state = UnixThreadTable.get thread slot.Threads
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
-            failwith
-                $"UnixScheduling.dispatch: %O{thread} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixScheduling.dispatch"
+                    (RefusalKind.OutOfRange "cpu")
+                    $"%O{thread} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            )
 
         if
             state.Cpu = cpu
@@ -129,9 +133,9 @@ module UnixScheduling =
     /// A parked thread may be dispatched, whether or not `UnixWait.wake` has
     /// woken it.
     ///
-    /// Fails loudly if `caller` names no thread, or if `cpu` is not one of the
-    /// machine's processors (`UnixSystem.processorCount`): each is a bug in
-    /// the client.
+    /// Throws `InvalidOperationException` if `caller` names no thread, and
+    /// `ArgumentOutOfRangeException` if `cpu` is not one of the machine's
+    /// processors (`UnixSystem.processorCount`): each is a bug in the client.
     let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (cpu : CpuId)
@@ -195,7 +199,7 @@ module UnixScheduling =
                 | Some other -> $"%O{state.Cpu} is running the thread with thread ID %O{other}"
                 | None -> $"%O{state.Cpu} is idle"
 
-            failwith
+            invalidOp
                 $"UnixScheduling.getcpu: thread %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each thread the client runs with UnixScheduling.dispatch (this is a bug in the client)."
 
     /// `getcpu`, with a refusal answered as the `Error` rather than raised.
@@ -223,6 +227,7 @@ module UnixScheduling =
     /// means the client's record of what it runs disagrees with this
     /// library's, which is a bug in the client.
     /// </summary>
+    /// <exception cref="T:System.InvalidOperationException">The thread is not running: the client has not dispatched it, or has dispatched another thread to its processor since.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let getcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

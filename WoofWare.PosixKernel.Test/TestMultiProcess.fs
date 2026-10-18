@@ -194,7 +194,7 @@ module TestMultiProcess =
             UnixSystem.initial<int, string> platform
             |> Launched.processId (ProcessId.parseOrFail context 299)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> UnixSystem.writePidMaxSysctl context 301
+            |> UnixSystem.writePidMaxSysctl 301
 
         let pid, machine =
             match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
@@ -414,7 +414,7 @@ module TestMultiProcess =
         ProcessId.toInt32 pids.[1] |> shouldEqual 4243
 
         let (), lowered =
-            inProcess pids.[0] (fun view -> (), UnixSystem.writePidMaxSysctl context 4243 view) machine
+            inProcess pids.[0] (fun view -> (), UnixSystem.writePidMaxSysctl 4243 view) machine
 
         assertClean lowered
         Proc.state pids.[1] lowered |> shouldEqual (Proc.state pids.[1] machine)
