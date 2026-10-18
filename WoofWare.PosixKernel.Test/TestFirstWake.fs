@@ -547,7 +547,7 @@ module TestFirstWake =
         | _ -> notOn flavour call
 
     let private isWoken (thread : int) (system : UnixSystem<int, string>) : bool =
-        match UnixThreadTable.parkOf thread (Lone.threads system) with
+        match Lone.parkOf thread system with
         | Some {
                    State = ParkState.Woken _
                } -> true

@@ -1561,7 +1561,7 @@ module TestMultiProcessFuzz =
         (view : UnixSystem<int, string>)
         : Made
         =
-        match UnixThreadTable.parkedFor thread (Proc.threads pid view) with
+        match Proc.parkedIn (Caller.make pid thread) view with
         | Some (ParkedSyscall.Accept _) ->
             match UnixConnection.tryFinishAccept (Caller.make pid thread) view |> logged log with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
@@ -1611,7 +1611,7 @@ module TestMultiProcessFuzz =
         | Some (ParkedSyscall.PipeWrite _)
         | Some (ParkedSyscall.ConnectionWrite _) ->
             let connection =
-                match UnixThreadTable.parkedFor thread (Proc.threads pid view) with
+                match Proc.parkedIn (Caller.make pid thread) view with
                 | Some (ParkedSyscall.ConnectionWrite _) -> true
                 | _ -> false
 
@@ -1851,8 +1851,8 @@ module TestMultiProcessFuzz =
                     // parked, woken still, for a later pass.
                     let world =
                         match ProcessTable.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
-                        | Some slot when
-                            (UnixThreadTable.parkedFor thread slot.Threads).IsSome
+                        | Some _ when
+                            (Proc.parkedIn (Caller.make pid thread) world.Machine).IsSome
                             && not (Set.contains (pid, thread) world.Asleep)
                             ->
                             { world with
@@ -2504,10 +2504,10 @@ module TestMultiProcessFuzz =
     /// Every thread of `machine`'s processes that is parked in a call.
     let private parkedThreads (machine : UnixSystem<int, string>) : Set<ProcessId * int> =
         ProcessTable.slots machine.Processes
-        |> Seq.collect (fun (KeyValue (key, slot)) ->
+        |> Seq.collect (fun (KeyValue (key, _)) ->
             let pid = ProcessId.parseOrFail "parkedThreads" key
 
-            UnixThreadTable.byName slot.Threads
+            Proc.threadMap pid machine
             |> Map.toSeq
             |> Seq.choose (fun (thread, state) ->
                 match UnixThreadState.parkedIn state with
@@ -2555,7 +2555,7 @@ module TestMultiProcessFuzz =
                     let slot = ProcessTable.find "wake" (ProcessId.toInt32 pid) after.Processes
                     obj.ReferenceEquals (slot.Process, before.Process) |> shouldEqual true
 
-                    for KeyValue (thread, state) in UnixThreadTable.byName before.Threads do
+                    for KeyValue (thread, state) in Proc.threadMap pid machine do
                         let expected =
                             match Map.tryFind (pid, thread) answered with
                             | Some fired ->
@@ -2570,10 +2570,10 @@ module TestMultiProcessFuzz =
                                 }
                             | None -> state
 
-                        UnixThreadTable.get thread slot.Threads |> shouldEqual expected
+                        Proc.thread (Caller.make pid thread) after |> shouldEqual expected
 
-                    (UnixThreadTable.byName slot.Threads).Count
-                    |> shouldEqual (UnixThreadTable.byName before.Threads).Count
+                    (Proc.threadMap pid after).Count
+                    |> shouldEqual (Proc.threadMap pid machine).Count
 
                 if answer.IsEmpty then
                     after |> shouldEqual machine
@@ -2593,7 +2593,7 @@ module TestMultiProcessFuzz =
                 let held =
                     woken
                     |> Seq.collect (fun (pid, thread) ->
-                        match UnixThreadTable.parkOf thread (Proc.threads pid machine) with
+                        match Proc.parkOf (Caller.make pid thread) machine with
                         | Some {
                                    State = ParkState.Woken fired
                                } -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine.Machine)
@@ -2714,7 +2714,7 @@ module TestMultiProcessFuzz =
                     let view = Proc.view pid world.Machine
 
                     let parked =
-                        UnixThreadTable.byName view.Threads
+                        Proc.threadMap pid world.Machine
                         |> Map.toList
                         |> List.choose (fun (thread, state) ->
                             state.Parked |> Option.map (fun park -> thread, park.Syscall)
@@ -2770,7 +2770,7 @@ module TestMultiProcessFuzz =
                                 let ended =
                                     parked
                                     |> List.exists (fun (thread, parked) ->
-                                        UnixThreadTable.parkOf thread after.Threads
+                                        Proc.parkOf (Caller.make pid thread) (Proc.unview after)
                                         |> Option.map (fun park -> park.Syscall)
                                         <> Some parked
                                     )

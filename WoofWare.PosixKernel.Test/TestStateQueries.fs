@@ -178,8 +178,7 @@ module TestStateQueries =
         for platform in platforms do
             let system = initialOn platform
 
-            UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
-            |> shouldEqual None
+            UnixThreadState.park (Lone.thread 0 system) |> shouldEqual None
 
             let system =
                 match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
@@ -191,8 +190,8 @@ module TestStateQueries =
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 
-            let park = UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
-            park |> shouldEqual (UnixThreadTable.parkOf 0 (Lone.threads system))
+            let park = UnixThreadState.park (Lone.thread 0 system)
+            park |> shouldEqual (Lone.thread 0 system).Parked
 
             match park |> Option.map (fun park -> park.Syscall) with
             | Some (ParkedSyscall.PipeRead _) -> ()

@@ -1267,7 +1267,7 @@ module TestBlockingPipe =
                             )
 
                         let actual =
-                            UnixThreadTable.parkedFor thread (Lone.threads system)
+                            Lone.parkedIn thread system
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.PipeRead read -> 0, read.Count, 0
@@ -2402,7 +2402,7 @@ module TestBlockingPipe =
                         admitted
                 with
                 | WriteStep.WouldBlock (_, asleep) ->
-                    match UnixThreadTable.parkedFor sleeper (Lone.threads asleep) with
+                    match Lone.parkedIn sleeper asleep with
                     | Some (ParkedSyscall.PipeWrite parked) ->
                         (parked.Count, parked.Written) |> shouldEqual (200000, 65536)
                     | other -> failwith $"%O{platform}: %A{other}"

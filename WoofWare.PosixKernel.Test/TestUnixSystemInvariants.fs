@@ -623,23 +623,20 @@ module TestUnixSystemInvariants =
     /// `system` with thread `name`'s park stamped `ordinal`, as only a record copy past
     /// `Parking.park` could.
     let private forgeOrdinal (name : int) (ordinal : ParkOrdinal) (system : UnixSystem<int, string>) =
-        let thread = UnixThreadTable.get name (Lone.threads system)
+        let thread = Lone.thread name system
 
         system
-        |> Lone.mapThreadMap (fun threads ->
-            threads
-            |> Map.add
-                name
-                { thread with
-                    Parked =
-                        thread.Parked
-                        |> Option.map (fun park ->
-                            { park with
-                                Ordinal = ordinal
-                            }
-                        )
-                }
-        )
+        |> ForgedThread.withState
+            (Callers.thread name system)
+            { thread with
+                Parked =
+                    thread.Parked
+                    |> Option.map (fun park ->
+                        { park with
+                            Ordinal = ordinal
+                        }
+                    )
+            }
 
     [<Test>]
     let ``parks minted by UnixWait are sound`` () : unit =
@@ -647,8 +644,7 @@ module TestUnixSystemInvariants =
 
     [<Test>]
     let ``two parks stamped with one ordinal are a defect`` () : unit =
-        let first =
-            (UnixThreadTable.parkOf 1 (Lone.threads twoParked) |> Option.get).Ordinal
+        let first = (Lone.parkOf 1 twoParked |> Option.get).Ordinal
 
         forgeOrdinal 2 first twoParked
         |> UnixSystem.checkInvariants
@@ -1059,14 +1055,14 @@ module TestUnixSystemInvariants =
         system
         |> withThread None
         |> withSignals (directedAt (ValueSome thread))
-        |> Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue)
+        |> ForgedThread.owing (Callers.thread thread system) OwedReturn.SignalDue
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
         system
         |> withThread None
         |> withSignals (directedAt ValueNone)
-        |> Lone.mapThreads (UnixThreadTable.owe (Lone.leader system) OwedReturn.SignalDue)
+        |> ForgedThread.owing (Callers.leader system) OwedReturn.SignalDue
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -1107,7 +1103,7 @@ module TestUnixSystemInvariants =
                 UnixSystemDefect.SignalDeliverableWithoutOwedReturn (Callers.ofDefault thread, Signal.SIGUSR1)
 
             let owes (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue) system
+                ForgedThread.owing (Callers.thread thread system) OwedReturn.SignalDue system
 
             let check (system : UnixSystem<int, string>) : UnixSystemDefect<int> list =
                 UnixSystem.checkInvariants system
@@ -1229,17 +1225,14 @@ module TestUnixSystemInvariants =
     let ``two threads with one thread ID are a defect`` () : unit =
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
             let system = spawned platform
-            let leader = UnixThreadTable.get 0 (Lone.threads system)
+            let leader = Lone.thread 0 system
 
             system
-            |> Lone.mapThreadMap (fun threads ->
-                Map.add
-                    1
-                    { threads.[1] with
-                        OsThreadId = leader.OsThreadId
-                    }
-                    threads
-            )
+            |> ForgedThread.withState
+                (Callers.thread 1 system)
+                { Lone.thread 1 system with
+                    OsThreadId = leader.OsThreadId
+                }
             |> UnixSystem.checkInvariants
             |> shouldEqual
                 [
@@ -1247,7 +1240,7 @@ module TestUnixSystemInvariants =
                     // Thread 1's own ID, which the allocator still records, is
                     // held by no thread now.
                     UnixSystemDefect.LiveThreadIdsMismatch (
-                        Set.singleton (UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads system))),
+                        Set.singleton (UnixThreadState.osThreadId (Lone.thread 1 system)),
                         Set.empty
                     )
                 ]
@@ -1290,7 +1283,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.LeaderThreadIdNotProcessId (
                     Caller.make seventeen 0,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads linux)),
+                    UnixThreadState.osThreadId (Lone.thread 0 linux),
                     ProcessId.parseOrFail "test" 17
                 )
             ]
@@ -1316,12 +1309,10 @@ module TestUnixSystemInvariants =
                 (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
                  |> Launched.leaderThreadId id
                  |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                |> Lone.threads
-                |> UnixThreadTable.get 0
+                |> Lone.thread 0
                 |> UnixThreadState.osThreadId
 
-            let replaced =
-                UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads linux))
+            let replaced = UnixThreadState.osThreadId (Lone.thread 1 linux)
 
             foreign,
             { linux with
@@ -1336,14 +1327,11 @@ module TestUnixSystemInvariants =
                             }
                     }
             }
-            |> Lone.mapThreadMap (fun threads ->
-                Map.add
-                    1
-                    { threads.[1] with
-                        OsThreadId = foreign
-                    }
-                    threads
-            )
+            |> ForgedThread.withState
+                (Callers.thread 1 linux)
+                { Lone.thread 1 linux with
+                    OsThreadId = foreign
+                }
 
         let _, below = withDarwinId 4194303UL
         UnixSystem.checkInvariants below |> shouldEqual []
@@ -1380,7 +1368,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.OsThreadIdNotMintable (
                     Callers.ofDefault 1,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads darwin)),
+                    UnixThreadState.osThreadId (Lone.thread 1 darwin),
                     behind
                 )
             ]

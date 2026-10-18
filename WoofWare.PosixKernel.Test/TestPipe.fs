@@ -539,7 +539,7 @@ module TestPipe =
                             SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
 
                             withSignals (Lone.proc system).Signals after
-                            |> Lone.mapThreads (UnixThreadTable.settle (Lone.leader system))
+                            |> ForgedThread.settled (Callers.leader system)
                             |> shouldEqual system
 
                             // The writer takes it as it returns to user mode,
@@ -585,7 +585,7 @@ module TestPipe =
                                 ReadsSeen = reads
                             }
 
-                        UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after)
+                        Lone.parkedIn (Lone.leader system) after
                         |> shouldEqual (Some (ParkedSyscall.PipeWrite parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeWrite parked))
@@ -689,7 +689,7 @@ module TestPipe =
                                 Count = count
                             }
 
-                        UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after)
+                        Lone.parkedIn (Lone.leader system) after
                         |> shouldEqual (Some (ParkedSyscall.PipeRead parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeRead parked))
@@ -1235,11 +1235,11 @@ module TestPipe =
                                     // The writer takes the SIGPIPE as it returns
                                     // to user mode, which it owes before its next
                                     // call; nothing else changed.
-                                    UnixThreadTable.owedBy (Lone.leader system) (Lone.threads after)
+                                    Lone.owedBy (Lone.leader system) after
                                     |> shouldEqual (Some OwedReturn.SignalDue)
 
                                     withSignals (Lone.proc system).Signals after
-                                    |> Lone.mapThreads (UnixThreadTable.settle (Lone.leader system))
+                                    |> ForgedThread.settled (Callers.leader system)
                                     |> shouldEqual system
                                 | _ -> failwith $"%s{where ()}: %A{actual}"
 
@@ -1273,7 +1273,7 @@ module TestPipe =
 
             match WriteOutcomes.admitThenWrite (Lone.leader system) w UserBuffer.Mapped (payload 0 70000) system with
             | Ok (WriteStep.WouldBlock (_, after)) ->
-                match UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after) with
+                match Lone.parkedIn (Lone.leader system) after with
                 | Some (ParkedSyscall.PipeWrite parked) -> (parked.Count, parked.Written) |> shouldEqual (70000, 65536)
                 | other -> failwith $"%O{platform}: %A{other}"
             | other -> failwith $"%O{platform}: %A{other}"

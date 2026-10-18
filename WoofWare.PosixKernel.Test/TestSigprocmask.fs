@@ -653,7 +653,7 @@ module TestSigprocmask =
             // it.
             let parked =
                 match UnixPoll.tryPoll (Callers.thread 1 system) [] -1 system with
-                | Ok (_, system) when UnixThreadTable.parkOf 1 (Lone.threads system) |> Option.isSome -> system
+                | Ok (_, system) when Lone.parkOf 1 system |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
             Lone.wakes parked |> shouldEqual []

@@ -372,7 +372,7 @@ module TestSigcontGeneration =
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
-            match UnixThreadTable.parkedFor row.Sleeper (Lone.threads r.System) with
+            match Lone.parkedIn row.Sleeper r.System with
             | None -> Ok r
             | Some _ ->
 

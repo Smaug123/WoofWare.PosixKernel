@@ -31,7 +31,7 @@ module TestThreadIds =
     let private pid (value : int32) : ProcessId = ProcessId.parseOrFail "test" value
 
     let private idOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
-        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread (Lone.threads system)))
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (Lone.thread thread system))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
         match UnixThreadLifecycle.trySpawn (Callers.leader system) child (CpuId 0) system with
@@ -59,8 +59,7 @@ module TestThreadIds =
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
 
-            UnixThreadState.cpu (UnixThreadTable.get 0 (Lone.threads system))
-            |> shouldEqual (CpuId 0)
+            UnixThreadState.cpu (Lone.thread 0 system) |> shouldEqual (CpuId 0)
 
             UnixSystem.checkInvariants system |> shouldEqual []
 
@@ -74,8 +73,7 @@ module TestThreadIds =
 
         Lone.leader system |> shouldEqual "main"
 
-        UnixThreadState.cpu (UnixThreadTable.get "main" (Lone.threads system))
-        |> shouldEqual (CpuId 3)
+        UnixThreadState.cpu (Lone.thread "main" system) |> shouldEqual (CpuId 3)
 
     [<Test>]
     let ``Linux: the leader's tid is the pid, and threads count up from it, never reusing an exited one's`` () : unit =

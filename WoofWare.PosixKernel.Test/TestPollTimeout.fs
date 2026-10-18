@@ -222,7 +222,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes atDeadline
                 reported |> shouldEqual [ 0s ]
                 count |> shouldEqual 0
-                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+                Lone.parkedIn thread finished |> shouldEqual None
                 UnixSystem.checkInvariants finished |> shouldEqual []
 
         Check.One (config, property)
@@ -252,7 +252,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes becameReady
                 reported |> shouldEqual [ 0s ; events &&& (pollIn ||| pollRdNorm) ]
                 count |> shouldEqual 1
-                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+                Lone.parkedIn thread finished |> shouldEqual None
 
         Check.One (config, property)
 
@@ -378,8 +378,8 @@ module TestPollTimeout =
 
         Lone.deadlines parkedAgain |> shouldEqual [ 10_000_000L ]
 
-        (UnixThreadTable.parkOf thread (Lone.threads parkedAgain) |> Option.get).Ordinal
-        |> shouldBeGreaterThan (UnixThreadTable.parkOf thread (Lone.threads parked) |> Option.get).Ordinal
+        (Lone.parkOf thread parkedAgain |> Option.get).Ordinal
+        |> shouldBeGreaterThan (Lone.parkOf thread parked |> Option.get).Ordinal
 
         let reported, count, _ = parkedAgain |> after 9_000_000L |> finishes
         reported |> shouldEqual [ 0s ]
@@ -389,7 +389,7 @@ module TestPollTimeout =
     let ``the park records each entry with the description it named`` () : unit =
         let _, parked = parks [ entry listener pollIn ; entry -3 pollOut ] 7 idle
 
-        UnixThreadTable.parkedFor thread (Lone.threads parked)
+        Lone.parkedIn thread parked
         |> shouldEqual (
             Some (
                 ParkedSyscall.Poll

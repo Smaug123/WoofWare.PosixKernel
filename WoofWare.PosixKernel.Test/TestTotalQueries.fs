@@ -166,19 +166,6 @@ module TestTotalQueries =
 
         Check.One (Config.QuickThrowOnFailure, Prop.forAll (Arb.fromGen gen) property)
 
-    /// A client names a thread by its own identity, and the process holds a thread
-    /// by that name only from its creation to its exit; so the library has no
-    /// public question about one thread by its name, and a client looks the
-    /// name up in `UnixSystem.threads` and reads the state it finds.
-    [<Test>]
-    let ``UnixThreadTable asks nothing about a single thread by its name`` () : unit =
-        let table =
-            typeof<VirtualFileSystem>.Assembly.GetType ("WoofWare.PosixKernel.UnixThreadTable", true)
-
-        table.GetMethods (BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
-        |> Array.map (fun (f : MethodInfo) -> f.Name)
-        |> shouldEqual [| "reconcile" |]
-
     [<Test>]
     let ``a thread is in UnixSystem.threads from its creation to its exit, with the processor and ID it was given``
         ()

@@ -317,8 +317,7 @@ module TestProcessView =
                             system.Processes
                 }
 
-            let leaderTid =
-                UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads system))
+            let leaderTid = UnixThreadState.osThreadId (Lone.thread 0 system)
 
             // The launched pipes' three descriptions are each named once by the
             // machine's record and twice by the two tables.

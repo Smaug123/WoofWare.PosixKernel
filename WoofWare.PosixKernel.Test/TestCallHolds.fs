@@ -296,7 +296,7 @@ module TestCallHolds =
         =
         match parked with
         | ParkedSyscall.KqueuePoll poll ->
-            match UnixThreadTable.parkedFor thread (Lone.threads system) with
+            match Lone.parkedIn thread system with
             | Some (ParkedSyscall.KqueuePoll existing) ->
                 Lone.Parking.park
                     thread
@@ -371,7 +371,7 @@ module TestCallHolds =
         let model =
             {
                 Holds = Map.empty
-                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads initial)) ]
+                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (Lone.thread 0 initial) ]
             }
 
         agree "initial" model initial
@@ -388,7 +388,7 @@ module TestCallHolds =
                     match shapeOf shape a b system with
                     | None -> system, model
                     | Some (parked, held) ->
-                        match UnixThreadTable.parkedFor thread (Lone.threads system) with
+                        match Lone.parkedIn thread system with
                         | Some existing when kindOf existing <> kindOf parked -> system, model
                         | existing ->
                             if existing.IsSome then
@@ -420,7 +420,7 @@ module TestCallHolds =
                 | Op.Unpark t ->
                     let thread = liveThread t
 
-                    match UnixThreadTable.parkedFor thread (Lone.threads system) with
+                    match Lone.parkedIn thread system with
                     | None -> system, model
                     | Some parked ->
                         // As a finishing call does: the park goes, then whatever it
@@ -459,7 +459,7 @@ module TestCallHolds =
                                 else
                                     model.Holds
                                     |> Map.map (fun thread held ->
-                                        match UnixThreadTable.parkedFor thread (Lone.threads system) with
+                                        match Lone.parkedIn thread system with
                                         | Some (ParkedSyscall.PipeRead {
                                                                            Reader = SleepTarget.Waiting (_, entered)
                                                                        })
@@ -502,7 +502,7 @@ module TestCallHolds =
 
                     let parent = Lone.leader system
 
-                    if (UnixThreadTable.parkedFor parent (Lone.threads system)).IsSome then
+                    if (Lone.parkedIn parent system).IsSome then
                         system, model
                     else
 
@@ -524,7 +524,7 @@ module TestCallHolds =
 
                     if thread = Lone.leader system then
                         system, model
-                    elif (UnixThreadTable.parkedFor thread (Lone.threads system)).IsSome then
+                    elif (Lone.parkedIn thread system).IsSome then
                         // A thread asleep in a call is not making another.
                         Assert.Throws<System.InvalidOperationException> (fun () ->
                             UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system
@@ -547,7 +547,7 @@ module TestCallHolds =
                 | Op.ExitGroup t ->
                     let thread = liveThread t
 
-                    if (UnixThreadTable.parkedFor thread (Lone.threads system)).IsSome then
+                    if (Lone.parkedIn thread system).IsSome then
                         system, model
                     else
 
@@ -664,7 +664,7 @@ module TestCallHolds =
         =
         for platform in platforms do
             let system = world platform |> Threads.spawn 1 |> Threads.spawn 2
-            let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads system))
+            let one = UnixThreadState.osThreadId (Lone.thread 1 system)
 
             // Thread 1's ID freed behind its back: the allocator could hand it out again.
             let freed =
@@ -679,7 +679,7 @@ module TestCallHolds =
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.empty, Set.singleton one) ]
 
             // Thread 1 gone without its ID: the allocator never hands it out again.
-            let leaked = system |> Lone.mapThreadMap (Map.remove 1)
+            let leaked = system |> ForgedThread.gone (Callers.thread 1 system)
 
             UnixSystem.checkInvariants leaked
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.singleton one, Set.empty) ]

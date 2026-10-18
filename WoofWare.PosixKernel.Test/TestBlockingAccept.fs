@@ -172,7 +172,7 @@ module TestBlockingAccept =
                     Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                 )
 
-                UnixThreadTable.parkOf thread (Lone.threads parked)
+                Lone.parkOf thread parked
                 |> shouldEqual (
                     Some
                         {
@@ -200,7 +200,7 @@ module TestBlockingAccept =
                             OpenFiles = OpenFileTable.releaseHold listener parked.Machine.OpenFiles
                         }
                 }
-                |> Lone.mapThreads (fun _ -> Lone.threads system)
+                |> ForgedThread.threadsAsIn (Lone.pid system) system
                 |> shouldEqual system
 
                 UnixSystem.checkInvariants parked |> shouldEqual []
@@ -306,7 +306,7 @@ module TestBlockingAccept =
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
-            let parkedRecord = UnixThreadTable.parkedFor 1 (Lone.threads system)
+            let parkedRecord = Lone.parkedIn 1 system
 
             let system =
                 (system, actions)
@@ -329,7 +329,7 @@ module TestBlockingAccept =
             // The client asks again before it finishes.
             let system = Lone.wake system |> snd
 
-            match UnixThreadTable.parkOf 1 (Lone.threads system) with
+            match Lone.parkOf 1 system with
             | Some {
                        State = ParkState.Asleep
                    } ->
@@ -351,7 +351,7 @@ module TestBlockingAccept =
                         Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                     )
 
-                    UnixThreadTable.parkOf 1 (Lone.threads parkedAgain)
+                    Lone.parkOf 1 parkedAgain
                     |> shouldEqual (
                         parkedRecord
                         |> Option.map (fun syscall ->
@@ -568,7 +568,7 @@ module TestBlockingAccept =
                 (system, parks)
                 ||> List.fold (fun system park ->
                     let system =
-                        match UnixThreadTable.parkOf park.Waiter (Lone.threads system) with
+                        match Lone.parkOf park.Waiter system with
                         | Some _ -> ForgedPark.woken park.Waiter system
                         | None -> system
 
@@ -615,7 +615,7 @@ module TestBlockingAccept =
                             else
                                 WakePrimitive.SignalDeliverable
 
-                        system |> Lone.mapThreads (UnixThreadTable.markWoken name (Set.singleton fired))
+                        system |> ForgedThread.woken (Callers.thread name system) (Set.singleton fired)
                 )
 
             let isQueued (listener : OpenFileDescriptionId) : bool =
@@ -1751,7 +1751,7 @@ module TestBlockingAccept =
                         Map.tryFind thread reference.Parks |> Option.map (fun park -> park.Through)
 
                     let actual =
-                        UnixThreadTable.parkedFor thread (Lone.threads system)
+                        Lone.parkedIn thread system
                         |> Option.map (fun parked ->
                             match parked with
                             | ParkedSyscall.Accept {
@@ -1917,7 +1917,7 @@ module TestBlockingAccept =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let state = UnixThreadTable.get thread (Lone.threads system)
+        let state = Lone.thread thread system
 
         match state.Parked with
         | Some ({

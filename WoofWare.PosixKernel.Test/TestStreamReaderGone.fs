@@ -143,8 +143,7 @@ module TestStreamReaderGone =
                             | ValueSome thread -> thread
                             | ValueNone -> Lone.leader system
 
-                        UnixThreadTable.owedBy receiver (Lone.threads after)
-                        |> shouldEqual (Some OwedReturn.SignalDue)
+                        Lone.owedBy receiver after |> shouldEqual (Some OwedReturn.SignalDue)
 
                         after
                         |> Lone.mapProc (fun proc ->
@@ -152,7 +151,7 @@ module TestStreamReaderGone =
                                 Signals = (Lone.proc system).Signals
                             }
                         )
-                        |> Lone.mapThreads (UnixThreadTable.settle receiver)
+                        |> ForgedThread.settled (Callers.thread receiver system)
                         |> shouldEqual system
 
                         system <- after

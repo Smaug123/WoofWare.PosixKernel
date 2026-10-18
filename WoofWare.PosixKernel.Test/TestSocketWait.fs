@@ -118,7 +118,7 @@ module TestSocketWait =
         let system = Threads.ensure thread system
 
         let parkedOn (system : UnixSystem<int, string>) : Waited =
-            match UnixThreadTable.parkedFor thread (Lone.threads system) with
+            match Lone.parkedIn thread system with
             | Some (ParkedSyscall.EpollWait wait) -> Waited.Parked (wait.Epoll, wait.MaxEvents)
             | Some (ParkedSyscall.Kevent wait) -> Waited.Parked (wait.Kqueue, wait.MaxEvents)
             | other -> failwith $"expected a wait's park, got %A{other}"

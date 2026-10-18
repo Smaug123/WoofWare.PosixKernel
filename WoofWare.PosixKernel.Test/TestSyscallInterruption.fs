@@ -681,7 +681,7 @@ module TestSyscallInterruption =
             | Ending.TimedOut
             | Ending.Eintr
             | Ending.Restart ->
-                UnixThreadTable.parkedFor thread (Lone.threads after) |> shouldEqual None
+                Lone.parkedIn thread after |> shouldEqual None
 
                 // The signals are still pending as the call ends, for the
                 // return to user mode that follows (which, for a call a
@@ -740,7 +740,7 @@ module TestSyscallInterruption =
     [<Test>]
     let ``the rule each sleeping call follows is the measured one`` () : unit =
         let parked (sleep : Sleep) : ParkedSyscall =
-            match UnixThreadTable.parkedFor 1 (Lone.threads (asleep linuxWorld 1 sleep)) with
+            match Lone.parkedIn 1 (asleep linuxWorld 1 sleep) with
             | Some parked -> parked
             | None -> failwith $"%O{sleep} did not park"
 
@@ -965,34 +965,34 @@ module TestSyscallInterruption =
 
     [<Test>]
     let ``a thread parked in one syscall may be parked again in it, and in no other`` () : unit =
-        // `UnixThreadTable.withPark` refuses to park a thread in a second syscall
-        // over the first; it must tell every pair of cases apart, and no two
-        // parks of one case.
+        // The kernel's record of a thread's park refuses to park it in a second
+        // syscall over the first; it must tell every pair of cases apart, and no
+        // two parks of one case.
         let caseName (parked : ParkedSyscall) : string =
             let case, _ =
                 Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields (parked, typeof<ParkedSyscall>)
 
             case.Name
 
-        let threads = (worldOn SimulatedUnixPlatform.linuxX64).System |> Lone.threads
+        let system = (worldOn SimulatedUnixPlatform.linuxX64).System
 
-        let park (parked : ParkedSyscall) (threads : ThreadTable<int>) : ThreadTable<int> =
-            UnixThreadTable.withPark
-                1
+        let park (parked : ParkedSyscall) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            ForgedThread.parked
+                (Callers.thread 1 system)
                 {
                     Syscall = parked
                     Ordinal = ParkOrdinal 0L
                     State = ParkState.Asleep
                 }
-                threads
+                system
 
         for first in oneParkOfEach do
-            let parkedOnce = park first threads
+            let parkedOnce = park first system
 
             for second in oneParkOfEach do
                 let accepted =
                     try
-                        park second parkedOnce |> ignore<ThreadTable<int>>
+                        park second parkedOnce |> ignore<UnixSystem<int, string>>
                         true
                     with e when e.Message.Contains "without clearing the first" ->
                         false
