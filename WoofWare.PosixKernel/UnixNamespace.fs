@@ -158,7 +158,7 @@ module internal ReadLinkRefusal =
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
 
 /// What `readlink(2)` puts in the caller's buffer and what it returns.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type ReadLinkAnswer =
     /// Place these bytes in the caller's buffer; the entry point returns how
     /// many there are.

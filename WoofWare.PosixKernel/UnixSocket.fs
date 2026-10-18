@@ -236,7 +236,7 @@ module internal ListenRefusal =
 /// What `getsockname(2)` reports about a socket's own address, or
 /// `getpeername(2)` about its peer's: the two share every rule past the choice
 /// of address.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type GetSockNameAnswer =
     /// The call succeeded: the kernel wrote `copiedOut` to the start of the
     /// caller's buffer and `reportedLength` to its length cell.
@@ -406,7 +406,7 @@ type internal GetSockOptAdmission =
     | SkipLength
 
 /// What a `getsockopt(2)` answered.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type GetSockOptAnswer =
     /// The call succeeded. The kernel wrote `copiedOut` to the start of the
     /// caller's value buffer, and then its length to the caller's length cell.

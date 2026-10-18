@@ -121,6 +121,7 @@
     <Compile Include="SocketFuzz.fs" />
     <Compile Include="TestSocketFuzz.fs" />
     <Compile Include="TestNoPawPrintReference.fs" />
+    <Compile Include="TestTotalComparison.fs" />
     <Compile Include="TestPublicSurface.fs" />
     <Compile Include="TestTotalQueries.fs" />
     <Compile Include="LibraryNames.fs" />

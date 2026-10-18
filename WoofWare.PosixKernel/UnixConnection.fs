@@ -3,7 +3,7 @@ namespace WoofWare.PosixKernel
 open System.Collections.Immutable
 
 /// What became of an `accept(2)` this kernel could answer.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type AcceptOutcome =
     /// The call failed with this errno, and nothing about the listener changed.
     /// The accept queue in particular is untouched: measured on both flavours,

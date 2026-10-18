@@ -183,7 +183,7 @@ type internal TcpShutdownRefusal =
     | DarwinReceiveShutBeforeUnsentBytes of shutter : ConnectionEnd * unsent : int
 
 /// What a non-blocking read of a TCP connection answers.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type internal TcpReadAnswer =
     /// These bytes, which may be none: a request for zero bytes, or one on a
     /// Darwin connection that is open with nothing queued.

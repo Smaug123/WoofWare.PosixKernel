@@ -3,7 +3,7 @@ namespace WoofWare.PosixKernel
 open System.Collections.Immutable
 
 /// What `read(2)` moved, for a request this kernel could answer.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type ReadAnswer =
     /// The bytes to place in the caller's buffer; the entry point returns how
     /// many there are.
