@@ -745,6 +745,8 @@ module SimulatedUnixPlatform =
         // every caller standing over every mode and every kind of ID named;
         // Darwin 27.0 at uid 501 for its owner over every mode it could set,
         // and for a non-owner on other users' inodes. Its output is beside it.
+        // Darwin's root, and uid 501 against inodes with set-ID bits, by
+        // `docs/probes/darwin-root/root-files.c` (CHOWN).
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> OwnerChangeRule.ClearsSetIdFromNonDirectories
         | SimulatedUnixFlavour.Darwin -> OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
@@ -1623,13 +1625,24 @@ module SimulatedUnixPlatform =
     /// the family field `sockaddrFamilyField` places: as many as it is wide, in
     /// the machine's own byte order.
     ///
-    /// Any other number of bytes is not a family field, and is refused.
+    /// Any other number of bytes is not a family field: it, and the default
+    /// `ImmutableArray`, throw `ArgumentException`.
     let decodeSockaddrFamily (platform : SimulatedUnixPlatform) (field : ImmutableArray<byte>) : int =
         let width = SockaddrFamilyField.width (sockaddrFamilyField platform)
 
         if field.IsDefault || field.Length <> width then
-            failwith
-                $"SimulatedUnixPlatform.decodeSockaddrFamily: this platform's family field is %d{width} bytes wide, and the caller passed %d{(if field.IsDefault then 0 else field.Length)} (this is a bug in the caller)."
+            let passed =
+                if field.IsDefault then
+                    "the default ImmutableArray"
+                else
+                    $"%d{field.Length} bytes"
+
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeSockaddrFamily"
+                    (RefusalKind.Contradictory "field")
+                    $"this platform's family field is %d{width} bytes wide, and the caller passed %s{passed}."
+            )
 
         match width with
         | 1 -> int field.[0]
@@ -1671,10 +1684,28 @@ module SimulatedUnixPlatform =
 
     /// The C `int` in the four bytes of `bytes` from `offset`, as `encodeCInt`
     /// lays one out.
+    ///
+    /// Throws `ArgumentException` if `bytes` is the default `ImmutableArray`,
+    /// and `ArgumentOutOfRangeException` if it holds no four bytes from
+    /// `offset`.
     let decodeCInt (platform : SimulatedUnixPlatform) (bytes : ImmutableArray<byte>) (offset : int) : int =
-        if bytes.IsDefault || offset < 0 || bytes.Length < offset + 4 then
-            failwith
-                $"SimulatedUnixPlatform.decodeCInt: no four bytes at offset %d{offset} of %d{(if bytes.IsDefault then 0 else bytes.Length)} (this is a bug in the caller)."
+        if bytes.IsDefault then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.Contradictory "bytes")
+                    "bytes is the default ImmutableArray, whose underlying array is null."
+            )
+
+        // Subtracted rather than added, so that an offset near Int32.MaxValue
+        // does not wrap onto one that passes.
+        if offset < 0 || offset > bytes.Length - 4 then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.OutOfRange "offset")
+                    $"no four bytes at offset %d{offset} of %d{bytes.Length}."
+            )
 
         let span = bytes.AsSpan().Slice (offset, 4)
 

@@ -673,11 +673,12 @@ module TestCredentialChange =
                     GroupListWords.Readable [ 1u ; 2u ; 3u ]
                     GroupListWords.FaultsAfter [ 1u ; 2u ]
                 ] do
-                Assert.Throws<Exception> (fun () ->
-                    UnixCredentials.trySetgroups (Callers.leader system) 2 words system
-                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, SetGroupsRefusal>>
-                )
-                |> ignore<Exception>
+                (Assert.Throws<ArgumentException> (fun () ->
+                    UnixCredentials.setgroups (Callers.leader system) 2 words system
+                    |> ignore<SyscallAnswer * UnixSystem<int, string>>
+                ))
+                    .ParamName
+                |> shouldEqual "words"
 
     // ------------------------------------------------------------- getresuid, getresgid
 
