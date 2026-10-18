@@ -6,6 +6,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Publishing is manual until 1.0: "Run workflow" on main runs everything below,
+  # including nuget-publish and github-release, which a push to main skips.
+  workflow_dispatch:
 
 env:
   DOTNET_NOLOGO: true
@@ -209,10 +212,12 @@ jobs:
         with:
           needs-context: ${{ toJSON(needs) }}
 
-  # Everything below runs on a push to main only, and publishes the package that push
-  # built. Nerdbank.GitVersioning gives a new version to each commit on main that touches
-  # a path in WoofWare.PosixKernel/version.json's pathFilters; any other commit packs the
-  # version already on nuget.org, which publish-nuget then skips.
+  # Everything below runs on main only. The attestation job attests the package that run
+  # built on every run; nuget-publish and github-release publish it only on a manual run
+  # (workflow_dispatch) while the surface is still changing before 1.0.
+  # Nerdbank.GitVersioning gives a new version to each commit on main that touches a path
+  # in WoofWare.PosixKernel/version.json's pathFilters; any other commit packs the version
+  # already on nuget.org, which publish-nuget then skips.
 
   attestation:
     runs-on: ubuntu-latest
@@ -239,10 +244,9 @@ jobs:
   # environment. NUGET_USER is the nuget.org profile name that owns that policy.
   nuget-publish:
     runs-on: ubuntu-latest
-    # Still doing a whole load of refactors pre-1.0;
-    # no need to publish all those intermediate states
-    if: false
-    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0, so only a manual run publishes;
+    # from 1.0, drop the event_name clause to publish every push to main.
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     needs: [attestation]
     environment: main-deploy
     permissions:
@@ -280,10 +284,9 @@ jobs:
 
   github-release:
     runs-on: ubuntu-latest
-    # Still doing a whole load of refactors pre-1.0;
-    # no need to publish all those intermediate states
-    if: false
-    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0, so only a manual run publishes;
+    # from 1.0, drop the event_name clause to publish every push to main.
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     needs: [all-required-checks-complete]
     environment: main-deploy
     permissions:

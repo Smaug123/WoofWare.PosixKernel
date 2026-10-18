@@ -100,7 +100,7 @@ The repository's accumulated guidance lives in `.claude/skills/<name>/SKILL.md`.
 
 ## Releases
 
-The package is published to nuget.org from this repository's CI on every push to `main` that changes its version. Nerdbank.GitVersioning computes the version from `WoofWare.PosixKernel/version.json` and the git height over that file's `pathFilters`, so CI needs full history (`fetch-depth: 0`). From 1.0, a new case in any union whose cases are public is a major version (README, "Unions that gain cases"); before 1.0, breaking changes are made deliberately, by regenerating `SurfaceBaseline.txt`.
+The package is published to nuget.org from this repository's CI, by a manual run of the `.NET` workflow on `main` ("Run workflow", or `gh workflow run ci.yaml --ref main`); before 1.0, a push to `main` builds and attests the package but does not publish it. Nerdbank.GitVersioning computes the version from `WoofWare.PosixKernel/version.json` and the git height over that file's `pathFilters`, so CI needs full history (`fetch-depth: 0`). From 1.0, a new case in any union whose cases are public is a major version (README, "Unions that gain cases"); before 1.0, breaking changes are made deliberately, by regenerating `SurfaceBaseline.txt`.
 
 ## Development workflow
 
