@@ -472,15 +472,29 @@ module SignalState =
             Pending = []
         }
 
-    /// What a delivery of `signal` would do now. A client asks
-    /// `UnixSignal.sigaction`.
-    let internal disposition
+    /// What a delivery of `signal` would do now, in the process whose signal state is `state`
+    /// (`UnixSystem.signals`): the disposition `UnixSignal.sigaction` reports for it, read without
+    /// a call, so that no thread of the process need be one that may make one. SIGKILL and
+    /// SIGSTOP, which nothing can catch, read as `SignalDisposition.Default`, on Darwin too,
+    /// whose `sigaction` refuses to report them. `numbering` is the machine's
+    /// (`SimulatedUnixPlatform.signalNumbering`).
+    ///
+    /// Throws `ArgumentException` on a signal that `numbering` lacks.
+    let disposition
         (numbering : SignalNumbering)
         (signal : Signal)
         (state : SignalState<'Thread, 'Handler>)
         : SignalDisposition<'Handler>
         =
-        match Map.tryFind (parseUnder "disposition" numbering signal) state.Dispositions with
+        if not (Signal.existsUnder numbering signal) then
+            raise (
+                Refusal.exceptionOf
+                    "SignalState.disposition"
+                    (RefusalKind.Contradictory (nameof signal))
+                    $"%O{signal} is not a signal under the %O{numbering} numbering."
+            )
+
+        match Map.tryFind signal state.Dispositions with
         | Some disposition -> disposition
         | None -> SignalDisposition.Default
 
