@@ -32,7 +32,7 @@ module internal Launched =
         =
         let launch = launch (UnixBootImage.platform image) streams leader cpu |> configure
 
-        UnixBootImage.tryBoot launch image |> Configured.expectOk LaunchRefusal.describe
+        UnixBootImage.tryBoot launch image |> Configured.expectOk BootRefusal.describe
 
     /// `bootWith` with the launch as `ProcessLaunch.create` makes it.
     let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

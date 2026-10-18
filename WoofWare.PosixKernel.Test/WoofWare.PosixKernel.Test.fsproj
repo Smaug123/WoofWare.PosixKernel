@@ -74,6 +74,8 @@
     <Compile Include="TestPermissionStanding.fs" />
     <Compile Include="TestGetGroups.fs" />
     <Compile Include="TestCredentialChange.fs" />
+    <Compile Include="TestCredentialThreadsMeasured.fs" />
+    <Compile Include="TestCredentialSetxid.fs" />
     <Compile Include="TestModeChange.fs" />
     <Compile Include="TestUmask.fs" />
     <Compile Include="TestAccess.fs" />
@@ -244,6 +246,8 @@
     <Compile Include="TestEphemeralSearchMeasured.fs" />
     <Compile Include="TestConnectSearchHoldersMeasured.fs" />
     <Compile Include="TestPortSharingMeasured.fs" />
+    <Compile Include="TestLocalPortRangeMeasured.fs" />
+    <Compile Include="TestUnprivilegedPortStartMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -303,6 +307,7 @@
     <Compile Include="TestShutdownAgainstHost.fs" />
     <Compile Include="TestKeventWriteData.fs" />
     <Compile Include="TestDarwinPoll.fs" />
+    <Compile Include="TestHugeTimeoutMeasured.fs" />
     <Compile Include="TestPollEntryCount.fs" />
     <Compile Include="TestKqueueTimerReserved.fs" />
     <Compile Include="TestPipeBuffer.fs" />
@@ -357,6 +362,12 @@
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
+    <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.darwin.txt" />
+    <!-- docs/probes/huge-timeout. `TestHugeTimeoutMeasured` replays every row whose call the model makes. -->
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -432,6 +443,17 @@
          the model can make. -->
     <EmbeddedResource Include="..\docs\probes\port-sharing\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\port-sharing\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.darwin.txt" />
+    <!-- Which values Linux's ip_local_port_range and
+         ip_unprivileged_port_start accepted, measured by
+         docs/probes/local-port-range. `TestLocalPortRangeMeasured` replays the
+         ranges. -->
+    <EmbeddedResource Include="..\docs\probes\local-port-range\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.local-port-range.linux.txt" />
+    <!-- Which ports an unprivileged process bound under each value of Linux's
+         ip_unprivileged_port_start, and which values it took against the
+         range, measured by docs/probes/unprivileged-port-start.
+         `TestUnprivilegedPortStartMeasured` and `TestLocalPortRangeMeasured`
+         replay it. -->
+    <EmbeddedResource Include="..\docs\probes\unprivileged-port-start\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.unprivileged-port-start.linux.txt" />
     <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
          connect took its four-tuple over, measured per flavour by
          docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->

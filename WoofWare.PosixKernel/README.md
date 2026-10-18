@@ -90,6 +90,7 @@ In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left
 `UnixSystem.initial` builds the *boot image* of a machine of the given `SimulatedUnixPlatform` that has not done anything yet: a `UnixBootImage`, which no syscall takes.
 Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
 Sysctls are configuration too: `UnixBootImage.withInotifyLimits` sets Linux's `fs.inotify` limits (`InotifyLimits`), which default to `UnixSystem.defaultInotifyLimits` (128 instances and 8192 watches per user, 16384 records per instance).
+`UnixBootImage.withUnprivilegedPortStart` sets Linux's `net.ipv4.ip_unprivileged_port_start`, the lowest port a process without privilege may bind, which defaults to `UnixSystem.defaultUnprivilegedPortStart` (1024, where Darwin's privileged ports always end); and `UnixBootImage.withEphemeralPortRange` sets the range `bind` of port 0 draws from. Linux's sysctls keep the range at or above the unprivileged port start, so `UnixBootImage.boot` refuses a Linux image whose range starts below it, whichever setter ran first.
 Since no setter takes a booted system, configuration can only describe the machine from the moment it booted.
 
 How a process starts is a `ProcessLaunch`.
@@ -234,6 +235,7 @@ Where they do, the function says which it is, and the tables below mark it: (3) 
 * `UnixSignal.sigaction` is `sigaction(3)`, which on Linux refuses the C library's own signals 32 and 33 before the kernel sees them; `UnixSignal.sigactionSyscall` is the system call (Linux's `rt_sigaction`).
 * `UnixSignal.pthreadSigmask`, and on Linux `UnixSignal.sigprocmask`, drop 32 and 33 from a set as the C library does; `UnixSignal.rtSigprocmask` is Linux's `rt_sigprocmask(2)`, which can block them. `UnixSignal.rtSigsuspend` is Linux's `rt_sigsuspend(2)`, which differs from `UnixSignal.sigsuspend` only in taking the set's size.
 * `UnixSignal.pthreadKill` is `pthread_kill(3)` and `raise(3)`; the `tgkill(2)` beneath them is not modelled.
+* `UnixCredentials.setresuid`, `UnixCredentials.setresgid` and `UnixCredentials.setgroups` are the C library's functions, which change every thread of the process. Under Linux the system calls beneath them change only the calling thread, and are not modelled: glibc makes every other thread repeat the call by sending it signal 33, which ends or restarts a call the thread is asleep in, and with which the C library's function never returns while a thread blocks it. So under Linux each of the three is refused while another thread blocks signal 33, is asleep in a call, or owes a return to user mode, whatever the call would answer.
 * `UnixDescriptor.terminalAttributes` is `tcgetattr(3)`, `UnixPathResolution.getcwd` is `getcwd(3)` (a library routine on Darwin), and `UnixDescriptor.posixFadvise` returns its error as `posix_fadvise(3)` does, rather than setting errno.
 
 A client replaying a record of raw system calls, such as an `strace` log, uses the (2) forms.
@@ -543,8 +545,9 @@ The kernel holds no word: the word is the caller's memory.
 A wait screens its timeout, a relative time on the monotonic clock, and then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping; a timeout of zero sleeps too, as Linux's does.
 Both screen the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`).
 A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
-A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout with `EINTR`.
-A restarted wait reads its word again, so the client makes the call again; a wait with a timeout whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`.
+A timeout Linux saturates, of `KTIME_SEC_MAX` (9223372036) seconds or more or one that ends past the last instant the clock can represent, never expires: the park's timeout is `FutexTimeout.Unbounded`, and `UnixWait.deadlines` holds nothing for it. Any other timeout expires at its instant (`FutexTimeout.Until`), however far off.
+A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout, even one that never expires, with `EINTR`.
+A restarted wait reads its word again, so the client makes the call again; a wait with a deadline whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`, and one whose timeout never expires restarts, as one with no timeout does.
 Every other operation throws `UnmodelledException`, and Darwin, which has no `futex`, throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
@@ -586,9 +589,9 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | `umask(2)` | `UnixSystem.umask (caller : Caller) (mask : int)` | `PermissionBits * UnixSystem` |
 | `getresuid(2)` | `UnixCredentials.getresuid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
 | `getresgid(2)` | `UnixCredentials.getresgid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
-| `setresuid(2)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
-| `setresgid(2)` | `UnixCredentials.setresgid (caller : Caller) (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `setgroups(2)` | `UnixCredentials.setgroups (caller : Caller) (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
+| `setresuid(3)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
+| `setresgid(3)` | `UnixCredentials.setresgid (caller : Caller) (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `setgroups(3)` | `UnixCredentials.setgroups (caller : Caller) (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
 | `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (caller : Caller) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
 | Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (caller : Caller) (status : int)` | `ProcessFate<unit>` |
 | `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (caller : Caller) (status : int)` | `EndedProcess * UnixSystem` |
@@ -815,6 +818,7 @@ The cases exist so that a client's matches already handle them when sleeps, FIFO
 A call that waits with a timeout (`poll`, `epoll_wait`, `kevent`, a `futex` wait) wakes once its deadline passes.
 With nothing runnable, the client asks `UnixWait.deadlines`, which answers each sleeping call's deadline as an instant, in nanoseconds since boot.
 The earliest is when the first of those calls times out: the client advances the clock by it less `UnixSystem.nanosecondsSinceBoot`, and asks `UnixWait.wake` again.
+A `futex` wait whose timeout never expires (`FutexTimeout.Unbounded`, see "Futexes") has no deadline there: advancing the clock never ends it, as no real machine stays up long enough to.
 
 A parked call holds the open file descriptions it waits on (`ParkedSyscall.descriptions`), as a real one holds a reference to each file: a description goes when no descriptor names it and no call holds it, so one closed under a sleeping call goes when the call returns.
 

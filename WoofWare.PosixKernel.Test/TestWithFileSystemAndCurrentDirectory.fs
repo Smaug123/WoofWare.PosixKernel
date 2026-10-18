@@ -86,8 +86,8 @@ module TestWithFileSystemAndCurrentDirectory =
         =
         match UnixBootImage.tryBoot (launchAt (UnixBootImage.platform image) dir) image with
         | Ok system -> Ok system
-        | Error (LaunchRefusal.CurrentDirectory (_, fault)) -> Error (StartFault.Directory fault)
-        | Error refusal -> failwith $"unexpected launch refusal: %s{LaunchRefusal.describe refusal}"
+        | Error (BootRefusal.Launch (LaunchRefusal.CurrentDirectory (_, fault))) -> Error (StartFault.Directory fault)
+        | Error refusal -> failwith $"unexpected boot refusal: %s{BootRefusal.describe refusal}"
 
     let private startAt
         (platform : SimulatedUnixPlatform)

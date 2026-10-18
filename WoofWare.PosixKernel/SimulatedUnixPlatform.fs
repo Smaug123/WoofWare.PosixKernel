@@ -1481,19 +1481,8 @@ module SimulatedUnixPlatform =
     /// own numbering.
     let internetAddressFamily : int = 2
 
-    /// Ports below this one a process may bind only as root, at the addresses
-    /// `privilegedPortGuards` says the limit covers.
-    ///
-    /// Measured as 1024 on both: binding 1023 to loopback is `EACCES` for an
-    /// unprivileged caller and 1024 succeeds. A constant rather than a function
-    /// of the platform because the two agree, and not configuration though
-    /// Linux does expose it as `ip_unprivileged_port_start` -- nothing needs to
-    /// vary it yet, and a knob with no consumer is a knob no test covers.
-    /// Darwin has no such setting: it has no `net.inet.ip.portrange.reservedhigh`.
-    let privilegedPortCeiling : uint16 = 1024us
-
-    /// Whether this platform's `bind(2)` keeps a port below
-    /// `privilegedPortCeiling` for root when the address is, or is not, the
+    /// Whether this platform's `bind(2)` keeps a port below the machine's
+    /// unprivileged port start for root when the address is, or is not, the
     /// wildcard (`0.0.0.0` or `::`). Linux keeps it at every address; Darwin
     /// keeps it only at an address other than the wildcard, so an unprivileged
     /// process binds `0.0.0.0:80` there.

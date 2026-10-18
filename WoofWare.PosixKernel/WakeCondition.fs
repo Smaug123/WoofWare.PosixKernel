@@ -520,7 +520,7 @@ module WakeCondition =
             // A wake that takes it, its deadline, or a signal.
             | ParkedSyscall.Futex wait ->
                 let deadline =
-                    wait.FutexDeadline
+                    FutexTimeout.deadline wait.FutexTimeout
                     |> Option.map (WakePrimitive.DeadlinePassed >> WakeCondition.Primitive)
                     |> Option.toList
 
