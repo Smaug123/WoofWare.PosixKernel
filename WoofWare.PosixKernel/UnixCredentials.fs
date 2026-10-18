@@ -29,6 +29,31 @@ type GetIdsAnswer<'Id> =
     /// not write, in order (the real ID first), and fails with `EFAULT`.
     | Faulted of written : 'Id list
 
+/// Why this kernel will not answer one of the C library's credential calls
+/// under Linux. glibc's wrapper makes every other thread of the process repeat
+/// the call by sending it signal 33 (SIGSETXID), caught with `SA_RESTART`, and
+/// this kernel does not model that signal.
+[<RequireQualifiedAccess>]
+type internal SetxidSignalRefusal =
+    /// Another thread of the process blocks signal 33. The wrapper then never
+    /// returns.
+    | OtherThreadBlocksSignal
+    /// Another thread of the process is asleep in a call, or owes a return to
+    /// user mode. The signal would end or restart the call it is asleep in, as
+    /// a caught `SA_RESTART` signal does, or be taken beside the signals it
+    /// takes on its return.
+    | OtherThreadInKernel
+
+[<RequireQualifiedAccess>]
+module internal SetxidSignalRefusal =
+    /// What this kernel knows about why it will not answer.
+    let describe (refusal : SetxidSignalRefusal) : string =
+        match refusal with
+        | SetxidSignalRefusal.OtherThreadBlocksSignal ->
+            "under Linux the C library's wrapper makes every other thread repeat the call by sending it signal 33, and another thread blocks that signal, so the wrapper never returns."
+        | SetxidSignalRefusal.OtherThreadInKernel ->
+            "under Linux the C library's wrapper makes every other thread repeat the call by sending it signal 33, caught with SA_RESTART, and another thread is asleep in a call or owes a return to user mode. The signal would end or restart that call, or be taken beside the signals the thread takes on its return, and this kernel does not model it."
+
 /// Why this kernel will not answer a `setresuid(2)` or `setresgid(2)`.
 [<RequireQualifiedAccess>]
 type internal SetIdsRefusal =
@@ -42,6 +67,9 @@ type internal SetIdsRefusal =
     /// `fs.suid_dumpable` sysctl, which this kernel does not model, so whether
     /// the process still writes a core dump is unknown.
     | DumpabilityUnmodelled
+    /// The C library's signal to the process's other threads would reach one
+    /// this kernel cannot answer for.
+    | SetxidSignal of SetxidSignalRefusal
 
 [<RequireQualifiedAccess>]
 module internal SetIdsRefusal =
@@ -53,12 +81,14 @@ module internal SetIdsRefusal =
             $"%O{flavour} has no setresuid(2) or setresgid(2); its C library declares neither."
         | SetIdsRefusal.DumpabilityUnmodelled ->
             "the call changes the effective ID of a process that writes core dumps. Linux then sets the process's dumpable flag from the fs.suid_dumpable sysctl, which this kernel does not model, so whether the process would still write a core dump is unknown."
+        | SetIdsRefusal.SetxidSignal refusal -> SetxidSignalRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SetIdsRefusal) : RefusalKind =
         match refusal with
         | SetIdsRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
         | SetIdsRefusal.DumpabilityUnmodelled -> RefusalKind.Unmodelled
+        | SetIdsRefusal.SetxidSignal _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `setgroups(2)`.
 [<RequireQualifiedAccess>]
@@ -66,6 +96,9 @@ type internal SetGroupsRefusal =
     /// A privileged process on this flavour, whose `setgroups` has not been
     /// measured, because measuring it needs root.
     | UnmeasuredPrivileged of flavour : SimulatedUnixFlavour
+    /// The C library's signal to the process's other threads would reach one
+    /// this kernel cannot answer for.
+    | SetxidSignal of SetxidSignalRefusal
 
 [<RequireQualifiedAccess>]
 module internal SetGroupsRefusal =
@@ -75,11 +108,13 @@ module internal SetGroupsRefusal =
         match refusal with
         | SetGroupsRefusal.UnmeasuredPrivileged flavour ->
             $"the process is privileged, and what %O{flavour}'s setgroups(2) does for a privileged process has not been measured: measuring it needs root."
+        | SetGroupsRefusal.SetxidSignal refusal -> SetxidSignalRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SetGroupsRefusal) : RefusalKind =
         match refusal with
         | SetGroupsRefusal.UnmeasuredPrivileged _ -> RefusalKind.Unmodelled
+        | SetGroupsRefusal.SetxidSignal _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `getresuid(2)` or `getresgid(2)`.
 [<RequireQualifiedAccess>]
@@ -107,11 +142,15 @@ module internal GetIdsRefusal =
         | GetIdsRefusal.Buffer refusal -> BufferRefusal.kind refusal
 
 /// The calls by which a process reads and changes who it is: `getresuid(2)`,
-/// `getresgid(2)`, `setresuid(2)`, `setresgid(2)` and `setgroups(2)`.
+/// `getresgid(2)`, and the C library's `setresuid(3)`, `setresgid(3)` and
+/// `setgroups(3)`.
 ///
-/// Each changes the whole process, every thread alike, as the C library's
-/// wrappers do. (Linux's own system calls change only the calling thread, and
-/// the C library makes every other thread repeat the call.)
+/// Each change is the whole process's, every thread alike, as the C library's
+/// functions make it. Linux's system calls beneath them change only the
+/// calling thread, and are not modelled: glibc makes every other thread repeat
+/// the call by sending it signal 33, so under Linux each of the three is
+/// refused while another thread blocks that signal, is asleep in a call, or
+/// owes a return to user mode.
 [<RequireQualifiedAccess>]
 module UnixCredentials =
 
@@ -245,6 +284,39 @@ module UnixCredentials =
         tryGetresgid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.getresgid" GetIdsRefusal.kind GetIdsRefusal.describe
 
+    // Measured on Linux 6.18.5 with glibc 2.41 (`docs/probes/setxid-threads`):
+    // glibc's wrapper sends every other thread signal 33, whose SA_RESTART
+    // handler makes the same system call there, before it makes its own, so
+    // even a call that then fails reaches them. A thread asleep in a call had
+    // the call ended or restarted as a caught SA_RESTART signal ends or
+    // restarts it, in every one of 20 trials of each call measured, and with a
+    // thread blocking the signal the wrapper never returned. A thread owing a
+    // return would take the signal beside the ones it takes there. Darwin's
+    // calls change the process, and end no other thread's call.
+    let private checkSetxidSignal<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<unit, SetxidSignalRefusal>
+        =
+        let others = system.Threads |> Map.remove caller
+
+        let blocksSignal =
+            others
+            |> Map.exists (fun thread _ ->
+                SignalMask.contains (Signal.RealTime 1) (SignalState.maskOf thread system.Process.Signals)
+            )
+
+        let inKernel =
+            others
+            |> Map.exists (fun _ state -> Option.isSome state.Parked || Option.isSome state.Owes)
+
+        if blocksSignal then
+            Error SetxidSignalRefusal.OtherThreadBlocksSignal
+        elif inKernel then
+            Error SetxidSignalRefusal.OtherThreadInKernel
+        else
+            Ok ()
+
     // Linux's rule for `setresuid` and `setresgid`, which differ only in which
     // triple they replace: a privileged process may set each ID to anything,
     // and any other process only to one of the three it already holds. On
@@ -306,6 +378,7 @@ module UnixCredentials =
 
     /// `trySetresuid` once `Entry` has admitted its caller.
     let private trySetresuidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : 'Thread)
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
@@ -315,6 +388,10 @@ module UnixCredentials =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
+
+        match checkSetxidSignal caller system with
+        | Error refusal -> Error (SetIdsRefusal.SetxidSignal refusal)
+        | Ok () ->
 
         let credentials = system.Process.Credentials
 
@@ -357,20 +434,23 @@ module UnixCredentials =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (trySetresuidIn real effective saved)
+            (trySetresuidIn (Caller.thread caller) real effective saved)
             system
 
     /// <summary>
-    /// `setresuid(2)`: set the process's real, effective and saved user IDs.
-    /// `None` leaves an ID as it is.
+    /// `setresuid(3)`: set the process's real, effective and saved user IDs,
+    /// for every thread. `None` leaves an ID as it is.
     ///
     /// A privileged process may set them to anything. Any other process may
     /// only set each to one of the three it already holds, and is otherwise
     /// answered `EPERM` with nothing changed.
     ///
-    /// Refused on Darwin, which has no such call, and for a process that writes
-    /// core dumps when its effective user ID would change: whether it still
-    /// writes one turns on `fs.suid_dumpable`, which this kernel does not model.
+    /// Refused on Darwin, which has no such call; under Linux while another
+    /// thread blocks signal 33, is asleep in a call, or owes a return to user
+    /// mode, since the C library reaches every other thread with that signal;
+    /// and for a process that writes core dumps when its effective user ID
+    /// would change: whether it still writes one turns on `fs.suid_dumpable`,
+    /// which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -386,6 +466,7 @@ module UnixCredentials =
 
     /// `trySetresgid` once `Entry` has admitted its caller.
     let private trySetresgidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : 'Thread)
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
@@ -395,6 +476,10 @@ module UnixCredentials =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
+
+        match checkSetxidSignal caller system with
+        | Error refusal -> Error (SetIdsRefusal.SetxidSignal refusal)
+        | Ok () ->
 
         let credentials = system.Process.Credentials
 
@@ -437,21 +522,24 @@ module UnixCredentials =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (trySetresgidIn real effective saved)
+            (trySetresgidIn (Caller.thread caller) real effective saved)
             system
 
     /// <summary>
-    /// `setresgid(2)`: set the process's real, effective and saved group IDs.
-    /// `None` leaves an ID as it is.
+    /// `setresgid(3)`: set the process's real, effective and saved group IDs,
+    /// for every thread. `None` leaves an ID as it is.
     ///
     /// A privileged process may set them to anything. Any other process may
     /// only set each to one of the three it already holds (its supplementary
     /// groups do not count), and is otherwise answered `EPERM` with nothing
     /// changed. Privilege is the effective *user* ID's, as everywhere else.
     ///
-    /// Refused on Darwin, which has no such call, and for a process that writes
-    /// core dumps when its effective group ID would change: whether it still
-    /// writes one turns on `fs.suid_dumpable`, which this kernel does not model.
+    /// Refused on Darwin, which has no such call; under Linux while another
+    /// thread blocks signal 33, is asleep in a call, or owes a return to user
+    /// mode, since the C library reaches every other thread with that signal;
+    /// and for a process that writes core dumps when its effective group ID
+    /// would change: whether it still writes one turns on `fs.suid_dumpable`,
+    /// which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -504,6 +592,7 @@ module UnixCredentials =
 
     /// `trySetgroups` once `Entry` has admitted its caller.
     let private trySetgroupsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : 'Thread)
         (size : int)
         (words : GroupListWords)
         (system : ProcessView<'Thread, 'Handler>)
@@ -532,6 +621,10 @@ module UnixCredentials =
             // first, so an unprivileged process is EPERM whatever it passes;
             // then the size, which is EINVAL whatever the buffer; then the
             // words. Changing the groups leaves the dumpable flag alone.
+            match checkSetxidSignal caller system with
+            | Error refusal -> Error (SetGroupsRefusal.SetxidSignal refusal)
+            | Ok () ->
+
             match privilege with
             | CallerPrivilege.Unprivileged -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
             | CallerPrivilege.Privileged ->
@@ -579,11 +672,11 @@ module UnixCredentials =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (trySetgroupsIn size words)
+            (trySetgroupsIn (Caller.thread caller) size words)
             system
 
-    /// `setgroups(2)`: replace the process's supplementary groups with the
-    /// `size` groups `words` holds, kept in the order given.
+    /// `setgroups(3)`: replace the process's supplementary groups, for every
+    /// thread, with the `size` groups `words` holds, kept in the order given.
     ///
     /// Only a privileged process may. A list longer than the platform's
     /// `SimulatedUnixPlatform.supplementaryGroupLimit`, or of negative size, is
@@ -592,7 +685,9 @@ module UnixCredentials =
     /// orders.
     ///
     /// Refused for a privileged Darwin process, whose answer has not been
-    /// measured.
+    /// measured, and under Linux, whatever the call would answer, while another
+    /// thread blocks signal 33, is asleep in a call, or owes a return to user
+    /// mode, since the C library reaches every other thread with that signal.
     let setgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (size : int)

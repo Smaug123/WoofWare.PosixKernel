@@ -533,13 +533,13 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | GetResUid of real : UserBuffer * effective : UserBuffer * saved : UserBuffer
     /// `getresgid(2)`, as `UnixCredentials.getresgid` makes it.
     | GetResGid of real : UserBuffer * effective : UserBuffer * saved : UserBuffer
-    /// `setresuid(2)`, as `UnixCredentials.setresuid` makes it. `None` is
+    /// `setresuid(3)`, as `UnixCredentials.setresuid` makes it. `None` is
     /// `(uid_t)-1`: leave that ID as it is.
     | SetResUid of real : UserId option * effective : UserId option * saved : UserId option
-    /// `setresgid(2)`, as `UnixCredentials.setresgid` makes it. `None` is
+    /// `setresgid(3)`, as `UnixCredentials.setresgid` makes it. `None` is
     /// `(gid_t)-1`: leave that ID as it is.
     | SetResGid of real : GroupId option * effective : GroupId option * saved : GroupId option
-    /// `setgroups(2)` of a list of `size` groups, whose words are as the caller
+    /// `setgroups(3)` of a list of `size` groups, whose words are as the caller
     /// read them, as `UnixCredentials.setgroups` makes it.
     | SetGroups of size : int * words : GroupListWords
     /// `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it and

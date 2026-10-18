@@ -26,7 +26,7 @@ The table's third row looks like them too, and is not the kernel's at all.
 | home | the fact is… | examples |
 | --- | --- | --- |
 | `SimulatedUnixPlatform` | true of *this kernel's source*, the same on every machine running it | the architecture and page size the image was built for, `sa_family_t` width, `AF_INET6`'s number, `sizeof(struct sockaddr_storage)`, `reportsBirthTime`, `setIdBitsOnTruncation`, `creatingOpenRules` |
-| configuration: `UnixBootImage` for the machine, `ProcessLaunch` for a process | true of *this machine or mount or process*, and a different admin could change it | `withMount`, `withUserAddressLimit`, `withProcessorCount`, `withBootTime`, `withProtectedFiles` on the boot image; `withCredentials`, `withUmask` on a launch |
+| configuration: `UnixBootImage` for the machine, `ProcessLaunch` for a process | true of *this machine or mount or process*, and a different admin could change it | `withMount`, `withUserAddressLimit`, `withProcessorCount`, `withBootTime`, `withProtectedFiles`, `withUnprivilegedPortStart` on the boot image; `withCredentials`, `withUmask` on a launch |
 | the client | an artefact of how the client runs the process, which no real kernel has | a limit that comes from how the client represents memory; which code path the process's own C library or runtime takes on each platform |
 
 The test that separates the first two: **could two machines running the same
@@ -66,7 +66,9 @@ Two rules for adding a configuration knob:
   a current directory is an inode of *this* filesystem, and a new filesystem
   invalidates every inode number the previous one handed out, so `ProcessLaunch`
   holds the directory as a path and the launch resolves it against the machine
-  it starts on.
+  it starts on. Likewise Linux keeps its ephemeral range at or above its
+  unprivileged port start, so `UnixBootImage.boot`, not either setter, refuses
+  a range below the start.
 - **How a process starts is a `ProcessLaunch`, not a boot-image setter.** The
   first process (`UnixBootImage.boot`) and every later one
   (`UnixSystem.launch`) start from one, so a per-process knob goes on

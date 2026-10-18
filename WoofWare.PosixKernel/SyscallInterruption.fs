@@ -194,9 +194,10 @@ module SyscallInterruption =
         // wait with no timeout returned EINTR without SA_RESTART and went on
         // sleeping with it; one with a timeout returned EINTR either way.
         | ParkedSyscall.Futex wait ->
-            match wait.FutexDeadline with
-            | None -> SignalRestartRule.RestartsUnderSaRestart
-            | Some _ -> SignalRestartRule.FailsWithEintr
+            match wait.FutexTimeout with
+            | FutexTimeout.Untimed -> SignalRestartRule.RestartsUnderSaRestart
+            | FutexTimeout.Until _
+            | FutexTimeout.Unbounded -> SignalRestartRule.FailsWithEintr
 
     /// What a thread in `sigsuspend` does now, its temporary mask in force.
     [<RequireQualifiedAccess>]
@@ -430,11 +431,15 @@ module SyscallInterruption =
             measuredWithoutTimeout wait.Deadline InterruptedCall.FailsWithEintr
         // Measured on Linux 6.18.5 (`docs/probes/futex`, the "stop" rows): a
         // wait stopped and continued, no handler run, went on sleeping, and
-        // one with a timeout still timed out at its first deadline.
+        // one with a timeout still timed out at its first deadline. A saturated
+        // timeout's first deadline never comes, and the call made again with
+        // the same arguments saturates too (a later "now" only overflows
+        // further), so it restarts as an untimed wait does.
         | SimulatedUnixFlavour.Linux, ParkedSyscall.Futex wait ->
-            match wait.FutexDeadline with
-            | None -> UnhandledInterruption.Ends InterruptedCall.Restarts
-            | Some _ -> UnhandledInterruption.RestartsWithRemainingTime
+            match wait.FutexTimeout with
+            | FutexTimeout.Untimed
+            | FutexTimeout.Unbounded -> UnhandledInterruption.Ends InterruptedCall.Restarts
+            | FutexTimeout.Until _ -> UnhandledInterruption.RestartsWithRemainingTime
         // A park the flavour never makes, and the reserved parks.
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.InotifyRead _
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.Poll _

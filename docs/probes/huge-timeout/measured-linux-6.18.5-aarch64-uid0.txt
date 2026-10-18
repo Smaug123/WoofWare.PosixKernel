@@ -1,0 +1,100 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+# Linux 6.18.5 aarch64, uid 0, sizeof(long)=8 sizeof(time_t)=8, CLOCK_MONOTONIC at start 3.077900293 s
+# watch 2000 ms
+futex-wait-private ender=wake timeout=1,500000000 ret=-1 errno=ETIMEDOUT at=1504
+futex-wait-private ender=wake timeout=8589934592,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372035,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372035,999999999 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372036,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372036,854775807 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372036,999999999 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372037,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=10000000000,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=1000000000000000,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=4611686018427387904,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=9223372036854775806,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=INT64_MAX,0 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=INT64_MAX,999999999 asleep-at=2000 woke=1 ret=0 errno=0 at=2000
+futex-wait-private ender=wake timeout=-1,0 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=-9223372036,0 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=INT64_MIN,0 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=INT64_MIN,999999999 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=0,1000000000 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=0,-1 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=0,INT64_MAX ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=0,INT64_MIN ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=INT64_MAX,1000000000 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=INT64_MAX,-1 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=9223372036,1000000000 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=wake timeout=-1,999999999 ret=-1 errno=EINVAL at=0
+futex-wait-private ender=restart timeout=null asleep-at=2000 after-signal=asleep woke=1 ret=0 errno=0 at=2300
+futex-wait-private ender=restart timeout=100,0 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+futex-wait-private ender=restart timeout=8589934592,0 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+futex-wait-private ender=restart timeout=9223372035,999999999 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+futex-wait-private ender=restart timeout=9223372036,0 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+futex-wait-private ender=restart timeout=10000000000,0 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+futex-wait-private ender=restart timeout=INT64_MAX,0 asleep-at=2000 after-signal: ret=-1 errno=EINTR at=2000
+poll ender=write timeout=1500 ret=0 errno=0 at=1503
+poll ender=write timeout=100000000 asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=1073741824 asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=INT_MAX asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=-1 asleep-at=2000 ret=1 errno=0 at=2000
+poll ender=write timeout=INT_MIN asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=1,500000000 ret=0 errno=0 at=1502
+ppoll ender=write timeout=8589934592,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372035,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372035,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372036,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372036,854775807 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372036,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372037,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=10000000000,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=1000000000000000,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=4611686018427387904,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=9223372036854775806,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=INT64_MAX,0 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=INT64_MAX,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+ppoll ender=write timeout=-1,0 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=-9223372036,0 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=INT64_MIN,0 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=INT64_MIN,999999999 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=0,1000000000 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=0,-1 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=0,INT64_MAX ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=0,INT64_MIN ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=INT64_MAX,1000000000 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=INT64_MAX,-1 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=9223372036,1000000000 ret=-1 errno=EINVAL at=0
+ppoll ender=write timeout=-1,999999999 ret=-1 errno=EINVAL at=0
+epoll_wait ender=write timeout=1500 ret=0 errno=0 at=1501
+epoll_wait ender=write timeout=100000000 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_wait ender=write timeout=1073741824 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_wait ender=write timeout=INT_MAX asleep-at=2000 ret=1 errno=0 at=2000
+epoll_wait ender=write timeout=-1 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_wait ender=write timeout=INT_MIN asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=1,500000000 ret=0 errno=0 at=1501
+epoll_pwait2 ender=write timeout=8589934592,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372035,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372035,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372036,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372036,854775807 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372036,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372037,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=10000000000,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=1000000000000000,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=4611686018427387904,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=9223372036854775806,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=INT64_MAX,0 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=INT64_MAX,999999999 asleep-at=2000 ret=1 errno=0 at=2000
+epoll_pwait2 ender=write timeout=-1,0 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=-9223372036,0 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=INT64_MIN,0 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=INT64_MIN,999999999 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=0,1000000000 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=0,-1 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=0,INT64_MAX ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=0,INT64_MIN ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=INT64_MAX,1000000000 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=INT64_MAX,-1 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=9223372036,1000000000 ret=-1 errno=EINVAL at=0
+epoll_pwait2 ender=write timeout=-1,999999999 ret=-1 errno=EINVAL at=0

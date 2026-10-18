@@ -147,7 +147,7 @@ module TestSignalState =
         (s : SignalState<TestThread, TestHandler>)
         : SignalGeneration<TestThread, TestHandler>
         =
-        match SignalState.generate numbering coreDumps t0 (Set.ofList threads) entry s with
+        match SignalState.generate numbering coreDumps t0 true (Set.ofList threads) entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
@@ -1199,11 +1199,11 @@ module TestSignalState =
                 Target = ValueNone
             }
 
-        SignalState.generate numbering CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ; t2 ]) entry s
+        SignalState.generate numbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ; t2 ]) entry s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGINT))
 
         // Once every thread blocks it, it is simply pending.
-        SignalState.generate numbering CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) entry s
+        SignalState.generate numbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
@@ -1232,7 +1232,7 @@ module TestSignalState =
                 (SignalMask.ofSignals linux (Set.singleton Signal.SIGCONT))
                 t0
 
-        SignalState.generate linux CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) entry s
+        SignalState.generate linux CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGCONT))
 
         SignalState.onReturnToUser
@@ -1245,7 +1245,7 @@ module TestSignalState =
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGCONT))
 
         // With every thread blocking it, it is simply pending.
-        SignalState.generate linux CoreDumps.Suppressed t0 (Set.singleton t0) entry s
+        SignalState.generate linux CoreDumps.Suppressed t0 true (Set.singleton t0) entry s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
@@ -1260,7 +1260,7 @@ module TestSignalState =
                 (SignalMask.ofSignals darwinNumbering (Set.singleton Signal.SIGCONT))
                 t0
 
-        SignalState.generate darwinNumbering CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) entry darwin
+        SignalState.generate darwinNumbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry darwin
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [])
@@ -1351,6 +1351,7 @@ module TestSignalState =
                 numbering
                 CoreDumps.Suppressed
                 t2
+                true
                 threads
                 {
                     Signal = Signal.SIGINT
@@ -1635,7 +1636,8 @@ module TestSignalState =
         /// `changeMask`, as `sigprocmask(2)` calls it, with a set of signals.
         | ChangeMask of thread : TestThread * change : SignalMaskChange * set : Set<Signal>
         | Enqueue of entry : PendingSignal<TestThread>
-        | Generate of coreDumps : CoreDumps * entry : PendingSignal<TestThread>
+        /// `generate`, with whether the leader is running.
+        | Generate of coreDumps : CoreDumps * leaderRunning : bool * entry : PendingSignal<TestThread>
         | Deliver of coreDumps : CoreDumps * thread : TestThread
         /// `sigreturn` of the thread's innermost frame, which it has.
         | Sigreturn of thread : TestThread
@@ -1929,6 +1931,10 @@ module TestSignalState =
         /// Darwin's numbering, and the signal would be left pending beside an
         /// instance in the set Darwin holds as the same one.
         | RefusedAsMerged of Signal
+        /// Linux's numbering: a caught signal sent to the process while the
+        /// leader, not running, has one to take already, and another thread
+        /// does not block it, so Linux wakes that thread too.
+        | RefusedLeaderSignalled of Signal
 
     /// What generating `entry` does at once, and the state after.
     /// A default-disposition signal some thread could receive takes its default
@@ -1937,10 +1943,14 @@ module TestSignalState =
     /// process that only a non-leader could receive is refused, and so, under
     /// Darwin's numbering, is one left pending beside an instance in the set
     /// Darwin holds as the same: it keeps a signal sent to the process in the
-    /// leader's own set.
+    /// leader's own set. Under Linux's numbering a caught one for the process
+    /// is refused too where the leader is not running and already has a signal
+    /// it could take, another thread does not block it, and it is not a standard
+    /// signal already pending on the process.
     let private referenceGenerate
         (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
+        (leaderRunning : bool)
         (threads : Set<TestThread>)
         (entry : PendingSignal<TestThread>)
         (r : ReferenceState)
@@ -1976,6 +1986,25 @@ module TestSignalState =
             with
             | ReferenceReceiver.Nobody, _, _ -> pend ()
             | ReferenceReceiver.BeyondLeader, SignalDisposition.Catch _, _ -> ReferenceGeneration.Refused entry.Signal
+            | ReferenceReceiver.Thread _, SignalDisposition.Catch _, _ when
+                numbering = SignalNumbering.Linux
+                && entry.Target.IsNone
+                && not leaderRunning
+                && r.Pending
+                   |> List.exists (fun p ->
+                       (p.Target.IsNone || p.Target = ValueSome referenceLeader)
+                       && not (referenceBlocks r referenceLeader p.Signal)
+                   )
+                && not (
+                    not (Signal.isRealTimeUnder numbering entry.Signal)
+                    && r.Pending |> List.exists (fun p -> p.Signal = entry.Signal && p.Target.IsNone)
+                )
+                && threads
+                   |> Set.exists (fun thread ->
+                       thread <> referenceLeader && not (referenceBlocks r thread entry.Signal)
+                   )
+                ->
+                ReferenceGeneration.RefusedLeaderSignalled entry.Signal
             | _, SignalDisposition.Catch _, _ -> pend ()
             | _, SignalDisposition.Default, DefaultDisposition.Terminate ->
                 ReferenceGeneration.Terminated (entry.Signal, referenceCore numbering coreDumps entry.Signal)
@@ -2209,10 +2238,11 @@ module TestSignalState =
             },
             threads
         | Op.Enqueue e -> SignalState.enqueue numbering e s, referenceEnqueue numbering e r, threads
-        | Op.Generate (coreDumps, e) ->
-            let actual = SignalState.generate numbering coreDumps referenceLeader threads e s
+        | Op.Generate (coreDumps, leaderRunning, e) ->
+            let actual =
+                SignalState.generate numbering coreDumps referenceLeader leaderRunning threads e s
 
-            let expected = referenceGenerate numbering coreDumps threads e r
+            let expected = referenceGenerate numbering coreDumps leaderRunning threads e r
 
             // A terminated process has no state to carry on with, and a refused
             // generation did not happen, so in both the run goes on from the
@@ -2227,6 +2257,10 @@ module TestSignalState =
                 s, r, threads
             | Error (SignalReceiverRefusal.LeaderBlocks a), ReferenceGeneration.Refused b when a = b -> s, r, threads
             | Error (SignalReceiverRefusal.PendingForProcessAndLeader a), ReferenceGeneration.RefusedAsMerged b when
+                a = b
+                ->
+                s, r, threads
+            | Error (SignalReceiverRefusal.LeaderAlreadySignalled a), ReferenceGeneration.RefusedLeaderSignalled b when
                 a = b
                 ->
                 s, r, threads
@@ -2580,7 +2614,7 @@ module TestSignalState =
         elif kind < 60 then
             Op.Enqueue (pickEnqueuedEntry ())
         elif kind < 70 then
-            Op.Generate (pickCoreDumps (), pickGeneratedEntry ())
+            Op.Generate (pickCoreDumps (), rng.Next 2 = 0, pickGeneratedEntry ())
         elif kind < 94 then
             // The leader is asked half the time: it is the only thread that takes
             // the process's own signals.
@@ -2624,6 +2658,7 @@ module TestSignalState =
         | GeneratedQueued
         | GeneratedIgnoredDiscards
         | GenerationRefusals
+        | LeaderSignalledRefusals
         | DeliveryRefusals
         | DiscardsWhenSet
         | Flushes
@@ -2739,8 +2774,8 @@ module TestSignalState =
                         )
                     then
                         cover OracleLabel.HeldByFrame
-                | Op.Generate (coreDumps, e) ->
-                    match referenceGenerate numbering coreDumps threads e r with
+                | Op.Generate (coreDumps, leaderRunning, e) ->
+                    match referenceGenerate numbering coreDumps leaderRunning threads e r with
                     | ReferenceGeneration.Terminated (_, cored) ->
                         cover OracleLabel.GeneratedTerminations
 
@@ -2749,6 +2784,7 @@ module TestSignalState =
                     | ReferenceGeneration.Stopped _ -> cover OracleLabel.GeneratedStops
                     | ReferenceGeneration.Refused _ -> cover OracleLabel.GenerationRefusals
                     | ReferenceGeneration.RefusedAsMerged _ -> cover OracleLabel.MergeRefusals
+                    | ReferenceGeneration.RefusedLeaderSignalled _ -> cover OracleLabel.LeaderSignalledRefusals
                     | ReferenceGeneration.Continues r' ->
                         cover OracleLabel.GeneratedQueued
 
@@ -2779,7 +2815,7 @@ module TestSignalState =
 
                 match op with
                 | Op.Enqueue e
-                | Op.Generate (_, e) ->
+                | Op.Generate (_, _, e) ->
 
                     match referenceBeginGeneration numbering e.Signal r with
                     | None -> cover OracleLabel.GenerationDrops
@@ -2851,6 +2887,12 @@ module TestSignalState =
         coverage.Count OracleLabel.GeneratedQueued |> shouldBeGreaterThan 20
         coverage.Count OracleLabel.GeneratedIgnoredDiscards |> shouldBeGreaterThan 20
         coverage.Count OracleLabel.GenerationRefusals |> shouldBeGreaterThan 3
+
+        // Only Linux wakes a thread beside a leader that has a signal to take.
+        match numbering with
+        | SignalNumbering.Linux -> coverage.Count OracleLabel.LeaderSignalledRefusals |> shouldBeGreaterThan 3
+        | SignalNumbering.Darwin -> coverage.Count OracleLabel.LeaderSignalledRefusals |> shouldEqual 0
+
         coverage.Count OracleLabel.DeliveryRefusals |> shouldBeGreaterThan 20
         coverage.Count OracleLabel.DiscardsWhenSet |> shouldBeGreaterThan 20
         coverage.Count OracleLabel.Flushes |> shouldBeGreaterThan 20

@@ -626,6 +626,30 @@ type ParkedConnect =
             Socket : OpenFileDescriptionId
         }
 
+/// When a Linux `futex(2)` `FUTEX_WAIT_PRIVATE` times out.
+[<RequireQualifiedAccess>]
+type FutexTimeout =
+    /// The wait was made with no timeout: only a wake or a signal ends it.
+    | Untimed
+    /// The wait answers `ETIMEDOUT` at this instant, in nanoseconds since boot.
+    | Until of nanosecondsSinceBoot : int64
+    /// The wait was made with a timeout so long that Linux saturates it: at
+    /// least `KTIME_SEC_MAX` (9223372036) seconds, or one that ends past the
+    /// last instant the clock can represent (`Int64.MaxValue` nanoseconds since
+    /// boot). It never times out, so `UnixWait.deadlines` holds no deadline for
+    /// it, but it is a wait with a timeout: a signal whose handler was
+    /// installed with `SA_RESTART` still ends it with `EINTR`.
+    | Unbounded
+
+[<RequireQualifiedAccess>]
+module internal FutexTimeout =
+    /// The instant a wait with `timeout` times out, if it ever does.
+    let deadline (timeout : FutexTimeout) : int64 option =
+        match timeout with
+        | FutexTimeout.Until deadline -> Some deadline
+        | FutexTimeout.Untimed
+        | FutexTimeout.Unbounded -> None
+
 /// One thread's in-flight Linux `futex(2)` `FUTEX_WAIT_PRIVATE`: the address
 /// it waits on, when it times out, and whether a `FUTEX_WAKE_PRIVATE` has
 /// taken it off the queue of that address.
@@ -636,9 +660,8 @@ type ParkedFutex =
     {
         /// The user address the thread waits on.
         FutexAddress : uint64
-        /// The instant, in nanoseconds since boot, at which the wait answers
-        /// `ETIMEDOUT`; or `None` for a wait with no timeout.
-        FutexDeadline : int64 option
+        /// When the wait times out.
+        FutexTimeout : FutexTimeout
         /// Whether a `FUTEX_WAKE_PRIVATE` has taken the thread off its queue,
         /// so that the wait answers 0, whatever else has woken it.
         TakenByWake : bool

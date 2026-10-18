@@ -118,11 +118,11 @@ module TestUnixSignal =
         | other -> failwith $"unexpected answer: %O{other}"
 
     [<Test>]
-    let ``kill is answered only for the calling process`` () : unit =
+    let ``kill of a pid next to the caller's, which names nothing, is ESRCH`` () : unit =
         // A pid that differs from the caller's by one, so a comparison against
         // the wrong field (or an off-by-one) is caught.
         UnixSignal.tryKill (Callers.leader linux) (self + 1) 0 linux
-        |> shouldEqual (Error (KillRefusal.OtherProcess (self + 1)))
+        |> shouldEqual (Ok (Error UnixError.ESRCH))
 
         for pid in [ 0 ; -1 ; -self ; Int32.MinValue ] do
             UnixSignal.tryKill (Callers.leader linux) pid 0 linux
@@ -203,6 +203,7 @@ module TestUnixSignal =
                                 (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
                                 0
+                                false
                                 (Set.singleton 0)
                                 {
                                     Signal =
@@ -253,11 +254,11 @@ module TestUnixSignal =
 
     /// Linux finds the target before it looks at the signal number: `kill(2)`
     /// of a pid naming no process is ESRCH whatever the number, where Darwin
-    /// says EINVAL (measured, `kill-arguments.c`). Whether a pid names a process
-    /// is exactly what this kernel cannot know, so a number it would call
-    /// EINVAL for the calling process must still be refused for another.
+    /// says EINVAL (measured, `kill-arguments.c`). In a machine of one process
+    /// with one thread, every positive pid but the caller's and 1 names
+    /// nothing; 1 and every pid of 0 or below are refused whatever the number.
     [<Test>]
-    let ``kill of any other target is refused whatever the signal number`` () : unit =
+    let ``kill of any other target is ESRCH, after Darwin's EINVAL, or refused`` () : unit =
         let gen =
             gen {
                 let! flavour = Gen.elements flavours
@@ -269,10 +270,16 @@ module TestUnixSignal =
         let property (flavour : SimulatedUnixFlavour, pid : int, signo : int) : unit =
             let system = systemOn flavour
 
+            let invalid =
+                signo <> 0
+                && (Signal.ofRawSignoUnder (HostPlatform.signalNumberingOf flavour) signo).IsNone
+
             match UnixSignal.tryKill (Callers.leader system) pid signo system with
-            | Error (KillRefusal.OtherProcess refused) when pid > 0 -> refused |> shouldEqual pid
             | Error (KillRefusal.ProcessGroup refused) when pid <= 0 -> refused |> shouldEqual pid
-            | other -> failwith $"kill(%d{pid}, %d{signo}) under %O{flavour}: expected a refusal, got %O{other}"
+            | Error KillRefusal.ProcessOne when pid = 1 -> ()
+            | Ok (Error UnixError.EINVAL) when pid > 1 && flavour = SimulatedUnixFlavour.Darwin && invalid -> ()
+            | Ok (Error UnixError.ESRCH) when pid > 1 && (flavour = SimulatedUnixFlavour.Linux || not invalid) -> ()
+            | other -> failwith $"kill(%d{pid}, %d{signo}) under %O{flavour}: got %O{other}"
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 

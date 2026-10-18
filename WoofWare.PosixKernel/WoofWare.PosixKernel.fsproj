@@ -61,6 +61,7 @@
         <Compile Include="AtFlags.fs" />
         <Compile Include="EmulatedFileSystemType.fs" />
         <Compile Include="DeviceFileSystem.fs" />
+        <Compile Include="AccessTimeUpdate.fs" />
         <Compile Include="UserBuffer.fs" />
         <Compile Include="TimespecArgument.fs" />
         <Compile Include="OsThreadId.fs" />

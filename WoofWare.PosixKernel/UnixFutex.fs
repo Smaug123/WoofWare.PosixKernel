@@ -53,7 +53,7 @@ type PausedFutexWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : 
             Thread : 'Thread
             Address : uint64
             Expected : uint32
-            Deadline : int64 option
+            Timeout : FutexTimeout
             /// The system the call was made in: everything a wait does before
             /// reading the word is a question.
             System : ProcessView<'Thread, 'Handler>
@@ -80,40 +80,37 @@ module UnixFutex =
 
     let private nanosecondsPerSecond : int64 = 1_000_000_000L
 
-    /// The instant, in nanoseconds since boot, at which a wait made at `now`
-    /// with the relative timeout `timeout` times out; or the error the timeout
-    /// answers.
-    let private deadlineOf (now : int64) (timeout : TimespecArgument) : Result<int64 option, UnixError> =
+    /// When a wait made at `now` with the relative timeout `timeout` times
+    /// out; or the error the timeout answers.
+    let private timeoutOf (now : int64) (timeout : TimespecArgument) : Result<FutexTimeout, UnixError> =
         match timeout with
-        | TimespecArgument.Null -> Ok None
+        | TimespecArgument.Null -> Ok FutexTimeout.Untimed
         | TimespecArgument.Unreadable -> Error UnixError.EFAULT
         | TimespecArgument.Readable (seconds, nanoseconds) ->
             if seconds < 0L || nanoseconds < 0L || nanoseconds >= nanosecondsPerSecond then
                 Error UnixError.EINVAL
             else
-                // Linux turns the timespec into nanoseconds, saturating at
-                // `KTIME_MAX` (`Int64.MaxValue`) from `KTIME_SEC_MAX` seconds
-                // up, and adds the time now, saturating again
-                // (`timespec64_to_ktime`, `ktime_add_safe`; from source). The
-                // measured "huge" rows (`docs/probes/futex`) slept until a
-                // wake ended them, which every reading of the rule agrees with:
-                // where they differ is under a second, 292 years from boot.
+                // Linux turns the timespec into nanoseconds, saturating from
+                // `KTIME_SEC_MAX` seconds up, and adds the time now, saturating
+                // again where the sum overflows (`timespec64_to_ktime`,
+                // `ktime_add_safe`; the rule's shape from source). Measured
+                // (`docs/probes/huge-timeout`, on both sides of each
+                // saturation): every such wait slept until a wake ended it, and
+                // a signal under `SA_RESTART` ended it with `EINTR`, as it ends
+                // a timed wait. By source Linux arms a timer near
+                // `KTIME_SEC_MAX` seconds after boot, which no measurement can
+                // tell from never, so a saturated wait has no deadline here.
                 let ktimeSecondsMax = System.Int64.MaxValue / nanosecondsPerSecond
 
-                let length =
-                    if seconds >= ktimeSecondsMax then
-                        System.Int64.MaxValue
-                    else
-                        seconds * nanosecondsPerSecond + nanoseconds
+                if seconds >= ktimeSecondsMax then
+                    Ok FutexTimeout.Unbounded
+                else
+                    let length = seconds * nanosecondsPerSecond + nanoseconds
 
-                Ok (
-                    Some (
-                        if now > System.Int64.MaxValue - length then
-                            System.Int64.MaxValue
-                        else
-                            now + length
-                    )
-                )
+                    if now > System.Int64.MaxValue - length then
+                        Ok FutexTimeout.Unbounded
+                    else
+                        Ok (FutexTimeout.Until (now + length))
 
     /// `tryFutex` once `Entry` has admitted its caller.
     let private tryFutexIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -147,9 +144,9 @@ module UnixFutex =
             UserBufferCheck.faultsBeforeOperation (UnixMachineState.userBufferCheck system.Machine) address 4UL
 
         if op = FutexWaitPrivate then
-            match deadlineOf system.Scheduling.NanosecondsSinceBoot timeout with
+            match timeoutOf system.Scheduling.NanosecondsSinceBoot timeout with
             | Error error -> failed error
-            | Ok deadline ->
+            | Ok timeout ->
 
             if not aligned then
                 failed UnixError.EINVAL
@@ -167,7 +164,7 @@ module UnixFutex =
                     Thread = thread
                     Address = address
                     Expected = uint32 value
-                    Deadline = deadline
+                    Timeout = timeout
                     System = system
                 }
                 |> CallProgress.NeedsCopyIn
@@ -251,7 +248,10 @@ module UnixFutex =
     ///
     /// `FUTEX_WAIT_PRIVATE` waits while the word at `address` holds `value`,
     /// for at most `timeout`, a relative time on the monotonic clock, or for
-    /// ever if it is `TimespecArgument.Null`. `word` is the caller's memory at
+    /// ever if it is `TimespecArgument.Null`. A timeout of `KTIME_SEC_MAX`
+    /// (9223372036) seconds or more, or one that ends past the last instant
+    /// the clock can represent, never expires (`FutexTimeout.Unbounded`), but
+    /// is still a timeout to a signal. `word` is the caller's memory at
     /// `address`. Once the timeout and the address have passed their screens
     /// (`EFAULT` for an unreadable timeout, `EINVAL` for a malformed one, then
     /// `EINVAL` for an address that is not a multiple of 4, then `EFAULT` for
@@ -305,7 +305,7 @@ module UnixFutex =
             ParkedSyscall.Futex
                 {
                     FutexAddress = paused.Address
-                    FutexDeadline = paused.Deadline
+                    FutexTimeout = paused.Timeout
                     TakenByWake = false
                 }
 
@@ -315,11 +315,12 @@ module UnixFutex =
         // it parks with its condition already holding, which `parkWaiting`
         // would report as a bug.
         let asleep =
-            match paused.Deadline with
-            | Some deadline when deadline <= system.Scheduling.NanosecondsSinceBoot ->
+            match paused.Timeout with
+            | FutexTimeout.Until deadline when deadline <= system.Scheduling.NanosecondsSinceBoot ->
                 Parking.park paused.Thread parked system
-            | Some _
-            | None -> Parking.parkWaiting paused.Thread parked system
+            | FutexTimeout.Until _
+            | FutexTimeout.Untimed
+            | FutexTimeout.Unbounded -> Parking.parkWaiting paused.Thread parked system
 
         Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), asleep)
 
@@ -370,7 +371,7 @@ module UnixFutex =
         // signal's handler runs as it returns; and a timeout beats a signal.
         if wait.TakenByWake then
             Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), UnixParkState.unpark thread system)
-        elif WakeCondition.deadlinePassed wait.FutexDeadline system then
+        elif WakeCondition.deadlinePassed (FutexTimeout.deadline wait.FutexTimeout) system then
             Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ETIMEDOUT), UnixParkState.unpark thread system)
         else
 
@@ -412,14 +413,16 @@ module UnixFutex =
     /// is interrupted by a signal (`SyscallOutcome.Interrupted`), and the
     /// thread's return to user mode (`UnixSignal.onReturnToUser`) says whether
     /// it fails with `EINTR` or restarts. A wait with no timeout restarts under
-    /// a handler installed with `SA_RESTART`; one with a timeout never does. A
+    /// a handler installed with `SA_RESTART`; one with a timeout, even one that
+    /// never expires, never does. A
     /// restarted wait reads its word again, so the caller makes the call again
     /// with the arguments it first made it with.
     ///
-    /// Throws `UnmodelledException` for a wait with a timeout that a signal
+    /// Throws `UnmodelledException` for a wait with a deadline that a signal
     /// woke, where by now the thread would take no signal as it returned to
     /// user mode: Linux restarts such a wait with its first deadline, which a
-    /// call made again does not have.
+    /// call made again does not have. A wait whose timeout never expires
+    /// restarts then, as one with no timeout does.
     let finishFutexWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)

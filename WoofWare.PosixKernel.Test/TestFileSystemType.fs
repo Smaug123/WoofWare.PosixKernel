@@ -109,9 +109,10 @@ module TestFileSystemType =
             }
 
     /// Every APFS field measured on Darwin, with the fields the mount was
-    /// configured with. The flags are local, root, volfs, journaled,
-    /// multilabel and no-atime; the `f_fsid` is `{ st_dev, f_type }` for the
-    /// `st_dev` every inode here reports.
+    /// configured with. The flags are local, root, volfs, journaled and
+    /// multilabel, with neither no-atime nor strict-atime, as a Mac's data
+    /// volume reports; the `f_fsid` is `{ st_dev, f_type }` for the `st_dev`
+    /// every inode here reports.
     let private measuredApfs (apfs : ApfsMount) : FileSystemStatistics =
         FileSystemStatistics.Darwin
             {
@@ -134,7 +135,7 @@ module TestFileSystemType =
                     Ok
                         {
                             Owner = apfs.Owner
-                            Flags = 0x1480D000u
+                            Flags = 0x0480D000u
                             ExtendedFlags = 0u
                             SubType = 0u
                             MountedOn = utf8 "/"

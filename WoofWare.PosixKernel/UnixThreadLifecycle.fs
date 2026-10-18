@@ -594,11 +594,29 @@ module internal ProcessSignal =
             failwith
                 $"ProcessSignal.effect: %O{entry.Signal} would be generated for process 1, an init process, whose signals every caller refuses first (this is a bug in this library)."
 
+        // A thread the client has dispatched and has not since parked, or one
+        // woken from its park and dispatched to finish its call: Linux's
+        // `task_curr`. A thread asleep in a call is not running wherever the
+        // client last placed it.
+        let leaderRunning =
+            let leader = UnixThreadTable.get system.Leader system.Threads
+
+            UnixSchedulingState.runs leader.Cpu leader.OsThreadId system.Scheduling
+            && (
+                match leader.Parked with
+                | None -> true
+                | Some park ->
+                    match park.State with
+                    | ParkState.Woken _ -> true
+                    | ParkState.Asleep -> false
+            )
+
         let generation =
             SignalState.generate
                 (UnixSystemState.signalNumbering system)
                 system.Process.CoreDumps
                 system.Leader
+                leaderRunning
                 (system.Threads |> Map.keys |> Set.ofSeq)
                 entry
                 system.Process.Signals
