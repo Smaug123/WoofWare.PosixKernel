@@ -1756,7 +1756,7 @@ module TestUnixSystemStep =
             imageOn SimulatedUnixPlatform.linuxX64
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixDescriptor.effectiveUserId (Callers.leader system) system
+        UnixCredentials.geteuid (Callers.leader system) system
         |> shouldEqual credentials.EffectiveUser
 
     [<Test>]
@@ -2667,7 +2667,7 @@ module TestUnixSystemStep =
         // Not a `SyscallAnswer`: `geteuid(2)` cannot fail, so a shape that
         // admitted `Failed` would make an unreachable state representable. The
         // per-syscall function is the primitive for exactly this reason.
-        UnixDescriptor.effectiveUserId (Callers.leader linux) linux
+        UnixCredentials.geteuid (Callers.leader linux) linux
         |> shouldEqual (UserId.parseOrFail "test" 1000u)
 
     [<Test>]
@@ -2676,7 +2676,7 @@ module TestUnixSystemStep =
         // logs and replays through is not the surface it computes through.
         UnixSystem.tryStep (Callers.thread leaderThread linux) Syscall.GetEffectiveUserId linux
         |> Stepped.resultShouldBe (
-            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId (Callers.leader linux) linux))
+            Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid (Callers.leader linux) linux))
         )
 
     [<Test>]

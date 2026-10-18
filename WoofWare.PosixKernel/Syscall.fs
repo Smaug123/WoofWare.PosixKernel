@@ -270,11 +270,11 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | FileClone of destination : int * source : int
     /// `tcgetattr(3)`, as `UnixDescriptor.terminalAttributes` makes it.
     | TerminalAttributes of fd : int
-    /// `geteuid(2)`, as `UnixDescriptor.effectiveUserId` makes it.
+    /// `geteuid(2)`, as `UnixCredentials.geteuid` makes it.
     | GetEffectiveUserId
-    /// `getegid(2)`, as `UnixDescriptor.effectiveGroupId` makes it.
+    /// `getegid(2)`, as `UnixCredentials.getegid` makes it.
     | GetEffectiveGroupId
-    /// `getgroups(2)`, as `UnixDescriptor.getgroups` makes it.
+    /// `getgroups(2)`, as `UnixCredentials.getgroups` makes it.
     | GetGroups of size : int * destination : UserBuffer
     /// `stat(2)` or `lstat(2)`, as `UnixPathResolution.stat` makes it:
     /// `policy` says which.
@@ -726,11 +726,11 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | FileClone of error : UnixError
     /// What `UnixDescriptor.terminalAttributes` answers.
     | TerminalAttributes of answer : TerminalAttributesAnswer
-    /// What `UnixDescriptor.effectiveUserId` answers.
+    /// What `UnixCredentials.geteuid` answers.
     | GetEffectiveUserId of user : UserId
-    /// What `UnixDescriptor.effectiveGroupId` answers.
+    /// What `UnixCredentials.getegid` answers.
     | GetEffectiveGroupId of group : GroupId
-    /// What `UnixDescriptor.getgroups` answers.
+    /// What `UnixCredentials.getgroups` answers.
     | GetGroups of answer : GetGroupsAnswer
     /// What `UnixPathResolution.stat` answers.
     | Stat of answer : FileStatusAnswer
