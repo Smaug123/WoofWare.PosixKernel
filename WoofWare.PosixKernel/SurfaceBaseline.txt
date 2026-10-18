@@ -1704,19 +1704,19 @@ WoofWare.PosixKernel.GroupIdModule.parseOrFail [static method]: string -> System
 WoofWare.PosixKernel.GroupIdModule.toUInt32 [static method]: WoofWare.PosixKernel.GroupId -> System.UInt32
 WoofWare.PosixKernel.GroupListReport inherit obj, implements WoofWare.PosixKernel.GroupListReport System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GroupListReport System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.GroupListReport+Tags inherit obj
+WoofWare.PosixKernel.GroupListReport+Tags.EffectiveGroupThenSupplementaryGroups [static field]: int = 1
 WoofWare.PosixKernel.GroupListReport+Tags.SortedSupplementaryGroups [static field]: int = 0
-WoofWare.PosixKernel.GroupListReport+Tags.Unmeasured [static field]: int = 1
+WoofWare.PosixKernel.GroupListReport.EffectiveGroupThenSupplementaryGroups [static property]: [read-only] WoofWare.PosixKernel.GroupListReport
 WoofWare.PosixKernel.GroupListReport.Equals [method]: (WoofWare.PosixKernel.GroupListReport, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.GroupListReport.get_EffectiveGroupThenSupplementaryGroups [static method]: unit -> WoofWare.PosixKernel.GroupListReport
+WoofWare.PosixKernel.GroupListReport.get_IsEffectiveGroupThenSupplementaryGroups [method]: unit -> bool
 WoofWare.PosixKernel.GroupListReport.get_IsSortedSupplementaryGroups [method]: unit -> bool
-WoofWare.PosixKernel.GroupListReport.get_IsUnmeasured [method]: unit -> bool
 WoofWare.PosixKernel.GroupListReport.get_SortedSupplementaryGroups [static method]: unit -> WoofWare.PosixKernel.GroupListReport
 WoofWare.PosixKernel.GroupListReport.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.GroupListReport.get_Unmeasured [static method]: unit -> WoofWare.PosixKernel.GroupListReport
+WoofWare.PosixKernel.GroupListReport.IsEffectiveGroupThenSupplementaryGroups [property]: [read-only] bool
 WoofWare.PosixKernel.GroupListReport.IsSortedSupplementaryGroups [property]: [read-only] bool
-WoofWare.PosixKernel.GroupListReport.IsUnmeasured [property]: [read-only] bool
 WoofWare.PosixKernel.GroupListReport.SortedSupplementaryGroups [static property]: [read-only] WoofWare.PosixKernel.GroupListReport
 WoofWare.PosixKernel.GroupListReport.Tag [property]: [read-only] int
-WoofWare.PosixKernel.GroupListReport.Unmeasured [static property]: [read-only] WoofWare.PosixKernel.GroupListReport
 WoofWare.PosixKernel.GroupListWords inherit obj, implements WoofWare.PosixKernel.GroupListWords System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GroupListWords System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.GroupListWords+FaultsAfter inherit WoofWare.PosixKernel.GroupListWords
 WoofWare.PosixKernel.GroupListWords+FaultsAfter.get_readable [method]: unit -> System.UInt32 list
@@ -4530,6 +4530,7 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.socketErrorOption [static metho
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.socketOptionLevel [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.startingPointRules [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.StartingPointRules
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.supplementaryGroupLimit [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> int
+WoofWare.PosixKernel.SimulatedUnixPlatformModule.supplementaryGroupsHeld [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.symlinkModeChange [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.SymlinkModeChange
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.symlinkRules [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.SymlinkRules
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.tcpOptionLevel [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> int
