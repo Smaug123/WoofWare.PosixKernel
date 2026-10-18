@@ -52,5 +52,6 @@ module CredentialsGen =
                 }
         }
 
-    /// Credentials with few enough groups for any platform to hold.
-    let credentials : Gen<Credentials> = credentialsWithAtMost 16
+    /// Credentials with few enough groups for any platform to hold: Darwin
+    /// holds 15 (`SimulatedUnixPlatform.supplementaryGroupsHeld`).
+    let credentials : Gen<Credentials> = credentialsWithAtMost 15

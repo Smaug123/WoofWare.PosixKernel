@@ -93,9 +93,15 @@ module internal SetIdsRefusal =
 /// Why this kernel will not answer a `setgroups(2)`.
 [<RequireQualifiedAccess>]
 type internal SetGroupsRefusal =
-    /// A privileged process on this flavour, whose `setgroups` has not been
-    /// measured, because measuring it needs root.
-    | UnmeasuredPrivileged of flavour : SimulatedUnixFlavour
+    /// A privileged Darwin process asked for no groups at all, from an
+    /// effective group other than 0. Darwin then holds a list of one group,
+    /// measured only from effective group 0, where it is 0; whether it is 0 or
+    /// the effective group from any other is unmeasured.
+    | EmptyFromNonZeroEffectiveGroup of effectiveGroup : GroupId
+    /// A privileged Darwin process's list holds `(gid_t)-1` at `index`.
+    /// Darwin takes it as a group like any other, even as the effective
+    /// group, and this kernel holds no such group ID.
+    | MinusOneGroup of index : int
     /// The C library's signal to the process's other threads would reach one
     /// this kernel cannot answer for.
     | SetxidSignal of SetxidSignalRefusal
@@ -106,14 +112,17 @@ module internal SetGroupsRefusal =
     /// entry point asked, and with which list.
     let describe (refusal : SetGroupsRefusal) : string =
         match refusal with
-        | SetGroupsRefusal.UnmeasuredPrivileged flavour ->
-            $"the process is privileged, and what %O{flavour}'s setgroups(2) does for a privileged process has not been measured: measuring it needs root."
+        | SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup effectiveGroup ->
+            $"the process is privileged and asks for no groups, from effective group %O{effectiveGroup}. Darwin then holds one group, which was measured only from effective group 0, where it is 0; from any other it may be 0 or the effective group."
+        | SetGroupsRefusal.MinusOneGroup index ->
+            $"the process is privileged and the list holds (gid_t)-1 at index %d{index}. Darwin takes it as a group like any other (as the effective group when it comes first), and this kernel holds no such group ID: it reads -1 as \"leave the ID unchanged\" everywhere else."
         | SetGroupsRefusal.SetxidSignal refusal -> SetxidSignalRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SetGroupsRefusal) : RefusalKind =
         match refusal with
-        | SetGroupsRefusal.UnmeasuredPrivileged _ -> RefusalKind.Unmodelled
+        | SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup _ -> RefusalKind.Unmodelled
+        | SetGroupsRefusal.MinusOneGroup _ -> RefusalKind.Unmodelled
         | SetGroupsRefusal.SetxidSignal _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `getresuid(2)` or `getresgid(2)`.
@@ -615,6 +624,20 @@ module UnixCredentials =
                     }
             }
 
+        // Darwin's list, whose first group is the effective group.
+        let installedOnDarwin (effective : GroupId) (rest : GroupId list) =
+            SyscallAnswer.Completed 0L,
+            { system with
+                Process =
+                    { system.Process with
+                        Credentials =
+                            { system.Process.Credentials with
+                                EffectiveGroup = effective
+                                SupplementaryGroups = rest
+                            }
+                    }
+            }
+
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
             // Measured on Linux 6.18.5 (`setresid.c`): the privilege check comes
@@ -638,7 +661,43 @@ module UnixCredentials =
             | Ok groups -> Ok (installed groups)
         | SimulatedUnixFlavour.Darwin ->
             match privilege with
-            | CallerPrivilege.Privileged -> Error (SetGroupsRefusal.UnmeasuredPrivileged SimulatedUnixFlavour.Darwin)
+            | CallerPrivilege.Privileged ->
+                // Measured on Darwin 27.0 as root (`setresid.c`, and
+                // `docs/probes/darwin-root/credentials.c`): the size is screened
+                // first (EINVAL), then a non-empty list is copied (EFAULT at any
+                // fault, changing nothing). Darwin keeps one list whose first
+                // group is the effective group: the list given becomes it, as
+                // given, duplicates and all, so its first group becomes the
+                // effective group and getgroups reports the list unchanged; the
+                // real group is left alone. An empty list leaves one group, 0,
+                // from effective group 0. `(gid_t)-1` is taken as a group.
+                if not sizeAdmitted then
+                    Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
+                elif size = 0 then
+                    let effective = system.Process.Credentials.EffectiveGroup
+                    let wheel = GroupId.parseOrFail "UnixCredentials.setgroups" 0u
+
+                    if effective <> wheel then
+                        Error (SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup effective)
+                    else
+                        Ok (installedOnDarwin wheel [])
+                else
+
+                assertWordsAgree size words
+
+                match words with
+                | GroupListWords.FaultsAfter _ -> Ok (SyscallAnswer.Failed UnixError.EFAULT, system)
+                | GroupListWords.Readable words ->
+
+                match words |> List.tryFindIndex (fun word -> GroupId.parse word = None) with
+                | Some index -> Error (SetGroupsRefusal.MinusOneGroup index)
+                | None ->
+
+                match words |> List.map (GroupId.parseOrFail "UnixCredentials.setgroups") with
+                | effective :: rest -> Ok (installedOnDarwin effective rest)
+                | [] ->
+                    failwith
+                        "UnixCredentials.setgroups: a list of at least one group read as none (this is a bug in this library)."
             | CallerPrivilege.Unprivileged ->
 
             // Measured on Darwin 27.0 at uid 501 (`setresid.c`): the size comes
@@ -677,17 +736,23 @@ module UnixCredentials =
 
     /// `setgroups(3)`: replace the process's supplementary groups, for every
     /// thread, with the `size` groups `words` holds, kept in the order given.
+    /// Darwin keeps one list whose first group is the effective group, so
+    /// there the first group given becomes the effective group and the rest
+    /// the supplementary groups.
     ///
     /// Only a privileged process may. A list longer than the platform's
     /// `SimulatedUnixPlatform.supplementaryGroupLimit`, or of negative size, is
-    /// `EINVAL`; an unreadable word is `EFAULT`, and `(gid_t)-1`, which no
-    /// process can hold, is `EINVAL`. The flavours check these in different
-    /// orders.
+    /// `EINVAL`; an unreadable word is `EFAULT`; and on Linux `(gid_t)-1`,
+    /// which no process can hold, is `EINVAL`. The flavours check these in
+    /// different orders.
     ///
-    /// Refused for a privileged Darwin process, whose answer has not been
-    /// measured, and under Linux, whatever the call would answer, while another
-    /// thread blocks signal 33, is asleep in a call, or owes a return to user
-    /// mode, since the C library reaches every other thread with that signal.
+    /// Refused for a privileged Darwin process whose list holds `(gid_t)-1`,
+    /// which Darwin takes as a group and this kernel cannot hold, or that asks
+    /// for no groups from an effective group other than 0, which is
+    /// unmeasured; and under Linux, whatever the call would answer, while
+    /// another thread blocks signal 33, is asleep in a call, or owes a return
+    /// to user mode, since the C library reaches every other thread with that
+    /// signal.
     let setgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (size : int)

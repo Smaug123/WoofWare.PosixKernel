@@ -45,6 +45,7 @@ module TestCredentialChange =
 
     let private linuxRows : string[] list = rows "linux"
     let private darwinRows : string[] list = rows "darwin"
+    let private darwinRootRows : string[] list = rows "darwin-root"
 
     let private section (name : string) (all : string[] list) : string[] list =
         all |> List.filter (fun row -> row.[0] = name)
@@ -122,10 +123,15 @@ module TestCredentialChange =
         section "RESGID" linuxRows |> List.length |> shouldEqual (3 * 27 * 125)
         section "SETGROUPS" linuxRows |> List.length |> shouldEqual (4 * 19)
         section "SETGROUPS" darwinRows |> List.length |> shouldEqual 19
+
+        (section "RUN" darwinRootRows |> List.exactlyOne).[1]
+        |> shouldEqual "uid=0 euid=0 gid=0 egid=0 NGROUPS_MAX=16"
+
+        section "SETGROUPS" darwinRootRows |> List.length |> shouldEqual 19
         section "GETRES" linuxRows |> List.length |> shouldEqual 8
         section "FSOWNER" linuxRows |> List.length |> shouldEqual 1
 
-        for all in [ linuxRows ; darwinRows ] do
+        for all in [ linuxRows ; darwinRows ; darwinRootRows ] do
             (List.last all).[0] |> shouldEqual "DONE"
             section "SETUP-FAILED" all |> shouldBeEmpty
             section "CHILD-FAILED" all |> shouldBeEmpty
@@ -401,7 +407,6 @@ module TestCredentialChange =
 
             let reported =
                 Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport linux) (Lone.proc after).Credentials
-                |> Option.get
 
             if $"after=%s{groupsText reported}" <> row.[5] then
                 failwith $"%s{label}: the model's list is %s{groupsText reported}"
@@ -443,28 +448,167 @@ module TestCredentialChange =
             row.[4] |> shouldEqual (row.[5].Replace ("after=", "before="))
             after |> shouldEqual before
 
+    /// The groups a Darwin process reports: its effective group, then its
+    /// supplementary groups.
+    let private darwinReported (credentials : Credentials) : GroupId list =
+        Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport darwin) credentials
+
+    /// Root as the probe's run found it: effective group 0, and the fifteen
+    /// groups after it that sudo's login list held.
+    let private darwinRoot : Credentials =
+        Credentials.ofIds UserId.root (gid 0u) ([ 1u ; 2u ; 3u ; 4u ; 5u ; 8u ; 9u ; 12u ; 20u ; 29u ; 61u ; 80u ; 33u ; 98u ; 100u ] |> List.map gid)
+
     [<Test>]
-    let ``Darwin setgroups is refused for a privileged process, whose answer needs root to measure`` () : unit =
-        let root =
-            systemWith darwin CoreDumps.Suppressed (Credentials.ofIds UserId.root (gid 0u) [])
+    let ``Darwin setgroups answers every row of root's run`` () : unit =
+        let limit = SimulatedUnixPlatform.supplementaryGroupLimit darwin
 
-        let property (size : int, words : uint32 list) : unit =
-            UnixCredentials.trySetgroups (Callers.leader root) size (GroupListWords.Readable words) root
-            |> Result.map fst
-            |> shouldEqual (Error (SetGroupsRefusal.UnmeasuredPrivileged SimulatedUnixFlavour.Darwin))
+        for row in section "SETGROUPS" darwinRootRows do
+            let label = String.Join ("\t", row)
+            let before = systemWith darwin CoreDumps.Suppressed darwinRoot
 
-        // Any size at all, since the refusal comes before the size is read; the
-        // words agree with the size whenever a kernel would copy them.
+            $"before=%s{groupsText (darwinReported darwinRoot)}" |> shouldEqual row.[4]
+
+            let size, words = groupsArgument limit row.[2]
+
+            let wordsHold (candidate : uint32) : bool =
+                match words with
+                | GroupListWords.Readable words -> List.contains candidate words
+                | GroupListWords.FaultsAfter _ -> false
+
+            match UnixCredentials.trySetgroups (Callers.leader before) size words before with
+            | Error (SetGroupsRefusal.MinusOneGroup _) when wordsHold UInt32.MaxValue && row.[3] = "OK" ->
+                // Darwin takes (gid_t)-1 as a group, which no `GroupId` is.
+                ()
+            | Error refusal -> failwith $"%s{label}: refused %s{SetGroupsRefusal.describe refusal}"
+            | Ok (answer, after) ->
+                if answerText answer <> row.[3] then
+                    failwith $"%s{label}: answered %s{answerText answer}"
+
+                let credentials = (Lone.proc after).Credentials
+
+                if $"after=%s{groupsText (darwinReported credentials)}" <> row.[5] then
+                    failwith $"%s{label}: the model's list is %s{groupsText (darwinReported credentials)}"
+
+                $"egid=%d{GroupId.toUInt32 credentials.EffectiveGroup}" |> shouldEqual row.[6]
+
+                if answer <> SyscallAnswer.Completed 0L then
+                    after |> shouldEqual before
+
+    /// `docs/probes/darwin-root/credentials.c`, run as root on Darwin 27.0.
+    let private credentialsRows : string[] list =
+        let assembly = Assembly.GetExecutingAssembly ()
+        let resourceName = "WoofWare.PosixKernel.Test.darwin-root.credentials.txt"
+
+        use stream =
+            match assembly.GetManifestResourceStream resourceName with
+            | null -> failwith $"embedded resource %s{resourceName} not found"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+        |> List.map (fun line -> line.Split '\t')
+
+    /// A list as `credentials.c` names it: `size=0 NULL`, `[a,b]`, or 16 or
+    /// 17 distinct groups from 3000.
+    let private credentialsList (label : string) : int * GroupListWords =
+        match label with
+        | "size=0 NULL" -> 0, GroupListWords.FaultsAfter []
+        | "16 distinct [3000..3015]" -> 16, GroupListWords.Readable [ 3000u .. 3015u ]
+        | "17 distinct [3000..3016]" -> 17, GroupListWords.Readable [ 3000u .. 3016u ]
+        | bracketed ->
+            let words =
+                bracketed.Trim('[', ']').Split ',' |> Array.map UInt32.Parse |> List.ofArray
+
+            List.length words, GroupListWords.Readable words
+
+    /// `[a,b,c]` as `credentials.c` prints a list.
+    let private listText (groups : GroupId list) : string =
+        groups |> List.map (GroupId.toUInt32 >> string<uint32>) |> String.concat "," |> sprintf "[%s]"
+
+    [<Test>]
+    let ``Darwin root's setgroups makes the list's first group the effective group, and every group a member`` () : unit =
+        // INITIAL is root as sudo left it: the same list `darwinRoot` holds.
+        let initial = credentialsRows |> List.find (fun row -> row.[0] = "INITIAL")
+        initial.[1] |> shouldEqual $"uid=0 euid=0 groups=%s{listText (darwinReported darwinRoot)} egid=0 rgid=0"
+
+        let setgroupsRows = credentialsRows |> List.filter (fun row -> row.[0] = "SETGROUPS")
+        let memberRows = credentialsRows |> List.filter (fun row -> row.[0] = "MEMBER")
+        setgroupsRows.Length |> shouldEqual 13
+
+        for row in setgroupsRows do
+            let label = row.[1]
+            let size, words = credentialsList label
+            let before = systemWith darwin CoreDumps.Suppressed darwinRoot
+
+            let answer, after =
+                UnixCredentials.trySetgroups (Callers.leader before) size words before |> ok
+
+            let credentials = (Lone.proc after).Credentials
+
+            let measured =
+                match answer with
+                | SyscallAnswer.Completed 0L -> "-> ok"
+                | SyscallAnswer.Failed error -> $"-> %A{error}"
+                | other -> failwith $"%s{label}: answered %A{other}"
+
+            (label, measured) |> shouldEqual (label, row.[2])
+
+            (label, row.[3])
+            |> shouldEqual (
+                label,
+                $"groups=%s{listText (darwinReported credentials)} egid=%d{GroupId.toUInt32 credentials.EffectiveGroup} rgid=%d{GroupId.toUInt32 credentials.RealGroup}"
+            )
+
+            // Membership as the kernel judged it: open(O_RDONLY) of a file uid
+            // 504 owns, mode 0040, in each group, after setuid(502).
+            match memberRows |> List.tryFind (fun memberRow -> memberRow.[1] = label) with
+            | Some memberRow when not (memberRow.[2].StartsWith "SKIP") ->
+                memberRow.[3] |> shouldEqual "control=ok"
+
+                for cell in memberRow.[4].Substring("->".Length).Trim().Split ' ' do
+                    match cell.Substring("member=".Length).Split ':' with
+                    | [| group ; opened |] ->
+                        (label, group, Credentials.isInGroup credentials (gid (UInt32.Parse group)))
+                        |> shouldEqual (label, group, (opened = "ok"))
+                    | _ -> failwith $"unparsed cell %s{cell}"
+            | Some _ -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+            | None -> failwith $"%s{label}: no MEMBER row"
+
+    [<Test>]
+    let ``Darwin root's setgroups of any list makes its first group the effective group and reports it as given`` () : unit =
+        let property (egid : GroupId, list : GroupId list) : unit =
+            let before =
+                systemWith darwin CoreDumps.Suppressed (Credentials.ofIds UserId.root egid [])
+
+            let words = list |> List.map GroupId.toUInt32
+
+            match UnixCredentials.trySetgroups (Callers.leader before) (List.length words) (GroupListWords.Readable words) before with
+            | Ok (SyscallAnswer.Completed 0L, after) ->
+                let credentials = (Lone.proc after).Credentials
+
+                match list with
+                | [] ->
+                    // Measured only from effective group 0, which it keeps.
+                    egid |> shouldEqual (gid 0u)
+                    darwinReported credentials |> shouldEqual [ gid 0u ]
+                | first :: _ ->
+                    credentials.EffectiveGroup |> shouldEqual first
+                    darwinReported credentials |> shouldEqual list
+                    credentials.RealGroup |> shouldEqual egid
+            | Error (SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup refused) ->
+                list |> shouldEqual []
+                refused |> shouldEqual egid
+                egid <> gid 0u |> shouldEqual true
+            | other -> failwith $"setgroups(%A{words}) from effective group %O{egid} answered %A{other}"
+
         let gen =
             gen {
-                let! words = Gen.listOf CredentialsGen.rawId
-                let! size = Gen.oneof [ Gen.constant (List.length words) ; ArbMap.defaults |> ArbMap.generate<int> ]
-
-                return
-                    if size >= 0 && size <= 16 then
-                        List.length words, words
-                    else
-                        size, words
+                let! egid = Gen.oneof [ Gen.constant (gid 0u) ; CredentialsGen.groupId ]
+                let! count = Gen.choose (0, 16)
+                let! list = Gen.listOfLength count CredentialsGen.groupId
+                return egid, list
             }
 
         Check.One (Config.QuickThrowOnFailure, Prop.forAll (Arb.fromGen gen) property)
