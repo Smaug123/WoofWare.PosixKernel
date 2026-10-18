@@ -4,9 +4,11 @@ namespace WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 type internal PortHolderKind =
     /// An open socket that is bound and neither listening, connected nor
-    /// refused: an idle stream socket, or a datagram socket with or without a
-    /// default peer.
+    /// refused: an idle stream socket, or a datagram socket with no default
+    /// peer.
     | Idle
+    /// A datagram socket with a default peer.
+    | DatagramPeer
     /// An open stream socket whose connect was refused.
     | Refused
     /// A listening socket.
@@ -193,11 +195,13 @@ module internal PortHolderRules =
         holdsAt holder endpoint.Port
         && Ipv4Endpoint.addressesOverlap holder.Endpoint endpoint
 
-    /// Whether `kind` is one end of a TCP connection, in TIME_WAIT or not.
-    let private endsConnection (kind : PortHolderKind) : bool =
+    /// Whether `kind` has a foreign address: one end of a TCP connection, in
+    /// TIME_WAIT or not, or a datagram socket with a default peer.
+    let private hasPeer (kind : PortHolderKind) : bool =
         match kind with
         | PortHolderKind.ConnectionEnd
-        | PortHolderKind.TimeWait _ -> true
+        | PortHolderKind.TimeWait _
+        | PortHolderKind.DatagramPeer -> true
         | PortHolderKind.Idle
         | PortHolderKind.Refused
         | PortHolderKind.Listener -> false
@@ -215,7 +219,8 @@ module internal PortHolderRules =
     /// and both relax that for `SO_REUSEADDR`, in opposite directions:
     /// Linux only while the holder is not listening and both carry the flag;
     /// Darwin, keyed on the candidate's flag alone, for addresses that differ,
-    /// or for the very address a connection end holds.
+    /// or for the very address a holder with a peer holds. Neither asks the
+    /// two sockets' owners.
     let bindMeets
         (flavour : SimulatedUnixFlavour)
         (holder : PortHolder)
@@ -233,9 +238,13 @@ module internal PortHolderRules =
             // docs/plans/2026-10-08-tcp-shutdown-linger; a replacement
             // listener bound over accepted connections), and against an end in
             // TIME_WAIT once both its sockets have closed
-            // (`docs/probes/time-wait`, rows B and S). A connection end's
-            // pcb is keyed by its whole four-tuple, which is why Darwin lets a
-            // reuse-carrying candidate bind its exact endpoint, and why Linux's
+            // (`docs/probes/time-wait`, rows B and S); and for datagram
+            // sockets, idle or with a peer, and for idle and listening stream
+            // sockets, held by a process of the candidate's uid or of another
+            // (`docs/probes/port-sharing`; Darwin at one uid only). Darwin's
+            // lookup for a reuse-carrying candidate skips a pcb with a foreign
+            // address, which is why such a candidate binds the exact endpoint
+            // of a connection end or of a connected datagram socket; Linux's
             // rule, an accepted socket carrying its listener's flag, needs no
             // case of its own for one.
             match flavour with
@@ -243,7 +252,7 @@ module internal PortHolderRules =
                 not (holder.ReuseAddress && candidateReuse)
                 || holder.Kind = PortHolderKind.Listener
             | SimulatedUnixFlavour.Darwin ->
-                (holder.Endpoint.Address = candidate.Address && not (endsConnection holder.Kind))
+                (holder.Endpoint.Address = candidate.Address && not (hasPeer holder.Kind))
                 || not candidateReuse
         )
 
@@ -289,12 +298,15 @@ module internal PortHolderRules =
         : bool
         =
         match transport with
-        // Measured on Linux (`inet_csk_find_open_port`), and on Darwin for a
-        // search carrying SO_REUSEADDR against holders carrying it
+        // Measured on Linux (`inet_csk_find_open_port`), at either uid
+        // pairing (`docs/probes/port-sharing`), and on Darwin for a search
+        // carrying SO_REUSEADDR against holders carrying it
         // (`docs/probes/ephemeral-search`).
         | SocketKind.Stream -> holdsOver holder candidate
-        // Linux's UDP search lets two sockets carrying SO_REUSEADDR share a
-        // port, by its source (`udp_lib_lport_inuse`), which is unmeasured.
+        // Measured on Linux, holder and search each carrying SO_REUSEADDR or
+        // not, at either uid pairing (`docs/probes/port-sharing`): two
+        // sockets carrying it share a port. Darwin's is taken to ask the same
+        // question, which is unmeasured.
         | SocketKind.Datagram
         | SocketKind.SeqPacket -> bindMeets flavour holder candidate candidateReuse
 
@@ -386,6 +398,7 @@ module internal PortHolderRules =
             failwith
                 $"PortHolderRules: the end in TIME_WAIT at %s{Ipv4Endpoint.toString holder.Endpoint} has no peer (this is a bug in this library)."
         | PortHolderKind.Idle, _
+        | PortHolderKind.DatagramPeer, _
         | PortHolderKind.Refused, _
         | PortHolderKind.Listener, _
         | PortHolderKind.ConnectionEnd, _ -> None

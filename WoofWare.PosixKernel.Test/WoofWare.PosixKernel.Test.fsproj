@@ -242,6 +242,7 @@
     <Compile Include="TestPortHolders.fs" />
     <Compile Include="TestEphemeralSearchMeasured.fs" />
     <Compile Include="TestConnectSearchHoldersMeasured.fs" />
+    <Compile Include="TestPortSharingMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -419,6 +420,13 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.darwin.txt" />
+    <!-- Which binds two processes' sockets shared a port through, by
+         SO_REUSEADDR and SO_REUSEPORT, and which ports a datagram socket's
+         search took beside them, measured per flavour by
+         docs/probes/port-sharing. `TestPortSharingMeasured` replays every row
+         the model can make. -->
+    <EmbeddedResource Include="..\docs\probes\port-sharing\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\port-sharing\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.darwin.txt" />
     <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
          connect took its four-tuple over, measured per flavour by
          docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
