@@ -1275,8 +1275,9 @@ type private OpenFileEntry =
 /// An index of registrations: under each key, each member with a
 /// registration filed there, an identity's value, and what tells its
 /// registrations under that key apart. The shape of the open file table's
-/// indexes of epoll and kqueue registrations, and of the sleeping Darwin
-/// polls' kqueues'.
+/// indexes of epoll and kqueue registrations, of inotify watches, and of the
+/// names descriptions were opened through, and of the sleeping Darwin polls'
+/// kqueues'.
 ///
 /// A key with no member has no entry, and a member with nothing filed under a
 /// key no entry under it, so an index is a function of what it files, and two
@@ -1292,21 +1293,21 @@ module internal RegistrationIndex =
 
     /// Each member with a registration filed under `key`, and what tells its
     /// registrations there apart.
-    let membersUnder<'Distinct when 'Distinct : comparison>
-        (key : int64)
-        (index : Map<int64, Map<int64, Set<'Distinct>>>)
+    let membersUnder<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
         : Map<int64, Set<'Distinct>>
         =
         Map.tryFind key index |> Option.defaultValue Map.empty
 
     /// `index` with the registration of `memberValue` that `distinct` tells
     /// apart filed under `key`, in time logarithmic in the index.
-    let file<'Distinct when 'Distinct : comparison>
-        (key : int64)
+    let file<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
         (memberValue : int64)
         (distinct : 'Distinct)
-        (index : Map<int64, Map<int64, Set<'Distinct>>>)
-        : Map<int64, Map<int64, Set<'Distinct>>>
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+        : Map<'Key, Map<int64, Set<'Distinct>>>
         =
         let members = membersUnder key index
         let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
@@ -1315,19 +1316,19 @@ module internal RegistrationIndex =
     /// `index` without the registration of `memberValue` that `distinct` tells
     /// apart under `key`, in time logarithmic in the index. Loudly partial on
     /// a registration the index does not hold.
-    let unfile<'Distinct when 'Distinct : comparison>
-        (key : int64)
+    let unfile<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
         (memberValue : int64)
         (distinct : 'Distinct)
-        (index : Map<int64, Map<int64, Set<'Distinct>>>)
-        : Map<int64, Map<int64, Set<'Distinct>>>
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+        : Map<'Key, Map<int64, Set<'Distinct>>>
         =
         let members = membersUnder key index
         let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
 
         if not (Set.contains distinct filed) then
             failwith
-                $"RegistrationIndex.unfile: member %d{memberValue} has no registration %A{distinct} filed under key %d{key} to remove (this is a bug in this library: something changed a registration without telling its index)."
+                $"RegistrationIndex.unfile: member %d{memberValue} has no registration %A{distinct} filed under key %A{key} to remove (this is a bug in this library: something changed a registration without telling its index)."
 
         let filed = Set.remove distinct filed
 
@@ -1342,8 +1343,8 @@ module internal RegistrationIndex =
         else
             Map.add key members index
 
-/// The entries of the machine's open file table, and four indexes of them.
-/// Two are what a sleeping call's wake condition reads: how many live
+/// The entries of the machine's open file table, and indexes of them. Two
+/// are what a sleeping call's wake condition reads: how many live
 /// descriptions name each end of each pipe, and which descriptions hold a
 /// `flock` on each object. A real kernel keeps both beside the object: a
 /// pipe's count of readers and writers, an inode's list of locks. Two are
@@ -1351,13 +1352,19 @@ module internal RegistrationIndex =
 /// Linux keeps on each file the list of epoll items watching it (`f_ep`); and
 /// which kqueues registered through each descriptor of each process, as
 /// Darwin keeps a list per descriptor of the knotes made through it
-/// (`fd_knlist`).
+/// (`fd_knlist`). The rest are what a change of the filesystem reads: the
+/// inotify watches on each inode, as Linux hangs an inode's marks off the
+/// inode (`i_fsnotify_marks`); the descriptions opened through each name, as
+/// Linux's descriptions share the name's dentry; the inodes the descriptions
+/// hold; and how many inotify instances and watches each user holds, as
+/// Linux counts them per user (`ucounts`).
 ///
 /// The representation is private to this module, so every change to an
 /// entry goes through `add`, `remove` or `map`, or through one of the
 /// functions that change one registration of an epoll instance or a kqueue
-/// (`registerInEpoll` and its kin), which keep the indexes, and nothing else
-/// can change one.
+/// (`registerInEpoll` and its kin) or one watch of an inotify instance
+/// (`setInotifyWatch`, `removeInotifyWatch`), which keep the indexes, and
+/// nothing else can change one.
 [<RequireQualifiedAccess>]
 module private OpenFileEntries =
 
@@ -1396,6 +1403,32 @@ module private OpenFileEntries =
                 /// identity, and the filters it registers through the
                 /// descriptor.
                 KqueuesThrough : Map<int64, Map<int64, Set<KqueueFilter>>>
+                /// The inotify instances with a watch on each inode, keyed by
+                /// the inode's value, by the value of each instance's
+                /// identity, and the values of the descriptors of its watches
+                /// on the inode.
+                WatchesOn : Map<int64, Map<int64, Set<int>>>
+                /// How many live inotify instances each user owns, keyed by
+                /// the user's `uid_t`. A user who owns none has no key.
+                InotifyInstancesOf : Map<uint32, int>
+                /// How many watches the inotify instances each user owns
+                /// have, keyed as `InotifyInstancesOf`. A user whose instances
+                /// have none has no key.
+                InotifyWatchesOf : Map<uint32, int>
+                /// The descriptions onto an inode, by the name each was opened
+                /// through (`OpenFileEntry.OpenedThrough`), by the value of
+                /// the identity of that name (`OpenFileEntry.NameIdentity`),
+                /// and the values of their own identities.
+                NamesOpenedThrough : Map<ReachedThrough, Map<int64, Set<int64>>>
+                /// How many references the descriptions hold to each inode,
+                /// keyed by the inode's value: one for each description onto
+                /// it, and one for each description opened through a name in
+                /// it. An inode none holds has no key.
+                HeldInodes : Map<int64, int>
+                /// Of those, how many are to a directory: one for each
+                /// description onto a directory, and one for each opened
+                /// through a name in it.
+                HeldDirectories : Map<int64, int>
             }
 
     let empty : Entries =
@@ -1405,6 +1438,12 @@ module private OpenFileEntries =
             Flocks = Map.empty
             EpollsRegistering = Map.empty
             KqueuesThrough = Map.empty
+            WatchesOn = Map.empty
+            InotifyInstancesOf = Map.empty
+            InotifyWatchesOf = Map.empty
+            NamesOpenedThrough = Map.empty
+            HeldInodes = Map.empty
+            HeldDirectories = Map.empty
         }
 
     /// Every entry, by its description's identity.
@@ -1478,51 +1517,94 @@ module private OpenFileEntries =
             Flocks = flocks
         }
 
-    /// `epolls` and `kqueues`, indexes of epoll and kqueue registrations, with
-    /// each registration of `entry`, the description `id`'s, filed in them by
-    /// `file`, if it is an epoll instance or a kqueue.
+    /// `counts` with `step` added to the count under `key`, and no key for a
+    /// count of zero. Loudly partial on a count that would fall below zero.
+    let private bump<'Key when 'Key : comparison> (step : int) (key : 'Key) (counts : Map<'Key, int>) : Map<'Key, int> =
+        let after = (Map.tryFind key counts |> Option.defaultValue 0) + step
+
+        if after < 0 then
+            failwith
+                $"OpenFileEntries: the count under %A{key} would fall to %d{after}, after something that was never counted left it (this is a bug in this library)."
+
+        if after = 0 then
+            Map.remove key counts
+        else
+            Map.add key after counts
+
+    /// `entries`'s indexes of epoll and kqueue registrations and of inotify
+    /// watches with each registration and watch of `entry`, the description
+    /// `id`'s, filed in them (`step` 1) or no longer filed (`step` -1), if it
+    /// is an epoll instance, a kqueue or an inotify instance.
     let private fileRegistrations
-        (file : int64 -> int64 -> int -> Map<int64, Map<int64, Set<int>>> -> Map<int64, Map<int64, Set<int>>>)
-        (fileFilter :
-            int64
-                -> int64
-                -> KqueueFilter
-                -> Map<int64, Map<int64, Set<KqueueFilter>>>
-                -> Map<int64, Map<int64, Set<KqueueFilter>>>)
+        (step : int)
         (id : OpenFileDescriptionId)
         (entry : OpenFileEntry)
-        (epolls : Map<int64, Map<int64, Set<int>>>, kqueues : Map<int64, Map<int64, Set<KqueueFilter>>>)
-        : Map<int64, Map<int64, Set<int>>> * Map<int64, Map<int64, Set<KqueueFilter>>>
+        (entries : Entries)
+        : Entries
         =
         let (OpenFileDescriptionId raw) = id
+
+        let file
+            (key : 'Key)
+            (distinct : 'Distinct)
+            (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+            : Map<'Key, Map<int64, Set<'Distinct>>>
+            =
+            if step > 0 then
+                RegistrationIndex.file key raw distinct index
+            else
+                RegistrationIndex.unfile key raw distinct index
 
         match entry.Description.Target with
         | OpenFileTarget.Epoll state ->
             let epolls =
-                (epolls, state.Registrations)
-                ||> Map.fold (fun epolls (fd, OpenFileDescriptionId target) _ -> file target raw fd epolls)
+                (entries.EpollsRegistering, state.Registrations)
+                ||> Map.fold (fun epolls (fd, OpenFileDescriptionId target) _ -> file target fd epolls)
 
-            epolls, kqueues
+            { entries with
+                EpollsRegistering = epolls
+            }
         | OpenFileTarget.Kqueue state ->
             let kqueues =
-                (kqueues, state.Registrations)
+                (entries.KqueuesThrough, state.Registrations)
                 ||> Map.fold (fun kqueues (fd, filter) _ ->
-                    fileFilter (RegistrationIndex.throughDescriptor state.Owner fd) raw filter kqueues
+                    file (RegistrationIndex.throughDescriptor state.Owner fd) filter kqueues
                 )
 
-            epolls, kqueues
+            { entries with
+                KqueuesThrough = kqueues
+            }
+        | OpenFileTarget.Inotify state ->
+            let owner = UserId.toUInt32 state.Owner
+
+            let watchesOn, count =
+                ((entries.WatchesOn, 0), state.Watches)
+                ||> Map.fold (fun (watchesOn, count) (WatchDescriptor wd) watch ->
+                    let (InodeNumber inode) = watch.Inode
+                    file inode wd watchesOn, count + 1
+                )
+
+            { entries with
+                WatchesOn = watchesOn
+                InotifyInstancesOf = bump step owner entries.InotifyInstancesOf
+                InotifyWatchesOf =
+                    if count = 0 then
+                        entries.InotifyWatchesOf
+                    else
+                        bump (step * count) owner entries.InotifyWatchesOf
+            }
         | OpenFileTarget.File _
         | OpenFileTarget.Directory _
         | OpenFileTarget.Socket _
         | OpenFileTarget.CharacterDevice _
         | OpenFileTarget.Fifo _
-        | OpenFileTarget.Inotify _
-        | OpenFileTarget.Pipe _ -> epolls, kqueues
+        | OpenFileTarget.Pipe _ -> entries
 
     /// Whether `before` and `after`, entries of one description, are certainly
-    /// filed alike in the registration indexes: neither is an epoll instance
-    /// or a kqueue, or both are of one kind and share their registrations, and
-    /// two kqueues their owner too. Constant time, and false for some entries
+    /// filed alike in the registration and watch indexes: none is an epoll
+    /// instance, a kqueue or an inotify instance, or both are of one kind and
+    /// share their registrations or watches, and two kqueues or two inotify
+    /// instances their owner too. Constant time, and false for some entries
     /// filed alike.
     let private registersAlike (before : OpenFileEntry) (after : OpenFileEntry) : bool =
         match before.Description.Target, after.Description.Target with
@@ -1531,17 +1613,22 @@ module private OpenFileEntries =
         | OpenFileTarget.Kqueue first, OpenFileTarget.Kqueue second ->
             first.Owner = second.Owner
             && LanguagePrimitives.PhysicalEquality first.Registrations second.Registrations
+        | OpenFileTarget.Inotify first, OpenFileTarget.Inotify second ->
+            first.Owner = second.Owner
+            && LanguagePrimitives.PhysicalEquality first.Watches second.Watches
         | OpenFileTarget.Epoll _, _
         | _, OpenFileTarget.Epoll _
         | OpenFileTarget.Kqueue _, _
-        | _, OpenFileTarget.Kqueue _ -> false
+        | _, OpenFileTarget.Kqueue _
+        | OpenFileTarget.Inotify _, _
+        | _, OpenFileTarget.Inotify _ -> false
         | _, _ -> true
 
-    /// `entries`'s registration indexes with the description `id` filed as
-    /// `after` says rather than as `before` does, where an absent entry is
-    /// filed under nothing: in time logarithmic in the indexes for each
-    /// registration of either, unless they are certainly filed alike
-    /// (`registersAlike`).
+    /// `entries`'s registration and watch indexes with the description `id`
+    /// filed as `after` says rather than as `before` does, where an absent
+    /// entry is filed under nothing: in time logarithmic in the indexes for
+    /// each registration or watch of either, unless they are certainly filed
+    /// alike (`registersAlike`).
     let private refileRegistrations
         (id : OpenFileDescriptionId)
         (before : OpenFileEntry option)
@@ -1559,22 +1646,116 @@ module private OpenFileEntries =
         if alike then
             entries
         else
-            let indexes = entries.EpollsRegistering, entries.KqueuesThrough
-
-            let indexes =
+            let entries =
                 match before with
-                | Some before -> fileRegistrations RegistrationIndex.unfile RegistrationIndex.unfile id before indexes
-                | None -> indexes
+                | Some before -> fileRegistrations -1 id before entries
+                | None -> entries
 
-            let epolls, kqueues =
-                match after with
-                | Some after -> fileRegistrations RegistrationIndex.file RegistrationIndex.file id after indexes
-                | None -> indexes
+            match after with
+            | Some after -> fileRegistrations 1 id after entries
+            | None -> entries
 
-            { entries with
-                EpollsRegistering = epolls
-                KqueuesThrough = kqueues
-            }
+    /// What a description of `target` holds of the inode it is onto: 2 and
+    /// the inode's value for a directory, 1 and it for any other inode, and 0
+    /// for a description onto no inode.
+    let private holdOf (target : OpenFileTarget) : struct (int * int64) =
+        match target with
+        | OpenFileTarget.Directory (InodeNumber inode, _) -> struct (2, inode)
+        | OpenFileTarget.File (InodeNumber inode, _)
+        | OpenFileTarget.CharacterDevice (InodeNumber inode, _, _)
+        | OpenFileTarget.Fifo (InodeNumber inode, _) -> struct (1, inode)
+        | OpenFileTarget.Epoll _
+        | OpenFileTarget.Kqueue _
+        | OpenFileTarget.Socket _
+        | OpenFileTarget.Pipe _
+        | OpenFileTarget.Inotify _ -> struct (0, 0L)
+
+    /// `entries`'s indexes of names and of held inodes with `entry`, the
+    /// description `id`'s, filed in them (`step` 1) or no longer filed
+    /// (`step` -1).
+    let private fileNames
+        (step : int)
+        (id : OpenFileDescriptionId)
+        (entry : OpenFileEntry)
+        (entries : Entries)
+        : Entries
+        =
+        let (OpenFileDescriptionId raw) = id
+        let (OpenFileDescriptionId identity) = entry.NameIdentity
+
+        let names =
+            match entry.OpenedThrough with
+            | None -> entries.NamesOpenedThrough
+            | Some through ->
+                if step > 0 then
+                    RegistrationIndex.file through identity raw entries.NamesOpenedThrough
+                else
+                    RegistrationIndex.unfile through identity raw entries.NamesOpenedThrough
+
+        let held, heldDirectories =
+            match holdOf entry.Description.Target with
+            | struct (0, _) -> entries.HeldInodes, entries.HeldDirectories
+            | struct (2, inode) -> bump step inode entries.HeldInodes, bump step inode entries.HeldDirectories
+            | struct (_, inode) -> bump step inode entries.HeldInodes, entries.HeldDirectories
+
+        let held, heldDirectories =
+            match entry.OpenedThrough with
+            | Some (ReachedThrough.Name (dentry, _)) ->
+                let (InodeNumber parent) = dentry.Parent
+                bump step parent held, bump step parent heldDirectories
+            | Some ReachedThrough.Unnamed
+            | Some (ReachedThrough.RemovedDirectory _)
+            | None -> held, heldDirectories
+
+        { entries with
+            NamesOpenedThrough = names
+            HeldInodes = held
+            HeldDirectories = heldDirectories
+        }
+
+    /// Whether `before` and `after`, entries of one description, are certainly
+    /// filed alike in the indexes of names and of held inodes: opened through
+    /// one name with one identity, and onto one inode of one kind, or none.
+    let private namedAlike (before : OpenFileEntry) (after : OpenFileEntry) : bool =
+        let struct (beforeKind, beforeInode) = holdOf before.Description.Target
+        let struct (afterKind, afterInode) = holdOf after.Description.Target
+
+        beforeKind = afterKind
+        && beforeInode = afterInode
+        && before.NameIdentity = after.NameIdentity
+        && (LanguagePrimitives.PhysicalEquality before.OpenedThrough after.OpenedThrough
+            || before.OpenedThrough = after.OpenedThrough)
+
+    /// `entries`'s indexes of names and of held inodes with the description
+    /// `id` filed as `after` says rather than as `before` does, where an
+    /// absent entry is filed under nothing: in time logarithmic in the
+    /// indexes, and constant unless they are filed differently
+    /// (`namedAlike`).
+    let private refileNames
+        (id : OpenFileDescriptionId)
+        (before : OpenFileEntry option)
+        (after : OpenFileEntry option)
+        (entries : Entries)
+        : Entries
+        =
+        let alike =
+            match before, after with
+            | Some before, Some after -> namedAlike before after
+            | None, None -> true
+            | Some _, None
+            | None, Some _ -> false
+
+        if alike then
+            entries
+        else
+            let entries =
+                match before with
+                | Some before -> fileNames -1 id before entries
+                | None -> entries
+
+            match after with
+            | Some after -> fileNames 1 id after entries
+            | None -> entries
 
     /// `entries` with `entry` as the description `id`'s, in place of any it had.
     let add (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
@@ -1586,7 +1767,9 @@ module private OpenFileEntries =
             | None -> entries
 
         let counted =
-            count 1 id entry uncounted |> refileRegistrations id before (Some entry)
+            count 1 id entry uncounted
+            |> refileRegistrations id before (Some entry)
+            |> refileNames id before (Some entry)
 
         { counted with
             All = Map.add id entry entries.All
@@ -1598,7 +1781,9 @@ module private OpenFileEntries =
         | None -> entries
         | Some before ->
             let uncounted =
-                count -1 id before entries |> refileRegistrations id (Some before) None
+                count -1 id before entries
+                |> refileRegistrations id (Some before) None
+                |> refileNames id (Some before) None
 
             { uncounted with
                 All = Map.remove id entries.All
@@ -1606,8 +1791,9 @@ module private OpenFileEntries =
 
     /// Whether `before` and `after`, entries of the description `id`, are
     /// certainly counted alike in the indexes: onto the same pipe end or none,
-    /// holding the same lock on the same object or none, and filed alike in
-    /// the registration indexes (`registersAlike`).
+    /// holding the same lock on the same object or none, filed alike in the
+    /// registration and watch indexes (`registersAlike`), and in those of
+    /// names and held inodes (`namedAlike`).
     let private indexedAlike (id : OpenFileDescriptionId) (before : OpenFileEntry) (after : OpenFileEntry) : bool =
         LanguagePrimitives.PhysicalEquality before after
         || (match before.Description.Target, after.Description.Target with
@@ -1620,6 +1806,7 @@ module private OpenFileEntries =
            && (before.Description.Flock.IsNone
                || OpenFileDescription.object id before.Description = OpenFileDescription.object id after.Description)
            && registersAlike before after
+           && namedAlike before after
 
     /// `entries` with each description's entry rewritten by `f`, in time
     /// linear in the number of entries, plus, for each entry `f` counts
@@ -1649,6 +1836,7 @@ module private OpenFileEntries =
         ||> Seq.fold (fun entries (struct (id, before, after)) ->
             count 1 id after (count -1 id before entries)
             |> refileRegistrations id (Some before) (Some after)
+            |> refileNames id (Some before) (Some after)
         )
 
     /// Entries of exactly the descriptions in `all`.
@@ -1848,6 +2036,121 @@ module private OpenFileEntries =
             KqueuesThrough = filed
         }
 
+    /// The inotify instances with a watch on `inode`, by the values of their
+    /// identities, and the values of the descriptors of their watches on it.
+    let watchesOn (InodeNumber inode) (entries : Entries) : Map<int64, Set<int>> =
+        RegistrationIndex.membersUnder inode entries.WatchesOn
+
+    /// How many live inotify instances `owner` owns.
+    let inotifyInstancesOf (owner : UserId) (entries : Entries) : int =
+        Map.tryFind (UserId.toUInt32 owner) entries.InotifyInstancesOf
+        |> Option.defaultValue 0
+
+    /// How many watches the live inotify instances `owner` owns have.
+    let inotifyWatchesOf (owner : UserId) (entries : Entries) : int =
+        Map.tryFind (UserId.toUInt32 owner) entries.InotifyWatchesOf
+        |> Option.defaultValue 0
+
+    /// The descriptions opened through `through`, by the value of the
+    /// identity of the name each holds, and the values of their own
+    /// identities.
+    let openedThrough (through : ReachedThrough) (entries : Entries) : Map<int64, Set<int64>> =
+        RegistrationIndex.membersUnder through entries.NamesOpenedThrough
+
+    /// Whether a live description is onto `inode`, or was opened through a
+    /// name in it.
+    let holds (InodeNumber inode) (entries : Entries) : bool =
+        Map.containsKey inode entries.HeldInodes
+
+    /// Every inode a live description is onto or was opened through a name
+    /// in, by its value, in order.
+    let heldInodes (entries : Entries) : int64 seq =
+        Map.keys entries.HeldInodes :> int64 seq
+
+    /// Every directory a live description is onto or was opened through a
+    /// name in, by its value, in order.
+    let heldDirectories (entries : Entries) : int64 seq =
+        Map.keys entries.HeldDirectories :> int64 seq
+
+    /// The entry of the live inotify instance `instance`, and its state.
+    /// Loudly partial: `operation`, named in the message, resolved it as one.
+    let private inotifyEntry
+        (operation : string)
+        (instance : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * InotifyState
+        =
+        match Map.tryFind instance entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Inotify state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{instance} is %A{other} rather than a live inotify instance, which the caller resolved it as (this is a bug in this library)."
+
+    /// `entries` with the live inotify instance `instance` holding `watch`
+    /// under `wd`, in place of any watch it had there: in time logarithmic in
+    /// the table and in the instance's watches, where `add` would take time
+    /// linear in them.
+    let setInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (watch : InotifyWatch)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = inotifyEntry "setInotifyWatch" instance entries
+        let (OpenFileDescriptionId raw) = instance
+        let (WatchDescriptor value) = wd
+        let (InodeNumber inode) = watch.Inode
+
+        let watchesOn, added =
+            match Map.tryFind wd state.Watches with
+            | Some held ->
+                let (InodeNumber heldInode) = held.Inode
+                RegistrationIndex.unfile heldInode raw value entries.WatchesOn, 0
+            | None -> entries.WatchesOn, 1
+
+        let state =
+            { state with
+                Watches = Map.add wd watch state.Watches
+            }
+
+        { entries with
+            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            WatchesOn = RegistrationIndex.file inode raw value watchesOn
+            InotifyWatchesOf = bump added (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
+        }
+
+    /// `entries` with the live inotify instance `instance` holding no watch
+    /// under `wd`: in time logarithmic in the table and in the instance's
+    /// watches. Loudly partial on a watch it does not hold.
+    let removeInotifyWatch (instance : OpenFileDescriptionId) (wd : WatchDescriptor) (entries : Entries) : Entries =
+        let entry, state = inotifyEntry "removeInotifyWatch" instance entries
+        let (OpenFileDescriptionId raw) = instance
+        let (WatchDescriptor value) = wd
+
+        match Map.tryFind wd state.Watches with
+        | None ->
+            failwith
+                $"OpenFileEntries.removeInotifyWatch: inotify instance %O{instance} holds no watch %O{wd} (this is a bug in this library)."
+        | Some held ->
+
+        let (InodeNumber inode) = held.Inode
+
+        let state =
+            { state with
+                Watches = Map.remove wd state.Watches
+            }
+
+        { entries with
+            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            WatchesOn = RegistrationIndex.unfile inode raw value entries.WatchesOn
+            InotifyWatchesOf = bump -1 (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
+        }
+
     /// Whether the indexes are those of the entries, as `ofMap` would build
     /// them afresh.
     let indexesFresh (entries : Entries) : bool =
@@ -1857,6 +2160,12 @@ module private OpenFileEntries =
         && fresh.Flocks = entries.Flocks
         && fresh.EpollsRegistering = entries.EpollsRegistering
         && fresh.KqueuesThrough = entries.KqueuesThrough
+        && fresh.WatchesOn = entries.WatchesOn
+        && fresh.InotifyInstancesOf = entries.InotifyInstancesOf
+        && fresh.InotifyWatchesOf = entries.InotifyWatchesOf
+        && fresh.NamesOpenedThrough = entries.NamesOpenedThrough
+        && fresh.HeldInodes = entries.HeldInodes
+        && fresh.HeldDirectories = entries.HeldDirectories
 
 /// The machine's open file descriptions, POSIX's "open file description" and
 /// Linux's `struct file`: what every descriptor in every process names, by
@@ -2122,9 +2431,12 @@ type internal FileDescriptorRegistryDefect =
     /// every record of it.
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
     /// The table's count of the descriptions naming each end of each pipe,
-    /// its record of the `flock`s held on each object, or its record of the
+    /// its record of the `flock`s held on each object, its record of the
     /// epoll instances registering each description or of the kqueues
-    /// registering through each descriptor, is not what its descriptions say.
+    /// registering through each descriptor, its record of the inotify
+    /// watches on each inode or of the instances and watches each user owns,
+    /// or its record of the names descriptions were opened through or of the
+    /// inodes they hold, is not what its descriptions say.
     | StaleIndex
 
 [<RequireQualifiedAccess>]
@@ -2256,21 +2568,63 @@ module OpenFileTable =
             failwith
                 $"OpenFileTable.openedThrough: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
 
-    /// Whether a live description holds the name that the destroyed
-    /// description `destroyed` was opened through: one opened through it while
-    /// it was linked, the same name as Linux's dentry. A name linked again
-    /// after an unlink is another, though it has the same directory and the
-    /// same text (measured, `inotify-self-probe.c` row N relinked).
-    let internal nameHeldElsewhere (destroyed : DestroyedDescription) (table : OpenFileTable) : bool =
-        OpenFileEntries.all table.Entries
-        |> Map.exists (fun _ entry ->
-            entry.NameIdentity = destroyed.NameIdentity
-            && entry.OpenedThrough = destroyed.OpenedThrough
-        )
+    /// Which name the live description `id` holds of the one it was opened
+    /// through (`openedThrough`): the identity of the first description
+    /// opened through it while it was linked, as Linux's dentry. Loudly
+    /// partial on a description that is not live.
+    let internal nameIdentity (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescriptionId =
+        match OpenFileEntries.tryFind id table.Entries with
+        | Some entry -> entry.NameIdentity
+        | None ->
+            failwith
+                $"OpenFileTable.nameIdentity: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
+
+    /// Whether a live description holds the name `through` whose identity
+    /// is `identity` (a destroyed description's `NameIdentity`): one opened
+    /// through it while it was linked, the same name as Linux's dentry. A
+    /// name linked again after an unlink is another, though it has the same
+    /// directory and the same text (measured, `inotify-self-probe.c` row N
+    /// relinked). In time logarithmic in the number of descriptions.
+    let internal nameHeldElsewhere
+        (through : ReachedThrough)
+        (identity : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : bool
+        =
+        let (OpenFileDescriptionId identity) = identity
+        OpenFileEntries.openedThrough through table.Entries |> Map.containsKey identity
+
+    /// The live description `raw` names. Loudly partial: an index of the
+    /// table named it.
+    let private indexed (raw : int64) (table : OpenFileTable) : OpenFileEntry =
+        match OpenFileEntries.tryFind (OpenFileDescriptionId raw) table.Entries with
+        | Some entry -> entry
+        | None ->
+            failwith
+                $"OpenFileTable: an index names open file description %d{raw}, which is not in the table (this is a bug in this library)."
+
+    /// The live descriptions onto `inode` opened through the name `name` in
+    /// `directory` while it is linked, in identity order, with the identity
+    /// of the name each holds: in time logarithmic in the number of
+    /// descriptions, and linear in the number opened through that name.
+    let private holdingLinkedName
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : (int64 * OpenFileDescriptionId) list
+        =
+        OpenFileEntries.openedThrough (ReachedThrough.ofEntry directory name) table.Entries
+        |> Seq.collect (fun (KeyValue (identity, ids)) -> ids |> Seq.map (fun raw -> raw, identity))
+        |> Seq.filter (fun (raw, _) -> inodeOf (indexed raw table).Description.Target = Some inode)
+        |> Seq.map (fun (raw, identity) -> raw, OpenFileDescriptionId identity)
+        |> List.ofSeq
+        |> List.sortBy fst
 
     /// Whether a live description onto `inode` was opened through the name
     /// `name` in `directory`, still linked: Linux's dentry, which that
-    /// description holds.
+    /// description holds. In time logarithmic in the number of descriptions,
+    /// and linear in the number opened through that name.
     let internal holdsLinkedName
         (directory : InodeNumber)
         (name : DirectoryEntryName)
@@ -2278,20 +2632,22 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        let through =
-            ReachedThrough.Name (
-                {
-                    Parent = directory
-                    Name = name
-                },
-                false
-            )
+        not (List.isEmpty (holdingLinkedName directory name inode table))
 
-        OpenFileEntries.all table.Entries
-        |> Map.exists (fun _ entry ->
-            entry.OpenedThrough = Some through
-            && inodeOf entry.Description.Target = Some inode
-        )
+    /// Whether a live description is onto `inode`, or was opened through a
+    /// name in it, in time logarithmic in the number of inodes they hold.
+    let internal holdsInode (inode : InodeNumber) (table : OpenFileTable) : bool =
+        OpenFileEntries.holds inode table.Entries
+
+    /// Every inode a live description is onto or was opened through a name
+    /// in, in order, in time linear in the number of such inodes.
+    let internal heldInodes (table : OpenFileTable) : InodeNumber seq =
+        OpenFileEntries.heldInodes table.Entries |> Seq.map InodeNumber
+
+    /// Every directory a live description is onto or was opened through a
+    /// name in, in order, in time linear in the number of such directories.
+    let internal heldDirectories (table : OpenFileTable) : InodeNumber seq =
+        OpenFileEntries.heldDirectories table.Entries |> Seq.map InodeNumber
 
     /// Every live description onto an inode, with its identity and the name it
     /// was opened through, in identity order.
@@ -2328,18 +2684,10 @@ module OpenFileTable =
         // description holds, so the walk found it again.
         let nameIdentity =
             match openedThrough, inodeOf description.Target with
-            | Some (ReachedThrough.Name (_, false) as through), Some inode ->
-                OpenFileEntries.all table.Entries
-                |> Map.tryPick (fun _ entry ->
-                    if
-                        entry.OpenedThrough = Some through
-                        && inodeOf entry.Description.Target = Some inode
-                    then
-                        Some entry.NameIdentity
-                    else
-                        None
-                )
-                |> Option.defaultValue id
+            | Some (ReachedThrough.Name (dentry, false)), Some inode ->
+                match holdingLinkedName dentry.Parent dentry.Name inode table with
+                | (_, identity) :: _ -> identity
+                | [] -> id
             | _ -> id
 
         id,
@@ -2361,42 +2709,69 @@ module OpenFileTable =
     /// `table` after a filesystem change of names: each description's record
     /// of the name it was opened through moved by a rename of that name, or
     /// marked unlinked by the name's going (`ReachedThrough.followChange`), in
-    /// the order of `changes`.
+    /// the order of `changes`. Visits only the descriptions opened through a
+    /// name a change removed or moved, in time logarithmic in the number of
+    /// descriptions for each.
     let internal followChanges (changes : FsChange list) (table : OpenFileTable) : OpenFileTable =
-        let follows =
-            changes
-            |> List.exists (fun change ->
-                match change with
-                | FsChange.EntryRemoved _
-                | FsChange.EntryMoved _ -> true
-                | FsChange.EntryAdded _
-                | FsChange.ContentChanged _
-                | FsChange.AttributesChanged _
-                | FsChange.InodeForgotten _ -> false
-            )
+        let entries =
+            (table.Entries, changes)
+            ||> List.fold (fun entries change ->
+                // `followChange` changes a record only of a name still linked
+                // that `change` removed or moved, at either end.
+                let names =
+                    match change with
+                    | FsChange.EntryRemoved (directory, name, _) -> [ directory, name ]
+                    | FsChange.EntryMoved (source, sourceName, destination, destinationName, _, _) ->
+                        if source = destination && sourceName = destinationName then
+                            [ source, sourceName ]
+                        else
+                            [ source, sourceName ; destination, destinationName ]
+                    | FsChange.EntryAdded _
+                    | FsChange.ContentChanged _
+                    | FsChange.AttributesChanged _
+                    | FsChange.InodeForgotten _ -> []
 
-        if not follows then
-            table
-        else
+                // Gathered before any is followed, so that a record the change
+                // moves onto its other name does not follow it twice.
+                let following =
+                    names
+                    |> List.collect (fun (directory, name) ->
+                        OpenFileEntries.openedThrough (ReachedThrough.ofEntry directory name) entries
+                        |> Seq.collect (fun (KeyValue (_, ids)) -> ids)
+                        |> List.ofSeq
+                    )
 
-        { table with
-            Entries =
-                table.Entries
-                |> OpenFileEntries.map (fun _ entry ->
+                (entries, following)
+                ||> List.fold (fun entries raw ->
+                    let id = OpenFileDescriptionId raw
+
+                    let entry =
+                        match OpenFileEntries.tryFind id entries with
+                        | Some entry -> entry
+                        | None ->
+                            failwith
+                                $"OpenFileTable.followChanges: the index of names names open file description %d{raw}, which is not in the table (this is a bug in this library)."
+
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some through, Some inode ->
-                        { entry with
-                            OpenedThrough =
-                                Some (
-                                    (through, changes)
-                                    ||> List.fold (fun through change ->
-                                        ReachedThrough.followChange inode change through
-                                    )
-                                )
-                        }
-                    | Some _, _
-                    | None, _ -> entry
+                        let followed = ReachedThrough.followChange inode change through
+
+                        if LanguagePrimitives.PhysicalEquality followed through then
+                            entries
+                        else
+                            OpenFileEntries.add
+                                id
+                                { entry with
+                                    OpenedThrough = Some followed
+                                }
+                                entries
+                    | Some _, None
+                    | None, _ -> entries
                 )
+            )
+
+        { table with
+            Entries = entries
         }
 
     /// Rewrite the entry of the live description `id`. `operation` names the
@@ -3054,6 +3429,60 @@ module OpenFileTable =
         | OpenFileTarget.Pipe _ ->
             failwith
                 $"%s{operation}: %O{instance} names %A{description.Target} rather than an inotify instance (this is a bug in this library, or in a caller that assembled the state by hand)."
+
+    /// The live inotify instances with a watch on `inode`, in identity order,
+    /// and the descriptors of each one's watches on it, in order: in time
+    /// logarithmic in the number of watches on the machine and linear in the
+    /// number answered.
+    let internal inotifyWatchesOn
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : (OpenFileDescriptionId * WatchDescriptor list) list
+        =
+        OpenFileEntries.watchesOn inode table.Entries
+        |> Seq.map (fun (KeyValue (instance, watches)) ->
+            OpenFileDescriptionId instance, watches |> Seq.map WatchDescriptor |> List.ofSeq
+        )
+        |> List.ofSeq
+
+    /// How many live inotify instances `owner` owns, in every process, in
+    /// time logarithmic in the number of users owning one.
+    let internal inotifyInstancesOwnedBy (owner : UserId) (table : OpenFileTable) : int =
+        OpenFileEntries.inotifyInstancesOf owner table.Entries
+
+    /// How many watches the live inotify instances `owner` owns have, in
+    /// every process, in time logarithmic in the number of users owning one.
+    let internal inotifyWatchesOwnedBy (owner : UserId) (table : OpenFileTable) : int =
+        OpenFileEntries.inotifyWatchesOf owner table.Entries
+
+    /// Record `watch` under `wd` in the inotify instance `instance` names, in
+    /// place of any watch there, in time logarithmic in the table and in the
+    /// instance's watches. Loudly partial on a dead or non-inotify
+    /// description: the caller has just resolved it as an inotify instance.
+    let internal setInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (watch : InotifyWatch)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.setInotifyWatch instance wd watch table.Entries
+        }
+
+    /// Remove the watch `wd` from the inotify instance `instance` names, in
+    /// time logarithmic in the table and in the instance's watches. Loudly
+    /// partial on a dead or non-inotify description, and on a watch it does
+    /// not hold.
+    let internal removeInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.removeInotifyWatch instance wd table.Entries
+        }
 
     /// Replace the state of the inotify instance `instance` names with
     /// `state`. Loudly partial, as `inotifyState` is.

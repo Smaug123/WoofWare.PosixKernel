@@ -489,63 +489,55 @@ module internal InotifyDelivery =
             else
                 [], None, nextCookie
 
+    /// The mask of the watch `wd` of the inotify instance `instance`. Loudly
+    /// partial: the table's index of watches named it.
+    let private maskOf
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (openFiles : OpenFileTable)
+        : InotifyMask
+        =
+        let state = OpenFileTable.inotifyState "InotifyDelivery" instance openFiles
+
+        match Map.tryFind wd state.Watches with
+        | Some watch -> watch.Mask
+        | None ->
+            failwith
+                $"InotifyDelivery: the index of watches names watch %O{wd} of inotify instance %O{instance}, which holds no such watch (this is a bug in this library)."
+
     /// The refusal of the change that raised `unplaced`, if some watch in
     /// `openFiles` on its old parent asks for an event of it: the first such,
-    /// in the order of the instances' IDs.
+    /// in the order of the instances' IDs and then of the watches'. In time
+    /// logarithmic in the number of watches on the machine, and linear in the
+    /// number on the old parent.
     let unplacedRefusal (unplaced : Unplaced option) (openFiles : OpenFileTable) : UnplacedChangeRefusal option =
         match unplaced with
         | None -> None
         | Some unplaced ->
 
-        OpenFileTable.toSeq openFiles
-        |> Seq.collect (fun (instance, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state ->
-                state.Watches |> Map.toSeq |> Seq.map (fun (wd, watch) -> instance, wd, watch)
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> Seq.empty
+        OpenFileTable.inotifyWatchesOn unplaced.OldParent openFiles
+        |> Seq.collect (fun (instance, watches) -> watches |> Seq.map (fun wd -> instance, wd))
+        |> Seq.tryFind (fun (instance, wd) ->
+            not (Set.intersect unplaced.Events (maskOf instance wd openFiles).Events).IsEmpty
         )
-        |> Seq.tryFind (fun (_, _, watch) ->
-            watch.Inode = unplaced.OldParent
-            && not (Set.intersect unplaced.Events watch.Mask.Events).IsEmpty
-        )
-        |> Option.map (fun (instance, wd, _) ->
+        |> Option.map (fun (instance, wd) ->
             UnplacedChangeRefusal.RemovedDirectoryName (unplaced.OldParent, unplaced.Events, instance, wd)
         )
 
-    /// The watches of each inotify instance in `openFiles`, in the order of
-    /// the instances' IDs, by the inode each watches.
-    let private watchesByInode
+    /// The watch of each inotify instance in `openFiles` on `inode`, in the
+    /// order of the instances' IDs, and its mask: of an instance holding
+    /// several, which `FileDescriptorRegistryDefect.InotifyInodeWatchedTwice`
+    /// rules out, the latest.
+    let private watching
+        (inode : InodeNumber)
         (openFiles : OpenFileTable)
-        : (OpenFileDescriptionId * Map<InodeNumber, WatchDescriptor * InotifyMask>) list
+        : (OpenFileDescriptionId * WatchDescriptor * InotifyMask) list
         =
-        OpenFileTable.toSeq openFiles
-        |> Seq.choose (fun (id, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state ->
-                let byInode =
-                    state.Watches
-                    |> Map.toSeq
-                    |> Seq.map (fun (watch, watched) -> watched.Inode, (watch, watched.Mask))
-                    |> Map.ofSeq
-
-                Some (id, byInode)
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> None
+        OpenFileTable.inotifyWatchesOn inode openFiles
+        |> List.map (fun (instance, watches) ->
+            let wd = List.last watches
+            instance, wd, maskOf instance wd openFiles
         )
-        |> List.ofSeq
 
     /// `openFiles` with each of `effects` made, in order, each instance's
     /// queue limit being `maxQueuedEvents` records
@@ -564,87 +556,49 @@ module internal InotifyDelivery =
     /// The end of the watches on an inode removes each before queueing its
     /// records, so the watch goes whether or not the queue takes its
     /// `IN_IGNORED` (measured, `inotify-self-probe.c` section Q).
+    ///
+    /// Each effect visits only the watches on its inode, in time logarithmic
+    /// in the number of watches on the machine for each, as Linux reads an
+    /// inode's own marks.
     let deliver (maxQueuedEvents : int) (effects : InotifyEffect list) (openFiles : OpenFileTable) : OpenFileTable =
-        if List.isEmpty effects then
-            openFiles
-        else
-
-        // Queueing a record changes no watch, so the watches are read once,
-        // and again only after some end.
-        ((openFiles, watchesByInode openFiles), effects)
-        ||> List.fold (fun (table, instances) effect ->
+        (openFiles, effects)
+        ||> List.fold (fun table effect ->
             match effect with
             | InotifyEffect.Notify notification ->
-                let table =
-                    (table, instances)
-                    ||> List.fold (fun table (instance, watches) ->
-                        match Map.tryFind notification.Watched watches with
-                        | None -> table
-                        | Some (watch, mask) ->
+                (table, watching notification.Watched table)
+                ||> List.fold (fun table (instance, watch, mask) ->
+                    if
+                        Set.intersect notification.Events mask.Events |> Set.isEmpty
+                        || notification.HiddenByExclUnlink && mask.ExcludeUnlinked
+                    then
+                        table
+                    else
+                        let record =
+                            InotifyRecord.Event (
+                                watch,
+                                notification.Events,
+                                notification.SubjectIsDirectory,
+                                notification.Cookie,
+                                notification.Name
+                            )
 
-                        if
-                            Set.intersect notification.Events mask.Events |> Set.isEmpty
-                            || notification.HiddenByExclUnlink && mask.ExcludeUnlinked
-                        then
-                            table
-                        else
-                            let record =
-                                InotifyRecord.Event (
-                                    watch,
-                                    notification.Events,
-                                    notification.SubjectIsDirectory,
-                                    notification.Cookie,
-                                    notification.Name
-                                )
-
-                            OpenFileTable.enqueueInotify maxQueuedEvents instance record table
-                    )
-
-                table, instances
+                        OpenFileTable.enqueueInotify maxQueuedEvents instance record table
+                )
             | InotifyEffect.WatchesEnd inode ->
-                let watching =
-                    instances
-                    |> List.choose (fun (instance, watches) ->
-                        Map.tryFind inode watches |> Option.map (fun watched -> instance, watched)
-                    )
+                (table, watching inode table)
+                ||> List.fold (fun table (instance, watch, mask) ->
+                    let table = OpenFileTable.removeInotifyWatch instance watch table
 
-                if List.isEmpty watching then
-                    table, instances
-                else
-
-                let table =
-                    (table, watching)
-                    ||> List.fold (fun table (instance, (watch, mask)) ->
-                        let state = OpenFileTable.inotifyState "InotifyDelivery.deliver" instance table
-
-                        let table =
-                            OpenFileTable.setInotifyState
-                                "InotifyDelivery.deliver"
+                    let table =
+                        if Set.contains InotifyEvent.DeleteSelf mask.Events then
+                            OpenFileTable.enqueueInotify
+                                maxQueuedEvents
                                 instance
-                                { state with
-                                    Watches = Map.remove watch state.Watches
-                                }
+                                (InotifyRecord.Event (watch, Set.singleton InotifyEvent.DeleteSelf, false, 0u, None))
                                 table
+                        else
+                            table
 
-                        let table =
-                            if Set.contains InotifyEvent.DeleteSelf mask.Events then
-                                OpenFileTable.enqueueInotify
-                                    maxQueuedEvents
-                                    instance
-                                    (InotifyRecord.Event (
-                                        watch,
-                                        Set.singleton InotifyEvent.DeleteSelf,
-                                        false,
-                                        0u,
-                                        None
-                                    ))
-                                    table
-                            else
-                                table
-
-                        OpenFileTable.enqueueInotify maxQueuedEvents instance (InotifyRecord.Ignored watch) table
-                    )
-
-                table, watchesByInode table
+                    OpenFileTable.enqueueInotify maxQueuedEvents instance (InotifyRecord.Ignored watch) table
+                )
         )
-        |> fst
