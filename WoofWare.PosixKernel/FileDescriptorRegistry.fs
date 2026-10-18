@@ -1261,15 +1261,92 @@ type private OpenFileEntry =
         NameIdentity : OpenFileDescriptionId
     }
 
-/// The entries of the machine's open file table, and two indexes of them that
-/// a sleeping call's wake condition reads: how many live descriptions name
-/// each end of each pipe, and which descriptions hold a `flock` on each
-/// object. A real kernel keeps both beside the object: a pipe's count of
-/// readers and writers, an inode's list of locks.
+/// An index of registrations: under each key, each member with a
+/// registration filed there, an identity's value, and what tells its
+/// registrations under that key apart. The shape of the open file table's
+/// indexes of epoll and kqueue registrations, and of the sleeping Darwin
+/// polls' kqueues'.
+///
+/// A key with no member has no entry, and a member with nothing filed under a
+/// key no entry under it, so an index is a function of what it files, and two
+/// indexes of the same registrations are equal.
+[<RequireQualifiedAccess>]
+module internal RegistrationIndex =
+
+    /// The key a registration made through the descriptor `fd` of the process
+    /// `owner` is filed under. Packed into one `int64`, since a `Map` boxes a
+    /// struct key at every comparison.
+    let throughDescriptor (owner : ProcessId) (fd : int) : int64 =
+        (int64 (ProcessId.toInt32 owner) <<< 32) ||| int64 (uint32 fd)
+
+    /// Each member with a registration filed under `key`, and what tells its
+    /// registrations there apart.
+    let membersUnder<'Distinct when 'Distinct : comparison>
+        (key : int64)
+        (index : Map<int64, Map<int64, Set<'Distinct>>>)
+        : Map<int64, Set<'Distinct>>
+        =
+        Map.tryFind key index |> Option.defaultValue Map.empty
+
+    /// `index` with the registration of `memberValue` that `distinct` tells
+    /// apart filed under `key`, in time logarithmic in the index.
+    let file<'Distinct when 'Distinct : comparison>
+        (key : int64)
+        (memberValue : int64)
+        (distinct : 'Distinct)
+        (index : Map<int64, Map<int64, Set<'Distinct>>>)
+        : Map<int64, Map<int64, Set<'Distinct>>>
+        =
+        let members = membersUnder key index
+        let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
+        Map.add key (Map.add memberValue (Set.add distinct filed) members) index
+
+    /// `index` without the registration of `memberValue` that `distinct` tells
+    /// apart under `key`, in time logarithmic in the index. Loudly partial on
+    /// a registration the index does not hold.
+    let unfile<'Distinct when 'Distinct : comparison>
+        (key : int64)
+        (memberValue : int64)
+        (distinct : 'Distinct)
+        (index : Map<int64, Map<int64, Set<'Distinct>>>)
+        : Map<int64, Map<int64, Set<'Distinct>>>
+        =
+        let members = membersUnder key index
+        let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
+
+        if not (Set.contains distinct filed) then
+            failwith
+                $"RegistrationIndex.unfile: member %d{memberValue} has no registration %A{distinct} filed under key %d{key} to remove (this is a bug in this library: something changed a registration without telling its index)."
+
+        let filed = Set.remove distinct filed
+
+        let members =
+            if Set.isEmpty filed then
+                Map.remove memberValue members
+            else
+                Map.add memberValue filed members
+
+        if Map.isEmpty members then
+            Map.remove key index
+        else
+            Map.add key members index
+
+/// The entries of the machine's open file table, and four indexes of them.
+/// Two are what a sleeping call's wake condition reads: how many live
+/// descriptions name each end of each pipe, and which descriptions hold a
+/// `flock` on each object. A real kernel keeps both beside the object: a
+/// pipe's count of readers and writers, an inode's list of locks. Two are
+/// what a close reads: which epoll instances register each description, as
+/// Linux keeps on each file the list of epoll items watching it (`f_ep`); and
+/// which kqueues registered through each descriptor of each process, as
+/// Darwin keeps a list per descriptor of the knotes made through it
+/// (`fd_knlist`).
 ///
 /// The representation is private to this module, so every change to an
-/// entry goes through `add`, `remove` or `map`, which keep the indexes, and
-/// nothing else can change one.
+/// entry goes through `add`, `remove` or `map`, or through one of the
+/// functions that change one registration of an epoll instance or a kqueue
+/// (`registerInEpoll` and its kin), which keep the indexes, and nothing else
+/// can change one.
 [<RequireQualifiedAccess>]
 module private OpenFileEntries =
 
@@ -1294,6 +1371,20 @@ module private OpenFileEntries =
                 /// by the description's identity's value. An object no
                 /// description holds a lock on has no key.
                 Flocks : Map<OpenFileObject, Map<int64, FlockMode>>
+                /// The epoll instances with a registration of each
+                /// description, keyed by the description's identity's value,
+                /// by the value of each instance's identity, and the
+                /// descriptor numbers it registers the description through. A
+                /// description no instance registers has no key, and an
+                /// instance that does not register it no entry.
+                EpollsRegistering : Map<int64, Map<int64, Set<int>>>
+                /// The kqueues with a registration through each descriptor of
+                /// each process, keyed as
+                /// `RegistrationIndex.throughDescriptor` keys the kqueue's
+                /// owner and the descriptor, by the value of each kqueue's
+                /// identity, and the filters it registers through the
+                /// descriptor.
+                KqueuesThrough : Map<int64, Map<int64, Set<KqueueFilter>>>
             }
 
     let empty : Entries =
@@ -1301,6 +1392,8 @@ module private OpenFileEntries =
             All = Map.empty
             PipeEnds = Map.empty
             Flocks = Map.empty
+            EpollsRegistering = Map.empty
+            KqueuesThrough = Map.empty
         }
 
     /// Every entry, by its description's identity.
@@ -1369,20 +1462,122 @@ module private OpenFileEntries =
                 else
                     Map.add object held entries.Flocks
 
-        {
-            All = entries.All
+        { entries with
             PipeEnds = pipeEnds
             Flocks = flocks
         }
 
+    /// `epolls` and `kqueues`, indexes of epoll and kqueue registrations, with
+    /// each registration of `entry`, the description `id`'s, filed in them by
+    /// `file`, if it is an epoll instance or a kqueue.
+    let private fileRegistrations
+        (file : int64 -> int64 -> int -> Map<int64, Map<int64, Set<int>>> -> Map<int64, Map<int64, Set<int>>>)
+        (fileFilter :
+            int64
+                -> int64
+                -> KqueueFilter
+                -> Map<int64, Map<int64, Set<KqueueFilter>>>
+                -> Map<int64, Map<int64, Set<KqueueFilter>>>)
+        (id : OpenFileDescriptionId)
+        (entry : OpenFileEntry)
+        (epolls : Map<int64, Map<int64, Set<int>>>, kqueues : Map<int64, Map<int64, Set<KqueueFilter>>>)
+        : Map<int64, Map<int64, Set<int>>> * Map<int64, Map<int64, Set<KqueueFilter>>>
+        =
+        let (OpenFileDescriptionId raw) = id
+
+        match entry.Description.Target with
+        | OpenFileTarget.Epoll state ->
+            let epolls =
+                (epolls, state.Registrations)
+                ||> Map.fold (fun epolls (fd, OpenFileDescriptionId target) _ -> file target raw fd epolls)
+
+            epolls, kqueues
+        | OpenFileTarget.Kqueue state ->
+            let kqueues =
+                (kqueues, state.Registrations)
+                ||> Map.fold (fun kqueues (fd, filter) _ ->
+                    fileFilter (RegistrationIndex.throughDescriptor state.Owner fd) raw filter kqueues
+                )
+
+            epolls, kqueues
+        | OpenFileTarget.File _
+        | OpenFileTarget.Directory _
+        | OpenFileTarget.Socket _
+        | OpenFileTarget.CharacterDevice _
+        | OpenFileTarget.Fifo _
+        | OpenFileTarget.Inotify _
+        | OpenFileTarget.Pipe _ -> epolls, kqueues
+
+    /// Whether `before` and `after`, entries of one description, are certainly
+    /// filed alike in the registration indexes: neither is an epoll instance
+    /// or a kqueue, or both are of one kind and share their registrations, and
+    /// two kqueues their owner too. Constant time, and false for some entries
+    /// filed alike.
+    let private registersAlike (before : OpenFileEntry) (after : OpenFileEntry) : bool =
+        match before.Description.Target, after.Description.Target with
+        | OpenFileTarget.Epoll first, OpenFileTarget.Epoll second ->
+            LanguagePrimitives.PhysicalEquality first.Registrations second.Registrations
+        | OpenFileTarget.Kqueue first, OpenFileTarget.Kqueue second ->
+            first.Owner = second.Owner
+            && LanguagePrimitives.PhysicalEquality first.Registrations second.Registrations
+        | OpenFileTarget.Epoll _, _
+        | _, OpenFileTarget.Epoll _
+        | OpenFileTarget.Kqueue _, _
+        | _, OpenFileTarget.Kqueue _ -> false
+        | _, _ -> true
+
+    /// `entries`'s registration indexes with the description `id` filed as
+    /// `after` says rather than as `before` does, where an absent entry is
+    /// filed under nothing: in time logarithmic in the indexes for each
+    /// registration of either, unless they are certainly filed alike
+    /// (`registersAlike`).
+    let private refileRegistrations
+        (id : OpenFileDescriptionId)
+        (before : OpenFileEntry option)
+        (after : OpenFileEntry option)
+        (entries : Entries)
+        : Entries
+        =
+        let alike =
+            match before, after with
+            | Some before, Some after -> registersAlike before after
+            | None, None -> true
+            | Some _, None
+            | None, Some _ -> false
+
+        if alike then
+            entries
+        else
+            let indexes = entries.EpollsRegistering, entries.KqueuesThrough
+
+            let indexes =
+                match before with
+                | Some before -> fileRegistrations RegistrationIndex.unfile RegistrationIndex.unfile id before indexes
+                | None -> indexes
+
+            let epolls, kqueues =
+                match after with
+                | Some after -> fileRegistrations RegistrationIndex.file RegistrationIndex.file id after indexes
+                | None -> indexes
+
+            { entries with
+                EpollsRegistering = epolls
+                KqueuesThrough = kqueues
+            }
+
     /// `entries` with `entry` as the description `id`'s, in place of any it had.
     let add (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
+        let before = Map.tryFind id entries.All
+
         let uncounted =
-            match Map.tryFind id entries.All with
+            match before with
             | Some before -> count -1 id before entries
             | None -> entries
 
-        { count 1 id entry uncounted with
+        let counted =
+            count 1 id entry uncounted |> refileRegistrations id before (Some entry)
+
+        { counted with
             All = Map.add id entry entries.All
         }
 
@@ -1391,13 +1586,17 @@ module private OpenFileEntries =
         match Map.tryFind id entries.All with
         | None -> entries
         | Some before ->
-            { count -1 id before entries with
+            let uncounted =
+                count -1 id before entries |> refileRegistrations id (Some before) None
+
+            { uncounted with
                 All = Map.remove id entries.All
             }
 
     /// Whether `before` and `after`, entries of the description `id`, are
-    /// counted alike in the indexes: onto the same pipe end or none, and
-    /// holding the same lock on the same object or none.
+    /// certainly counted alike in the indexes: onto the same pipe end or none,
+    /// holding the same lock on the same object or none, and filed alike in
+    /// the registration indexes (`registersAlike`).
     let private indexedAlike (id : OpenFileDescriptionId) (before : OpenFileEntry) (after : OpenFileEntry) : bool =
         LanguagePrimitives.PhysicalEquality before after
         || (match before.Description.Target, after.Description.Target with
@@ -1409,10 +1608,12 @@ module private OpenFileEntries =
            && before.Description.Flock = after.Description.Flock
            && (before.Description.Flock.IsNone
                || OpenFileDescription.object id before.Description = OpenFileDescription.object id after.Description)
+           && registersAlike before after
 
     /// `entries` with each description's entry rewritten by `f`, in time
-    /// linear in the number of entries and logarithmic in it for each entry
-    /// `f` counts differently in the indexes.
+    /// linear in the number of entries, plus, for each entry `f` counts
+    /// differently in the indexes (`indexedAlike`), time logarithmic in their
+    /// size and linear in what that entry registers.
     let map (f : OpenFileDescriptionId -> OpenFileEntry -> OpenFileEntry) (entries : Entries) : Entries =
         // Map.map keeps the map's shape, which adding each entry again would
         // not: a rename rewrites every description onto an inode.
@@ -1434,7 +1635,10 @@ module private OpenFileEntries =
             All = all
          },
          recounted)
-        ||> Seq.fold (fun entries (struct (id, before, after)) -> count 1 id after (count -1 id before entries))
+        ||> Seq.fold (fun entries (struct (id, before, after)) ->
+            count 1 id after (count -1 id before entries)
+            |> refileRegistrations id (Some before) (Some after)
+        )
 
     /// Entries of exactly the descriptions in `all`.
     let ofMap (all : Map<OpenFileDescriptionId, OpenFileEntry>) : Entries =
@@ -1454,11 +1658,194 @@ module private OpenFileEntries =
     let flocksOn (object : OpenFileObject) (entries : Entries) : Map<int64, FlockMode> =
         Map.tryFind object entries.Flocks |> Option.defaultValue Map.empty
 
+    /// The epoll instances with a registration of the description `target`,
+    /// by the values of their identities, and the descriptors each registers
+    /// it through.
+    let epollsRegistering (OpenFileDescriptionId target) (entries : Entries) : Map<int64, Set<int>> =
+        RegistrationIndex.membersUnder target entries.EpollsRegistering
+
+    /// The kqueues `owner` owns with a registration through its descriptor
+    /// `fd`, by the values of their identities, and the filters each
+    /// registers through it.
+    let kqueuesThrough (owner : ProcessId) (fd : int) (entries : Entries) : Map<int64, Set<KqueueFilter>> =
+        RegistrationIndex.membersUnder (RegistrationIndex.throughDescriptor owner fd) entries.KqueuesThrough
+
+    /// `entry` describing `target` instead.
+    let private retargeted (target : OpenFileTarget) (entry : OpenFileEntry) : OpenFileEntry =
+        { entry with
+            Description =
+                { entry.Description with
+                    Target = target
+                }
+        }
+
+    /// The entry of the live epoll instance `epoll`, and its state. Loudly
+    /// partial: `operation`, named in the message, resolved it as one.
+    let private epollEntry
+        (operation : string)
+        (epoll : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * EpollState
+        =
+        match Map.tryFind epoll entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Epoll state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{epoll} is %A{other} rather than a live epoll instance, which the caller resolved it as (this is a bug in this library)."
+
+    /// The entry of the live kqueue `kqueue`, and its state. Loudly partial:
+    /// `operation`, named in the message, resolved it as one.
+    let private kqueueEntry
+        (operation : string)
+        (kqueue : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * KqueueState
+        =
+        match Map.tryFind kqueue entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Kqueue state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{kqueue} is %A{other} rather than a live kqueue, which the caller resolved it as (this is a bug in this library)."
+
+    /// `entries` with the live epoll instance `epoll` registering
+    /// `registration` under `key`, in place of any registration it had there:
+    /// in time logarithmic in the table and in the instance's registrations,
+    /// where `add` would take time linear in them.
+    let registerInEpoll
+        (epoll : OpenFileDescriptionId)
+        (fd : int, OpenFileDescriptionId target as key : int * OpenFileDescriptionId)
+        (registration : EpollRegistration)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = epollEntry "registerInEpoll" epoll entries
+        let (OpenFileDescriptionId raw) = epoll
+
+        let state =
+            { state with
+                Registrations = Map.add key registration state.Registrations
+            }
+
+        { entries with
+            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            EpollsRegistering = RegistrationIndex.file target raw fd entries.EpollsRegistering
+        }
+
+    /// `entries` with the live epoll instance `epoll` registering nothing
+    /// under any of `keys`, and holding no ready entry for one: in time
+    /// logarithmic in the table and in the instance's registrations for each
+    /// key, and linear in its ready list once. Loudly partial on a key it does
+    /// not register.
+    let unregisterFromEpoll
+        (epoll : OpenFileDescriptionId)
+        (keys : Set<int * OpenFileDescriptionId>)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = epollEntry "unregisterFromEpoll" epoll entries
+        let (OpenFileDescriptionId raw) = epoll
+
+        let registrations, filed =
+            ((state.Registrations, entries.EpollsRegistering), keys)
+            ||> Set.fold (fun (registrations, filed) (fd, OpenFileDescriptionId target as key) ->
+                if not (Map.containsKey key registrations) then
+                    failwith
+                        $"OpenFileEntries.unregisterFromEpoll: epoll instance %O{epoll} registers nothing under %A{key} (this is a bug in this library)."
+
+                Map.remove key registrations, RegistrationIndex.unfile target raw fd filed
+            )
+
+        let state =
+            {
+                Registrations = registrations
+                Ready = state.Ready |> List.filter (fun ready -> not (Set.contains ready keys))
+            }
+
+        { entries with
+            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            EpollsRegistering = filed
+        }
+
+    /// `entries` with the live kqueue `kqueue` registering `registration`
+    /// under `key`, in place of any registration it had there: in time
+    /// logarithmic in the table and in the kqueue's registrations, where `add`
+    /// would take time linear in them.
+    let registerInKqueue
+        (kqueue : OpenFileDescriptionId)
+        (fd : int, filter : KqueueFilter as key : int * KqueueFilter)
+        (registration : KqueueRegistration)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = kqueueEntry "registerInKqueue" kqueue entries
+        let (OpenFileDescriptionId raw) = kqueue
+
+        let filed =
+            entries.KqueuesThrough
+            |> RegistrationIndex.file (RegistrationIndex.throughDescriptor state.Owner fd) raw filter
+
+        let state =
+            { state with
+                Registrations = Map.add key registration state.Registrations
+            }
+
+        { entries with
+            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            KqueuesThrough = filed
+        }
+
+    /// `entries` with the live kqueue `kqueue` registering nothing under any
+    /// of `keys`, and holding no active entry for one: in time logarithmic in
+    /// the table and in the kqueue's registrations for each key, and linear in
+    /// its active list once. Loudly partial on a key it does not register.
+    let unregisterFromKqueue
+        (kqueue : OpenFileDescriptionId)
+        (keys : Set<int * KqueueFilter>)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = kqueueEntry "unregisterFromKqueue" kqueue entries
+        let (OpenFileDescriptionId raw) = kqueue
+
+        let registrations, filed =
+            ((state.Registrations, entries.KqueuesThrough), keys)
+            ||> Set.fold (fun (registrations, filed) (fd, filter as key) ->
+                if not (Map.containsKey key registrations) then
+                    failwith
+                        $"OpenFileEntries.unregisterFromKqueue: kqueue %O{kqueue} registers nothing under %A{key} (this is a bug in this library)."
+
+                Map.remove key registrations,
+                RegistrationIndex.unfile (RegistrationIndex.throughDescriptor state.Owner fd) raw filter filed
+            )
+
+        let state =
+            { state with
+                Registrations = registrations
+                Active = state.Active |> List.filter (fun active -> not (Set.contains active keys))
+            }
+
+        { entries with
+            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            KqueuesThrough = filed
+        }
+
     /// Whether the indexes are those of the entries, as `ofMap` would build
     /// them afresh.
     let indexesFresh (entries : Entries) : bool =
         let fresh = ofMap entries.All
-        fresh.PipeEnds = entries.PipeEnds && fresh.Flocks = entries.Flocks
+
+        fresh.PipeEnds = entries.PipeEnds
+        && fresh.Flocks = entries.Flocks
+        && fresh.EpollsRegistering = entries.EpollsRegistering
+        && fresh.KqueuesThrough = entries.KqueuesThrough
 
 /// The machine's open file descriptions, POSIX's "open file description" and
 /// Linux's `struct file`: what every descriptor in every process names, by
@@ -1723,9 +2110,10 @@ type internal FileDescriptorRegistryDefect =
     /// through a name hold one name until it is unlinked, and a rename moves
     /// every record of it.
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
-    /// The table's count of the descriptions naming each end of each pipe, or
-    /// its record of the `flock`s held on each object, is not what its
-    /// descriptions say.
+    /// The table's count of the descriptions naming each end of each pipe,
+    /// its record of the `flock`s held on each object, or its record of the
+    /// epoll instances registering each description or of the kqueues
+    /// registering through each descriptor, is not what its descriptions say.
     | StaleIndex
 
 [<RequireQualifiedAccess>]
@@ -1800,6 +2188,32 @@ module OpenFileTable =
     /// `pipeId`, in time logarithmic in the number of pipes.
     let internal describesPipeEnd (pipeId : PipeId) (pipeEnd : PipeEnd) (table : OpenFileTable) : bool =
         OpenFileEntries.describesPipeEnd pipeId pipeEnd table.Entries
+
+    /// The live epoll instances with a registration of the description
+    /// `target`, in identity order, in time logarithmic in the number of
+    /// descriptions and linear in the number of instances answered.
+    let internal epollsRegistering
+        (target : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : OpenFileDescriptionId list
+        =
+        OpenFileEntries.epollsRegistering target table.Entries
+        |> Seq.map (fun (KeyValue (epoll, _)) -> OpenFileDescriptionId epoll)
+        |> List.ofSeq
+
+    /// The live kqueues `owner` owns with a registration through its
+    /// descriptor `fd`, in identity order, in time logarithmic in the number
+    /// of registrations on the machine and linear in the number of kqueues
+    /// answered.
+    let internal kqueuesRegisteringThrough
+        (owner : ProcessId)
+        (fd : int)
+        (table : OpenFileTable)
+        : OpenFileDescriptionId list
+        =
+        OpenFileEntries.kqueuesThrough owner fd table.Entries
+        |> Seq.map (fun (KeyValue (kqueue, _)) -> OpenFileDescriptionId kqueue)
+        |> List.ofSeq
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
@@ -2105,32 +2519,16 @@ module OpenFileTable =
         // is released, so every registration names an open descriptor, which
         // names a live description, never this one
         // (`KqueueRegistrationThroughClosedDescriptor`).
+        //
+        // Only the instances that register it are visited, as Linux walks the
+        // file's own list of the epoll items watching it.
+        let removed = OpenFileEntries.remove id table.Entries
+
         let entries =
-            OpenFileEntries.remove id table.Entries
-            |> OpenFileEntries.map (fun _ entry ->
-                match entry.Description.Target with
-                | OpenFileTarget.Epoll epollState ->
-                    { entry with
-                        Description =
-                            { entry.Description with
-                                Target =
-                                    OpenFileTarget.Epoll
-                                        {
-                                            Registrations =
-                                                epollState.Registrations
-                                                |> Map.filter (fun (_, target) _ -> target <> id)
-                                            Ready = epollState.Ready |> List.filter (fun (_, target) -> target <> id)
-                                        }
-                            }
-                    }
-                | OpenFileTarget.Kqueue _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> entry
+            (removed, OpenFileEntries.epollsRegistering id removed)
+            ||> Map.fold (fun entries epoll fds ->
+                let keys = fds |> Set.map (fun fd -> fd, id)
+                OpenFileEntries.unregisterFromEpoll (OpenFileDescriptionId epoll) keys entries
             )
 
         { table with
@@ -2309,16 +2707,62 @@ module OpenFileTable =
             failwith
                 $"setKqueueState: %O{kqueue} names %A{other} rather than a live kqueue; the caller resolved it as one moments ago (this is a bug in the caller of OpenFileTable.setKqueueState)."
 
-    /// Rewrite the state of the epoll instance `epollId` names. Loudly partial
-    /// on a dead or non-epoll description: every caller resolved it as an
-    /// epoll instance moments ago, so either means it wrote against a different
-    /// table than the one it read. `operation` names the caller for that message.
-    let private mapEpollState
-        (operation : string)
-        (epollId : OpenFileDescriptionId)
-        (f : EpollState -> EpollState)
+    /// Remove every registration made through the descriptor `fd` from every
+    /// kqueue the process `owner` owns, queued or not: what closing `fd`
+    /// does to them. Visits only the kqueues with such a registration
+    /// (`kqueuesRegisteringThrough`).
+    let internal dropKqueueRegistrationsThrough (owner : ProcessId) (fd : int) (table : OpenFileTable) : OpenFileTable =
+        let entries =
+            (table.Entries, OpenFileEntries.kqueuesThrough owner fd table.Entries)
+            ||> Map.fold (fun entries kqueue filters ->
+                let keys = filters |> Set.map (fun filter -> fd, filter)
+                OpenFileEntries.unregisterFromKqueue (OpenFileDescriptionId kqueue) keys entries
+            )
+
+        { table with
+            Entries = entries
+        }
+
+    /// Record `registration` under `key` in the kqueue the open file
+    /// description `kqueue` names, in place of any registration there: the
+    /// table half of a committed `EV_ADD`. Loudly partial on a dead or
+    /// non-kqueue description: the caller has just resolved it as a kqueue.
+    let internal registerInKqueue
+        (kqueue : OpenFileDescriptionId)
+        (key : int * KqueueFilter)
+        (registration : KqueueRegistration)
         (table : OpenFileTable)
         : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.registerInKqueue kqueue key registration table.Entries
+        }
+
+    /// Remove the registration under `key`, and its active entry if it has
+    /// one, from the kqueue the open file description `kqueue` names: the
+    /// table half of a committed `EV_DELETE`. Loudly partial on a dead or
+    /// non-kqueue description, and on a key it does not register, which
+    /// `kevent` answers `ENOENT` for before it reaches the table.
+    let internal unregisterFromKqueue
+        (kqueue : OpenFileDescriptionId)
+        (key : int * KqueueFilter)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.unregisterFromKqueue kqueue (Set.singleton key) table.Entries
+        }
+
+    /// The state of the epoll instance `epollId` names. Loudly partial on a
+    /// dead or non-epoll description: every caller resolved it as an epoll
+    /// instance moments ago, so either means it wrote against a different
+    /// table than the one it read. `operation` names the caller for that
+    /// message.
+    let private epollStateOf
+        (operation : string)
+        (epollId : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : EpollState
         =
         match tryFind epollId table with
         | None ->
@@ -2337,7 +2781,18 @@ module OpenFileTable =
         | OpenFileTarget.Pipe _ ->
             failwith
                 $"%s{operation}: %O{epollId} is not an epoll instance; the caller resolved it as one moments ago, so this is a bug in the caller of OpenFileTable.%s{operation}."
-        | OpenFileTarget.Epoll epollState ->
+        | OpenFileTarget.Epoll epollState -> epollState
+
+    /// Rewrite the state of the epoll instance `epollId` names. Loudly partial
+    /// as `epollStateOf` is; `operation` names the caller for that message.
+    let private mapEpollState
+        (operation : string)
+        (epollId : OpenFileDescriptionId)
+        (f : EpollState -> EpollState)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        let epollState = epollStateOf operation epollId table
 
         table
         |> mapDescription
@@ -2363,19 +2818,15 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "addEpollRegistration"
-            epollId
-            (fun epollState ->
-                if Map.containsKey key epollState.Registrations then
-                    failwith
-                        $"addEpollRegistration: %A{key} is already registered with epoll instance %O{epollId}, which epoll_ctl answers EEXIST for (this is a bug in the caller of OpenFileTable.addEpollRegistration)."
+        let epollState = epollStateOf "addEpollRegistration" epollId table
 
-                { epollState with
-                    Registrations = Map.add key registration epollState.Registrations
-                }
-            )
+        if Map.containsKey key epollState.Registrations then
+            failwith
+                $"addEpollRegistration: %A{key} is already registered with epoll instance %O{epollId}, which epoll_ctl answers EEXIST for (this is a bug in the caller of OpenFileTable.addEpollRegistration)."
+
+        { table with
+            Entries = OpenFileEntries.registerInEpoll epollId key registration table.Entries
+        }
 
     /// Replace the stored event mask and data of the registration under `key`:
     /// the table half of a committed `EPOLL_CTL_MOD`. The registration keeps
@@ -2392,27 +2843,22 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "modifyEpollRegistration"
-            epollId
-            (fun epollState ->
-                match Map.tryFind key epollState.Registrations with
-                | None ->
-                    failwith
-                        $"modifyEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.modifyEpollRegistration)."
-                | Some existing ->
-                    { epollState with
-                        Registrations =
-                            Map.add
-                                key
-                                { existing with
-                                    Events = events
-                                    Data = data
-                                }
-                                epollState.Registrations
-                    }
-            )
+        let epollState = epollStateOf "modifyEpollRegistration" epollId table
+
+        match Map.tryFind key epollState.Registrations with
+        | None ->
+            failwith
+                $"modifyEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.modifyEpollRegistration)."
+        | Some existing ->
+            let modified =
+                { existing with
+                    Events = events
+                    Data = data
+                }
+
+            { table with
+                Entries = OpenFileEntries.registerInEpoll epollId key modified table.Entries
+            }
 
     /// Remove the registration under `key`, and its pending entry if it has
     /// one: the table half of a committed `EPOLL_CTL_DEL`.
@@ -2425,20 +2871,15 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "removeEpollRegistration"
-            epollId
-            (fun epollState ->
-                if not (Map.containsKey key epollState.Registrations) then
-                    failwith
-                        $"removeEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.removeEpollRegistration)."
+        let epollState = epollStateOf "removeEpollRegistration" epollId table
 
-                {
-                    Registrations = Map.remove key epollState.Registrations
-                    Ready = epollState.Ready |> List.filter (fun k -> k <> key)
-                }
-            )
+        if not (Map.containsKey key epollState.Registrations) then
+            failwith
+                $"removeEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.removeEpollRegistration)."
+
+        { table with
+            Entries = OpenFileEntries.unregisterFromEpoll epollId (Set.singleton key) table.Entries
+        }
 
     /// Append `key` to the ready list of the epoll instance `epollId` names. The caller
     /// has decided the entry belongs there (an ADD/MOD found the target ready,
@@ -3523,32 +3964,7 @@ module FileDescriptorRegistry =
             // registers nothing through this descriptor, whatever numbers it
             // holds.
             let openFiles =
-                (registry.OpenFiles, OpenFileTable.toSeq registry.OpenFiles)
-                ||> Seq.fold (fun openFiles (kqueue, description) ->
-                    match description.Target with
-                    | OpenFileTarget.Kqueue state when
-                        state.Owner = owner
-                        && state.Registrations |> Map.exists (fun (registeredFd, _) _ -> registeredFd = fd)
-                        ->
-                        OpenFileTable.setKqueueState
-                            kqueue
-                            { state with
-                                Registrations =
-                                    state.Registrations
-                                    |> Map.filter (fun (registeredFd, _) _ -> registeredFd <> fd)
-                                Active = state.Active |> List.filter (fun (activeFd, _) -> activeFd <> fd)
-                            }
-                            openFiles
-                    | OpenFileTarget.Kqueue _
-                    | OpenFileTarget.Epoll _
-                    | OpenFileTarget.File _
-                    | OpenFileTarget.Directory _
-                    | OpenFileTarget.Socket _
-                    | OpenFileTarget.CharacterDevice _
-                    | OpenFileTarget.Fifo _
-                    | OpenFileTarget.Inotify _
-                    | OpenFileTarget.Pipe _ -> openFiles
-                )
+                OpenFileTable.dropKqueueRegistrationsThrough owner fd registry.OpenFiles
 
             // Present by `DanglingFd`: a live descriptor names a live
             // description.

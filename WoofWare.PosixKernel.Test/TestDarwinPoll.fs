@@ -903,7 +903,7 @@ module TestDarwinPoll =
             { connected.Machine with
                 PollQueues =
                     connected.Machine.PollQueues
-                    |> Map.map (fun _ queue ->
+                    |> PollQueueTable.map (fun queue ->
                         { queue with
                             Active = []
                         }
@@ -943,7 +943,7 @@ module TestDarwinPoll =
         |> List.map (fun (key, registration) -> key, registration.Socket)
         |> shouldEqual [ (listener, KqueueFilter.Read), Some socket ]
 
-        let withQueues (queues : Map<PollQueueId, PollQueue>) (next : PollQueueId) =
+        let withQueues (queues : PollQueueTable) (next : PollQueueId) =
             { parked with
                 Machine =
                     { parked.Machine with
@@ -955,13 +955,15 @@ module TestDarwinPoll =
         let next = parked.Machine.NextPollQueueId
 
         // Gone from the machine while the park names it.
-        UnixSystem.checkInvariants (withQueues Map.empty next)
+        UnixSystem.checkInvariants (withQueues PollQueueTable.empty next)
         |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentPollQueue (Callers.ofDefault poller, queueId) ]
 
         // A second one no park names.
         let (PollQueueId n) = next
 
-        UnixSystem.checkInvariants (withQueues (Map.add next queue parked.Machine.PollQueues) (PollQueueId (n + 1L)))
+        UnixSystem.checkInvariants (
+            withQueues (PollQueueTable.add next queue parked.Machine.PollQueues) (PollQueueId (n + 1L))
+        )
         |> shouldEqual [ UnixSystemDefect.PollQueueNotHeldOnce (next, 0) ]
 
         // Not below the counter.
@@ -973,7 +975,7 @@ module TestDarwinPoll =
 
         UnixSystem.checkInvariants (
             withQueues
-                (Map.add
+                (PollQueueTable.set
                     queueId
                     { queue with
                         Owner = other
@@ -998,7 +1000,7 @@ module TestDarwinPoll =
                     )
             }
 
-        UnixSystem.checkInvariants (withQueues (Map.add queueId detached parked.Machine.PollQueues) next)
+        UnixSystem.checkInvariants (withQueues (PollQueueTable.set queueId detached parked.Machine.PollQueues) next)
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
@@ -1011,5 +1013,5 @@ module TestDarwinPoll =
 
         // ...and the park's end lets it go.
         let finished = Lone.UnixParkState.unpark poller parked
-        finished.Machine.PollQueues |> shouldEqual Map.empty
+        PollQueueTable.all finished.Machine.PollQueues |> shouldEqual Map.empty
         sound finished
