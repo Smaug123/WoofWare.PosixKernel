@@ -314,6 +314,9 @@ module FileContents =
                 Pages = Map.add index (resized length index page) shortened.Pages
             }
 
+    // How many pages hold data rather than a hole.
+    let internal heldPageCount (contents : FileContents) : int64 = int64 contents.Pages.Count
+
     // Which pages hold data rather than a hole, in ascending order.
     let internal heldPages (contents : FileContents) : int64 list =
         contents.Pages |> Map.keys |> List.ofSeq

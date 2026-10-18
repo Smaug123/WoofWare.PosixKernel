@@ -459,6 +459,15 @@ module TestPipeAgainstHost =
                                 failwith
                                     $"%s{where ()}: fd %O{pipeEnd} end: model mode 0o%o{m.Mode} size %d{m.Size}, host 0o%o{h.Mode} size %d{h.Size}"
 
+                            // Not in System.Native's struct, so read from the
+                            // host's own `struct stat` where its layout is known.
+                            if HostStat.isMeasured flavour then
+                                let host = HostStat.fstat flavour hostFd
+
+                                if (m.IoBlockSize, m.AllocatedBlocks) <> (host.IoBlockSize, host.AllocatedBlocks) then
+                                    failwith
+                                        $"%s{where ()}: fd %O{pipeEnd} end: model st_blksize %d{m.IoBlockSize} st_blocks %d{m.AllocatedBlocks}, host %d{host.IoBlockSize} and %d{host.AllocatedBlocks}"
+
                             match flavour with
                             | SimulatedUnixFlavour.Darwin ->
                                 // Darwin's poll is not modelled, but while both

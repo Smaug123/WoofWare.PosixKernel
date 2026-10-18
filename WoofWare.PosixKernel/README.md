@@ -152,7 +152,8 @@ A `SeedEntry` is a file, a directory or a symbolic link, each with an optional o
 It throws `ArgumentException` for a name the flavour could never have created, for a symbolic link whose target is longer than the flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux, whatever the filesystem's type), and for anything at `/dev` but an empty directory.
 On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
 
-The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size` and where `lseek(2)` with `SEEK_END` lands on one.
+The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size`, every file's `st_blksize` and `st_blocks`, and where `lseek(2)` with `SEEK_END` lands on a directory.
+`stat(2)` refuses where nothing in the machine determines those: every inode on NFS, whose are the mount's and the server's, and on APFS a regular file with a hole, which APFS fills with allocated zeroes or not when it writes the file back, on `fsync(2)` or of its own accord seconds later.
 It is tmpfs on Linux and APFS on Darwin unless `UnixBootImage.withMount` says otherwise: `Some (EmulatedMount.defaultOf EmulatedFileSystemType.Nfs)`, for example, or `EmulatedMount.Tmpfs` and `EmulatedMount.Apfs` with their fields set.
 A type the flavour could not report is refused: on Linux, which has no APFS, with `ArgumentException`, and on Darwin, where a tmpfs has not been measured, with `UnmodelledException`.
 Path resolution keeps its flavour's limits whichever type is chosen.

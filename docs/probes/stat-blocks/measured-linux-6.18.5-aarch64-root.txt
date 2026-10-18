@@ -1,0 +1,86 @@
+KERNEL	Linux 6.18.5 aarch64	uid=0	pagesize=4096	dir=/dev/shm/tmp.wahRRYPCr8
+PIPE	read_end_empty	size=0	blksize=4096	blocks=0
+PIPE	write_end_empty	size=0	blksize=4096	blocks=0
+WROTE	requested=100	wrote=100
+PIPE	read_end_holding_100	size=0	blksize=4096	blocks=0
+PIPE	write_end_holding_100	size=0	blksize=4096	blocks=0
+WROTE	requested=20000	wrote=20000
+PIPE	read_end_holding_20100	size=0	blksize=4096	blocks=0
+PIPE	write_end_holding_20100	size=0	blksize=4096	blocks=0
+READ	read=20100
+PIPE	read_end_drained	size=0	blksize=4096	blocks=0
+PIPE	read_end_drained_writer_closed	size=0	blksize=4096	blocks=0
+WROTE	requested=16384	wrote=16384
+PIPE	one_write_16384	size=0	blksize=4096	blocks=0
+PIPE	bytewise_held=0	blksize=4096	blocks=0
+PIPE	bytewise_full_at=65536
+WROTE	requested=70000	wrote=65536
+PIPE	read_end_after_70000	size=0	blksize=4096	blocks=0
+READ	read=20000
+PIPE	write_end_after_read	size=0	blksize=4096	blocks=0
+READ	read=20000
+PIPE	write_end_after_read	size=0	blksize=4096	blocks=0
+READ	read=20000
+PIPE	write_end_after_read	size=0	blksize=4096	blocks=0
+READ	read=5536
+PIPE	write_end_after_read	size=0	blksize=4096	blocks=0
+WROTE	requested=100	wrote=100
+PIPE	write_end_holding_100_reader_closed	size=0	blksize=4096	blocks=0
+WROTE	requested=20000	wrote=20000
+PIPE	write_end_holding_20000_reader_closed	size=0	blksize=4096	blocks=0
+WROTE	requested=20000	wrote=20000
+PIPE	read_end_holding_20000_writer_closed	size=0	blksize=4096	blocks=0
+HOLE	extend_to_1MiB	size=1048576	blksize=4096	blocks=0
+HOLE	extend_to_1MiB_fsync	size=1048576	blksize=4096	blocks=0
+HOLE	byte_at_4096	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_4096_fsync	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_65536	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_65536_fsync	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_1MiB	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_1MiB_fsync	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_64MiB	size=67108865	blksize=4096	blocks=8
+HOLE	byte_at_64MiB_fsync	size=67108865	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB_fsync	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_byte_at_1MiB	size=1048577	blksize=4096	blocks=16
+HOLE	4096_then_byte_at_1MiB_fsync	size=1048577	blksize=4096	blocks=16
+HOLE	extend_to_1MiB_after_45s	size=1048576	blksize=4096	blocks=0
+HOLE	extend_to_1MiB_fsync_after_45s	size=1048576	blksize=4096	blocks=0
+HOLE	byte_at_4096_after_45s	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_4096_fsync_after_45s	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_65536_after_45s	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_65536_fsync_after_45s	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_1MiB_after_45s	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_1MiB_fsync_after_45s	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_64MiB_after_45s	size=67108865	blksize=4096	blocks=8
+HOLE	byte_at_64MiB_fsync_after_45s	size=67108865	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB_after_45s	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB_fsync_after_45s	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_byte_at_1MiB_after_45s	size=1048577	blksize=4096	blocks=16
+HOLE	4096_then_byte_at_1MiB_fsync_after_45s	size=1048577	blksize=4096	blocks=16
+HOLE	extend_to_1MiB_closed	size=1048576	blksize=4096	blocks=0
+HOLE	extend_to_1MiB_fsync_closed	size=1048576	blksize=4096	blocks=0
+HOLE	byte_at_4096_closed	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_4096_fsync_closed	size=4097	blksize=4096	blocks=8
+HOLE	byte_at_65536_closed	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_65536_fsync_closed	size=65537	blksize=4096	blocks=8
+HOLE	byte_at_1MiB_closed	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_1MiB_fsync_closed	size=1048577	blksize=4096	blocks=8
+HOLE	byte_at_64MiB_closed	size=67108865	blksize=4096	blocks=8
+HOLE	byte_at_64MiB_fsync_closed	size=67108865	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB_closed	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_extend_to_1MiB_fsync_closed	size=1048576	blksize=4096	blocks=8
+HOLE	4096_then_byte_at_1MiB_closed	size=1048577	blksize=4096	blocks=16
+HOLE	4096_then_byte_at_1MiB_fsync_closed	size=1048577	blksize=4096	blocks=16
+FILE	dense_16MiB	size=16777216	blksize=4096	blocks=32768
+LINK	target_126	size=126	blksize=4096	blocks=0
+LINK	target_127	size=127	blksize=4096	blocks=0
+LINK	target_128	size=128	blksize=4096	blocks=8
+LINK	target_129	size=129	blksize=4096	blocks=8
+LINK	target_1000	size=1000	blksize=4096	blocks=8
+LINK	target_1022	size=1022	blksize=4096	blocks=8
+LINK	target_1023	size=1023	blksize=4096	blocks=8
+LINK	target_1024	size=1024	blksize=4096	blocks=8
+LINK	target_4095	size=4095	blksize=4096	blocks=8
+DIR	names_5000	size=100040	blksize=4096	blocks=0
+DIR	names_20000	size=400040	blksize=4096	blocks=0

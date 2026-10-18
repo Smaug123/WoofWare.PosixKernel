@@ -49,6 +49,19 @@ type FileSystemTypeFields =
     /// such as `apfs`.
     | Darwin of fType : uint32 * fsTypeName : UnixByteString
 
+/// What a mount reports as an inode's `st_blksize` and `st_blocks`, or why
+/// nothing in the machine determines them.
+[<RequireQualifiedAccess>]
+type internal StatAllocation =
+    /// `st_blksize` and `st_blocks`, in 512-byte units.
+    | Reported of ioBlockSize : int64 * allocatedBlocks : int64
+    /// The mount is NFS: the mount's transfer size and the server's
+    /// filesystem decide.
+    | ServerDecides
+    /// A regular file on APFS with a range no write has filled, which APFS
+    /// fills or not when it writes the file back.
+    | WritebackDecides
+
 [<RequireQualifiedAccess>]
 module EmulatedFileSystemType =
     /// The type-naming fields `fstatfs(2)` reports for a file on a mount of
@@ -177,6 +190,90 @@ module EmulatedFileSystemType =
         | EmulatedFileSystemType.Apfs -> Some (2L + int64 (VirtualFileSystem.entryCount directory vfs))
         // Not measured: no NFS server or mount was available.
         | EmulatedFileSystemType.Nfs -> None
+
+    /// An inode's `st_blksize` and `st_blocks` on a mount of this type, under
+    /// a kernel with pages of `pageSize`.
+    ///
+    /// On tmpfs a regular file has a page for each 4096 bytes a write has
+    /// filled; truncation frees the pages wholly past the new end, and a hole
+    /// has none. APFS reports the same until it writes the file back, when it
+    /// allocates zeroes for some holes and not others, so a file with a hole
+    /// is `WritebackDecides`.
+    let internal allocation
+        (fsType : EmulatedFileSystemType)
+        (pageSize : SimulatedPageSize)
+        (content : InodeContent)
+        : StatAllocation
+        =
+        // Measured 2026-10-02 by `stat-fields.c` (docs/plans/2026-08-23-
+        // posix-kernel-extraction/) and 2026-10-18 by `stat-blocks.c`
+        // (docs/probes/stat-blocks/), on Linux 6.18.5 aarch64 (`/dev/shm`) and
+        // Darwin 27.0 arm64 (the APFS volume holding `/tmp`): every file
+        // size from 0 to 70000 in one write, 1 and 16 MiB, holes of a page to
+        // 64 MiB made by a write past the end or by `ftruncate`, each read at
+        // once, after `fsync`, after 45 seconds and by path once closed;
+        // symbolic links of 1 to 4095 bytes; directories of up to 20000
+        // names; a FIFO; and Linux's `/dev/null`.
+        // Both filesystems allocate a regular file in 4096-byte units, 8 of
+        // `st_blocks`'s 512 bytes, which are `FileContents`'s pages.
+        if FileContents.pageSize <> 4096 then
+            failwith
+                $"EmulatedFileSystemType.allocation: FileContents holds pages of %d{FileContents.pageSize} bytes, which are not the 4096-byte units tmpfs and APFS allocate (this is a bug in this library)."
+
+        let pageBlocks = 8L
+
+        let socket () : StatAllocation =
+            failwith
+                "EmulatedFileSystemType.allocation: asked about a socket file. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
+
+        match fsType with
+        | EmulatedFileSystemType.Tmpfs ->
+            // tmpfs counts in pages of memory, which are `FileContents`'s
+            // pages only on a kernel with 4 KiB pages: every Linux admitted.
+            match pageSize with
+            | SimulatedPageSize.FourKiB -> ()
+            | SimulatedPageSize.SixteenKiB
+            | SimulatedPageSize.SixtyFourKiB ->
+                failwith
+                    $"EmulatedFileSystemType.allocation: asked about tmpfs under a kernel with %d{SimulatedPageSize.bytes pageSize}-byte pages, which no measured Linux has (this is a bug in this library: SimulatedUnixPlatform.create admits none)."
+
+            match content with
+            | InodeContent.RegularFile (contents, _) ->
+                StatAllocation.Reported (4096L, pageBlocks * FileContents.heldPageCount contents)
+            // A target shorter than 128 bytes is held in the inode itself; a
+            // longer one takes a page.
+            | InodeContent.Symlink (target, _) ->
+                let length = UnixByteString.length (SymlinkTarget.toByteString target)
+                StatAllocation.Reported (4096L, (if length >= 128 then pageBlocks else 0L))
+            | InodeContent.Directory _
+            | InodeContent.Fifo _
+            | InodeContent.CharacterDevice _ -> StatAllocation.Reported (4096L, 0L)
+            | InodeContent.Socket _ -> socket ()
+        | EmulatedFileSystemType.Apfs ->
+            match content with
+            | InodeContent.RegularFile (contents, _) ->
+                let held = FileContents.heldPageCount contents
+                let pages = (FileContents.length contents + 4095L) / 4096L
+
+                // A file with no hole needs no zeroes. One holding no data is
+                // no exception: extended by `ftruncate` alone it stayed at 0
+                // however long it was left, but one whose data a truncation
+                // removed reported the zeroes APFS had already allocated.
+                if held = pages then
+                    StatAllocation.Reported (4096L, pageBlocks * held)
+                else
+                    StatAllocation.WritebackDecides
+            // A link measured 0 at every length `symlink(2)` takes, up to
+            // 1023 bytes.
+            | InodeContent.Symlink _
+            | InodeContent.Directory _
+            | InodeContent.Fifo _ -> StatAllocation.Reported (4096L, 0L)
+            | InodeContent.CharacterDevice _ ->
+                failwith
+                    "EmulatedFileSystemType.allocation: asked about a character device on APFS. Nothing makes one: mknod of a device is refused, and a seed holds none (this is a bug in this library)."
+            | InodeContent.Socket _ -> socket ()
+        // Not measured: no NFS server or mount was available.
+        | EmulatedFileSystemType.Nfs -> StatAllocation.ServerDecides
 
     /// The type a mount reports when a host expresses no preference.
     ///

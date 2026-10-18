@@ -291,10 +291,18 @@ module TestFaultingFileWrite =
 
         let system = UnixSystem.advanceClock 1_000_000_000L system
 
-        let stat (system : UnixSystem<int, string>) : FileStatus =
-            match UnixPathResolution.fstat caller fd system with
-            | FileStatusAnswer.Reported status -> status
-            | other -> failwith $"fstat: %A{other}"
+        // Read from the inode rather than through `fstat`, which refuses an
+        // APFS file a write past its end has left with a hole.
+        let stat (system : UnixSystem<int, string>) : Inode =
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
+            | Some (OpenFileTarget.File (inode, _)) ->
+                VirtualFileSystem.get "TestFaultingFileWrite" inode system.Machine.FileSystem
+            | other -> failwith $"fd %d{fd} is %A{other}"
+
+        let size (inode : Inode) : int64 =
+            match inode.Content with
+            | InodeContent.RegularFile (contents, _) -> FileContents.length contents
+            | other -> failwith $"/f is %A{other}"
 
         let statBefore = stat system
 
@@ -341,19 +349,19 @@ module TestFaultingFileWrite =
                 Some (records |> List.map (fun record -> record.Mask)), system
 
         let contents =
-            match UnixReadWrite.pread caller fd UserBuffer.Mapped (uint64 statAfter.Size) 0L system with
+            match UnixReadWrite.pread caller fd UserBuffer.Mapped (uint64 (size statAfter)) 0L system with
             | ReadAnswer.Completed read, _ -> read.AsSpan().ToArray ()
             | other -> failwith $"pread: %A{other}"
 
         Ended.Observed
             {
                 Answer = answer
-                Mode = statAfter.Mode &&& 0o7777
-                Size = statAfter.Size
+                Mode = PermissionBits.toInt (Inode.permissions statAfter)
+                Size = size statAfter
                 Position = position
-                AccessTimeMoved = statAfter.AccessTime <> statBefore.AccessTime
-                ModificationTimeMoved = statAfter.ModificationTime <> statBefore.ModificationTime
-                ChangeTimeMoved = statAfter.StatusChangeTime <> statBefore.StatusChangeTime
+                AccessTimeMoved = statAfter.Times.Access <> statBefore.Times.Access
+                ModificationTimeMoved = statAfter.Times.Modification <> statBefore.Times.Modification
+                ChangeTimeMoved = statAfter.Times.StatusChange <> statBefore.Times.StatusChange
                 Flags = flags
                 Events = events
                 Contents = contents
