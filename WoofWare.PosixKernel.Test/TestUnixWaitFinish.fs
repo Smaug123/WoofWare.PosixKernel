@@ -380,9 +380,13 @@ module TestUnixWaitFinish =
 
             let timeout =
                 if case.Timed then
-                    KeventTimeout.Readable (0L, 5_000_000L)
+                    TimespecArgument.Readable
+                        {
+                            Seconds = 0L
+                            Nanoseconds = 5_000_000L
+                        }
                 else
-                    KeventTimeout.Null
+                    TimespecArgument.Null
 
             UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps

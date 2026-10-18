@@ -263,7 +263,12 @@ module TestHugeTimeoutMeasured =
 
     let private timespecOf (row : Row) : TimespecArgument =
         match row.Timeout with
-        | Timeout.Timespec (seconds, nanoseconds) -> TimespecArgument.Readable (seconds, nanoseconds)
+        | Timeout.Timespec (seconds, nanoseconds) ->
+            TimespecArgument.Readable
+                {
+                    Seconds = seconds
+                    Nanoseconds = nanoseconds
+                }
         | Timeout.Null -> TimespecArgument.Null
         | Timeout.Milliseconds _ -> failwith $"a futex row with a timeout in milliseconds: %s{row.Line}"
 
@@ -464,8 +469,13 @@ module TestHugeTimeoutMeasured =
 
             let timeout =
                 match row.Timeout with
-                | Timeout.Timespec (seconds, nanoseconds) -> KeventTimeout.Readable (seconds, nanoseconds)
-                | Timeout.Null -> KeventTimeout.Null
+                | Timeout.Timespec (seconds, nanoseconds) ->
+                    TimespecArgument.Readable
+                        {
+                            Seconds = seconds
+                            Nanoseconds = nanoseconds
+                        }
+                | Timeout.Null -> TimespecArgument.Null
                 | Timeout.Milliseconds _ -> failwith $"a kevent row with a timeout in milliseconds: %s{row.Line}"
 
             let started =

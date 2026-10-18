@@ -515,9 +515,13 @@ module TestFirstWake =
 
                 let timeout =
                     if timed then
-                        KeventTimeout.Readable (0L, 100_000_000L)
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 100_000_000L
+                            }
                     else
-                        KeventTimeout.Null
+                        TimespecArgument.Null
 
                 let park (thread : int) (system : UnixSystem<int, string>) =
                     UnixKqueue.tryKevent (Callers.thread thread system) kq 0 [] 1 UserBuffer.Mapped timeout system

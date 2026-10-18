@@ -300,7 +300,11 @@ module KeventWorld =
                 changes
                 nevents
                 UserBuffer.Mapped
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
         with
         | Ok answered -> answered

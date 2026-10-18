@@ -394,7 +394,7 @@ module TestUnblockForAnotherThread =
                     []
                     1
                     UserBuffer.Mapped
-                    KeventTimeout.Null
+                    TimespecArgument.Null
                     system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->

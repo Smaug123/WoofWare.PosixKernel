@@ -332,9 +332,13 @@ module TestDispositionBeforeReturn =
 
             let timeout =
                 if milliseconds < 0 then
-                    KeventTimeout.Null
+                    TimespecArgument.Null
                 else
-                    KeventTimeout.Readable (int64 (milliseconds / 1000), int64 (milliseconds % 1000) * 1_000_000L)
+                    TimespecArgument.Readable
+                        {
+                            Seconds = int64 (milliseconds / 1000)
+                            Nanoseconds = int64 (milliseconds % 1000) * 1_000_000L
+                        }
 
             UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps

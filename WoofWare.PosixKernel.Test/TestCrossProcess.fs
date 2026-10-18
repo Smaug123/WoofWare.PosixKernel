@@ -677,7 +677,7 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     match
-                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view
+                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped TimespecArgument.Null view
                     with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"

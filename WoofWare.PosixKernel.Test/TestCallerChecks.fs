@@ -275,7 +275,19 @@ module TestCallerChecks =
             running
                 "UnixKqueue.kevent"
                 (fun caller system ->
-                    UnixKqueue.kevent caller 0 0 [] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        caller
+                        0
+                        0
+                        []
+                        1
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                     |> ignore
                 )
             finishing
@@ -756,7 +768,7 @@ module TestCallerChecks =
             | SimulatedUnixFlavour.Darwin ->
                 let kq, view = UnixKqueue.kqueue leader view
 
-                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null view with
+                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null view with
                 | KeventOutcome.WouldBlock _, view -> view
                 | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
 

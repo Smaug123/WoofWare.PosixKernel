@@ -506,7 +506,7 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 | `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
 | `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
-| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
+| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
 

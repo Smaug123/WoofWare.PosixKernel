@@ -4162,7 +4162,7 @@ module TestUnixSystemStep =
 
         let parked =
             match
-                UnixKqueue.tryKevent (Callers.thread 7 system) fd 0 [] 8 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent (Callers.thread 7 system) fd 0 [] 8 UserBuffer.Mapped TimespecArgument.Null system
             with
             | Ok (KeventOutcome.WouldBlock _, parked) -> parked
             | other -> failwith $"expected the wait to park, got %A{other}"

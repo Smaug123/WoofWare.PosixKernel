@@ -687,7 +687,19 @@ module TestStepOracle =
                 let changes = [ change 10 KeventFilter.Read ; change 11 KeventFilter.Write ]
 
                 match
-                    UnixKqueue.kevent leader 13 2 changes 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        leader
+                        13
+                        2
+                        changes
+                        0
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                 with
                 | KeventOutcome.Answered [], system -> system
                 | other -> failwith $"setting up, kevent: %A{other}"
@@ -1663,12 +1675,28 @@ module TestStepOracle =
                 let! timeout =
                     Gen.elements
                         [
-                            KeventTimeout.Null
-                            KeventTimeout.Readable (0L, 0L)
-                            KeventTimeout.Readable (1L, 0L)
-                            KeventTimeout.Readable (-1L, 0L)
-                            KeventTimeout.Readable (0L, 1_000_000_001L)
-                            KeventTimeout.Unreadable
+                            TimespecArgument.Null
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = -1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_001L
+                                }
+                            TimespecArgument.Unreadable
                         ]
 
                 return kq, changes, nchanges, eventlist, nevents, timeout
@@ -1785,9 +1813,21 @@ module TestStepOracle =
                         [
                             TimespecArgument.Null
                             TimespecArgument.Null
-                            TimespecArgument.Readable (0L, 0L)
-                            TimespecArgument.Readable (0L, 10_000_000L)
-                            TimespecArgument.Readable (0L, 1_000_000_000L)
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 10_000_000L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_000L
+                                }
                             TimespecArgument.Unreadable
                         ]
 
