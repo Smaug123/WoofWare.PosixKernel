@@ -50,9 +50,14 @@ module TestSockNameFaultLength =
     let private platformOf (resource : string) (header : string) : SimulatedUnixPlatform =
         match header.Split ' ' |> List.ofArray with
         | [ "uname:" ; "Darwin" ; release ; "arm64" ] ->
+            let version =
+                match DarwinRelease.version release with
+                | Some version -> version
+                | None -> failwith $"%s{resource}: release %s{release} names no version"
+
             SimulatedUnixPlatform.createOrFail
                 resource
-                SimulatedUnixKernel.Darwin
+                (SimulatedUnixKernel.Darwin version)
                 SimulatedUnixArchitecture.Arm64
                 SimulatedPageSize.SixteenKiB
                 release
