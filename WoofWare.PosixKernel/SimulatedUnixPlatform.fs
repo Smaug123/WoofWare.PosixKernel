@@ -745,6 +745,8 @@ module SimulatedUnixPlatform =
         // every caller standing over every mode and every kind of ID named;
         // Darwin 27.0 at uid 501 for its owner over every mode it could set,
         // and for a non-owner on other users' inodes. Its output is beside it.
+        // Darwin's root, and uid 501 against inodes with set-ID bits, by
+        // `docs/probes/darwin-root/root-files.c` (CHOWN).
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> OwnerChangeRule.ClearsSetIdFromNonDirectories
         | SimulatedUnixFlavour.Darwin -> OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
