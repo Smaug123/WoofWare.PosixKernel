@@ -182,6 +182,110 @@ module EmulatedFileSystemType =
         // Not measured: no NFS server or mount was available.
         | EmulatedFileSystemType.Nfs -> None
 
+    /// An inode's `st_blksize` and `st_blocks` on a mount of this type, under
+    /// a kernel with pages of `pageSize`, each `None` where nothing in the
+    /// machine determines it.
+    ///
+    /// On tmpfs a regular file has a page for each 4096 bytes a write has
+    /// filled, and for the page a write allocated before its buffer faulted;
+    /// truncation frees the pages from the new end on, and a hole has none.
+    /// APFS allocates as it writes a file back, at a time and by a rule the
+    /// model does not follow, so a regular file of any length but 0 has no
+    /// stated `st_blocks`.
+    let internal allocation
+        (fsType : EmulatedFileSystemType)
+        (pageSize : SimulatedPageSize)
+        (content : InodeContent)
+        : int64 option * int64 option
+        =
+        // Measured 2026-10-02 by `stat-fields.c` (docs/plans/2026-08-23-
+        // posix-kernel-extraction/) and 2026-10-18 by `stat-blocks.c`
+        // (docs/probes/stat-blocks/), on Linux 6.18.5 aarch64 (`/dev/shm`) and
+        // Darwin 27.0 arm64 (the APFS volume holding `/tmp`): every file
+        // size from 0 to 70000 in one write, 1 and 16 MiB, holes of a page to
+        // 64 MiB made by a write past the end or by `ftruncate`, each read at
+        // once, after `fsync`, after 45 seconds and by path once closed;
+        // writes whose buffer faulted, and histories after them; symbolic
+        // links of 1 to 4095 bytes; directories of up to 20000 names; a
+        // FIFO; and Linux's `/dev/null`.
+
+        // Both filesystems allocate a regular file in 4096-byte units, 8 of
+        // `st_blocks`'s 512 bytes, which are `FileContents`'s pages.
+        if FileContents.pageSize <> 4096 then
+            failwith
+                $"EmulatedFileSystemType.allocation: FileContents holds pages of %d{FileContents.pageSize} bytes, which are not the 4096-byte units tmpfs and APFS allocate (this is a bug in this library)."
+
+        let pageBlocks = 8L
+
+        let socket () : int64 option * int64 option =
+            failwith
+                "EmulatedFileSystemType.allocation: asked about a socket file. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
+
+        match fsType with
+        | EmulatedFileSystemType.Tmpfs ->
+            // tmpfs counts in pages of memory, which are `FileContents`'s
+            // pages only on a kernel with 4 KiB pages: every Linux admitted.
+            match pageSize with
+            | SimulatedPageSize.FourKiB -> ()
+            | SimulatedPageSize.SixteenKiB
+            | SimulatedPageSize.SixtyFourKiB ->
+                failwith
+                    $"EmulatedFileSystemType.allocation: asked about tmpfs under a kernel with %d{SimulatedPageSize.bytes pageSize}-byte pages, which no measured Linux has (this is a bug in this library: SimulatedUnixPlatform.create admits none)."
+
+            match content with
+            | InodeContent.RegularFile (contents, _) ->
+                Some 4096L, Some (pageBlocks * FileContents.heldPageCount contents)
+            // A target shorter than 128 bytes is held in the inode itself; a
+            // longer one takes a page.
+            | InodeContent.Symlink (target, _) ->
+                let length = UnixByteString.length (SymlinkTarget.toByteString target)
+                Some 4096L, Some (if length >= 128 then pageBlocks else 0L)
+            | InodeContent.Directory _
+            | InodeContent.Fifo _
+            | InodeContent.CharacterDevice _ -> Some 4096L, Some 0L
+            | InodeContent.Socket _ -> socket ()
+        | EmulatedFileSystemType.Apfs ->
+            match content with
+            // Measured, a file of data reported more blocks than its pages
+            // as APFS filled a hole with zeroes when it wrote the file back
+            // (on `fsync`, or within 45 seconds); as it allocated ahead of
+            // one-byte appends, from a size that differed every trial (176129
+            // to 286721 bytes) and in one run never came, which `fsync` kept;
+            // and once a truncation had removed a file's data, as it kept the
+            // zeroes it had allocated. Only a file of no bytes is certain.
+            | InodeContent.RegularFile (contents, _) ->
+                Some 4096L, (if FileContents.length contents = 0L then Some 0L else None)
+            // A link measured 0 at every length `symlink(2)` takes, up to
+            // 1023 bytes.
+            | InodeContent.Symlink _
+            | InodeContent.Directory _
+            | InodeContent.Fifo _ -> Some 4096L, Some 0L
+            | InodeContent.CharacterDevice _ ->
+                failwith
+                    "EmulatedFileSystemType.allocation: asked about a character device on APFS. Nothing makes one: mknod of a device is refused, and a seed holds none (this is a bug in this library)."
+            | InodeContent.Socket _ -> socket ()
+        // Not measured: no NFS server or mount was available. The mount's
+        // transfer size and the server's filesystem decide.
+        | EmulatedFileSystemType.Nfs -> None, None
+
+    /// What a write whose copy from the caller's buffer faults leaves
+    /// allocated in a regular file on a mount of this type.
+    let internal faultedWriteAllocation (fsType : EmulatedFileSystemType) : FaultedWriteAllocation =
+        // Measured 2026-10-18 by `stat-blocks.c`: a faulting `pwrite(2)` of 1
+        // or 10000 bytes, from NULL or a PROT_NONE page, at offsets from 0 to
+        // 100000 into an empty, a dense and an `ftruncate`-extended file.
+        match fsType with
+        // Linux 6.18.5 `/dev/shm`: the page holding the offset, and no other,
+        // whatever the count; an empty file faulted at 0 reports 0 bytes and
+        // 8 blocks.
+        | EmulatedFileSystemType.Tmpfs -> FaultedWriteAllocation.PageAtOffset
+        // Darwin 27.0: anything from no page to every page up to the offset,
+        // varying with the count, which the model does not follow;
+        // `allocation` states no `st_blocks` for a file of data there.
+        | EmulatedFileSystemType.Apfs -> FaultedWriteAllocation.Untracked
+        // `allocation` states no `st_blocks` on NFS.
+        | EmulatedFileSystemType.Nfs -> FaultedWriteAllocation.Untracked
+
     /// The type a mount reports when a host expresses no preference.
     ///
     /// `Tmpfs` under Linux because this library's filesystem really is in

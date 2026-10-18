@@ -9,34 +9,45 @@ open WoofWare.PosixKernel
 /// The fields of this host's own `struct stat` that the output struct of
 /// .NET's `System.Native` `stat` does not carry, read in the library's
 /// vocabulary: the oracle for
-/// `FileStatus.LinkCount`, `SpecialFileDevice` and `FileFlags`.
+/// `FileStatus.LinkCount`, `SpecialFileDevice`, `IoBlockSize`,
+/// `AllocatedBlocks` and `FileFlags`. A host always states the two block
+/// fields, so a model that states neither compares unequal.
 type HostStatus =
     {
         LinkCount : int64
         SpecialFileDevice : int64
+        IoBlockSize : int64 option
+        AllocatedBlocks : int64 option
         FileFlags : uint32 option
     }
 
 [<RequireQualifiedAccess>]
 module HostStat =
 
-    /// Where `st_nlink`, `st_rdev` and (Darwin) `st_flags` sit in a host's
-    /// `struct stat`, and how wide each is.
+    /// Where `st_nlink`, `st_rdev`, `st_blksize`, `st_blocks` and (Darwin)
+    /// `st_flags` sit in a host's `struct stat`, and how wide each is.
+    /// `st_blocks` is 8 bytes on every measured host.
     type private Layout =
         {
             LinkCountOffset : int
             LinkCountWidth : int
             DeviceOffset : int
             DeviceWidth : int
+            BlockSizeOffset : int
+            BlockSizeWidth : int
+            BlocksOffset : int
             FlagsOffset : int option
         }
 
     /// `struct stat` is read as raw bytes at offsets measured 2026-10-02 with
-    /// `offsetof`: on Darwin (arm64), `st_nlink` is a `uint16_t` at 6,
-    /// `st_rdev` an `int32_t` at 24 and `st_flags` a `uint32_t` at 116, of 144
-    /// bytes; on Linux x86-64 (glibc) `st_nlink` is 8 bytes at 16 and
-    /// `st_rdev` 8 at 40, of 144; on Linux aarch64 (glibc) `st_nlink` is 4
-    /// bytes at 20 and `st_rdev` 8 at 32, of 128. Any other host is unmeasured.
+    /// `offsetof`, and on 2026-10-18 for `st_blksize` and `st_blocks`: on
+    /// Darwin (arm64), `st_nlink` is a `uint16_t` at 6, `st_rdev` an
+    /// `int32_t` at 24, `st_blocks` 8 bytes at 104, `st_blksize` an `int32_t`
+    /// at 112 and `st_flags` a `uint32_t` at 116, of 144 bytes; on Linux
+    /// x86-64 (glibc) `st_nlink` is 8 bytes at 16, `st_rdev` 8 at 40,
+    /// `st_blksize` 8 at 56 and `st_blocks` 8 at 64, of 144; on Linux aarch64
+    /// (glibc) `st_nlink` is 4 bytes at 20, `st_rdev` 8 at 32, `st_blksize` 4
+    /// at 56 and `st_blocks` 8 at 64, of 128. Any other host is unmeasured.
     let private layoutFor (flavour : SimulatedUnixFlavour) : Layout option =
         match flavour, RuntimeInformation.ProcessArchitecture with
         | SimulatedUnixFlavour.Darwin, Architecture.Arm64 ->
@@ -46,6 +57,9 @@ module HostStat =
                     LinkCountWidth = 2
                     DeviceOffset = 24
                     DeviceWidth = 4
+                    BlockSizeOffset = 112
+                    BlockSizeWidth = 4
+                    BlocksOffset = 104
                     FlagsOffset = Some 116
                 }
         | SimulatedUnixFlavour.Linux, Architecture.X64 ->
@@ -55,6 +69,9 @@ module HostStat =
                     LinkCountWidth = 8
                     DeviceOffset = 40
                     DeviceWidth = 8
+                    BlockSizeOffset = 56
+                    BlockSizeWidth = 8
+                    BlocksOffset = 64
                     FlagsOffset = None
                 }
         | SimulatedUnixFlavour.Linux, Architecture.Arm64 ->
@@ -64,6 +81,9 @@ module HostStat =
                     LinkCountWidth = 4
                     DeviceOffset = 32
                     DeviceWidth = 8
+                    BlockSizeOffset = 56
+                    BlockSizeWidth = 4
+                    BlocksOffset = 64
                     FlagsOffset = None
                 }
         | _ -> None
@@ -106,9 +126,18 @@ module HostStat =
             | 8 -> BinaryPrimitives.ReadInt64LittleEndian (ReadOnlySpan (buffer, offset, 8))
             | other -> failwith $"HostStat: no field is %d{other} bytes wide"
 
+        // `blksize_t` and `blkcnt_t` are signed on every measured host.
+        let signedAt (offset : int) (width : int) : int64 =
+            match width with
+            | 4 -> int64 (BinaryPrimitives.ReadInt32LittleEndian (ReadOnlySpan (buffer, offset, 4)))
+            | 8 -> BinaryPrimitives.ReadInt64LittleEndian (ReadOnlySpan (buffer, offset, 8))
+            | other -> failwith $"HostStat: no signed field is %d{other} bytes wide"
+
         {
             LinkCount = unsignedAt layout.LinkCountOffset layout.LinkCountWidth
             SpecialFileDevice = unsignedAt layout.DeviceOffset layout.DeviceWidth
+            IoBlockSize = Some (signedAt layout.BlockSizeOffset layout.BlockSizeWidth)
+            AllocatedBlocks = Some (signedAt layout.BlocksOffset 8)
             FileFlags =
                 layout.FlagsOffset
                 |> Option.map (fun offset -> BinaryPrimitives.ReadUInt32LittleEndian (ReadOnlySpan (buffer, offset, 4)))
@@ -127,5 +156,7 @@ module HostStat =
         {
             LinkCount = status.LinkCount
             SpecialFileDevice = status.SpecialFileDevice
+            IoBlockSize = status.IoBlockSize
+            AllocatedBlocks = status.AllocatedBlocks
             FileFlags = status.FileFlags
         }

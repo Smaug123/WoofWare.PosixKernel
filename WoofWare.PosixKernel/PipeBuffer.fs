@@ -156,6 +156,17 @@ module PipeBuffer =
         | PipeBuffer.Linux linux -> linux.Slots |> List.sumBy (fun slot -> ByteQueue.length slot.Bytes)
         | PipeBuffer.Darwin darwin -> ByteQueue.length darwin.Bytes
 
+    // `st_blksize` of an end whose pipe still has its read end. Measured
+    // 2026-10-18 by `stat-blocks.c` (docs/probes/stat-blocks/): 4096 on
+    // Linux, the page size, however full; on Darwin 16384 until the buffer
+    // grows past it, then the buffer's size, 65536, through either end and
+    // after the bytes are read. Darwin's buffer starts smaller than 16384 in
+    // this model, which only `poll` and short writes can see.
+    let internal ioBlockSize (buffer : PipeBuffer) : int64 =
+        match buffer with
+        | PipeBuffer.Linux linux -> int64 linux.PageSize
+        | PipeBuffer.Darwin darwin -> int64 (max 16384 (DarwinPipeBufferSize.bytes darwin.Size))
+
     /// `PIPE_BUF`: a write of at most this many bytes is taken whole or not at
     /// all, never in part. 4096 on Linux, where it is the page size, and 512 on
     /// Darwin.

@@ -403,6 +403,17 @@ type internal FaultedWriteRule =
     /// the file, for every writer.
     | TimesMoveWhenReachingPastEnd
 
+/// What a write to a regular file whose copy from the caller's buffer faults
+/// at its first byte leaves allocated, which only `st_blocks` shows.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteAllocation =
+    /// The page holding the write's offset, zeroed, even when it starts at
+    /// the end of the file and so holds none of its bytes.
+    | PageAtOffset
+    /// Nothing the file's contents record. The filesystem allocates as it
+    /// does, which the model does not follow.
+    | Untracked
+
 /// Why a write whose copy from the caller's buffer faults has no answer.
 ///
 /// Separate from `FileWriteRefusal` for the reason `FileTruncationRefusal`
@@ -2188,7 +2199,8 @@ module VirtualFileSystem =
     /// because its copy from the caller's buffer faulted at the first byte:
     /// strips whichever set-ID bits a successful write would (`rule`), makes
     /// the file `offset` bytes long if it was shorter, filling the gap with
-    /// zeroes, and moves `mtime` and `ctime` where `faulted` says they move.
+    /// zeroes, allocates what `allocation` says, and moves `mtime` and `ctime`
+    /// where `faulted` says they move.
     /// Refused, changing nothing, where the file would outgrow
     /// `VirtualFileSystem.maxFileLength`.
     ///
@@ -2197,13 +2209,15 @@ module VirtualFileSystem =
     ///
     /// Reports `FsChange.AttributesChanged` when it stripped a set-ID bit,
     /// followed by `ContentChanged` when it moved the timestamps or the
-    /// length; nothing, and the graph it was given, when it did neither.
+    /// length or allocated a page; nothing, and the graph it was given, when it
+    /// did none of those.
     let internal writeFaulted
         (inode : InodeNumber)
         (offset : int64)
         (count : int)
         (rule : SetGroupIdOnWrite)
         (faulted : FaultedWriteRule)
+        (allocation : FaultedWriteAllocation)
         (credentials : Credentials)
         (now : UnixTimestamp)
         (vfs : VirtualFileSystem)
@@ -2239,6 +2253,11 @@ module VirtualFileSystem =
         | Error refusal -> Error refusal
         | Ok extended ->
 
+        let allocated =
+            match allocation with
+            | FaultedWriteAllocation.PageAtOffset -> FileContents.allocatePage offset extended
+            | FaultedWriteAllocation.Untracked -> extended
+
         let timesMove =
             match faulted with
             | FaultedWriteRule.TimesAlwaysMove -> true
@@ -2248,7 +2267,11 @@ module VirtualFileSystem =
             [
                 if stripped <> permissions then
                     FsChange.AttributesChanged inode
-                if timesMove || FileContents.length extended <> FileContents.length contents then
+                if
+                    timesMove
+                    || FileContents.length extended <> FileContents.length contents
+                    || not (obj.ReferenceEquals (allocated, extended))
+                then
                     FsChange.ContentChanged inode
             ]
 
@@ -2262,7 +2285,7 @@ module VirtualFileSystem =
                     Map.add
                         inode
                         { entry with
-                            Content = InodeContent.RegularFile (extended, stripped)
+                            Content = InodeContent.RegularFile (allocated, stripped)
                             Times =
                                 if timesMove then
                                     InodeTimes.contentsChangedAt now entry.Times

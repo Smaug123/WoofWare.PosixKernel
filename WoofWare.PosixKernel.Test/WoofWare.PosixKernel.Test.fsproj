@@ -154,6 +154,7 @@
     <Compile Include="TestFileSystemType.fs" />
     <Compile Include="TestDirectorySize.fs" />
     <Compile Include="TestLinkCount.fs" />
+    <Compile Include="TestStatBlocks.fs" />
     <Compile Include="TestWithFileSystemAndCurrentDirectory.fs" />
     <Compile Include="TestSeedSymlinkTarget.fs" />
     <Compile Include="TestInodeLifetime.fs" />
@@ -362,6 +363,10 @@
          `SignalState` to them. -->
     <EmbeddedResource Include="signalOrder\*.txt" />
     <EmbeddedResource Include="signalReceiver\*.txt" />
+    <!-- st_blksize and st_blocks, measured per flavour by docs/probes/stat-blocks.
+         `TestStatBlocks` replays its rows. -->
+    <EmbeddedResource Include="..\docs\probes\stat-blocks\measured-linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.stat-blocks.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\stat-blocks\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.stat-blocks.darwin.txt" />
     <!-- What a signal sent to the process, which every thread blocked, did
          once a thread unblocked it, measured per flavour by
          docs/probes/non-leader-unblock. `TestSignalReceiver` replays every row. -->

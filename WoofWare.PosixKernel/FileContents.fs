@@ -19,12 +19,17 @@ type FileContents =
             // Page `i` holds bytes `[i * pageSize, (i + 1) * pageSize)`, cut
             // short at `Length`, so that every page's length is a function of
             // its index and `Length` alone. A page absent here is a hole, which
-            // reads as zeroes.
+            // reads as zeroes. When `Length` is a multiple of the page size,
+            // page `Length / pageSize` may be held too, holding no bytes: a
+            // page allocated past the end, which `allocatePage` can leave.
             //
             // A page is a view of memory nothing will change: an array a write
             // made for it alone, or a slice of the array a file was made from,
             // which `ImmutableArray` promises nothing changes.
             Pages : Map<int64, ReadOnlyMemory<byte>>
+            // How many pages `Pages` holds, kept beside it because F#'s
+            // `Map.Count` walks the whole map, and `stat` reads it.
+            Held : int64
         }
 
     member private this.Display : string =
@@ -43,7 +48,7 @@ type FileContents =
             bytes |> Array.map (fun b -> b.ToString "x2") |> String.concat " "
 
         let ellipsis = if this.Length > int64 shown then " ..." else ""
-        $"FileContents (%d{this.Length} bytes, %d{this.Pages.Count} pages held: %s{prefix}%s{ellipsis})"
+        $"FileContents (%d{this.Length} bytes, %d{this.Held} pages held: %s{prefix}%s{ellipsis})"
 
     override this.ToString () : string = this.Display
 
@@ -52,7 +57,7 @@ type FileContents =
         | :? FileContents as other ->
             Object.ReferenceEquals (this, other)
             || this.Length = other.Length
-               && this.Pages.Count = other.Pages.Count
+               && this.Held = other.Held
                && Seq.forall2
                    (fun (KeyValue (i, p : ReadOnlyMemory<byte>)) (KeyValue (j, q : ReadOnlyMemory<byte>)) ->
                        i = j && p.Span.SequenceEqual q.Span
@@ -98,6 +103,7 @@ module FileContents =
         {
             Length = 0L
             Pages = Map.empty
+            Held = 0L
         }
 
     /// How many bytes the file holds.
@@ -135,6 +141,7 @@ module FileContents =
         {
             Length = length
             Pages = pages
+            Held = pageCount
         }
 
     /// The bytes from `offset`, up to `count` of them, stopping at the end of
@@ -192,15 +199,13 @@ module FileContents =
             page.Span.CopyTo (bytes.AsSpan ())
             ReadOnlyMemory<byte> bytes
 
-    // The page the file's last byte is on, if it has one, and if a write has
-    // filled it. Its length is the only one that a change of `Length` changes
-    // without the change touching it.
+    // The page that starts at or before the end of the file and reaches past
+    // it, if one is held: the page the file's last byte is on, or the empty
+    // page just past a page-aligned end. Its length is the only one that a
+    // change of `Length` changes without the change touching it.
     let private finalPage (contents : FileContents) : (int64 * ReadOnlyMemory<byte>) option =
-        if contents.Length = 0L then
-            None
-        else
-            let index = (contents.Length - 1L) / pageSize64
-            Map.tryFind index contents.Pages |> Option.map (fun page -> index, page)
+        let index = contents.Length / pageSize64
+        Map.tryFind index contents.Pages |> Option.map (fun page -> index, page)
 
     // The pages of `contents` at the lengths they have in a file `length` bytes
     // long, which must be no shorter. Only the final page can change.
@@ -235,9 +240,9 @@ module FileContents =
         let last = offset + int64 bytes.Length
         let length = max contents.Length last
 
-        let pages =
-            (extendedPages length contents, seq { offset / pageSize64 .. (last - 1L) / pageSize64 })
-            ||> Seq.fold (fun pages index ->
+        let pages, held =
+            ((extendedPages length contents, contents.Held), seq { offset / pageSize64 .. (last - 1L) / pageSize64 })
+            ||> Seq.fold (fun (pages, held) index ->
                 let pageStart = index * pageSize64
 
                 // Zero-initialised, which is what a hole and the page's growth
@@ -246,21 +251,25 @@ module FileContents =
                 // holds nothing of the caller's buffer but what it keeps.
                 let updated = Array.zeroCreate<byte> (pageLength length index)
 
-                match Map.tryFind index pages with
-                | Some page -> page.Span.CopyTo (updated.AsSpan ())
-                | None -> ()
+                let held =
+                    match Map.tryFind index pages with
+                    | Some page ->
+                        page.Span.CopyTo (updated.AsSpan ())
+                        held
+                    | None -> held + 1L
 
                 let from = max offset pageStart
                 let until = min last (pageStart + int64 updated.Length)
 
                 bytes.AsSpan(int (from - offset), int (until - from)).CopyTo (updated.AsSpan (int (from - pageStart)))
 
-                Map.add index (ReadOnlyMemory<byte> updated) pages
+                Map.add index (ReadOnlyMemory<byte> updated) pages, held
             )
 
         {
             Length = length
             Pages = pages
+            Held = held
         }
 
     /// The file after truncation to `length` bytes: shortening discards the
@@ -270,11 +279,21 @@ module FileContents =
             invalidArg (nameof length) $"FileContents.truncate: length %d{length} is negative."
 
         if length = contents.Length then
-            contents
+            // Measured on tmpfs: a truncation to the file's own length frees a
+            // page allocated past its end.
+            match finalPage contents with
+            | Some (index, page) when page.IsEmpty ->
+                {
+                    Length = length
+                    Pages = Map.remove index contents.Pages
+                    Held = contents.Held - 1L
+                }
+            | _ -> contents
         elif length > contents.Length then
             {
                 Length = length
                 Pages = extendedPages length contents
+                Held = contents.Held
             }
         else
 
@@ -286,25 +305,34 @@ module FileContents =
         // pages can be. From there a map built of the pages kept, read in
         // ascending order up to `firstGone`, is cheaper, so the cost is in
         // whichever of the two is smaller.
-        let rec drop (pages : Map<int64, ReadOnlyMemory<byte>>) (removed : int64) : Map<int64, ReadOnlyMemory<byte>> =
+        let rec drop
+            (pages : Map<int64, ReadOnlyMemory<byte>>)
+            (removed : int64)
+            : Map<int64, ReadOnlyMemory<byte>> * int64
+            =
             if pages.IsEmpty then
-                pages
+                pages, 0L
             else
                 let index, _ = Map.maxKeyValue pages
 
                 if index < firstGone then
-                    pages
+                    pages, contents.Held - removed
                 elif removed >= firstGone then
                     contents.Pages
                     |> Seq.takeWhile (fun (KeyValue (index, _)) -> index < firstGone)
-                    |> Seq.fold (fun kept (KeyValue (index, page)) -> Map.add index page kept) Map.empty
+                    |> Seq.fold
+                        (fun (kept, held) (KeyValue (index, page)) -> Map.add index page kept, held + 1L)
+                        (Map.empty, 0L)
                 else
                     drop (Map.remove index pages) (removed + 1L)
 
         let shortened =
+            let pages, held = drop contents.Pages 0L
+
             {
                 Length = length
-                Pages = drop contents.Pages 0L
+                Pages = pages
+                Held = held
             }
 
         match finalPage shortened with
@@ -314,19 +342,49 @@ module FileContents =
                 Pages = Map.add index (resized length index page) shortened.Pages
             }
 
+    // The file after a write whose copy faulted has allocated the page
+    // holding `offset`, which must be at most the file's length: a zeroed
+    // page, empty if it starts at the end of the file. The bytes the file
+    // holds do not change.
+    let internal allocatePage (offset : int64) (contents : FileContents) : FileContents =
+        if offset < 0L || offset > contents.Length then
+            invalidArg
+                (nameof offset)
+                $"FileContents.allocatePage: offset %d{offset} is outside a file %d{contents.Length} bytes long."
+
+        let index = offset / pageSize64
+
+        if contents.Pages.ContainsKey index then
+            contents
+        else
+            { contents with
+                Pages =
+                    Map.add
+                        index
+                        (ReadOnlyMemory<byte> (Array.zeroCreate<byte> (pageLength contents.Length index)))
+                        contents.Pages
+                Held = contents.Held + 1L
+            }
+
+    // How many pages hold data rather than a hole.
+    let internal heldPageCount (contents : FileContents) : int64 = contents.Held
+
     // Which pages hold data rather than a hole, in ascending order.
     let internal heldPages (contents : FileContents) : int64 list =
         contents.Pages |> Map.keys |> List.ofSeq
 
-    // What is wrong with the representation, if anything is: every page index
-    // must be inside the file, and every page exactly the length its index has.
+    // What is wrong with the representation, if anything is: every page must
+    // start inside the file, or exactly at a page-aligned end, and be exactly
+    // the length its index has, and `Held` must count the pages.
     let internal invariantViolation (contents : FileContents) : string option =
         if contents.Length < 0L then
             Some $"the length %d{contents.Length} is negative"
+        elif contents.Held <> int64 contents.Pages.Count then
+            Some $"the count of pages held is %d{contents.Held}, but %d{contents.Pages.Count} are"
         else
             contents.Pages
             |> Seq.tryPick (fun (KeyValue (index, page)) ->
-                if index < 0L || index * pageSize64 >= contents.Length then
+                if index < 0L || index * pageSize64 > contents.Length then
                     Some $"page %d{index} is outside a file %d{contents.Length} bytes long"
                 elif page.Length <> pageLength contents.Length index then
                     Some

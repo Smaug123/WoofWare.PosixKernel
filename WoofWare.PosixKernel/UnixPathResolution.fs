@@ -8,8 +8,6 @@ open System.Collections.Immutable
 /// <remarks>
 /// Stored as structured information, rather than the bytes of a <c>struct stat</c>.
 /// This is because we don't want to be opinionated about the client's ABI.
-///
-/// Some fields are not yet modelled and so don't appear in here yet (e.g. no <c>st_blksize</c>).
 /// </remarks>
 type FileStatus =
     {
@@ -76,6 +74,31 @@ type FileStatus =
         /// for, in the flavour's `dev_t` encoding, and 0 for every other kind
         /// of file.
         SpecialFileDevice : int64
+        /// `st_blksize`: the size of the transfers the kernel prefers, which
+        /// is what a C library sizes a stream's buffer from; or `None` where
+        /// nothing in the machine determines it, for every file on NFS, where
+        /// it is the mount's.
+        ///
+        /// 4096 for every file on tmpfs and APFS and for a Linux pipe. A
+        /// Darwin pipe reports its buffer's size, 16384 until a write grows the
+        /// buffer to 65536, and 16384 again through the write end once the read
+        /// end has closed.
+        IoBlockSize : int64 option
+        /// `st_blocks`: how many 512-byte units the file has allocated, which
+        /// is less than its size covers when it has holes; or `None` where
+        /// nothing in the machine determines it. A client filling a
+        /// `struct stat` chooses what to report for `None`.
+        ///
+        /// On tmpfs a regular file has 8 for each 4096-byte page that holds
+        /// data, a hole holding none, and for the page a write allocated
+        /// before its buffer faulted, even one past the end of the file; a
+        /// symbolic link has 8 once its target is 128 bytes or longer. On APFS
+        /// a regular file of no bytes has 0, and one of any other length
+        /// `None`: APFS allocates as it writes the file back, by when and how
+        /// quickly the writes came, filling some holes and allocating ahead of
+        /// some appends. Everything on NFS is `None`, being the server's. A
+        /// Darwin pipe has 1 while it holds bytes. Everything else has 0.
+        AllocatedBlocks : int64 option
         /// `st_flags`, the BSD file flags `chflags(2)` sets, or `None` on a
         /// flavour whose `stat(2)` has no such field.
         ///
@@ -873,6 +896,12 @@ module UnixPathResolution =
             else
                 None
 
+        let ioBlockSize, allocatedBlocks =
+            EmulatedFileSystemType.allocation
+                (UnixMachineState.fileSystemTypeOf inode system.Machine)
+                (SimulatedUnixPlatform.pageSize system.Machine.UnixPlatform)
+                entry.Content
+
         match sizeAndLinks with
         | Error refusal -> Some (Error refusal)
         | Ok (size, links) ->
@@ -902,6 +931,8 @@ module UnixPathResolution =
                         | InodeContent.Socket _ ->
                             failwith
                                 $"UnixPathResolution.statOf: inode %O{inode} is a socket. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
+                    IoBlockSize = ioBlockSize
+                    AllocatedBlocks = allocatedBlocks
                     FileFlags = newFileFlags system.Machine.UnixPlatform
                 }
         )
@@ -1010,15 +1041,35 @@ module UnixPathResolution =
             // write end too -- but not once the read end has closed, when the
             // write end reports 0 while FIONREAD on a surviving read end would
             // still see them.
+            let readerGone =
+                match pipeEnd with
+                | PipeEnd.Read -> false
+                | PipeEnd.Write -> not (UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read system.Machine)
+
             let size =
-                match flavour, pipeEnd with
-                | SimulatedUnixFlavour.Linux, _ -> 0L
-                | SimulatedUnixFlavour.Darwin, PipeEnd.Read -> int64 (PipeBuffer.held pipe.Buffer)
-                | SimulatedUnixFlavour.Darwin, PipeEnd.Write ->
-                    if UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read system.Machine then
-                        int64 (PipeBuffer.held pipe.Buffer)
-                    else
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> 0L
+                | SimulatedUnixFlavour.Darwin ->
+                    if readerGone then
                         0L
+                    else
+                        int64 (PipeBuffer.held pipe.Buffer)
+
+            // Measured 2026-10-18 by `stat-blocks.c`: Darwin's write end
+            // reports 16384, the size its buffer starts at, once the read end
+            // has closed, however far the buffer had grown.
+            let ioBlockSize =
+                match flavour with
+                | SimulatedUnixFlavour.Darwin when readerGone -> 16384L
+                | SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin -> PipeBuffer.ioBlockSize pipe.Buffer
+
+            // Measured: Linux 0 always; Darwin 1 while the end reports bytes
+            // held, which never exceed its `st_blksize`.
+            let allocatedBlocks =
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> 0L
+                | SimulatedUnixFlavour.Darwin -> if size > 0L then 1L else 0L
 
             let inode =
                 match status.Inodes, pipeEnd with
@@ -1062,6 +1113,8 @@ module UnixPathResolution =
                 LinkCount = reportedLinkCount system.Machine.UnixPlatform links
                 // Measured 0 through either end on both flavours.
                 SpecialFileDevice = 0L
+                IoBlockSize = Some ioBlockSize
+                AllocatedBlocks = Some allocatedBlocks
                 FileFlags = newFileFlags system.Machine.UnixPlatform
             }
             |> FileStatusAnswer.Reported
