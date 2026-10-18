@@ -355,7 +355,8 @@ module UnixMachineState =
 
     /// `tryCommitFileSystem`, for a change no watch can make this kernel
     /// refuse: a change of names (`ChangeNotice.Names`), the release of a
-    /// name (`ChangeNotice.NameReleased`), or one that reached
+    /// name (`ChangeNotice.NameReleased`), a read (`ChangeNotice.Read`), or
+    /// one that reached
     /// what it changed through a name or none, rather than through a removed
     /// directory (`ReachedThrough.RemovedDirectory`). A write and a
     /// truncation are such changes, being of a regular file, which only a
@@ -369,6 +370,7 @@ module UnixMachineState =
         match notice with
         | ChangeNotice.Names
         | ChangeNotice.NameReleased _
+        | ChangeNotice.Read _
         | ChangeNotice.SetAttributes (ReachedThrough.Name _, _)
         | ChangeNotice.SetAttributes (ReachedThrough.Unnamed, _)
         | ChangeNotice.Written (ReachedThrough.Name _)
@@ -398,6 +400,31 @@ module UnixMachineState =
         | Some root, DeviceFileSystemMount.Devfs ->
             failwith
                 $"UnixMachineState.fileSystemTypeOf: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+
+    /// `machine` after a read of `inode` at `now`: the inode's access time
+    /// moved where the rule of the filesystem it is on says it moves
+    /// (`AccessTimeUpdate`), and nothing else changed.
+    let internal afterRead (inode : InodeNumber) (now : UnixTimestamp) (machine : UnixMachineState) : UnixMachineState =
+        let rule =
+            match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
+            | None, _ -> AccessTimeUpdate.ofMount machine.Mount
+            // Measured (`docs/probes/devtmpfs-times`): no read moves a time
+            // of a devtmpfs node.
+            | Some _, DeviceFileSystemMount.Devtmpfs _ -> AccessTimeUpdate.Never
+            | Some root, DeviceFileSystemMount.Devfs ->
+                failwith
+                    $"UnixMachineState.afterRead: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+
+        let times =
+            (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem).Times
+
+        match AccessTimeUpdate.afterRead rule now times with
+        | None -> machine
+        | Some times ->
+            commitFileSystem
+                (ChangeNotice.Read inode)
+                (VirtualFileSystem.setTimes inode times machine.FileSystem)
+                machine
 
     /// Whether `protection` is something a machine of `flavour` can be
     /// configured with: anything on Linux, and on Darwin, which has none of

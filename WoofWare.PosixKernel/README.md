@@ -156,6 +156,11 @@ It is tmpfs on Linux and APFS on Darwin unless `UnixBootImage.withMount` says ot
 A type the flavour could not report is refused: on Linux, which has no APFS, with `ArgumentException`, and on Darwin, where a tmpfs has not been measured, with `UnmodelledException`.
 Path resolution keeps its flavour's limits whichever type is chosen.
 
+Whether a read moves an access time is a mount option, and each type is mounted with one, which `statfs(2)` reports.
+The Linux tmpfs is mounted `noatime`, so only `utimensat(2)` moves an access time there.
+The Darwin APFS volume has APFS's default options: a `read(2)` or `pread(2)` of at least one byte from a file, even one that answers 0 at end-of-file or `EFAULT`, and a directory read that yields an entry, move the access time to now when it is before the modification time, and nothing else moves it (`readlink(2)` and a path through a symbolic link included).
+On NFS no read moves it, which is unmeasured: an NFS file's times are the server's.
+
 ```fsharp
 open System.Collections.Immutable
 open WoofWare.PosixKernel

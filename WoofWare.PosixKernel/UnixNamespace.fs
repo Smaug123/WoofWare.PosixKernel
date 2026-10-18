@@ -1502,16 +1502,10 @@ module UnixNamespace =
     /// `readlink(2)`: report what the symbolic link at `path` points at. It is
     /// `readlinkat` from `AT_FDCWD`.
     ///
-    /// Changes nothing and returns no system. That is *not* quite what POSIX
-    /// says: a successful `readlink` marks the link's access time for update,
-    /// and this kernel does not move it. Whether it would move is a property of
-    /// the mount rather than of this syscall, and the two flavours disagree —
-    /// measured on macOS (lstat, sleep, readlink, lstat) `st_atime` does not
-    /// move, while Linux's default `relatime` updates whenever `mtime` or
-    /// `ctime` is at or after the old `atime`, and a freshly seeded inode has
-    /// all three equal, so the first read there *would* move it. Deciding it
-    /// inside one entry point would set mount semantics for every future read
-    /// by accident, and would make `readlink` the only syscall obeying them.
+    /// Changes nothing and returns no system. POSIX lets a successful
+    /// `readlink` mark the link's access time for update, but neither
+    /// flavour's filesystem moves it as this kernel mounts it: APFS never
+    /// does, and Linux's tmpfs is mounted `noatime`.
     ///
     /// `capacity` is the caller's buffer size. A size that is not positive is
     /// answered as this system's flavour answers it: EINVAL before the path is
@@ -1705,7 +1699,19 @@ module UnixNamespace =
                 Kind = kind
             }
 
-        Ok (ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) system)
+        // A call that returns an entry moves the directory's access time
+        // where its filesystem's rule says, and one at the end does not
+        // (measured, `docs/probes/atime`: getdents and getdents-eof).
+        let read =
+            { system with
+                Machine =
+                    UnixMachineState.afterRead
+                        inode
+                        (UnixMachineState.realtime system.Scheduling system.Machine)
+                        system.Machine
+            }
+
+        Ok (ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) read)
 
     /// `readDirectoryEntry`, with a refusal answered as the `Error` rather than raised.
     let internal tryReadDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1734,6 +1740,10 @@ module UnixNamespace =
     /// filesystem, followed by `..` and `.`, at the *end*, where ext4 has been
     /// seen to put them; `readdir(3)` fixes no position for either. A
     /// directory that `rmdir` has since removed yields nothing more.
+    ///
+    /// A call that yields an entry moves the directory's access time as
+    /// `UnixReadWrite.read` moves a file's: it is a `getdents(2)` into a
+    /// buffer with room for one record. A call at the end moves nothing.
     let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
