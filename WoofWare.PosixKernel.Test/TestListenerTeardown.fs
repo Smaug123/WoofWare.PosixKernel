@@ -270,7 +270,7 @@ module TestListenerTeardown =
 
         let readable =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         $"poll=0x%x{revents} %s{waiters} fionread=%d{readable}", system

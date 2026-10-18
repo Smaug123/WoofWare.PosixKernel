@@ -1042,6 +1042,7 @@ module TestDeviceDescriptors =
 
                 for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Opaque ] do
                     UnixDescriptor.tryBytesAvailable (Callers.leader system) fd destination system
+                    |> Result.map fst
                     |> shouldEqual (Ok (BytesAvailableAnswer.Failed expected))
 
                 UnixDescriptor.terminalAttributes (Callers.leader system) fd system

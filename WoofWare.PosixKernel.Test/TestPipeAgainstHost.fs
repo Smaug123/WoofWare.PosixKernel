@@ -445,6 +445,7 @@ module TestPipeAgainstHost =
                                 failwith $"%s{where ()}: host FIONREAD failed"
 
                             UnixDescriptor.tryBytesAvailable (Callers.leader system) modelFd UserBuffer.Mapped system
+                            |> Result.map fst
                             |> shouldEqual (Ok (BytesAvailableAnswer.Reported available))
 
                             let h = hostStatus hostFd

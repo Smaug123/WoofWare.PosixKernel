@@ -316,7 +316,7 @@ module TestInotifyDeliveryMeasured =
 
         let available =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         produced.Add ("fionread-full", $"%d{available} bytes after %d{changes} alternating chmods")
@@ -420,7 +420,7 @@ module TestInotifyDeliveryMeasured =
             ||> List.fold (fun system i -> chmod (if i % 2 = 1 then a else b) (0o600 + i % 2) system)
 
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) when count = (limit - 1) * 32 -> system
+        | Ok (BytesAvailableAnswer.Reported count, _) when count = (limit - 1) * 32 -> system
         | other -> failwith $"filled to %A{other}, not %d{(limit - 1) * 32} bytes"
 
     [<Test>]

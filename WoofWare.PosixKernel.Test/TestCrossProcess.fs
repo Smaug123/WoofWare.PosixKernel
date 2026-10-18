@@ -1945,7 +1945,7 @@ module TestCrossProcess =
         let view = Machines.viewOf pid machine
 
         match UnixDescriptor.tryBytesAvailable (Caller.make pid (Proc.leader pid view)) fd UserBuffer.Mapped view with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
     /// `open(path, O_WRONLY|O_CREAT|O_EXCL)` and its close, by the process
