@@ -66,6 +66,10 @@ type internal EphemeralPortRangeRefusal =
     /// The low end is above the high end, so the range holds no port and no
     /// bind of port 0 could be answered. Contradictory.
     | Empty of low : uint16 * high : uint16
+    /// Under Linux, the range starts at `low`, below 1024. Linux takes such a
+    /// range only once `ip_unprivileged_port_start` is at or below its low
+    /// end, and this kernel holds that sysctl at 1024. Unmodelled.
+    | BelowUnprivilegedPortStart of low : uint16
 
 [<RequireQualifiedAccess>]
 module internal EphemeralPortRangeRefusal =
@@ -77,12 +81,15 @@ module internal EphemeralPortRangeRefusal =
             $"the range 0-%d{high} starts at port 0, which is how a process asks for an ephemeral port, so it cannot also be one that gets handed out. Start the range at 1 or above."
         | EphemeralPortRangeRefusal.Empty (low, high) ->
             $"the range %d{low}-%d{high} is empty, so no bind of port 0 could ever be answered."
+        | EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low ->
+            $"the range starts at port %d{low}. Linux's ip_local_port_range takes a low end only at or above ip_unprivileged_port_start (measured), so a Linux machine has such a range only with that sysctl lowered to %d{low} or below, which lets any process bind the ports below it; this kernel holds ip_unprivileged_port_start at %d{SimulatedUnixPlatform.privilegedPortCeiling}. Start the range at %d{SimulatedUnixPlatform.privilegedPortCeiling} or above."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : EphemeralPortRangeRefusal) : RefusalKind =
         match refusal with
         | EphemeralPortRangeRefusal.LowIsZero _ -> RefusalKind.OutOfRange "low"
         | EphemeralPortRangeRefusal.Empty _ -> RefusalKind.Contradictory "high"
+        | EphemeralPortRangeRefusal.BelowUnprivilegedPortStart _ -> RefusalKind.Unmodelled
 
 /// Why `UnixBootImage.withBootTime` refuses an instant.
 [<RequireQualifiedAccess>]
@@ -825,10 +832,18 @@ module UnixBootImage =
         =
         let machine = image.Machine
 
+        // Measured on Linux (`docs/probes/local-port-range`): the sysctl takes
+        // ip_unprivileged_port_start <= low <= high. Darwin's is unmeasured,
+        // since writing it needs root.
         if low = 0us then
             Error (EphemeralPortRangeRefusal.LowIsZero high)
         elif low > high then
             Error (EphemeralPortRangeRefusal.Empty (low, high))
+        elif
+            SimulatedUnixPlatform.flavour machine.UnixPlatform = SimulatedUnixFlavour.Linux
+            && low < SimulatedUnixPlatform.privilegedPortCeiling
+        then
+            Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low)
         else
 
         { machine with
@@ -843,10 +858,12 @@ module UnixBootImage =
     /// cursor into it: a cursor left outside the range would hand out its first
     /// port from wherever the previous range had reached.
     ///
-    /// Refuses a range that starts at port 0, and an empty one.
+    /// Refuses a range that starts at port 0, an empty one, and on Linux one
+    /// that starts below 1024.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out. Contradictory.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">On Linux, the range starts below 1024. Linux takes such a range only with <c>ip_unprivileged_port_start</c> lowered to its low end or below, and this library holds that sysctl at 1024.</exception>
     let withEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
         (image : UnixBootImage<'Thread, 'Handler>)

@@ -1,0 +1,84 @@
+Linux 6.18.5 aarch64
+uid=0
+defaults: range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "32768 60999" -> OK | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "1024 2000" -> OK | range=1024 2000 unprivileged_start=1024
+R write ip_local_port_range "1023 2000" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "1 2000" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "0 2000" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "1024 1024" -> OK | range=1024 1024 unprivileged_start=1024
+R write ip_local_port_range "2000 2000" -> OK | range=2000 2000 unprivileged_start=1024
+R write ip_local_port_range "2000 1999" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "2000 2001" -> OK | range=2000 2001 unprivileged_start=1024
+R write ip_local_port_range "2000 2002" -> OK | range=2000 2002 unprivileged_start=1024
+R write ip_local_port_range "2001 2003" -> OK | range=2001 2003 unprivileged_start=1024
+R write ip_local_port_range "60000 65535" -> OK | range=60000 65535 unprivileged_start=1024
+R write ip_local_port_range "60000 65536" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "65535 65535" -> OK | range=65535 65535 unprivileged_start=1024
+R write ip_local_port_range "65536 65536" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "-1 2000" -> EINVAL | range=32768 60999 unprivileged_start=1024
+R write ip_local_port_range "2000" -> OK | range=2000 60999 unprivileged_start=1024
+R write ip_local_port_range "2000 3000 4000" -> OK | range=2000 3000 unprivileged_start=1024
+R write ip_local_port_range "" -> OK | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "0" -> OK | range=32768 60999 unprivileged_start=0
+U write ip_unprivileged_port_start "1" -> OK | range=32768 60999 unprivileged_start=1
+U write ip_unprivileged_port_start "1023" -> OK | range=32768 60999 unprivileged_start=1023
+U write ip_unprivileged_port_start "1024" -> OK | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "1025" -> OK | range=32768 60999 unprivileged_start=1025
+U write ip_unprivileged_port_start "32767" -> OK | range=32768 60999 unprivileged_start=32767
+U write ip_unprivileged_port_start "32768" -> OK | range=32768 60999 unprivileged_start=32768
+U write ip_unprivileged_port_start "32769" -> EINVAL | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "60999" -> EINVAL | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "65535" -> EINVAL | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "65536" -> EINVAL | range=32768 60999 unprivileged_start=1024
+U write ip_unprivileged_port_start "-1" -> EINVAL | range=32768 60999 unprivileged_start=1024
+O1 write ip_unprivileged_port_start "0" -> OK | range=32768 60999 unprivileged_start=0
+O1 write ip_local_port_range "0 2000" -> EINVAL | range=32768 60999 unprivileged_start=0
+O1 write ip_local_port_range "1 2000" -> OK | range=1 2000 unprivileged_start=0
+O1 write ip_unprivileged_port_start "1" -> OK | range=1 2000 unprivileged_start=1
+O1 write ip_unprivileged_port_start "2" -> EINVAL | range=1 2000 unprivileged_start=1
+O2 write ip_unprivileged_port_start "500" -> OK | range=32768 60999 unprivileged_start=500
+O2 write ip_local_port_range "499 2000" -> EINVAL | range=32768 60999 unprivileged_start=500
+O2 write ip_local_port_range "500 2000" -> OK | range=500 2000 unprivileged_start=500
+O2 write ip_local_port_range "600 600" -> OK | range=600 600 unprivileged_start=500
+O2 write ip_unprivileged_port_start "600" -> OK | range=600 600 unprivileged_start=600
+O2 write ip_unprivileged_port_start "601" -> EINVAL | range=600 600 unprivileged_start=600
+O3 write ip_local_port_range "2000 3000" -> OK | range=2000 3000 unprivileged_start=1024
+O3 write ip_unprivileged_port_start "2000" -> OK | range=2000 3000 unprivileged_start=2000
+O3 write ip_unprivileged_port_start "2001" -> EINVAL | range=2000 3000 unprivileged_start=2000
+O3 write ip_local_port_range "1999 3000" -> EINVAL | range=2000 3000 unprivileged_start=2000
+B unprivileged_start "1024" -> OK, range "1024 1024" -> OK | range=1024 1024 unprivileged_start=1024
+  as uid 1000
+  tcp bind 127.0.0.1:1024 -> OK port=1024
+  tcp bind 127.0.0.1:0 -> OK port=1024
+  udp bind 0.0.0.0:0 -> OK port=1024
+  udp connect 127.0.0.1:X -> OK port=1024
+  tcp connect 127.0.0.1:X -> OK port=1024
+B unprivileged_start "500" -> OK, range "600 600" -> OK | range=600 600 unprivileged_start=500
+  as uid 1000
+  tcp bind 127.0.0.1:600 -> OK port=600
+  tcp bind 127.0.0.1:0 -> OK port=600
+  udp bind 0.0.0.0:0 -> OK port=600
+  udp connect 127.0.0.1:X -> OK port=600
+  tcp connect 127.0.0.1:X -> OK port=600
+B unprivileged_start "500" -> OK, range "600 601" -> OK | range=600 601 unprivileged_start=500
+  as uid 1000
+  tcp bind 127.0.0.1:600 -> OK port=600
+  tcp bind 127.0.0.1:0 -> OK port=601
+  udp bind 0.0.0.0:0 -> OK port=600
+  udp connect 127.0.0.1:X -> OK port=601
+  tcp connect 127.0.0.1:X -> OK port=600
+B unprivileged_start "0" -> OK, range "1 1" -> OK | range=1 1 unprivileged_start=0
+  as uid 1000
+  tcp bind 127.0.0.1:1 -> OK port=1
+  tcp bind 127.0.0.1:0 -> OK port=1
+  udp bind 0.0.0.0:0 -> OK port=1
+  udp connect 127.0.0.1:X -> OK port=1
+  tcp connect 127.0.0.1:X -> OK port=1
+B unprivileged_start "0" -> OK, range "80 80" -> OK | range=80 80 unprivileged_start=0
+  as uid 1000
+  tcp bind 127.0.0.1:80 -> OK port=80
+  tcp bind 127.0.0.1:0 -> OK port=80
+  udp bind 0.0.0.0:0 -> OK port=80
+  udp connect 127.0.0.1:X -> OK port=80
+  tcp connect 127.0.0.1:X -> OK port=80
