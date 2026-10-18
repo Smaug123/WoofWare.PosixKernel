@@ -59,7 +59,7 @@ module TestGetGroups =
             systemWith SimulatedUnixPlatform.macOsArm64 (Credentials.ofIds (uid 501u) (gid 12u) [])
 
         for system, expected in [ linux, 8u ; darwin, 12u ] do
-            UnixDescriptor.effectiveGroupId (Callers.leader system) system
+            UnixCredentials.getegid (Callers.leader system) system
             |> shouldEqual (gid expected)
 
             match UnixSystem.tryStep (Callers.thread 0 system) Syscall.GetEffectiveGroupId system with
@@ -119,7 +119,7 @@ module TestGetGroups =
             let count = List.length credentials.SupplementaryGroups
 
             let actual =
-                UnixDescriptor.tryGetgroups (Callers.leader system) destination size system
+                UnixCredentials.tryGetgroups (Callers.leader system) destination size system
 
             // The screens, in the order the probe found them: the sign of the
             // size, then a size of 0 asking only for the count, then a size too
@@ -189,7 +189,7 @@ module TestGetGroups =
         for given, reported in rows do
             let system = linuxWithGroups given
 
-            UnixDescriptor.tryGetgroups (Callers.leader system) UserBuffer.Mapped 256 system
+            UnixCredentials.tryGetgroups (Callers.leader system) UserBuffer.Mapped 256 system
             |> shouldEqual (copied reported)
 
         // An effective group that is not in the list is not reported.
@@ -197,7 +197,7 @@ module TestGetGroups =
             Credentials.ofIds (uid 1000u) (gid 4242u) ([ 30u ; 10u ; 20u ] |> List.map gid)
             |> systemWith SimulatedUnixPlatform.linuxX64
 
-        UnixDescriptor.tryGetgroups (Callers.leader system) UserBuffer.Mapped 3 system
+        UnixCredentials.tryGetgroups (Callers.leader system) UserBuffer.Mapped 3 system
         |> shouldEqual (copied [ 10u ; 20u ; 30u ])
 
     [<Test>]
@@ -222,7 +222,7 @@ module TestGetGroups =
             ]
 
         for size, destination, expected in rows do
-            (size, destination, UnixDescriptor.tryGetgroups (Callers.leader unsorted) destination size unsorted)
+            (size, destination, UnixCredentials.tryGetgroups (Callers.leader unsorted) destination size unsorted)
             |> shouldEqual (size, destination, expected)
 
         // With no groups at all there is nothing to copy, so no buffer faults.
@@ -234,7 +234,7 @@ module TestGetGroups =
                 1, copied []
                 -1, failed UnixError.EINVAL
             ] do
-            (size, UnixDescriptor.tryGetgroups (Callers.leader empty) nothing size empty)
+            (size, UnixCredentials.tryGetgroups (Callers.leader empty) nothing size empty)
             |> shouldEqual (size, expected)
 
     // ------------------------------------------------------------------ Darwin
@@ -253,7 +253,7 @@ module TestGetGroups =
             let count = List.length reported
 
             let actual =
-                UnixDescriptor.tryGetgroups (Callers.leader system) destination size system
+                UnixCredentials.tryGetgroups (Callers.leader system) destination size system
 
             // The screens, in the order `getgroups.c` found them on Darwin as on
             // Linux: the sign of the size, a size of 0 asking only for the
@@ -312,7 +312,7 @@ module TestGetGroups =
                 4, nothing, failed UnixError.EINVAL
                 -1, nothing, failed UnixError.EINVAL
             ] do
-            (size, destination, UnixDescriptor.tryGetgroups (Callers.leader system) destination size system)
+            (size, destination, UnixCredentials.tryGetgroups (Callers.leader system) destination size system)
             |> shouldEqual (size, destination, expected)
 
     [<Test>]
@@ -426,7 +426,7 @@ module TestGetGroupsAgainstHost =
                         [ "storage", storage, UserBuffer.Mapped ; "NULL", 0n, UserBuffer.Unmapped 0UL ] do
                         let expected = host platform size address capacity
 
-                        match UnixDescriptor.tryGetgroups (Callers.leader system) classified size system with
+                        match UnixCredentials.tryGetgroups (Callers.leader system) classified size system with
                         | Ok answer -> (size, where, answer) |> shouldEqual (size, where, expected)
                         | Error refusal -> failwith $"getgroups(%d{size}, %s{where}) was refused: %A{refusal}"
             finally

@@ -27,7 +27,7 @@ module internal DirectoryReading =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<int, UnixError> * UnixSystem<'Thread, 'Handler>
         =
-        match Answered.openPath flags path 0 system with
+        match Answered.openPath path flags 0 system with
         | SyscallAnswer.Completed fd, system -> Ok (int fd), system
         | SyscallAnswer.Failed error, system -> Error error, system
 

@@ -9,13 +9,13 @@ open WoofWare.PosixKernel
 module internal Answered =
 
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (flags : OpenFlags)
         (path : UnixPath)
+        (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofPath path) mode system with
+        match OpenFlagWords.openPath (PathArg.ofPath path) flags mode system with
         | Ok answer -> answer
         | Error refusal -> failwith $"open(%O{path}) was refused: %s{OpenRefusal.describe refusal}"
 

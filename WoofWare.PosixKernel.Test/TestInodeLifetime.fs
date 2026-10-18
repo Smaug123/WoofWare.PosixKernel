@@ -489,7 +489,7 @@ module TestInodeLifetime =
                 Directory = true
             }
 
-        match Answered.openPath flags (UnixPath.parseOrFail "test" "/outer/inner") 0 kernel with
+        match Answered.openPath (UnixPath.parseOrFail "test" "/outer/inner") flags 0 kernel with
         | SyscallAnswer.Completed fd, system -> int fd, inner, system
         | other -> failwith $"could not open the directory: %O{other}"
 

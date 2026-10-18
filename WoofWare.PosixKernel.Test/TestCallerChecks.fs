@@ -146,15 +146,15 @@ module TestCallerChecks =
 
         [
             running
-                "UnixDescriptor.effectiveUserId"
-                (fun caller system -> UnixDescriptor.effectiveUserId caller system |> ignore<UserId>)
+                "UnixCredentials.geteuid"
+                (fun caller system -> UnixCredentials.geteuid caller system |> ignore<UserId>)
             running
-                "UnixDescriptor.effectiveGroupId"
-                (fun caller system -> UnixDescriptor.effectiveGroupId caller system |> ignore<GroupId>)
+                "UnixCredentials.getegid"
+                (fun caller system -> UnixCredentials.getegid caller system |> ignore<GroupId>)
             running
-                "UnixDescriptor.getgroups"
+                "UnixCredentials.getgroups"
                 (fun caller system ->
-                    UnixDescriptor.getgroups caller UserBuffer.Mapped 0 system
+                    UnixCredentials.getgroups caller UserBuffer.Mapped 0 system
                     |> ignore<GetGroupsAnswer>
                 )
             running "UnixDescriptor.dup" (fun caller system -> UnixDescriptor.dup caller 0 system |> ignore)
@@ -425,7 +425,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
             running
                 "UnixNamespace.openPath"
-                (fun caller system -> UnixNamespace.openPath caller 0 root 0 system |> ignore)
+                (fun caller system -> UnixNamespace.openPath caller root 0 0 system |> ignore)
             running
                 "UnixNamespace.openat"
                 (fun caller system -> UnixNamespace.openat caller 0 root 0 0 system |> ignore)

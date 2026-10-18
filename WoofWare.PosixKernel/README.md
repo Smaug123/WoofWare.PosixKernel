@@ -200,7 +200,7 @@ let path (text : string) : PathArgumentBytes =
 // O_RDONLY is 0 on every flavour.
 let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 
-match UnixNamespace.openPath leader 0 (path "/etc/hostname") 0 system with
+match UnixNamespace.openPath leader (path "/etc/hostname") 0 0 system with
 | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
     match UnixReadWrite.read leader (int fd) UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
@@ -366,9 +366,6 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread 
 | `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
 | `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `SyscallAnswer * UnixSystem` |
 | `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (caller : Caller) (fd : int)` | `TerminalAttributesAnswer` |
-| `geteuid(2)` | `UnixDescriptor.effectiveUserId (caller : Caller)` | `UserId` |
-| `getegid(2)` | `UnixDescriptor.effectiveGroupId (caller : Caller)` | `GroupId` |
-| `getgroups(2)` | `UnixDescriptor.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 
 #### Paths and their files
 
@@ -404,7 +401,7 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (caller : Caller) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `open(2)` | `UnixNamespace.openPath (caller : Caller) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
 | `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
 | `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
@@ -593,6 +590,9 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
 | `getpid(2)` | `UnixSystem.processId (caller : Caller)` | `ProcessId` |
 | `umask(2)` | `UnixSystem.umask (caller : Caller) (mask : int)` | `PermissionBits * UnixSystem` |
+| `geteuid(2)` | `UnixCredentials.geteuid (caller : Caller)` | `UserId` |
+| `getegid(2)` | `UnixCredentials.getegid (caller : Caller)` | `GroupId` |
+| `getgroups(2)` | `UnixCredentials.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 | `getresuid(2)` | `UnixCredentials.getresuid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
 | `getresgid(2)` | `UnixCredentials.getresgid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
 | `setresuid(3)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |

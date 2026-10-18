@@ -349,7 +349,7 @@ module TestDispositionBeforeReturn =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
                 | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
                 | other -> failwith $"open: %A{other}"
 

@@ -148,8 +148,8 @@ module BindingProbes =
             Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o777 system
             |> fst
             |> ofAnswer
-        | BindingProbeCall.OpenCreate path -> Answered.openPath creating (rooted path) 0o666 system |> fst |> ofAnswer
-        | BindingProbeCall.OpenRead path -> Answered.openPath reading (rooted path) 0 system |> fst |> ofAnswer
+        | BindingProbeCall.OpenCreate path -> Answered.openPath (rooted path) creating 0o666 system |> fst |> ofAnswer
+        | BindingProbeCall.OpenRead path -> Answered.openPath (rooted path) reading 0 system |> fst |> ofAnswer
         | BindingProbeCall.Exists path ->
             match
                 UnixPathResolution.tryStat

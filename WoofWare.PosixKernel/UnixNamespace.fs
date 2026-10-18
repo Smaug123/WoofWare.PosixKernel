@@ -836,8 +836,8 @@ module UnixNamespace =
     /// `directory` if it is relative.
     let internal openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
-        (flags : OpenFlags)
         (path : UnixPath)
+        (flags : OpenFlags)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>
@@ -1139,8 +1139,8 @@ module UnixNamespace =
 
     let private openFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
@@ -1178,23 +1178,23 @@ module UnixNamespace =
 
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
-        | Ok path -> openPathParsed directory flags path mode system |> answered
+        | Ok path -> openPathParsed directory path flags mode system |> answered
 
     /// `tryOpenPath` once `Entry` has admitted its caller.
     let private tryOpenPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
-        openFrom AtDirectory.CurrentDirectory flags path mode system
+        openFrom AtDirectory.CurrentDirectory path flags mode system
 
     /// `openPath`, with a refusal answered as the `Error` rather than raised.
     let internal tryOpenPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
@@ -1204,7 +1204,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryOpenPathIn flags path mode)
+            (tryOpenPathIn path flags mode)
             system
 
     /// `open(2)`, made by `caller`: resolve `path`, apply every check a kernel
@@ -1251,13 +1251,13 @@ module UnixNamespace =
     /// outcome is a descriptor or an errno.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryOpenPath caller flags path mode system
+        tryOpenPath caller path flags mode system
         |> Refusal.orRaise "UnixNamespace.openPath" OpenRefusal.kind OpenRefusal.describe
 
     /// `tryOpenat` once `Entry` has admitted its caller.
@@ -1270,7 +1270,7 @@ module UnixNamespace =
         : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
-        openFrom (AtDirectory.decode flavour dirfd) flags path mode system
+        openFrom (AtDirectory.decode flavour dirfd) path flags mode system
 
     /// `openat`, with a refusal answered as the `Error` rather than raised.
     let internal tryOpenat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

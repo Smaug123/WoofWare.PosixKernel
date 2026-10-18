@@ -141,7 +141,7 @@ module TestStartingDirectory =
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
@@ -966,7 +966,7 @@ module TestStartingDirectory =
             if opened > bound then
                 failwith $"%s{context}: %d{opened} opens and the table is still not full at the bound %d{bound}"
 
-            match OpenOutcomes.openPath 0 (PathArg.ofText "f") 0 system with
+            match OpenOutcomes.openPath (PathArg.ofText "f") 0 0 system with
             | Ok (SyscallAnswer.Completed _, system) -> fill (opened + 1) system
             | Error (OpenRefusal.DescriptorLimit _) -> system
             | other -> failwith $"%s{context}: filling the table: %A{other}"
@@ -2961,7 +2961,7 @@ module TestStartingDirectory =
             let asRoot = walkSystem platform Owners.root cwd
 
             let fd, held =
-                match Answered.openPath readOnly (UnixPath.parseOrFail context cwd) 0 asRoot with
+                match Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 asRoot with
                 | SyscallAnswer.Completed fd, system -> int fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
@@ -3018,8 +3018,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3076,8 +3076,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3148,7 +3148,7 @@ module TestStartingDirectory =
             let inCwd = walkSystem platform credentials cwd
 
             OpenOutcomes.openat (atFdCwd flavour) argument flags 0o644 inCwd
-            |> shouldEqual (OpenOutcomes.openPath flags argument 0o644 inCwd)
+            |> shouldEqual (OpenOutcomes.openPath argument flags 0o644 inCwd)
 
             // Opened as root, as the descriptor properties above do, and
             // compared with open from the same tree, whose unowned entries are
@@ -3157,8 +3157,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3185,7 +3185,7 @@ module TestStartingDirectory =
 
             OpenOutcomes.openat fd argument flags 0o644 atRoot
             |> outcome
-            |> shouldEqual (OpenOutcomes.openPath flags argument 0o644 heldInCwd |> outcome)
+            |> shouldEqual (OpenOutcomes.openPath argument flags 0o644 heldInCwd |> outcome)
 
         Check.One (config, Prop.forAll (Arb.fromGen openCase) property)
 
@@ -3218,8 +3218,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3288,8 +3288,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3365,8 +3365,8 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
@@ -3442,7 +3442,7 @@ module TestStartingDirectory =
             let asRoot = walkSystem platform Owners.root cwd
 
             let openedAsRoot (directory : string) (system : UnixSystem<int, string>) =
-                match Answered.openPath readOnly (UnixPath.parseOrFail context directory) 0 system with
+                match Answered.openPath (UnixPath.parseOrFail context directory) readOnly 0 system with
                 | SyscallAnswer.Completed fd, system -> int fd, system
                 | other -> failwith $"%s{context}: open(%s{directory}) did not open: %O{other}"
 
@@ -3505,7 +3505,7 @@ module TestStartingDirectory =
         // by the same caller.
         let fd, held =
             match
-                Answered.openPath readOnly (UnixPath.parseOrFail context cwd) 0 (walkSystem platform Owners.root cwd)
+                Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 (walkSystem platform Owners.root cwd)
             with
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
@@ -3755,7 +3755,7 @@ module TestStartingDirectory =
             else
                 let path = held.Substring (held.IndexOf ':' + 1)
 
-                match Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 asRoot with
+                match Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 asRoot with
                 | SyscallAnswer.Completed fd, system -> int fd, system
                 | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 

@@ -100,7 +100,7 @@ module TestLinkCount =
             held, system
         | LinkCountStep.Create path ->
             let fd, system =
-                Answered.openPath creating (rooted path) 0o644 system
+                Answered.openPath (rooted path) creating 0o644 system
                 |> completed $"creat %s{path}"
 
             match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
@@ -122,7 +122,7 @@ module TestLinkCount =
             | Error refusal -> failwith $"rename %s{source} %s{destination} was refused: %A{refusal}"
         | LinkCountStep.Hold path ->
             let fd, system =
-                Answered.openPath reading (rooted path) 0 system |> completed $"open %s{path}"
+                Answered.openPath (rooted path) reading 0 system |> completed $"open %s{path}"
 
             Map.add path (int fd) held, system
 
