@@ -66,10 +66,6 @@ type internal EphemeralPortRangeRefusal =
     /// The low end is above the high end, so the range holds no port and no
     /// bind of port 0 could be answered. Contradictory.
     | Empty of low : uint16 * high : uint16
-    /// Under Linux, the range starts at `low`, below 1024. Linux takes such a
-    /// range only once `ip_unprivileged_port_start` is at or below its low
-    /// end, and this kernel holds that sysctl at 1024. Unmodelled.
-    | BelowUnprivilegedPortStart of low : uint16
 
 [<RequireQualifiedAccess>]
 module internal EphemeralPortRangeRefusal =
@@ -81,15 +77,59 @@ module internal EphemeralPortRangeRefusal =
             $"the range 0-%d{high} starts at port 0, which is how a process asks for an ephemeral port, so it cannot also be one that gets handed out. Start the range at 1 or above."
         | EphemeralPortRangeRefusal.Empty (low, high) ->
             $"the range %d{low}-%d{high} is empty, so no bind of port 0 could ever be answered."
-        | EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low ->
-            $"the range starts at port %d{low}. Linux's ip_local_port_range takes a low end only at or above ip_unprivileged_port_start (measured), so a Linux machine has such a range only with that sysctl lowered to %d{low} or below, which lets any process bind the ports below it; this kernel holds ip_unprivileged_port_start at %d{SimulatedUnixPlatform.privilegedPortCeiling}. Start the range at %d{SimulatedUnixPlatform.privilegedPortCeiling} or above."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : EphemeralPortRangeRefusal) : RefusalKind =
         match refusal with
         | EphemeralPortRangeRefusal.LowIsZero _ -> RefusalKind.OutOfRange "low"
         | EphemeralPortRangeRefusal.Empty _ -> RefusalKind.Contradictory "high"
-        | EphemeralPortRangeRefusal.BelowUnprivilegedPortStart _ -> RefusalKind.Unmodelled
+
+/// Why `UnixBootImage.withUnprivilegedPortStart` refuses a value.
+[<RequireQualifiedAccess>]
+type internal UnprivilegedPortStartRefusal =
+    /// The machine is of `flavour` (Darwin), which has no such setting: its
+    /// privileged ports end at 1024, which nothing configures. Contradictory.
+    | NoSuchSetting of flavour : SimulatedUnixFlavour
+
+[<RequireQualifiedAccess>]
+module internal UnprivilegedPortStartRefusal =
+    /// What this library knows about why it refused the value, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : UnprivilegedPortStartRefusal) : string =
+        match refusal with
+        | UnprivilegedPortStartRefusal.NoSuchSetting flavour ->
+            $"the machine is %O{flavour}'s, which has no ip_unprivileged_port_start: its privileged ports end at 1024, and no sysctl moves that (measured: net.inet.ip.portrange.reservedlow and reservedhigh do not exist)."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : UnprivilegedPortStartRefusal) : RefusalKind =
+        match refusal with
+        | UnprivilegedPortStartRefusal.NoSuchSetting _ -> RefusalKind.Contradictory "start"
+
+/// Why `UnixBootImage.boot` refuses to boot an image with a launch.
+[<RequireQualifiedAccess>]
+type internal BootRefusal =
+    /// The launch cannot start on the machine.
+    | Launch of LaunchRefusal
+    /// Under Linux, the ephemeral range starts at `low`, below the
+    /// unprivileged port start `start`. Linux refuses either sysctl a value
+    /// that would leave them so, so no Linux machine has them. Contradictory.
+    | EphemeralPortsBelowUnprivilegedPortStart of low : uint16 * start : uint16
+
+[<RequireQualifiedAccess>]
+module internal BootRefusal =
+    /// What this library knows about why it refused to boot, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : BootRefusal) : string =
+        match refusal with
+        | BootRefusal.Launch refusal -> LaunchRefusal.describe refusal
+        | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, start) ->
+            $"the ephemeral range starts at port %d{low}, below the unprivileged port start, %d{start}. Linux's ip_local_port_range takes a low end only at or above ip_unprivileged_port_start, and ip_unprivileged_port_start a value only at or below the range's low end (measured), so no Linux machine has these two settings. Lower the unprivileged port start to %d{low}, or start the range at %d{start} or above."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : BootRefusal) : RefusalKind =
+        match refusal with
+        | BootRefusal.Launch refusal -> LaunchRefusal.kind refusal
+        | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart _ -> RefusalKind.Contradictory "image"
 
 /// Why `UnixBootImage.withBootTime` refuses an instant.
 [<RequireQualifiedAccess>]
@@ -457,8 +497,22 @@ module UnixBootImage =
     let internal tryBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (image : UnixBootImage<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, LaunchRefusal>
+        : Result<UnixSystem<'Thread, 'Handler>, BootRefusal>
         =
+        // The two settings constrain each other, so they are judged here,
+        // where both are final, whichever setter ran first. Measured on Linux
+        // (`docs/probes/local-port-range`, `docs/probes/unprivileged-port-start`);
+        // Darwin's start is fixed at 1024, and its range is not judged
+        // against it.
+        let low, _ = image.Machine.EphemeralPortRange
+        let start = image.Machine.UnprivilegedPortStart
+
+        match SimulatedUnixPlatform.flavour image.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux when low < start ->
+            Error (BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, start))
+        | SimulatedUnixFlavour.Linux
+        | SimulatedUnixFlavour.Darwin ->
+
         let leaderThreadId =
             match ThreadIdAllocator.live image.Machine.ThreadIds |> Set.toList with
             | [ id ] -> id
@@ -467,6 +521,7 @@ module UnixBootImage =
                     $"UnixBootImage.boot: the boot image's thread ID allocator records %A{ids} as live, where it holds the first process's leader's alone (this is a bug in this library)."
 
         ProcessLaunch.launchOnto launch image.ProcessId leaderThreadId image.Machine
+        |> Result.mapError BootRefusal.Launch
         |> Result.map (fun (machine, proc, threads) ->
             let slot : ProcessSlot<'Thread, 'Handler> =
                 {
@@ -492,9 +547,11 @@ module UnixBootImage =
     /// unless it was set, and its leader the thread ID the machine's counter
     /// starts at. Refuses a launch described for another platform, one whose
     /// leader is on a processor the machine does not have, and one whose
-    /// directory the machine's filesystem does not let it start in.
+    /// directory the machine's filesystem does not let it start in; and, on
+    /// Linux, an image whose ephemeral range starts below its unprivileged
+    /// port start.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have.</exception>
+    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have. Under Linux, the ephemeral range starts at `low`, below the unprivileged port start `start`. Linux refuses either sysctl a value that would leave them so, so no Linux machine has them. Contradictory.</exception>
     /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
     let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
@@ -502,7 +559,7 @@ module UnixBootImage =
         : UnixSystem<'Thread, 'Handler>
         =
         tryBoot launch image
-        |> Refusal.orRaise "UnixBootImage.boot" LaunchRefusal.kind LaunchRefusal.describe
+        |> Refusal.orRaise "UnixBootImage.boot" BootRefusal.kind BootRefusal.describe
 
     /// `withProcessId`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -833,17 +890,13 @@ module UnixBootImage =
         let machine = image.Machine
 
         // Measured on Linux (`docs/probes/local-port-range`): the sysctl takes
-        // ip_unprivileged_port_start <= low <= high. Darwin's is unmeasured,
-        // since writing it needs root.
+        // ip_unprivileged_port_start <= low <= high, the first of which `boot`
+        // judges, once the unprivileged port start is final too. Darwin's is
+        // unmeasured, since writing it needs root.
         if low = 0us then
             Error (EphemeralPortRangeRefusal.LowIsZero high)
         elif low > high then
             Error (EphemeralPortRangeRefusal.Empty (low, high))
-        elif
-            SimulatedUnixPlatform.flavour machine.UnixPlatform = SimulatedUnixFlavour.Linux
-            && low < SimulatedUnixPlatform.privilegedPortCeiling
-        then
-            Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low)
         else
 
         { machine with
@@ -858,12 +911,12 @@ module UnixBootImage =
     /// cursor into it: a cursor left outside the range would hand out its first
     /// port from wherever the previous range had reached.
     ///
-    /// Refuses a range that starts at port 0, an empty one, and on Linux one
-    /// that starts below 1024.
+    /// Refuses a range that starts at port 0, and an empty one. On Linux,
+    /// `boot` refuses a range that starts below the unprivileged port start
+    /// (`withUnprivilegedPortStart`), as Linux's sysctl does.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out. Contradictory.</exception>
-    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">On Linux, the range starts below 1024. Linux takes such a range only with <c>ip_unprivileged_port_start</c> lowered to its low end or below, and this library holds that sysctl at 1024.</exception>
     let withEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
         (image : UnixBootImage<'Thread, 'Handler>)
@@ -874,6 +927,46 @@ module UnixBootImage =
             "UnixBootImage.withEphemeralPortRange"
             EphemeralPortRangeRefusal.kind
             EphemeralPortRangeRefusal.describe
+
+    /// `withUnprivilegedPortStart`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithUnprivilegedPortStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (start : uint16)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, UnprivilegedPortStartRefusal>
+        =
+        let machine = image.Machine
+
+        match SimulatedUnixPlatform.flavour machine.UnixPlatform with
+        | SimulatedUnixFlavour.Darwin -> Error (UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin)
+        | SimulatedUnixFlavour.Linux ->
+            { machine with
+                UnprivilegedPortStart = start
+            }
+            |> withMachine image
+            |> Ok
+
+    /// <summary>
+    /// Sets Linux's <c>net.ipv4.ip_unprivileged_port_start</c>: the lowest port
+    /// a process without privilege may bind. A port below it is
+    /// <c>EACCES</c> to an unprivileged <c>bind(2)</c>, at every address. 0
+    /// and 1 leave no port privileged.
+    ///
+    /// Linux takes a value only at or below the ephemeral range's low end, and
+    /// a range only starting at or above it, so <c>boot</c> refuses an image
+    /// whose range starts below the value, whichever of the two setters ran
+    /// first. Darwin has no such setting, and refuses any value.
+    /// </summary>
+    /// <exception cref="T:System.ArgumentException">The machine is of `flavour` (Darwin), which has no such setting: its privileged ports end at 1024, which nothing configures. Contradictory.</exception>
+    let withUnprivilegedPortStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (start : uint16)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithUnprivilegedPortStart start image
+        |> Refusal.orRaise
+            "UnixBootImage.withUnprivilegedPortStart"
+            UnprivilegedPortStartRefusal.kind
+            UnprivilegedPortStartRefusal.describe
 
     /// `withBootTime`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithBootTime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
