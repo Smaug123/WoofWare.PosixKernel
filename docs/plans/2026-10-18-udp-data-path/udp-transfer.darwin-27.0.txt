@@ -1,11 +1,11 @@
 Darwin 27.0.0 arm64
 ProductName:		macOS ProductVersion:		27.0.1 BuildVersion:		26A434 
 uid=501
-A1 sendto then an immediate MSG_DONTWAIT recv, 1000 trials: delivered=1 EAGAIN=999
-A2 sender unbound: before sendto getsockname=0.0.0.0:0 sendto=5 after getsockname=0.0.0.0:52738; recvfrom=5 from=127.0.0.1:52738 len=16
-A2 sender bound 0.0.0.0:0: before sendto getsockname=0.0.0.0:65338 sendto=5 after getsockname=0.0.0.0:65338; recvfrom=5 from=127.0.0.1:65338 len=16
-A2 sender bound 127.0.0.1:0: before sendto getsockname=127.0.0.1:50524 sendto=5 after getsockname=127.0.0.1:50524; recvfrom=5 from=127.0.0.1:50524 len=16
-A3 receiver bound 0.0.0.0, sent to 127.0.0.1: sendto=5 recvfrom=5 from=127.0.0.1:49946
+A1 sendto then an immediate MSG_DONTWAIT recv, 1000 trials: delivered=4 EAGAIN=996
+A2 sender unbound: before sendto getsockname=0.0.0.0:0 sendto=5 after getsockname=0.0.0.0:53539; recvfrom=5 from=127.0.0.1:53539 len=16
+A2 sender bound 0.0.0.0:0: before sendto getsockname=0.0.0.0:55443 sendto=5 after getsockname=0.0.0.0:55443; recvfrom=5 from=127.0.0.1:55443 len=16
+A2 sender bound 127.0.0.1:0: before sendto getsockname=127.0.0.1:57575 sendto=5 after getsockname=127.0.0.1:57575; recvfrom=5 from=127.0.0.1:57575 len=16
+A3 receiver bound 0.0.0.0, sent to 127.0.0.1: sendto=5 recvfrom=5 from=127.0.0.1:60159
 B1 datagrams of 10, 20, 30; four recvs of 100: 10 20 30 -1 EAGAIN
 B2 read(2) of an unconnected socket holding one datagram of 3: 3, then -1 EAGAIN
 C1 a datagram of 100 then one of 4; recv of 10, then of 200: 10 (first bytes abc), then 4 (the next datagram if 4)
@@ -25,7 +25,7 @@ E2 recv of 100, twice: 0 -1 EAGAIN; then poll=1 revents=0x104
 E3 sendto of 0 from NULL with no address, unconnected: -1 EDESTADDRREQ
 E4 sendto of 0 from NULL: 0; the queue holds 0
 E5 sendto of 0 from an unmapped buffer: 0; the queue holds 0
-E6 sendto of 5 from an unmapped buffer: -1 EFAULT; the queue holds none; the sender is 0.0.0.0:63533
+E6 a fresh sender's sendto of 5 from an unmapped buffer: -1 EFAULT; the queue holds none; the sender was 0.0.0.0:0 and is 0.0.0.0:0
 F1 datagrams of 10, 20, 30: FIONREAD=140 SO_NREAD=10
 F2 after one recv: FIONREAD=114 SO_NREAD=20
 F3 datagrams of 0, 10: FIONREAD=74 SO_NREAD=0
@@ -97,7 +97,7 @@ I1 datagrams of 65507, trial 2: sent=0 failed=4000 (first EMSGSIZE); FIONREAD be
 I2 SO_RCVBUF set to 4096 (reads 4096), datagrams of 100: sent=4000 queued=22
 I2 SO_RCVBUF set to 65536 (reads 65536), datagrams of 100: sent=4000 queued=342
 J1 r holds 'early' from s2, connects to s1 (0); s2 sends 'late', s1 sends 's1': r receives early|s1
-J2 r disconnects with AF_UNSPEC (-1) and keeps 0.0.0.0:57098; s2 sends 'after': r receives after
+J2 r disconnects with AF_UNSPEC (-1) and keeps 0.0.0.0:64226; s2 sends 'after': r receives after
 J3 r connects to 127.0.0.1:port of a socket bound to 0.0.0.0 (0); that socket sends: r receives fromany
 K1 connected to r: write=1 send=1 sendto(NULL)=1 sendto(r)=-1 EISCONN sendto(r2)=-1 EISCONN; r receives w|s|n; r2 receives none
 K2 r sends to c: read=4 then read=-1 EAGAIN
@@ -106,14 +106,18 @@ L1 connected to an unheld port: send=1; at once poll=1 revents=0x104; later poll
 L2 connected to an unheld port, sends: 1, at once 1, later -1 ECONNREFUSED, 1; SO_ERROR=0 then 0
 L3 connected to an unheld port, after a send: SO_ERROR=61 then 0; recv=-1 EAGAIN
 L4 unconnected sendto an unheld port: 1; then poll=1 revents=0x104; recv=-1 EAGAIN; sendto again=1; SO_ERROR=0
-L5 an error pending, then the peer binds (0) and sends 'data': FIONREAD=36; c receives data|ECONNREFUSED; SO_ERROR=0
+L5 an error pending, then the peer binds (0) and sends 'data': FIONREAD=36; poll=1 revents=0x145; c receives data|ECONNREFUSED; SO_ERROR=0
 L6 write then write: -1 ECONNREFUSED; read after the second write's error=-1 EAGAIN
-L7 an error pending, then connect elsewhere (to port 54042): -1 ECONNREFUSED; SO_ERROR=0; getpeername 0 port 54042
+L7 an error pending, then connect elsewhere (to port 58300): -1 ECONNREFUSED; SO_ERROR=0; getpeername 0 port 58300
 L8 an error pending, recv of 0: -1 ECONNREFUSED; SO_ERROR=0
 L9 a blocking recv; another process sends through the socket at 100 ms: -1 ECONNREFUSED
 L10 bound 0.0.0.0, connected to an unheld port, after a send: SO_ERROR=61
 L12 connected to a port whose only socket is connected elsewhere, after a send: SO_ERROR=61; that socket holds none
 L13 connected, the receiver's queue overfilled with 400 sends: SO_ERROR=0
+L14 an error pending, read of 0: -1 ECONNREFUSED; then SO_ERROR=0
+L14 an error pending, read of 0 into NULL: -1 ECONNREFUSED; then SO_ERROR=0
+L14 an error pending, write of 0: -1 ECONNREFUSED; then SO_ERROR=0
+L14 an error pending, send of 0: -1 ECONNREFUSED; then SO_ERROR=0
 L11 connected to a port only a TCP listener holds, after a send: SO_ERROR=61
 M1 sendto own address: 4; it receives self
 M2 connected to itself, send: 5; it receives self2
@@ -121,47 +125,47 @@ N NULL address, length 0: -1 EDESTADDRREQ; afterwards getsockname=0.0.0.0:0; rec
 N good address, length 0: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 8: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 15: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
-N good address, length 16: 1; afterwards getsockname=0.0.0.0:56091; receiver holds 1
+N good address, length 16: 1; afterwards getsockname=0.0.0.0:51221; receiver holds 1
 N good address, length 17: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 128: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 129: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 200: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N unmapped address, length 16: -1 EFAULT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N NULL address, length 16: -1 EDESTADDRREQ; afterwards getsockname=0.0.0.0:0; receiver holds none
-N AF_UNSPEC, length 16: 1; afterwards getsockname=0.0.0.0:56783; receiver holds 1
+N AF_UNSPEC, length 16: 1; afterwards getsockname=0.0.0.0:65274; receiver holds 1
 N AF_INET6 in a sockaddr_in, length 16: -1 EAFNOSUPPORT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N family 99, length 16: -1 EAFNOSUPPORT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N AF_INET6 ::1, length 28: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N 127.0.0.1 port 0: -1 EADDRNOTAVAIL; afterwards getsockname=0.0.0.0:0; receiver holds none
-N 0.0.0.0 at the receiver's port: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:50393; receiver holds none
-N 127.0.0.2 at the receiver's port (receiver bound 0.0.0.0): 1; afterwards getsockname=0.0.0.0:62330; receiver holds none
-N 255.255.255.255: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:56037; receiver holds none
-N good address, sin_zero 0xff: 1; afterwards getsockname=0.0.0.0:49899; receiver holds 1
-N good address, sin_len 0: 1; afterwards getsockname=0.0.0.0:61542; receiver holds 1
-N good address, sin_len 255: 1; afterwards getsockname=0.0.0.0:64385; receiver holds 1
-N good address, sin_len 8: 1; afterwards getsockname=0.0.0.0:58985; receiver holds 1
-N 127.0.0.2 at a receiver bound 127.0.0.1: 1; afterwards getsockname=0.0.0.0:62867; receiver holds none
+N 0.0.0.0 at the receiver's port: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:49992; receiver holds none
+N 127.0.0.2 at the receiver's port (receiver bound 0.0.0.0): 1; afterwards getsockname=0.0.0.0:60643; receiver holds none
+N 255.255.255.255: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:63016; receiver holds none
+N good address, sin_zero 0xff: 1; afterwards getsockname=0.0.0.0:54212; receiver holds 1
+N good address, sin_len 0: 1; afterwards getsockname=0.0.0.0:51393; receiver holds 1
+N good address, sin_len 255: 1; afterwards getsockname=0.0.0.0:64081; receiver holds 1
+N good address, sin_len 8: 1; afterwards getsockname=0.0.0.0:57554; receiver holds 1
+N 127.0.0.2 at a receiver bound 127.0.0.1: 1; afterwards getsockname=0.0.0.0:60369; receiver holds none
 N source seen for a send to 127.0.0.2 from a 0.0.0.0-bound sender: -1 EAGAIN from 0.0.0.0:0
 N sendto a pipe: -1 ENOTSOCK; a closed descriptor: -1 EBADF; a closed descriptor with an unmapped buffer: -1 EBADF; with an unmapped address: -1 EBADF
 N recvfrom a pipe: -1 ENOTSOCK; a closed descriptor: -1 EBADF
-O0 sender is 127.0.0.1:51174
+O0 sender is 127.0.0.1:55124
 O1 addrlen 0: 3; addrlen out 0; first 20 bytes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 O1 addrlen 1: 3; addrlen out 16; first 20 bytes 10aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 O1 addrlen 2: 3; addrlen out 16; first 20 bytes 1002aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 4: 3; addrlen out 16; first 20 bytes 1002c7e6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 8: 3; addrlen out 16; first 20 bytes 1002c7e67f000001aaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 15: 3; addrlen out 16; first 20 bytes 1002c7e67f00000100000000000000aaaaaaaaaa
-O1 addrlen 16: 3; addrlen out 16; first 20 bytes 1002c7e67f0000010000000000000000aaaaaaaa
-O1 addrlen 17: 3; addrlen out 16; first 20 bytes 1002c7e67f0000010000000000000000aaaaaaaa
-O1 addrlen 28: 3; addrlen out 16; first 20 bytes 1002c7e67f0000010000000000000000aaaaaaaa
-O1 addrlen 128: 3; addrlen out 16; first 20 bytes 1002c7e67f0000010000000000000000aaaaaaaa
+O1 addrlen 4: 3; addrlen out 16; first 20 bytes 1002d754aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+O1 addrlen 8: 3; addrlen out 16; first 20 bytes 1002d7547f000001aaaaaaaaaaaaaaaaaaaaaaaa
+O1 addrlen 15: 3; addrlen out 16; first 20 bytes 1002d7547f00000100000000000000aaaaaaaaaa
+O1 addrlen 16: 3; addrlen out 16; first 20 bytes 1002d7547f0000010000000000000000aaaaaaaa
+O1 addrlen 17: 3; addrlen out 16; first 20 bytes 1002d7547f0000010000000000000000aaaaaaaa
+O1 addrlen 28: 3; addrlen out 16; first 20 bytes 1002d7547f0000010000000000000000aaaaaaaa
+O1 addrlen 128: 3; addrlen out 16; first 20 bytes 1002d7547f0000010000000000000000aaaaaaaa
 O2 NULL address, addrlen 16: 3; addrlen out 16
 O3 an address, NULL addrlen: 3; then the queue holds none
 O4 addrlen 0xffffffff: 3; addrlen out 16; then the queue holds none
 O5 unmapped address, addrlen 16: 3; then the queue holds none
 O6 an address, unmapped addrlen: -1 EFAULT; then the queue holds 3
 O7 an empty queue, addrlen 99: -1 EAGAIN; addrlen out 99; address aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O8 a connected receiver: 3 from 127.0.0.1:51174 len 16
+O8 a connected receiver: 3 from 127.0.0.1:55124 len 16
 P1 recvmsg, iovecs of 4 and 4, datagram of 6: 6; contents ABCD|EF..; namelen 16; controllen 0; flags 0x0
 P2 recvmsg of 10, datagram of 100: 10; flags 0x10 (MSG_TRUNC is 0x10)
 P3 recvmsg of 10 with MSG_TRUNC, datagram of 100: 10; flags 0x10

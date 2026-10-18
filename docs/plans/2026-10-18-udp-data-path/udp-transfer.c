@@ -427,9 +427,13 @@ static void section_e(void)
     a = sendto(s, (void *)1, 0, 0, (struct sockaddr *)&to, sizeof to); ea = errno;
     SETTLE();
     printf("E5 sendto of 0 from an unmapped buffer: %s; the queue holds %s\n", res(a, ea), drain(r));
-    a = sendto(s, (void *)1, 5, 0, (struct sockaddr *)&to, sizeof to); ea = errno;
+    // A fresh sender, so that whether the fault binds it shows.
+    int s6 = udp();
+    const char *before6 = nameof(s6);
+    a = sendto(s6, (void *)1, 5, 0, (struct sockaddr *)&to, sizeof to); ea = errno;
     SETTLE();
-    printf("E6 sendto of 5 from an unmapped buffer: %s; the queue holds %s; the sender is %s\n", res(a, ea), drain(r), nameof(s));
+    printf("E6 a fresh sender's sendto of 5 from an unmapped buffer: %s; the queue holds %s; the sender was %s and is %s\n", res(a, ea), drain(r), before6, nameof(s6));
+    close(s6);
     close(r); close(s);
 }
 
@@ -844,8 +848,10 @@ static void section_l(void)
         ssize_t d = send(c, "x", 1, 0); int ed = errno;
         ssize_t e = send(c, "x", 1, 0); int ee = errno;
         SETTLE();
+        int first = sock_error(c);
+        int second = sock_error(c);
         printf("L2 connected to an unheld port, sends: %s, at once %s, later %s, %s; SO_ERROR=%d then %d\n",
-               res(a, ea), res(b, eb), res(d, ed), res(e, ee), sock_error(c), sock_error(c));
+               res(a, ea), res(b, eb), res(d, ed), res(e, ee), first, second);
         close(c);
     }
     // L3: SO_ERROR takes it.
@@ -881,7 +887,11 @@ static void section_l(void)
         struct sockaddr_in qa = lo(x);
         int bq = bind(q, (struct sockaddr *)&qa, sizeof qa);
         send_to(q, "data", 4, portof(c)); SETTLE();
-        printf("L5 an error pending, then the peer binds (%d) and sends 'data': FIONREAD=%d; c receives %s; SO_ERROR=%d\n", bq, fionread(c), drain_text(c), sock_error(c));
+        int fion = fionread(c);
+        const char *level = revents(c);
+        const char *got = drain_text(c);
+        int after = sock_error(c);
+        printf("L5 an error pending, then the peer binds (%d) and sends 'data': FIONREAD=%d; %s; c receives %s; SO_ERROR=%d\n", bq, fion, level, got, after);
         close(c); close(q);
     }
     // L6: write(2) and read(2) see the error too.
@@ -979,6 +989,28 @@ static void section_l(void)
         SETTLE();
         printf("L13 connected, the receiver's queue overfilled with %d sends: SO_ERROR=%d\n", sent, sock_error(c));
         close(c); close(x);
+    }
+    // L14: zero-length calls with the error pending, each on a socket of its own.
+    for (int call = 0; call < 4; call++) {
+        static const char *names[] = { "read of 0", "read of 0 into NULL", "write of 0", "send of 0" };
+        int c = bound();
+        struct sockaddr_in to = lo(unheld_port());
+        connect(c, (struct sockaddr *)&to, sizeof to);
+        send(c, "x", 1, 0); SETTLE();
+        int fl = fcntl(c, F_GETFL);
+        fcntl(c, F_SETFL, fl | O_NONBLOCK);
+        ssize_t a;
+        switch (call) {
+        case 0: a = read(c, buf, 0); break;
+        case 1: a = read(c, NULL, 0); break;
+        case 2: a = write(c, buf, 0); break;
+        default: a = send(c, buf, 0, 0); break;
+        }
+        int ea = errno;
+        fcntl(c, F_SETFL, fl);
+        int after = sock_error(c);
+        printf("L14 an error pending, %s: %s; then SO_ERROR=%d\n", names[call], res(a, ea), after);
+        close(c);
     }
     // L11: a port held by a TCP listener only.
     {
@@ -1421,6 +1453,8 @@ static void section_q5(void)
 
 static int sleepers_done = 0;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static int done_count(void) { pthread_mutex_lock(&mu); int v = sleepers_done; pthread_mutex_unlock(&mu); return v; }
+static void done_reset(void) { pthread_mutex_lock(&mu); sleepers_done = 0; pthread_mutex_unlock(&mu); }
 static void on_usr1(int sig) { (void)sig; }
 struct sleeper { int fd; ssize_t ret; int err; };
 static void *sleep_recv(void *p)
@@ -1442,15 +1476,15 @@ static void section_s(void)
     int r = bound(), s = udp();
     struct sleeper sl[3];
     pthread_t th[3];
-    sleepers_done = 0;
+    done_reset();
     for (int i = 0; i < 3; i++) { sl[i].fd = r; sl[i].ret = -2; pthread_create(&th[i], NULL, sleep_recv, &sl[i]); }
     usleep(100000);
     send_to(s, "one", 3, portof(r));
     usleep(100000);
-    int after_one = sleepers_done;
+    int after_one = done_count();
     send_to(s, "two", 3, portof(r));
     usleep(100000);
-    int after_two = sleepers_done;
+    int after_two = done_count();
     for (int i = 0; i < 3; i++) pthread_kill(th[i], SIGUSR1);
     for (int i = 0; i < 3; i++) pthread_join(th[i], NULL);
     printf("S1 three threads asleep in recv on one socket: after one datagram %d returned, after two %d; answers %s %s %s\n",
@@ -1460,16 +1494,16 @@ static void section_s(void)
         struct sleeper z;
         z.fd = r;
         pthread_t t;
-        sleepers_done = 0;
+        done_reset();
         // recv of 0 bytes: does it sleep at all?
         int fl = fcntl(r, F_GETFL);
         (void)fl;
         pthread_create(&t, NULL, sleep_recv, &z);
         usleep(100000);
-        int before = sleepers_done;
+        int before = done_count();
         send_to(s, "z", 1, portof(r));
         usleep(100000);
-        int after = sleepers_done;
+        int after = done_count();
         if (!after) pthread_kill(t, SIGUSR1);
         pthread_join(t, NULL);
         printf("S2 (control) a sleeper with buffer 16: returned before the datagram %d, after %d, answer %s\n", before, after, res(z.ret, z.err));

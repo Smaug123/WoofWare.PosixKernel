@@ -95,7 +95,7 @@ Below, L is Linux and D is Darwin.
 
 - **Linux.** A `MSG_DONTWAIT` receive straight after `sendto` found the
   datagram in 1000 trials of 1000.
-- **Darwin.** It found it in 21 and in 1 of 1000 (two runs). The loopback
+- **Darwin.** It found it in 21, 1 and 4 of 1000 (three runs). The loopback
   interface delivers on another thread, as the TCP plan found for Darwin's send
   queue.
 - **Linux under a burst.** Linux is asynchronous too: delivery moves from the
@@ -122,7 +122,7 @@ first) or bound to 0.0.0.0 or 127.0.0.1.
 | 20 and 3 queued, peeks of 10, 100, and 10 with `MSG_TRUNC` | 10, 20, **20**; both stay | 10, 20, **10**; both stay |
 | `sendto` of 0 bytes | 0; the receiver holds one empty datagram, which a `recv` takes and answers 0 | same |
 | `sendto` of 0 bytes from NULL or an unmapped buffer | 0, and the datagram is sent | same |
-| `sendto` of 5 bytes from an unmapped buffer | `EFAULT`, nothing sent; **Linux has bound the sender** | `EFAULT`, nothing sent; Darwin has bound it too |
+| a fresh sender's `sendto` of 5 bytes from an unmapped buffer | `EFAULT`, nothing sent; **the sender is bound** | `EFAULT`, nothing sent; **the sender is not bound** |
 | `read` of an unconnected socket holding a datagram | the datagram | same |
 
 ### 2.3 How large a datagram may be (H)
@@ -218,7 +218,8 @@ does. It is not modelled, since `getsockopt` refuses it.
 |---|---|
 | unbound, bound, or connected, nothing queued | OUT\|WRNORM\|WRBAND (0x304), today's level |
 | a datagram queued | IN\|RDNORM\|OUT\|WRNORM\|WRBAND (0x345) |
-| an ICMP error pending (2.8) | OUT\|ERR\|WRNORM\|WRBAND (0x30c): **ERR, and no IN** |
+| an ICMP error pending (2.8), nothing queued | OUT\|ERR\|WRNORM\|WRBAND (0x30c) |
+| an ICMP error pending and a datagram queued | IN\|RDNORM\|OUT\|ERR\|WRNORM\|WRBAND (0x34d): IN and ERR are independent |
 
 Under `EPOLLET`:
 
@@ -238,7 +239,8 @@ Under `EPOLLET`:
   A sender's own send activates no WRITE.
 - An ICMP error makes READ ready with data 0, and **no `EV_EOF`**.
 - `poll`, derived from the filters, answers 0x104 empty, 0x145 with a datagram,
-  and **0x145 with an error pending: IN, not ERR**.
+  and **0x145 with an error pending, with or without a datagram: IN, never
+  ERR**.
 
 ### 2.7 Which socket a datagram reaches (J, Q, M)
 
@@ -258,7 +260,8 @@ Under `EPOLLET`:
 - **Ties.**
   - **Linux**, two unconnected sockets on 127.0.0.1:p with `SO_REUSEADDR`: the
     socket bound last takes every datagram (Q1, Q2). With `SO_REUSEPORT`, the
-    choice hashes the source, so eight senders split 6 to 2.
+    choice hashes the source with a secret chosen at boot, so eight senders
+    split 6 to 2, 5 to 3 and 2 to 6 in three runs.
   - **Darwin** refuses that second bind (`EADDRINUSE`). With `SO_REUSEPORT`,
     the socket bound last takes all.
 
@@ -282,8 +285,9 @@ How the pending error is reported and taken:
 
 | call | L | D |
 |---|---|---|
-| `recv`, `read` (any count, 0 included) | `ECONNREFUSED`, taken | same |
-| `send`, `write` | `ECONNREFUSED`, taken, nothing sent | same |
+| `recv`, of any count, 0 included; `read` of more than 0 | `ECONNREFUSED`, taken | same |
+| `read` of 0, into a buffer or NULL (L14) | **0, and the error stays pending** (Linux's zero-length read answers 0 in every state) | **`ECONNREFUSED`, taken** |
+| `send`, `write`, of any count, 0 included | `ECONNREFUSED`, taken, nothing sent | same |
 | `SO_ERROR` | 111, taken | 61, taken |
 | `connect` elsewhere | succeeds; **the error stays pending** | **`ECONNREFUSED`, taken, and the socket is connected anyway** (`getpeername` names the new peer) |
 | a datagram arrives while the error is pending | **the error first**, then the datagram | **the datagram first**, then the error |
@@ -325,9 +329,8 @@ Each row is a fresh, unbound sender, sending to a receiver bound to 0.0.0.0.
 
 **Order.** Linux autobinds first and keeps the binding whatever then fails,
 except a destination it could not copy in. That matches `connect`'s
-`failPrepared` and `write`'s `writeBindsFirst`. Darwin binds on success, on
-`EHOSTUNREACH`, and when the data buffer faults (E6), but not on any other
-failure of the destination.
+`failPrepared` and `write`'s `writeBindsFirst`, and Linux binds when the data
+buffer faults too (E6). Darwin binds only on success and on `EHOSTUNREACH`.
 
 ### 2.11 `recvfrom`'s source (O)
 
@@ -525,7 +528,9 @@ of that window.
 ### 3.6 How the calls are expressed
 
 **`read`, `write`, `send` and `recv`** on a datagram socket move to the
-datagram receiver. `UnconnectedSocketRules` keeps its rules for a socket that
+datagram receiver. Linux's zero-length `read`, which answers 0 in every state,
+stays ahead of all of it: it neither takes a datagram nor the error (2.2,
+2.8). `UnconnectedSocketRules` keeps its rules for a socket that
 holds nothing. Its "datagram, blocking, sleeps" becomes the park (3.8).
 
 **`sendto` and `recvfrom`** need real argument types. NULL is not the same as
@@ -587,7 +592,7 @@ unmeasured bit, as today, rather than ignoring it as both kernels do.
 **Linux.**
 
 - `socketReadinessLevel` gains IN while the queue is non-empty, and ERR while
-  the error is pending. In the error state it drops IN, as 2.6 measured.
+  the error is pending, independently (2.6).
 - `SocketWake.DataArrived` already exists. A delivery raises it on the
   receiver for each datagram.
 - A new `SocketWake.DatagramSent` raises an OUT edge on the sender after each
@@ -662,5 +667,14 @@ blocking receives first can have U4 before U3.
 
 ## Decisions
 
-To be taken with Patrick before U1: 3.1, 3.2 (and the sysctls), 3.3 (ties and
-cost), 3.8, and the stage order.
+Patrick, 2026-10-18:
+
+- **3.1**: (A), a machine map of datagram receivers.
+- **3.2**: (A), each flavour's accounting reproduced, with (A2): an arrival at
+  a Darwin queue holding 1757 datagrams is refused.
+- **3.3**: ties are refused; U1 delivers by a scan, and U2 adds the port index.
+- **Staging**: as section 4, U1 to U6 in order.
+
+Not put to Patrick, so the recommendation stands until he says otherwise:
+3.8's (a), one primitive with losers parking again; and 3.2's sysctls as
+machine settings without setters.
