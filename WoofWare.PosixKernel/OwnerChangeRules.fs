@@ -75,15 +75,11 @@ type OwnerChangeRule =
     /// current owner, and a group only if it is the current group, or the
     /// caller owns the inode and names one of its own groups. That holds for
     /// a non-owner as for the owner: anyone may name the IDs an inode already
-    /// has.
+    /// has. A privileged caller may name anything.
     ///
     /// A call naming either ID clears both `S_ISUID` and `S_ISGID`, from every
-    /// kind of inode, and moves its `ctime`. A call naming neither succeeds and
-    /// changes nothing, not even `ctime`.
-    ///
-    /// What a privileged caller may do, and what a call clears where an
-    /// ordinary user cannot set up the inode to ask, have not been measured;
-    /// `chown` refuses those rows.
+    /// kind of inode, whoever makes it, and moves its `ctime`. A call naming
+    /// neither succeeds and changes nothing, not even `ctime`.
     ///
     /// This is Darwin.
     | ClearsSetIdWhenAnIdIsNamed
@@ -100,43 +96,6 @@ type internal OwnerChange =
     /// call named (each unnamed one staying as it was), its permission bits
     /// become `bits`, and its `ctime` moves.
     | Changed of bits : PermissionBits
-
-/// Why this library will not say what a `chown(2)`-family call does: the
-/// kernel's answer for that caller and that inode has not been measured.
-[<RequireQualifiedAccess>]
-type internal OwnerChangeRefusal =
-    /// A privileged caller, under `OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed`,
-    /// standing as `standing` towards an inode carrying `bits`, asking
-    /// `request`.
-    | UnmeasuredPrivilegedCaller of standing : Standing * request : OwnerChangeRequest * bits : PermissionBits
-    /// An unprivileged caller, under
-    /// `OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed`, standing as `standing`
-    /// towards an inode carrying `bits` and asking `request`, where an
-    /// ordinary user could not set up the inode to measure: an owner outside
-    /// the inode's group, of an inode with `S_ISGID`; a non-owner naming an ID
-    /// of an inode with either set-ID bit; or a non-owner asking nothing of an
-    /// inode with `S_ISGID`.
-    | UnmeasuredSetIdChange of standing : Standing * request : OwnerChangeRequest * bits : PermissionBits
-
-[<RequireQualifiedAccess>]
-module internal OwnerChangeRefusal =
-    /// What this library knows about why it will not answer. A client adds
-    /// which call it was answering and which inode it was.
-    let describe (refusal : OwnerChangeRefusal) : string =
-        let measured =
-            "What has been measured, as an ordinary user: the owner, in the inode's group or not, over every mode it could set up (an owner outside the group cannot set S_ISGID), naming every kind of user and group; and a non-owner, in the group or not, of files, directories and symbolic links without set-ID bits, and of a set-user-ID file asked to change nothing."
-
-        match refusal with
-        | OwnerChangeRefusal.UnmeasuredPrivilegedCaller (standing, request, bits) ->
-            $"what Darwin's chown does for a privileged caller, standing %A{standing} towards an inode carrying %O{bits} and asking %A{request}, has not been measured; measuring it needs root. %s{measured}"
-        | OwnerChangeRefusal.UnmeasuredSetIdChange (standing, request, bits) ->
-            $"what Darwin's chown does for a caller standing %A{standing} towards an inode carrying %O{bits} and asking %A{request} has not been measured; setting that inode up needs root or a second user. %s{measured}"
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : OwnerChangeRefusal) : RefusalKind =
-        match refusal with
-        | OwnerChangeRefusal.UnmeasuredPrivilegedCaller _ -> RefusalKind.Unmodelled
-        | OwnerChangeRefusal.UnmeasuredSetIdChange _ -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
 module internal OwnerChangeRequest =
@@ -236,27 +195,7 @@ module internal OwnerChangeRules =
         else
             OwnerChange.Changed (PermissionBits.parseOrFail "OwnerChangeRules.verdict" (raw &&& ~~~cleared))
 
-    // Darwin's measurements are an ordinary user's: it can set up any mode on
-    // an inode it owns in one of its groups, only modes without `S_ISGID` on
-    // one it owns outside them, and nothing at all on another user's inode,
-    // whose mode it can only find. Among other users' inodes it found none
-    // with `S_ISGID`, and one with `S_ISUID` it could ask only to change
-    // nothing, since anything else would change it if the kernel allowed it.
-    let private darwinMeasured (standing : Standing) (request : OwnerChangeRequest) (bits : PermissionBits) : bool =
-        let raw = PermissionBits.toInt bits
-
-        raw &&& (PermissionBits.setUserId ||| PermissionBits.setGroupId) = 0
-        || standing.Owns && (standing.InGroup || raw &&& PermissionBits.setGroupId = 0)
-        || not standing.Owns
-           && request = nothingAsked
-           && raw &&& PermissionBits.setGroupId = 0
-
-    let private darwin
-        (standing : Standing)
-        (request : OwnerChangeRequest)
-        (bits : PermissionBits)
-        : Result<OwnerChange, OwnerChangeRefusal>
-        =
+    let private darwin (standing : Standing) (request : OwnerChangeRequest) (bits : PermissionBits) : OwnerChange =
         // Measured by `chown-rules.c` on Darwin 27.0 at uid 501, with no
         // mismatch against this rule: every mode the owner could set, on a
         // file and on a directory, in its effective group, in a supplementary
@@ -266,39 +205,39 @@ module internal OwnerChangeRules =
         // for their current IDs, for itself, for one of its groups, and for
         // other IDs. A call that names an ID clears both set-ID bits whether
         // or not either ID changes, on a directory as on a file: `06745`
-        // becomes `00745` under chown(501, -1) by its owner.
-        match standing.Privilege with
-        | CallerPrivilege.Privileged -> Error (OwnerChangeRefusal.UnmeasuredPrivilegedCaller (standing, request, bits))
-        | CallerPrivilege.Unprivileged ->
-
-        if not (darwinMeasured standing request bits) then
-            Error (OwnerChangeRefusal.UnmeasuredSetIdChange (standing, request, bits))
-        elif request = nothingAsked then
-            Ok OwnerChange.Untouched
+        // becomes `00745` under chown(501, -1) by its owner. And as root
+        // (`docs/probes/darwin-root/root-files.c`, CHOWN and CTIME): root
+        // naming any user and group of files, directories and links of every
+        // mode, its own and uid 502's, and uid 501 naming them of its own
+        // inodes outside its groups and of uid 502's, over every mode,
+        // set-ID bits included; chown(-1, -1) moved no ctime for either.
+        if request = nothingAsked then
+            OwnerChange.Untouched
         else
+
+        let privileged = standing.Privilege = CallerPrivilege.Privileged
 
         let userAllowed =
             match request.UserAsked with
             | RequestedUser.Unchanged
             | RequestedUser.Current -> true
             | RequestedUser.Callers
-            | RequestedUser.Other -> false
+            | RequestedUser.Other -> privileged
 
         let groupAllowed =
             match request.GroupAsked with
             | RequestedGroup.Unchanged
             | RequestedGroup.Current -> true
-            | RequestedGroup.CallersGroup -> standing.Owns
-            | RequestedGroup.Other -> false
+            | RequestedGroup.CallersGroup -> standing.Owns || privileged
+            | RequestedGroup.Other -> privileged
 
         if userAllowed && groupAllowed then
             PermissionBits.toInt bits
             &&& ~~~(PermissionBits.setUserId ||| PermissionBits.setGroupId)
             |> PermissionBits.parseOrFail "OwnerChangeRules.verdict"
             |> OwnerChange.Changed
-            |> Ok
         else
-            Ok OwnerChange.Forbidden
+            OwnerChange.Forbidden
 
     /// What a `chown(2)`-family call asking `request`, made by a caller
     /// standing as `standing` towards a `target` inode carrying `bits`, does to
@@ -312,10 +251,10 @@ module internal OwnerChangeRules =
         (request : OwnerChangeRequest)
         (target : OwnerChangeTarget)
         (bits : PermissionBits)
-        : Result<OwnerChange, OwnerChangeRefusal>
+        : OwnerChange
         =
         let bits = PermissionBits.assertValid "OwnerChangeRules.verdict" bits
 
         match rule with
-        | OwnerChangeRule.ClearsSetIdFromNonDirectories -> Ok (linux standing request target bits)
+        | OwnerChangeRule.ClearsSetIdFromNonDirectories -> linux standing request target bits
         | OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed -> darwin standing request bits

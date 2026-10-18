@@ -416,6 +416,84 @@ module TestCloneFile =
             | other -> failwith $"%A{other}"
 
     [<Test>]
+    let ``Darwin's root-files CLONE rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // clonefile of a source of each of the 4096 modes into its own
+        // directory, by root (flags 0 and CLONE_NOOWNERCOPY) and by uid 501.
+        // A cell is `.` when the clone has the source's mode, the digit of the
+        // special bits it dropped otherwise, and `A` for EACCES; the IDS rows
+        // give the clone's owner and group.
+        let rows = DarwinRootFiles.section "CLONE"
+        rows |> List.length |> shouldEqual 12
+
+        let ids =
+            DarwinRootFiles.spot "IDS" |> List.filter (fun idsRow -> idsRow.[0] = "CLONE")
+
+        let idsOf (text : string) : InodeOwner =
+            match text.Split ':' with
+            | [| user ; group |] -> owner (uint32 user) (uint32 group)
+            | _ -> failwith $"unexpected owner %s{text}"
+
+        let mismatches =
+            [
+                for row in rows do
+                    // "clonefile(flags=CLONE_NOOWNERCOPY) into a dir 0:20"
+                    let flags = if row.Call.Contains "CLONE_NOOWNERCOPY" then 0x2 else 0
+                    let directoryOwner = idsOf (row.Call.Substring (row.Call.LastIndexOf ' ' + 1))
+
+                    let sourceIds =
+                        $"%d{UserId.toUInt32 row.Owner.User}:%d{GroupId.toUInt32 row.Owner.Group}"
+
+                    let cloneOwner =
+                        ids
+                        |> List.find (fun idsRow ->
+                            idsRow.[1] = row.Caller
+                            && idsRow.[3] = row.Call
+                            && idsRow.[2].EndsWith sourceIds
+                        )
+                        |> fun idsRow -> idsOf (idsRow.[4].Split '=').[0]
+
+                    let baseTree =
+                        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
+                        |> directory "/dir" directoryOwner 0o755
+                        |> file "/dir/s" row.Owner 0o644 "source"
+
+                    let booted =
+                        systemOn SimulatedUnixPlatform.macOsArm64 (DarwinRootFiles.credentialsOf row.Caller) baseTree
+
+                    for raw in 0..0o7777 do
+                        let system =
+                            { booted with
+                                Machine =
+                                    { booted.Machine with
+                                        CommittedFileSystem =
+                                            CommittedFileSystem.initial (chmodded "/dir/s" raw baseTree)
+                                    }
+                            }
+
+                        let modelled =
+                            match clone "/dir/s" "/dir/c" flags system with
+                            | Ok (SyscallAnswer.Completed 0L, after) ->
+                                let cloned = entryAt after "/dir/c"
+                                let bits = PermissionBits.toInt (Inode.permissions cloned)
+
+                                if cloned.Owner <> cloneOwner then 'O'
+                                elif bits = raw then '.'
+                                else char (int '0' + ((raw &&& ~~~bits) >>> 9))
+                            | Ok (SyscallAnswer.Failed error, _) -> DarwinRootFiles.cellOf error
+                            | Ok (SyscallAnswer.Completed _, _)
+                            | Error _ -> 'R'
+
+                        if modelled <> row.Cells.[raw] then
+                            yield
+                                $"%s{row.Caller} %O{row.Owner} %s{row.Call} 0o%04o{raw}: measured %c{row.Cells.[raw]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
+
+    [<Test>]
     let ``clonefile refuses what it was not measured for`` () : unit =
         let darwin = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
@@ -427,9 +505,10 @@ module TestCloneFile =
         |> Result.map fst
         |> shouldEqual (Error (CloneFileRefusal.DirectorySource (inodeAt tree "/d")))
 
+        // A privileged caller's CLONE_ACL, measured only without it.
         clone "f" "new" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 Owners.root tree)
         |> Result.map fst
-        |> shouldEqual (Error CloneFileRefusal.PrivilegedCaller)
+        |> shouldEqual (Error (CloneFileRefusal.PrivilegedAclCopy 0x4))
 
         let linux =
             systemOn
@@ -456,14 +535,21 @@ module TestCloneFile =
         |> shouldEqual (Error (CloneFileRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // Special bits on a source the caller does not own, or S_ISGID on one
-        // whose group it is not in: unmeasured.
-        for by, bits in [ owner 0u 0u, 0o4644 ; owner 0u 0u, 0o1644 ; owner 501u 0u, 0o2644 ] do
+        // whose group it is not in (`root-files.c`): both set-ID bits go and
+        // the sticky bit stays.
+        for by, bits, expected in
+            [
+                owner 0u 0u, 0o4644, 0o0644
+                owner 0u 0u, 0o1644, 0o1644
+                owner 501u 0u, 0o2644, 0o0644
+            ] do
             let vfs =
                 VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
                 |> file "/s" by bits "x"
 
             match clone "s" "c" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs) with
-            | Error (CloneFileRefusal.UnmeasuredSpecialBits _) -> ()
+            | Ok (SyscallAnswer.Completed 0L, after) ->
+                Inode.permissions (entryAt after "/c") |> shouldEqual (mode expected)
             | other -> failwith $"0o%o{bits} owned by %A{by}: %A{other}"
 
         // Without special bits, someone else's readable file clones as the
