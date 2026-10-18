@@ -313,6 +313,8 @@
     <Compile Include="TestWakeSweepCost.fs" />
     <Compile Include="TestCloseCost.fs" />
     <Compile Include="TestOpenFileIndex.fs" />
+    <Compile Include="TestCloseRegistrationCost.fs" />
+    <Compile Include="TestPollQueueIndex.fs" />
     <Compile Include="TestUnixWaitFinish.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
     <Compile Include="TestTimeWait.fs" />

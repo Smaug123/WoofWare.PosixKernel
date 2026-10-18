@@ -337,14 +337,6 @@ module UnixKqueue =
             failwith
                 $"UnixKqueue: %O{kqueue} names %A{other} rather than a live kqueue, where the call resolved it as one (this is a bug in this library)."
 
-    let private withKqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (kqueue : OpenFileDescriptionId)
-        (state : KqueueState)
-        (system : ProcessView<'Thread, 'Handler>)
-        : ProcessView<'Thread, 'Handler>
-        =
-        UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
-
     let private filterNumber (filter : KqueueFilter) : int16 =
         match filter with
         | KqueueFilter.Read -> KeventFilter.Read
@@ -457,13 +449,7 @@ module UnixKqueue =
 
             match key with
             | Some key when Map.containsKey key state.Registrations ->
-                let state =
-                    { state with
-                        Registrations = Map.remove key state.Registrations
-                        Active = state.Active |> List.filter (fun active -> active <> key)
-                    }
-
-                Ok (None, withKqueueState kqueue state system)
+                Ok (None, UnixSystemState.mapOpenFiles (OpenFileTable.unregisterFromKqueue kqueue key) system)
             | Some _
             | None -> Ok (Some UnixError.ENOENT, system)
         else
@@ -490,17 +476,11 @@ module UnixKqueue =
             // Measured on 27.0.0 (`kevent-register.c`, D1 to D8, X7): an ADD of
             // a pair already registered keeps its flags and replaces its udata;
             // either way the registration is activated if its filter is ready.
-            let state, system =
+            let registration, system =
                 match Map.tryFind key state.Registrations with
                 | Some registration ->
-                    { state with
-                        Registrations =
-                            Map.add
-                                key
-                                { registration with
-                                    UserData = change.UserData
-                                }
-                                state.Registrations
+                    { registration with
+                        UserData = change.UserData
                     },
                     system
                 | None ->
@@ -515,9 +495,7 @@ module UnixKqueue =
                             Socket = socketId
                         }
 
-                    { state with
-                        Registrations = Map.add key registration state.Registrations
-                    },
+                    registration,
                     { system with
                         Machine =
                             { system.Machine with
@@ -527,7 +505,7 @@ module UnixKqueue =
 
             Ok (
                 None,
-                withKqueueState kqueue state system
+                UnixSystemState.mapOpenFiles (OpenFileTable.registerInKqueue kqueue key registration) system
                 |> KqueueQueue.activateRegistration kqueue key
             )
         | Some target -> Error (KeventRefusal.UnmodelledTarget (change, target))

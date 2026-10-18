@@ -62,7 +62,7 @@ type internal UnixMachineState =
             /// The kqueue of every Darwin `poll(2)` asleep on the machine, in
             /// whichever process: see `PollQueue`. Made as the call goes to
             /// sleep, and destroyed with the park that names it.
-            PollQueues : Map<PollQueueId, PollQueue>
+            PollQueues : PollQueueTable
             /// The identity the next sleeping Darwin `poll` gives its kqueue.
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
@@ -492,14 +492,14 @@ module UnixMachineState =
 
         id,
         { machine with
-            PollQueues = Map.add id queue machine.PollQueues
+            PollQueues = PollQueueTable.add id queue machine.PollQueues
             NextPollQueueId = PollQueueId (next + 1L)
         }
 
     /// The kqueue `queue` of a sleeping Darwin `poll`. Loudly partial: the
     /// caller read the identity from a park, which holds it.
     let internal pollQueue (queue : PollQueueId) (machine : UnixMachineState) : PollQueue =
-        match Map.tryFind queue machine.PollQueues with
+        match PollQueueTable.tryFind queue machine.PollQueues with
         | Some found -> found
         | None ->
             failwith
@@ -513,11 +513,8 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        if not (Map.containsKey queue machine.PollQueues) then
-            failwith $"UnixMachineState.setPollQueue: %O{queue} is not on the machine (this is a bug in this library)."
-
         { machine with
-            PollQueues = Map.add queue state machine.PollQueues
+            PollQueues = PollQueueTable.set queue state machine.PollQueues
         }
 
     /// Every live open file description on the machine naming `socketId`.
