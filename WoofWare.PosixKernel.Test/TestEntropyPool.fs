@@ -142,12 +142,20 @@ module TestEntropyPool =
     [<Test>]
     let ``a range outside the draw is refused`` () : unit =
         let taken, _ = EntropyPool.take 16 (EntropyPool.ofSeed 0UL)
-        (fun () -> EntropyDraw.range 8 9 taken |> ignore) |> shouldFail<exn>
-        (fun () -> EntropyDraw.range -1 1 taken |> ignore) |> shouldFail<exn>
-        (fun () -> EntropyDraw.range 0 -1 taken |> ignore) |> shouldFail<exn>
 
-        (fun () -> EntropyDraw.range System.Int32.MaxValue 1 taken |> ignore)
-        |> shouldFail<exn>
+        for offset, length, parameter in
+            [
+                8, 9, "length"
+                -1, 1, "offset"
+                0, -1, "length"
+                System.Int32.MaxValue, 1, "offset"
+                17, 0, "offset"
+            ] do
+            (Assert.Throws<System.ArgumentOutOfRangeException> (fun () ->
+                EntropyDraw.range offset length taken |> ignore
+            ))
+                .ParamName
+            |> shouldEqual parameter
 
     [<Test>]
     let ``a negative count is refused`` () : unit =

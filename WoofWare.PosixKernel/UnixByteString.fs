@@ -23,11 +23,15 @@ module private UnixByteStringInternal =
     /// *default* `ImmutableArray`, whose underlying array is null, and
     /// `.Length` on that throws rather than answering 0. Every read of the bytes
     /// goes through here, so the failure names the cause instead of surfacing as a
-    /// bare `NullReferenceException` from somewhere further in.
+    /// bare `NullReferenceException` from somewhere further in. It throws
+    /// `ArgumentException`, naming no parameter: it does not know which one
+    /// the value was passed as.
     let checkedBytes (bytes : ImmutableArray<byte>) : ImmutableArray<byte> =
         if bytes.IsDefault then
-            failwith
-                "UnixByteString: value carries no bytes at all, so it can only have come from `Unchecked.defaultof` or C# `default`; construct one with UnixByteString.ofBytes or UnixByteString.ofString instead."
+            raise (
+                System.ArgumentException
+                    "UnixByteString: value carries no bytes at all, so it can only have come from `Unchecked.defaultof` or C# `default`; construct one with UnixByteString.ofBytes or UnixByteString.ofString instead."
+            )
 
         bytes
 
@@ -320,18 +324,27 @@ module UnixByteString =
     /// is no use, and the bytes that fail to decode are exactly the interesting ones.
     let toEscaped (s : UnixByteString) : string = UnixByteStringInternal.escape s.Bytes
 
-    /// Re-check the invariant of a value that may not have come from a constructor,
-    /// throwing (with a message containing `context`) if it does not hold.
-    ///
-    /// The constructors already ensure the invariant holds, so there is no need to
-    /// call this if you know where the value came from. Takes constant time.
-    let assertValid (context : string) (s : UnixByteString) : UnixByteString =
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the value was passed as.
+    let internal assertValidFor (operation : string) (parameter : string) (s : UnixByteString) : UnixByteString =
         // The only value this can reject is `Unchecked.defaultof` / C# `default`,
         // whose payload is a default ImmutableArray. Every other value came from a
         // constructor, all of which refuse a NUL, and the representation is
         // private, so there is nothing else to re-check.
         if s.Bytes.IsDefault then
-            failwith
-                $"%s{context}: this UnixByteString carries no bytes at all, so it came from `Unchecked.defaultof` or C# `default`; construct one with UnixByteString.ofBytes instead."
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    "this UnixByteString carries no bytes at all, so it came from `Unchecked.defaultof` or C# `default`; construct one with UnixByteString.ofBytes instead."
+            )
 
         s
+
+    /// Re-check the invariant of a value that may not have come from a constructor,
+    /// throwing `ArgumentException` (with a message containing `context`) if it
+    /// does not hold.
+    ///
+    /// The constructors already ensure the invariant holds, so there is no need to
+    /// call this if you know where the value came from. Takes constant time.
+    let assertValid (context : string) (s : UnixByteString) : UnixByteString = assertValidFor context "s" s

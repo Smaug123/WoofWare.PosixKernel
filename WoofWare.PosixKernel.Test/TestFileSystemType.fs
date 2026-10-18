@@ -314,8 +314,56 @@ module TestFileSystemType =
     [<Test>]
     let ``type fields for a pair that describes no machine are refused`` () : unit =
         for flavour, fsType in everyIncoherentPair do
-            Assert.Throws (fun () -> EmulatedFileSystemType.fieldsFor flavour fsType |> ignore<FileSystemTypeFields>)
-            |> ignore<exn>
+            (Assert.Throws<ArgumentException> (fun () ->
+                EmulatedFileSystemType.fieldsFor flavour fsType |> ignore<FileSystemTypeFields>
+            ))
+                .ParamName
+            |> shouldEqual "fsType"
+
+    [<Test>]
+    let ``statistics for a platform and mount that describe no machine are the caller's mistake`` () : unit =
+        for platform in everyPlatform do
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            for fsType in everyIncoherentPair |> List.filter (fst >> (=) flavour) |> List.map snd do
+                let mount = EmulatedMount.defaultOf fsType
+
+                (Assert.Throws<ArgumentException> (fun () ->
+                    FileSystemStatistics.ofMount platform mount |> ignore<FileSystemStatistics>
+                ))
+                    .ParamName
+                |> shouldEqual "mount"
+
+                for target in
+                    [
+                        OpenFileObject.File (InodeNumber 7L)
+                        OpenFileObject.Pipe (PipeId 0L)
+                        OpenFileObject.Socket (SocketId 1L)
+                        OpenFileObject.AnonymousInode
+                        OpenFileObject.Kqueue (OpenFileDescriptionId 2L)
+                    ] do
+                    (Assert.Throws<ArgumentException> (fun () ->
+                        FileSystemStatistics.ofObject platform mount target
+                        |> ignore<FileSystemStatisticsAnswer>
+                    ))
+                        .ParamName
+                    |> shouldEqual "mount"
+
+    [<Test>]
+    let ``a kqueue on a Linux machine is the caller's mistake`` () : unit =
+        for platform in everyPlatform do
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Linux ->
+                (Assert.Throws<ArgumentException> (fun () ->
+                    FileSystemStatistics.ofObject
+                        platform
+                        (EmulatedMount.defaultFor SimulatedUnixFlavour.Linux)
+                        (OpenFileObject.Kqueue (OpenFileDescriptionId 2L))
+                    |> ignore<FileSystemStatisticsAnswer>
+                ))
+                    .ParamName
+                |> shouldEqual "target"
 
     // ------------------------------------------------ mount and flavour agree
 
@@ -653,8 +701,8 @@ module TestFileSystemType =
 
     [<Test>]
     let ``answering for a machine that is no machine is refused, whatever is asked`` () : unit =
-        // `UnixMachineState` is a public record, so `{ machine with Mount =
-        // ... }` bypasses the setter that keeps the platform and the mount
+        // `{ machine with Mount = ... }`, which this library's own code could
+        // write, bypasses the setter that keeps the platform and the mount
         // together. This is what stops such a kernel producing a *quietly*
         // wrong answer — one machine's files with another's pipes — rather
         // than a loud one. Every kind of question, including ones that fail
@@ -694,18 +742,6 @@ module TestFileSystemType =
                 )
                 |> ignore<exn>
 
-            for target in
-                [
-                    OpenFileObject.File (InodeNumber 7L)
-                    OpenFileObject.Pipe (PipeId 0L)
-                    OpenFileObject.Socket (SocketId 1L)
-                    OpenFileObject.AnonymousInode
-                ] do
-                Assert.Throws (fun () ->
-                    FileSystemStatistics.ofObject incoherent.Machine.UnixPlatform incoherent.Machine.Mount target
-                    |> ignore<FileSystemStatisticsAnswer>
-                )
-                |> ignore<exn>
 
     // ------------------------------------------------------------- the host
 

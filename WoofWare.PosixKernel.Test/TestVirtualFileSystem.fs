@@ -396,7 +396,7 @@ module TestVirtualFileSystem =
         let vfs = build [ mkfile (rootOf emptyFs) "f" ; mklink (rootOf emptyFs) "l" "f" ]
 
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 PathWalk.resolveExisting
                     forged
                     Owners.root
@@ -413,7 +413,7 @@ module TestVirtualFileSystem =
 
         // ...and it is refused even where no symlink is involved, so that the
         // guard cannot be satisfied by a check that only runs at a traversal.
-        Assert.Throws<Exception> (fun () ->
+        Assert.Throws<ArgumentException> (fun () ->
             PathWalk.resolveExisting
                 forged
                 Owners.root
@@ -425,21 +425,21 @@ module TestVirtualFileSystem =
             |> Answered.errno
             |> ignore<Result<InodeNumber, UnixError>>
         )
-        |> ignore<Exception>
+        |> ignore<ArgumentException>
 
     [<Test>]
     let ``create refuses a limit no Unix has`` () : unit =
-        Assert.Throws<Exception> (fun () ->
+        Assert.Throws<ArgumentOutOfRangeException> (fun () ->
             PathLimits.create 0 4096 (NameLengthLimit.Bytes 255) SpliceLengthRecheck.NoRecheck
             |> ignore<PathLimits>
         )
-        |> ignore<Exception>
+        |> ignore<ArgumentOutOfRangeException>
 
-        Assert.Throws<Exception> (fun () ->
+        Assert.Throws<ArgumentOutOfRangeException> (fun () ->
             PathLimits.create 40 4096 (NameLengthLimit.Bytes 0) SpliceLengthRecheck.NoRecheck
             |> ignore<PathLimits>
         )
-        |> ignore<Exception>
+        |> ignore<ArgumentOutOfRangeException>
 
     [<Test>]
     let ``create refuses its two int arguments the wrong way round`` () : unit =
@@ -448,7 +448,7 @@ module TestVirtualFileSystem =
         // kernel that permits 1024 traversals and a 32-byte PATH_MAX — wrong in
         // a way no test of *resolution* would obviously report.
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentOutOfRangeException> (fun () ->
                 PathLimits.create 4096 40 (NameLengthLimit.Bytes 255) SpliceLengthRecheck.NoRecheck
                 |> ignore<PathLimits>
             )
@@ -1298,7 +1298,7 @@ module TestVirtualFileSystem =
         let vfs = emptyFs
 
         let forgedName =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 GraphMutators.createFile
                     (rootOf vfs)
                     Unchecked.defaultof<DirectoryEntryName>
@@ -1313,7 +1313,7 @@ module TestVirtualFileSystem =
         forgedName.Message |> shouldContainText "Unchecked.defaultof"
 
         let forgedTarget =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 GraphMutators.createSymlink
                     (rootOf vfs)
                     (name "l")
@@ -1380,11 +1380,11 @@ module TestVirtualFileSystem =
                     |> Result.map snd
                 )
             ] do
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 builder Unchecked.defaultof<DirectoryEntryName>
                 |> ignore<Result<VirtualFileSystem, UnixError>>
             )
-            |> ignore<Exception>
+            |> ignore<ArgumentException>
 
     // ------------------------------------------------------------- properties
 
@@ -2552,7 +2552,7 @@ module TestVirtualFileSystem =
         let vfs = build [ mkfile (rootOf emptyFs) "f" ]
 
         let thrown =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 GraphMutators.unbind
                     UnbindTargetEffect.LostALink
                     (rootOf vfs)

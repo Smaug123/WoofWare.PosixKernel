@@ -169,6 +169,7 @@
     <Compile Include="TestFileSystemSeed.fs" />
     <Compile Include="TestFileDescriptorRegistry.fs" />
     <Compile Include="TestProcessId.fs" />
+    <Compile Include="TestForgedValues.fs" />
     <Compile Include="TestSignal.fs" />
     <Compile Include="TestSignalMask.fs" />
     <Compile Include="TestSignalAgainstHost.fs" />

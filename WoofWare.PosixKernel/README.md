@@ -319,7 +319,9 @@ The setters of the machine's boot configuration and of a process's launch refuse
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
 A call that a real kernel would not let happen at all is a bug in the client, and throws `InvalidOperationException`: a thread making a syscall while it is asleep in another, or while it owes a return to user mode (see "The return to user mode"), the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
-A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
+A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too.
+The functions that check for one, such as the setters, the functions that resume a paused call, and each type's `assertValid`, throw `ArgumentException` for it, or `ArgumentNullException` for a null reference, naming the parameter it was passed as.
+The parsers that throw rather than answer a `Result`, such as `DirectoryEntryName.parseOrFail`, throw `ArgumentException` or `ArgumentOutOfRangeException` naming the value they were handed.
 
 ### Unions that gain cases
 

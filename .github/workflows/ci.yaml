@@ -20,6 +20,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The job takes about ten minutes; without this, a hang the test steps' own
+    # timeout misses (in restore, in the build, or in the test host before any
+    # test starts) holds the runner for GitHub's default of six hours.
+    timeout-minutes: 45
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,15 +40,18 @@ jobs:
       run: nix develop --command dotnet build --no-restore --configuration Release
     # The TRX files carry each test's duration, so that a slow test shows up on CI's own
     # hardware rather than only on a developer's.
+    # `--blame-hang-timeout` kills the test host once one test has run for ten minutes, about
+    # five times the longest test's time on CI, and names the tests it found running. No dump:
+    # the test host's heap may be gigabytes, and the name is what a rerun needs.
     - name: Test
-      run: nix develop --command dotnet test --no-build --configuration Release --logger "trx;LogFilePrefix=default" --results-directory TestResults
+      run: nix develop --command dotnet test --no-build --configuration Release --blame-hang-timeout 10m --blame-hang-dump-type none --logger "trx;LogFilePrefix=default" --results-directory TestResults
     # The `LargeMemory` fixtures are `[<Explicit>]`, so the step above skips them: they need
     # buffers longer than one Linux call moves and peak at about 6.5 GB resident. Beside
     # another test host they exhaust the runner, which then dies without a test failure
     # ("The operation was canceled"). So they get a step of their own, after the suite has
     # finished, in which no other test host is running.
     - name: Test (large-memory fixtures)
-      run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --logger "trx;LogFilePrefix=large" --results-directory TestResults
+      run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --blame-hang-timeout 10m --blame-hang-dump-type none --logger "trx;LogFilePrefix=large" --results-directory TestResults
     - name: Upload test results
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

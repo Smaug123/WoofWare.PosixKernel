@@ -293,6 +293,10 @@ module TestShutdownAgainstHost =
                     $"a bind of %s{Ipv4Address.toString address}:%d{port}, to look for a socket holding the port there, failed with errno %d{bindErrno}"
         )
 
+    /// How many fresh ports `HostPair` tries for an explicit bind before it
+    /// fails, each found free a moment before.
+    let private explicitPortAttempts : int = 5
+
     /// A pair on the host, as the probe's `pair_locked` makes one.
     type private HostPair (flavour : SimulatedUnixFlavour, shape : ShutdownPairShape) =
         let platform = HostPlatform.platformOf flavour
@@ -320,6 +324,31 @@ module TestShutdownAgainstHost =
             let port = portOf t
             HostCalls.close t |> ignore<int>
             port
+
+        // Binds `fd` to 127.0.0.1 at an explicit port, as the probe's
+        // `pair_locked` does, choosing one that `freePort` found free. Any
+        // socket on the host, such as a concurrent test's bind of port 0 or
+        // its `connect`, can take that port between `freePort` releasing it
+        // and this bind, so a refusal with `EADDRINUSE` tries a fresh port,
+        // up to `explicitPortAttempts` times in all.
+        let bindExplicitPort (fd : int) : unit =
+            let addressInUse =
+                UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) UnixError.EADDRINUSE
+
+            let rec go (attempt : int) : unit =
+                let port = freePort ()
+                let address = loopbackAt port
+
+                if HostCalls.bind (fd, address, uint32 address.Length) < 0 then
+                    let errno = Marshal.GetLastPInvokeError ()
+
+                    if errno = addressInUse && attempt < explicitPortAttempts then
+                        go (attempt + 1)
+                    else
+                        failwith
+                            $"bind of 127.0.0.1:%d{port} failed with errno %d{errno}, on attempt %d{attempt} of %d{explicitPortAttempts}"
+
+            go 1
 
         let errorName (errno : int) : string =
             match UnixError.ofRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno with
@@ -514,16 +543,6 @@ module TestShutdownAgainstHost =
             let listener = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" listener
 
-            let address =
-                loopbackAt (
-                    match shape with
-                    | ShutdownPairShape.ListenerLocked -> freePort ()
-                    | ShutdownPairShape.Plain
-                    | ShutdownPairShape.ClientLocked
-                    | ShutdownPairShape.ClientReuseAddress
-                    | ShutdownPairShape.ListenerReuseAddress -> 0
-                )
-
             match shape with
             | ShutdownPairShape.ListenerReuseAddress -> setReuseAddress listener
             | ShutdownPairShape.Plain
@@ -531,16 +550,22 @@ module TestShutdownAgainstHost =
             | ShutdownPairShape.ListenerLocked
             | ShutdownPairShape.ClientReuseAddress -> ()
 
-            check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+            match shape with
+            | ShutdownPairShape.ListenerLocked -> bindExplicitPort listener
+            | ShutdownPairShape.Plain
+            | ShutdownPairShape.ClientLocked
+            | ShutdownPairShape.ClientReuseAddress
+            | ShutdownPairShape.ListenerReuseAddress ->
+                let address = loopbackAt 0
+                check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+
             check "listen" (HostCalls.listen (listener, 4))
             let destination = loopbackAt (portOf listener)
             let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" client
 
             match shape with
-            | ShutdownPairShape.ClientLocked ->
-                let own = loopbackAt (freePort ())
-                check "bind" (HostCalls.bind (client, own, uint32 own.Length))
+            | ShutdownPairShape.ClientLocked -> bindExplicitPort client
             | ShutdownPairShape.ClientReuseAddress -> setReuseAddress client
             | ShutdownPairShape.Plain
             | ShutdownPairShape.ListenerLocked

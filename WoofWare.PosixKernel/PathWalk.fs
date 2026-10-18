@@ -1073,6 +1073,10 @@ module PathWalk =
     /// `credentials` would walk it: the inode `stat` would describe, or the
     /// errno the walk fails with. A relative `path` is taken relative to the
     /// root.
+    ///
+    /// Throws `ArgumentException` for `limits` that did not come from
+    /// `SimulatedUnixPlatform.pathLimits` or `PathLimits.create`, such as
+    /// `Unchecked.defaultof`.
     let resolveExistingFromRoot
         (limits : PathLimits)
         (credentials : Credentials)
@@ -1082,6 +1086,8 @@ module PathWalk =
         (vfs : VirtualFileSystem)
         : Result<InodeNumber, UnixError>
         =
+        let limits = PathLimits.assertValid "PathWalk.resolveExistingFromRoot" limits
+
         match tryResolveExistingFromRoot limits credentials symlinkProtection policy path vfs with
         | Ok inode -> Ok inode
         | Error (PathFailure.Errno error) -> Error error

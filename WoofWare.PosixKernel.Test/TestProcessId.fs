@@ -40,7 +40,9 @@ module TestProcessId =
             | Some pid -> ProcessId.parseOrFail "ctx" candidate |> shouldEqual pid
             | None ->
                 let exn =
-                    Assert.Throws<Exception> (fun () -> ProcessId.parseOrFail "ctx" candidate |> ignore<ProcessId>)
+                    Assert.Throws<ArgumentOutOfRangeException> (fun () ->
+                        ProcessId.parseOrFail "ctx" candidate |> ignore<ProcessId>
+                    )
 
                 exn.Message.StartsWith ("ctx: ", StringComparison.Ordinal) |> shouldEqual true
 
@@ -50,10 +52,11 @@ module TestProcessId =
     let ``assertValid refuses the forged default and passes every parsed ID through`` () : unit =
         // A struct DU has a default value that no smart constructor produced, and
         // `Array.zeroCreate` or an uninitialised record field will hand one out.
-        Assert.Throws<Exception> (fun () ->
+        (Assert.Throws<ArgumentException> (fun () ->
             ProcessId.assertValid "ctx" Unchecked.defaultof<ProcessId> |> ignore<ProcessId>
-        )
-        |> ignore<Exception>
+        ))
+            .ParamName
+        |> shouldEqual "pid"
 
         let property (candidate : int32) : unit =
             match ProcessId.parse candidate with

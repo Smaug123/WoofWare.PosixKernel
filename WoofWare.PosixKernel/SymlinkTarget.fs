@@ -76,6 +76,9 @@ module SymlinkTarget =
     /// Never reports `SymlinkTargetError.Text`: a `UnixByteString` has no text
     /// defects.
     let ofByteString (candidate : UnixByteString) : Result<SymlinkTarget, SymlinkTargetError> =
+        let candidate =
+            UnixByteString.assertValidFor "SymlinkTarget.ofByteString" "candidate" candidate
+
         if UnixByteString.length candidate = 0 then
             Error SymlinkTargetError.Empty
         else
@@ -111,10 +114,35 @@ module SymlinkTarget =
     /// <remarks>
     /// This is <c>SymlinkTarget.parse</c> except it throws instead of returning an error <c>Result</c>.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not a symlink target. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : SymlinkTarget =
         match parse candidate with
         | Ok target -> target
-        | Error error -> failwith $"%s{context}: %s{describe error} (got %s{candidate})"
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%s{describe error} (got %s{candidate})"
+            )
+
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the target was passed as.
+    let internal assertValidFor (operation : string) (parameter : string) (target : SymlinkTarget) : SymlinkTarget =
+        match target with
+        | SymlinkTarget raw ->
+
+        let raw = UnixByteString.assertValidFor operation parameter raw
+
+        match ofByteString raw with
+        | Ok _ -> target
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    $"%s{describe error}. A SymlinkTarget that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SymlinkTarget.parse instead."
+            )
 
     /// <summary>
     /// Re-check the invariant of a value.
@@ -123,17 +151,8 @@ module SymlinkTarget =
     /// You don't need to call this for a target which came from <c>SymlinkTarget.parse</c>.
     /// (Use it e.g. when the input might have been <c>Unchecked.defaultof</c>.)
     /// </remarks>
-    let assertValid (context : string) (target : SymlinkTarget) : SymlinkTarget =
-        match target with
-        | SymlinkTarget raw ->
-
-        let raw = UnixByteString.assertValid context raw
-
-        match ofByteString raw with
-        | Ok _ -> target
-        | Error error ->
-            failwith
-                $"%s{context}: %s{describe error}. A SymlinkTarget that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SymlinkTarget.parse instead."
+    /// <exception cref="T:System.ArgumentException"><c>target</c> is a forged value, such as <c>Unchecked.defaultof</c>.</exception>
+    let assertValid (context : string) (target : SymlinkTarget) : SymlinkTarget = assertValidFor context "target" target
 
     /// <summary>
     /// The path structure of the target, for a resolution walk to splice in.
