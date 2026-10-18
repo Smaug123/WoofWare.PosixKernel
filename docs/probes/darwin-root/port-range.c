@@ -12,7 +12,9 @@
 // row writes one sysctl, reads it back and puts it back at once; each ALLOC
 // row narrows the range to a few ports, takes them, and puts the range back
 // before printing anything. Every original value is restored on exit, on a
-// fatal signal, and again by run.sh, from the values it read first. While a
+// fatal signal, and again by run.sh, from the values it read first; each
+// restoration is read back, a sysctl that is not then what it was is named on
+// stderr (RESTORE-FAILED), and the probe then exits 3. While a
 // range is narrowed (a few milliseconds a row) another process's outgoing
 // connection or port-0 bind on the machine can fail or take one of the
 // probe's ports.
@@ -78,11 +80,58 @@ static int get(const char *name, int *v) {
 
 static int set(const char *name, int v) { return sysctlbyname(name, NULL, NULL, &v, sizeof v) == 0 ? 0 : errno; }
 
-static void restore(void) {
-    if (!have_orig) return;
-    // Twice, in case the first pass ran into a check between two of them.
-    for (int pass = 0; pass < 2; pass++)
-        for (int i = 0; i < NNAMES; i++) set(names[i], orig[i]);
+// Writes to stderr with write(2) alone, so a signal handler may call it.
+static void put(const char *s) {
+    ssize_t r = write(2, s, strlen(s));
+    (void)r;
+}
+
+static void put_int(int v) {
+    char b[16];
+    int i = (int)sizeof b;
+    b[--i] = 0;
+    unsigned u = v < 0 ? 0u - (unsigned)v : (unsigned)v;
+    do b[--i] = (char)('0' + u % 10); while ((u /= 10) && i > 1);
+    if (v < 0) b[--i] = '-';
+    put(b + i);
+}
+
+static volatile sig_atomic_t restore_failed;
+
+// Put back every sysctl that is not what it was, read each back, and name on
+// stderr any that is still not what it was. Returns how many such there are.
+// Calls only sysctl and write(2), so a signal handler may call it.
+static int restore(void) {
+    if (!have_orig) return 0;
+    int failed = 0;
+    for (int i = 0; i < NNAMES; i++) {
+        int now = -1;
+        if (get(names[i], &now) == 0 && now == orig[i]) continue;
+        int e = set(names[i], orig[i]);
+        int back = -1;
+        int ge = get(names[i], &back);
+        if (e != 0 || ge != 0 || back != orig[i]) {
+            failed++;
+            restore_failed = 1;
+            put("RESTORE-FAILED\t");
+            put(names[i]);
+            put(" is ");
+            put_int(back);
+            put(", should be ");
+            put_int(orig[i]);
+            put(" (write errno ");
+            put_int(e);
+            put("): put it back with sudo sysctl -w\n");
+        }
+    }
+    return failed;
+}
+
+static void restore_at_exit(void) {
+    if (restore() != 0) {
+        fflush(stdout);
+        _exit(3);
+    }
 }
 
 static void on_signal(int sig) {
@@ -236,7 +285,7 @@ int main(void) {
     }
     fflush(stdout);
     have_orig = 1;
-    atexit(restore);
+    atexit(restore_at_exit);
     int sigs[] = {SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGSEGV, SIGBUS, SIGABRT, SIGALRM, SIGPIPE};
     for (size_t i = 0; i < sizeof sigs / sizeof sigs[0]; i++) signal(sigs[i], on_signal);
     alarm(600);
@@ -329,5 +378,6 @@ int main(void) {
         printf("RESTORED\t%s = %d%s\n", names[i], v, v == orig[i] ? "" : "\tDIFFERS FROM THE ORIGINAL");
     }
     printf("DONE\n");
-    return 0;
+    fflush(stdout);
+    return restore_failed ? 3 : 0;
 }
