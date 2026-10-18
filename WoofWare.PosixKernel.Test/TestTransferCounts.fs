@@ -367,7 +367,7 @@ module TestTransferCounts =
 
     type private Case =
         {
-            Machine : SimulatedUnixPlatform * uint64 option
+            Platform : SimulatedUnixPlatform * uint64 option
             Content : byte[]
             Position : int64
             Buffer : UserBuffer
@@ -384,7 +384,7 @@ module TestTransferCounts =
 
             return
                 {
-                    Machine = machine
+                    Platform = machine
                     Content = contentOf length
                     Position = position
                     Buffer = buffer
@@ -396,7 +396,7 @@ module TestTransferCounts =
 
     let private actualRead (case : Case) : Result<ReadAnswer * int64, BufferRefusal> =
         let fd, system =
-            withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Machine)
+            withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Platform)
 
         match ReadOutcomes.read fd case.Buffer case.Count system with
         | Ok (answer, after) -> Ok (answer, positionOf fd after)
@@ -422,7 +422,7 @@ module TestTransferCounts =
     [<Test>]
     let ``read answers every count as the measured rule does`` () : unit =
         let property (case : Case) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let _, expected =
                 expectedRead platform limit case.Content case.Position case.Buffer case.Count
@@ -445,11 +445,11 @@ module TestTransferCounts =
                 ]
 
         let property (case : Case, offset : int64) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
             // The description's own position plays no part in a `pread`, so it
             // is left at 0 and the case's position is ignored.
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Platform)
 
             let expected =
                 if offset < 0L then
@@ -476,10 +476,10 @@ module TestTransferCounts =
     [<Test>]
     let ``write admits every count as the measured rule does`` () : unit =
         let property (case : Case) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Platform)
 
             let _, expected =
                 expectedAdmission platform limit case.Position case.Buffer case.Count
@@ -538,10 +538,10 @@ module TestTransferCounts =
                 ]
 
         let property (case : Case, offset : int64) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Platform)
 
             let expected =
                 if offset < 0L then
@@ -605,7 +605,7 @@ module TestTransferCounts =
         let readRules =
             sample
             |> List.map (fun case ->
-                let platform, limit = case.Machine
+                let platform, limit = case.Platform
                 fst (expectedRead platform limit case.Content case.Position case.Buffer case.Count)
             )
             |> reached
@@ -613,7 +613,7 @@ module TestTransferCounts =
         let writeRules =
             sample
             |> List.map (fun case ->
-                let platform, limit = case.Machine
+                let platform, limit = case.Platform
                 fst (expectedAdmission platform limit case.Position case.Buffer case.Count)
             )
             |> reached

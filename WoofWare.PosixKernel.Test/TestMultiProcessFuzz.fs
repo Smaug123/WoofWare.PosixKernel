@@ -265,7 +265,7 @@ module TestMultiProcessFuzz =
     type private Case =
         {
             Platform : SimulatedUnixPlatform
-            Processes : int
+            ProcessCount : int
             /// Whether each process starts with a listener at a port of its
             /// own, an epoll instance or kqueue watching it, and a file another
             /// process can lock, so that the random calls after meet something
@@ -517,7 +517,7 @@ module TestMultiProcessFuzz =
             return
                 {
                     Platform = platform
-                    Processes = processes
+                    ProcessCount = processes
                     Prepared = prepared
                     Steps = steps
                 }
@@ -1664,7 +1664,7 @@ module TestMultiProcessFuzz =
     /// Everything the run tracks besides the machine.
     type private World =
         {
-            Machine : UnixSystem<int, string>
+            System : UnixSystem<int, string>
             /// The processes still on the machine, in launch order.
             Live : ProcessId list
             /// The threads held asleep in a call.
@@ -1675,7 +1675,7 @@ module TestMultiProcessFuzz =
         }
 
     let private wakeable (world : World) : Map<ProcessId * int, Set<WakePrimitive>> =
-        Machines.wakes world.Machine |> Map.ofList
+        Machines.wakes world.System |> Map.ofList
 
     let private assertClean (machine : UnixSystem<int, string>) : unit =
         Machines.checkInvariants machine |> Expect.empty (fun () -> "the system")
@@ -1733,23 +1733,23 @@ module TestMultiProcessFuzz =
             world
         | Made.Answered view ->
             { world with
-                Machine = Machines.unfocus view world.Machine
+                System = Machines.unfocus view world.System
             }
         | Made.Sleeps view ->
             cover FuzzLabel.Park
 
             { world with
-                Machine = Machines.unfocus view world.Machine
+                System = Machines.unfocus view world.System
                 Asleep = Set.add (pid, thread) world.Asleep
             }
         | Made.Ended (ended, machine) ->
             log $"  ended %A{EndedProcess.termination ended}"
             cover FuzzLabel.Exit
-            othersUnmoved pid world.Machine machine
+            othersUnmoved pid world.System machine
             UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
 
             {
-                Machine = machine
+                System = machine
                 Live = world.Live |> List.filter ((<>) pid)
                 Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
                 Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
@@ -1762,20 +1762,20 @@ module TestMultiProcessFuzz =
             | [] -> world
             | pid :: _ ->
 
-            let before = world.Machine
+            let before = world.System
 
             let machine =
                 Machines.inView
                     pid
                     (fun view -> (), UnixSystem.advanceClock (int64 milliseconds * 1_000_000L) view)
-                    world.Machine
+                    world.System
                 |> Option.get
                 |> snd
 
             othersUnmoved pid before machine
 
             { world with
-                Machine = machine
+                System = machine
             }
         | Step.Dispatch (proc, thread, cpu) ->
             match world.Live with
@@ -1791,25 +1791,25 @@ module TestMultiProcessFuzz =
                 world
             else
 
-            let before = world.Machine
+            let before = world.System
 
             let machine =
-                Machines.doIn pid (UnixScheduling.dispatch (Caller.make pid thread) (CpuId cpu)) world.Machine
+                Machines.doIn pid (UnixScheduling.dispatch (Caller.make pid thread) (CpuId cpu)) world.System
 
             othersUnmoved pid before machine
 
             { world with
-                Machine = machine
+                System = machine
             }
         | Step.WakePass finishing ->
-            let woken, machine = Machines.wake world.Machine
+            let woken, machine = Machines.wake world.System
             let woken = woken |> List.map fst
 
             log $"  woken %A{woken}"
 
             let world =
                 { world with
-                    Machine = machine
+                    System = machine
                     Asleep = Set.difference world.Asleep (Set.ofList woken)
                     Woken = world.Woken @ woken
                 }
@@ -1826,12 +1826,12 @@ module TestMultiProcessFuzz =
                     world
                 else
 
-                let before = world.Machine
+                let before = world.System
 
                 log $"  finish %O{pid} %d{thread}"
 
                 let made =
-                    finish cover log pid thread (Machines.focus pid world.Machine |> Option.get)
+                    finish cover log pid thread (Machines.focus pid world.System |> Option.get)
 
                 match made with
                 | Made.Refused ->
@@ -1850,9 +1850,9 @@ module TestMultiProcessFuzz =
                     // A finish whose process's end was refused leaves the thread
                     // parked, woken still, for a later pass.
                     let world =
-                        match ProcessTable.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
+                        match ProcessTable.tryFind (ProcessId.toInt32 pid) world.System.Processes with
                         | Some _ when
-                            (Proc.parkedIn (Caller.make pid thread) world.Machine).IsSome
+                            (Proc.parkedIn (Caller.make pid thread) world.System).IsSome
                             && not (Set.contains (pid, thread) world.Asleep)
                             ->
                             { world with
@@ -1860,10 +1860,10 @@ module TestMultiProcessFuzz =
                             }
                         | _ -> world
 
-                    if UnixSystem.processIds world.Machine |> Set.contains pid then
-                        othersUnmoved pid before world.Machine
+                    if UnixSystem.processIds world.System |> Set.contains pid then
+                        othersUnmoved pid before world.System
 
-                    assertClean world.Machine
+                    assertClean world.System
                     world
             )
         | Step.Call (proc, thread, op) ->
@@ -1881,7 +1881,7 @@ module TestMultiProcessFuzz =
             else
 
             cover FuzzLabel.Call
-            let before = world.Machine
+            let before = world.System
             let view = Machines.focus pid before |> Option.get
             let beforeFds = fdsOf pid view |> Map.keys |> Set.ofSeq
 
@@ -1909,15 +1909,15 @@ module TestMultiProcessFuzz =
 
                         cover (FuzzLabel.CrossWakeKind kind)
 
-            match ProcessTable.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
+            match ProcessTable.tryFind (ProcessId.toInt32 pid) world.System.Processes with
             | None -> world
             | Some _ ->
 
-            othersUnmoved pid before world.Machine
+            othersUnmoved pid before world.System
 
             // The caller's new descriptors are the lowest its own table had free.
             let afterFds =
-                fdsOf pid (Machines.focus pid world.Machine |> Option.get)
+                fdsOf pid (Machines.focus pid world.System |> Option.get)
                 |> Map.keys
                 |> Set.ofSeq
 
@@ -2139,7 +2139,7 @@ module TestMultiProcessFuzz =
         : unit
         =
         let pids, machine =
-            Machines.withThreadsOn configure case.Platform case.Processes threads
+            Machines.withThreadsOn configure case.Platform case.ProcessCount threads
 
         let machine =
             if case.Prepared then
@@ -2195,7 +2195,7 @@ module TestMultiProcessFuzz =
 
         let world =
             {
-                Machine = machine
+                System = machine
                 Live = pids
                 Asleep = Set.empty
                 Woken = []
@@ -2203,7 +2203,7 @@ module TestMultiProcessFuzz =
 
         (world, case.Steps)
         ||> List.fold (fun before next ->
-            let queued = queuedClients before.Machine
+            let queued = queuedClients before.System
 
             let wakeableBefore =
                 if queued.IsEmpty then
@@ -2213,9 +2213,9 @@ module TestMultiProcessFuzz =
 
             log (stepText next)
             let world = step cover log before next
-            assertClean world.Machine
+            assertClean world.System
 
-            let reset = checkQueuedClients cover queued world.Machine
+            let reset = checkQueuedClients cover queued world.System
             let owners = reset |> List.choose (fun queued -> queued.ClientOwner) |> Set.ofList
 
             let wokenRead =
@@ -2354,7 +2354,7 @@ module TestMultiProcessFuzz =
                 | step :: rest ->
                     gen {
                         let! kind = Gen.choose (0, 9)
-                        let! proc = Gen.choose (0, case.Processes - 1)
+                        let! proc = Gen.choose (0, case.ProcessCount - 1)
                         let! thread = Gen.choose (0, threads - 1)
                         let! cpu = Gen.frequency [ 4, Gen.constant 0 ; 1, Gen.constant 1 ]
 
@@ -2390,7 +2390,7 @@ module TestMultiProcessFuzz =
             let lastSkipped = ref false
 
             let observe (step : Step) (world : World) : World =
-                let machine = world.Machine
+                let machine = world.System
                 let asleep = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
                 let reference = ReferenceWake.wakes asleep machine
 
@@ -2465,7 +2465,7 @@ module TestMultiProcessFuzz =
                 // which keep the run's account of who sleeps.
                 if answer.IsEmpty then
                     { world with
-                        Machine = after
+                        System = after
                     }
                 else
                     world
@@ -2527,7 +2527,7 @@ module TestMultiProcessFuzz =
     let ``wake answers what the reference sweep answers, at every step of random interleavings`` () : unit =
         let property (cover : SweepLabel -> unit) (case : Case) : unit =
             let observe (_ : Step) (world : World) : unit =
-                let machine = world.Machine
+                let machine = world.System
                 let woken = Set.ofList world.Woken
 
                 Set.intersect world.Asleep woken |> shouldEqual Set.empty
@@ -2645,7 +2645,7 @@ module TestMultiProcessFuzz =
         =
         let property (cover : string -> unit) (case : Case) : unit =
             let observe (_ : Step) (world : World) : unit =
-                let _, woken = UnixWait.wake world.Machine
+                let _, woken = UnixWait.wake world.System
 
                 for pid in UnixSystem.processIds woken do
                     for KeyValue (thread, state) in UnixSystem.threads pid woken do
@@ -2710,18 +2710,18 @@ module TestMultiProcessFuzz =
 
         let property (cover : string -> unit) (case : Case) : unit =
             let observe (_ : Step) (world : World) : unit =
-                for pid in UnixSystem.processIds world.Machine do
-                    let view = Proc.view pid world.Machine
+                for pid in UnixSystem.processIds world.System do
+                    let view = Proc.view pid world.System
 
                     let parked =
-                        Proc.threadMap pid world.Machine
+                        Proc.threadMap pid world.System
                         |> Map.toList
                         |> List.choose (fun (thread, state) ->
                             state.Parked |> Option.map (fun park -> thread, park.Syscall)
                         )
 
                     if not parked.IsEmpty then
-                        for KeyValue (fd, _) in fdsOf pid world.Machine do
+                        for KeyValue (fd, _) in fdsOf pid world.System do
                             let closingId =
                                 FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors view)
                                 |> Option.get
@@ -2826,13 +2826,13 @@ module TestMultiProcessFuzz =
     let private transcriptOf (case : Case) : string =
         let builder = System.Text.StringBuilder ()
         let log (line : string) : unit = builder.AppendLine line |> ignore
-        log $"%A{case.Platform} %d{case.Processes} %b{case.Prepared}"
+        log $"%A{case.Platform} %d{case.ProcessCount} %b{case.Prepared}"
 
         // Case names rather than `%A`, which would make the oracle take
         // minutes: each call's answer is written in full already.
         let observe (_ : Step) (world : World) : unit =
             for pid in world.Live do
-                let view = Machines.focus pid world.Machine |> Option.get
+                let view = Machines.focus pid world.System |> Option.get
                 builder.Append("  ").Append(ProcessId.toInt32 pid).Append (':') |> ignore
 
                 for KeyValue (fd, target) in fdsOf pid view do
@@ -3217,7 +3217,7 @@ module TestMultiProcessFuzz =
     let private endingsTranscriptOf (case : Case) : string =
         let builder = System.Text.StringBuilder ()
         let log (line : string) : unit = builder.AppendLine line |> ignore
-        log $"%A{case.Platform} %d{case.Processes} %b{case.Prepared}"
+        log $"%A{case.Platform} %d{case.ProcessCount} %b{case.Prepared}"
         let last = ref None
         runObserving smallBuffers (fun _ world -> last.Value <- Some world) ignore ignore case
 
@@ -3230,7 +3230,7 @@ module TestMultiProcessFuzz =
                 for ending in endings do
                     log $"  %d{ProcessId.toInt32 pid} %A{ending}"
 
-                    match endBy ending pid world.Machine with
+                    match endBy ending pid world.System with
                     | Ended.Ended (termination, kernel) ->
                         log $"    ends %A{termination}"
                         observed log kernel

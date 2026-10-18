@@ -82,7 +82,7 @@ module TestUnixScheduling =
         {
             Platform : SimulatedUnixPlatform
             Count : int
-            Machine : UnixSystem<int, string>
+            System : UnixSystem<int, string>
             /// In creation order.
             Live : Live list
             NextName : Map<ProcessId, int>
@@ -159,7 +159,7 @@ module TestUnixScheduling =
 
             true
 
-    let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.Machine
+    let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.System
 
     let private withPipe (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         machine
@@ -179,12 +179,12 @@ module TestUnixScheduling =
         let cpu = CpuId (cpu % world.Count)
 
         match
-            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.Machine
+            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.System
         with
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         | Ok (pid, machine) ->
             { world with
-                Machine = withPipe pid machine
+                System = withPipe pid machine
                 Live =
                     world.Live
                     @ [
@@ -215,7 +215,7 @@ module TestUnixScheduling =
         {
             Platform = platform
             Count = count
-            Machine = Machines.ofSystem system |> withPipe pid
+            System = Machines.ofSystem system |> withPipe pid
             Live =
                 [
                     {
@@ -271,7 +271,7 @@ module TestUnixScheduling =
                 let cpu = CpuId (cpu % world.Count)
 
                 let machine =
-                    world.Machine
+                    world.System
                     |> Machines.doIn
                         pid
                         (fun view ->
@@ -281,7 +281,7 @@ module TestUnixScheduling =
                         )
 
                 { world with
-                    Machine = machine
+                    System = machine
                     Live =
                         world.Live
                         @ [
@@ -331,8 +331,8 @@ module TestUnixScheduling =
                         cover Reached.CrossProcessDisplacement
 
                     { world with
-                        Machine =
-                            world.Machine
+                        System =
+                            world.System
                             |> Machines.doIn
                                 thread.Pid
                                 (UnixScheduling.dispatch (Caller.make thread.Pid thread.Name) cpu)
@@ -352,7 +352,7 @@ module TestUnixScheduling =
             | None -> world
             | Some thread ->
                 let outcome, machine =
-                    world.Machine
+                    world.System
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
@@ -367,7 +367,7 @@ module TestUnixScheduling =
 
                 let world =
                     { world with
-                        Machine = machine
+                        System = machine
                     }
 
                 if outcome then
@@ -385,7 +385,7 @@ module TestUnixScheduling =
             | None -> world
             | Some pid ->
                 let machine =
-                    world.Machine
+                    world.System
                     |> Machines.doIn
                         pid
                         (fun view ->
@@ -405,7 +405,7 @@ module TestUnixScheduling =
                 let woken = woken |> List.map fst |> Set.ofList
 
                 { world with
-                    Machine = machine
+                    System = machine
                     Live =
                         world.Live
                         |> List.map (fun live ->
@@ -423,7 +423,7 @@ module TestUnixScheduling =
             | None -> world
             | Some thread ->
                 let parksAgain, machine =
-                    world.Machine
+                    world.System
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
@@ -441,7 +441,7 @@ module TestUnixScheduling =
                             Woken = false
                         }
                         { world with
-                            Machine = machine
+                            System = machine
                         }
 
                 if parksAgain then
@@ -474,13 +474,13 @@ module TestUnixScheduling =
                 with
                 | Ok (ProcessFate.Continues ((), view)) ->
                     { world with
-                        Machine = Machines.unfocus view world.Machine
+                        System = Machines.unfocus view world.System
                         Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
                         Events = Event.Exited thread.Serial :: world.Events
                     }
                 | Ok (ProcessFate.ProcessEnded (_, machine)) ->
                     { world with
-                        Machine = machine
+                        System = machine
                     }
                     |> ended thread.Pid
                 | Error refusal -> failwith $"exitThread: %s{ThreadExitRefusal.describe refusal}"
@@ -492,13 +492,13 @@ module TestUnixScheduling =
                     UnixThreadLifecycle.exitGroup (Caller.make pid 0) 0 (viewOf pid world)
 
                 { world with
-                    Machine = machine
+                    System = machine
                 }
                 |> ended pid
 
     /// Everything the reference says, asked of the library.
     let private check (cover : Reached -> unit) (world : World) : unit =
-        Machines.assertClean world.Machine
+        Machines.assertClean world.System
 
         let linux =
             SimulatedUnixPlatform.flavour world.Platform = SimulatedUnixFlavour.Linux
