@@ -279,25 +279,30 @@ module FileContents =
             }
         else
 
-        // The first page wholly past the new end. Removed from the top down, so
-        // that the cost is in the pages removed rather than in those kept.
+        // The first page wholly past the new end.
         let firstGone = (length + pageSize64 - 1L) / pageSize64
 
-        let rec drop (pages : Map<int64, ReadOnlyMemory<byte>>) : Map<int64, ReadOnlyMemory<byte>> =
+        // Removed from the top down, each removal copying a path of the map,
+        // until as many have gone as could be kept: no more than `firstGone`
+        // pages can be. From there a map built of the pages kept is cheaper,
+        // so the cost is in whichever of the two is smaller.
+        let rec drop (pages : Map<int64, ReadOnlyMemory<byte>>) (removed : int64) : Map<int64, ReadOnlyMemory<byte>> =
             if pages.IsEmpty then
                 pages
             else
                 let index, _ = Map.maxKeyValue pages
 
-                if index >= firstGone then
-                    drop (Map.remove index pages)
-                else
+                if index < firstGone then
                     pages
+                elif removed >= firstGone then
+                    Map.filter (fun index _ -> index < firstGone) contents.Pages
+                else
+                    drop (Map.remove index pages) (removed + 1L)
 
         let shortened =
             {
                 Length = length
-                Pages = drop contents.Pages
+                Pages = drop contents.Pages 0L
             }
 
         match finalPage shortened with

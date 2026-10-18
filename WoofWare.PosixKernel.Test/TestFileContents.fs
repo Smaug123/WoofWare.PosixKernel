@@ -231,6 +231,24 @@ module TestFileContents =
         FileContents.length contents |> shouldEqual (int64 bytes.Length)
 
     [<Test>]
+    let ``a truncation dropping most of a file allocates in proportion to the pages kept`` () : unit =
+        let contents =
+            FileContents.ofImmutableArray (ImmutableArray.CreateRange (Array.create (16 * 1024 * 1024) 1uy))
+
+        for length in [ 0L ; 1L ; int64 page ; 3L * int64 page + 1L ] do
+            let before = GC.GetAllocatedBytesForCurrentThread ()
+            let truncated = FileContents.truncate length contents
+            let allocated = GC.GetAllocatedBytesForCurrentThread () - before
+
+            // Removing 4096 pages one at a time would copy a path of the map
+            // for each.
+            if allocated > 64L * 1024L then
+                failwith $"truncating a 16 MiB file to %d{length} allocated %d{allocated} bytes"
+
+            FileContents.length truncated |> shouldEqual length
+            FileContents.invariantViolation truncated |> shouldEqual None
+
+    [<Test>]
     let ``a write past the end leaves a hole and holds only the pages it touched`` () : unit =
         let contents =
             FileContents.empty
