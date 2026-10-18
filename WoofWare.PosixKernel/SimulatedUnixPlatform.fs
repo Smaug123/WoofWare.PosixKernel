@@ -919,7 +919,7 @@ module SimulatedUnixPlatform =
     let groupListReport (platform : SimulatedUnixPlatform) : GroupListReport =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> GroupListReport.SortedSupplementaryGroups
-        | SimulatedUnixFlavour.Darwin -> GroupListReport.Unmeasured
+        | SimulatedUnixFlavour.Darwin -> GroupListReport.EffectiveGroupThenSupplementaryGroups
 
     /// Everything this platform's `mkdir(2)` does differently. See `MkDirRules`
     /// for the measurements; note in particular that `ModeMask` is not
@@ -1509,6 +1509,17 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> 65536
         | SimulatedUnixFlavour.Darwin -> 16
+
+    /// The most supplementary groups a process on this platform holds: Linux's
+    /// `NGROUPS_MAX`, and one fewer on Darwin, whose list of `NGROUPS_MAX`
+    /// holds the effective group first (`GroupListReport`).
+    let supplementaryGroupsHeld (platform : SimulatedUnixPlatform) : int =
+        // Measured on Darwin 27.0 as root (`setresid.c`): a list of 16 is
+        // installed whole, its first group becoming the effective group, and
+        // 17 is EINVAL.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> supplementaryGroupLimit platform
+        | SimulatedUnixFlavour.Darwin -> supplementaryGroupLimit platform - 1
 
     /// `AF_INET6`, in the platform's own numbering, which unlike `AF_INET` the two
     /// families disagree about: 10 on Linux against 30 on Darwin. Measured.

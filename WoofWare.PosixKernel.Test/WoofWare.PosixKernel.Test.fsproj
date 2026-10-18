@@ -532,6 +532,9 @@
     <EmbeddedResource Include="..\docs\probes\faulting-file-write\linux-6.18.5-aarch64-tmpfs.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.linux-6.18.5-aarch64-tmpfs.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.darwin-root.txt" />
+    <!-- docs/probes/darwin-root/credentials.c, as root. `TestCredentialChange` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\credentials.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.credentials.txt" />
     <!-- What a blocking write to a connected socket answers when its own bytes
          reset the connection, measured per flavour by
          docs/probes/connection-write-reset. `TestConnectionWriteResetMeasured`

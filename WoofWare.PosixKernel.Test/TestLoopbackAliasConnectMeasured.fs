@@ -193,12 +193,8 @@ module TestLoopbackAliasConnectMeasured =
 
     /// The rows this kernel refuses, by label, with the refusal.
     let private refused (flavour : SimulatedUnixFlavour) (label : string) : string option =
-        match flavour, label.[0], label.[2] with
-        // Measured, the source is 127.0.0.1; this kernel resolves a source
-        // only for a destination of 127.0.0.1.
-        | _, 'D', _
-        | SimulatedUnixFlavour.Linux, ('S' | 'B'), ('f' | 'w') -> Some "refused:SourceForNonLoopbackDestination"
-        | SimulatedUnixFlavour.Darwin, ('S' | 'B'), _ -> Some "refused:UnheldDestination"
+        match flavour, label.[0] with
+        | SimulatedUnixFlavour.Darwin, ('S' | 'B') -> Some "refused:UnheldDestination"
         | _ -> None
 
     let private check (platform : SimulatedUnixPlatform) : unit =
