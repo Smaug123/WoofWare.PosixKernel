@@ -456,7 +456,27 @@ module TestCredentialChange =
     /// Root as the probe's run found it: effective group 0, and the fifteen
     /// groups after it that sudo's login list held.
     let private darwinRoot : Credentials =
-        Credentials.ofIds UserId.root (gid 0u) ([ 1u ; 2u ; 3u ; 4u ; 5u ; 8u ; 9u ; 12u ; 20u ; 29u ; 61u ; 80u ; 33u ; 98u ; 100u ] |> List.map gid)
+        Credentials.ofIds
+            UserId.root
+            (gid 0u)
+            ([
+                1u
+                2u
+                3u
+                4u
+                5u
+                8u
+                9u
+                12u
+                20u
+                29u
+                61u
+                80u
+                33u
+                98u
+                100u
+             ]
+             |> List.map gid)
 
     [<Test>]
     let ``Darwin setgroups answers every row of root's run`` () : unit =
@@ -525,15 +545,25 @@ module TestCredentialChange =
 
     /// `[a,b,c]` as `credentials.c` prints a list.
     let private listText (groups : GroupId list) : string =
-        groups |> List.map (GroupId.toUInt32 >> string<uint32>) |> String.concat "," |> sprintf "[%s]"
+        groups
+        |> List.map (GroupId.toUInt32 >> string<uint32>)
+        |> String.concat ","
+        |> sprintf "[%s]"
 
     [<Test>]
-    let ``Darwin root's setgroups makes the list's first group the effective group, and every group a member`` () : unit =
+    let ``Darwin root's setgroups makes the list's first group the effective group, and every group a member``
+        ()
+        : unit
+        =
         // INITIAL is root as sudo left it: the same list `darwinRoot` holds.
         let initial = credentialsRows |> List.find (fun row -> row.[0] = "INITIAL")
-        initial.[1] |> shouldEqual $"uid=0 euid=0 groups=%s{listText (darwinReported darwinRoot)} egid=0 rgid=0"
 
-        let setgroupsRows = credentialsRows |> List.filter (fun row -> row.[0] = "SETGROUPS")
+        initial.[1]
+        |> shouldEqual $"uid=0 euid=0 groups=%s{listText (darwinReported darwinRoot)} egid=0 rgid=0"
+
+        let setgroupsRows =
+            credentialsRows |> List.filter (fun row -> row.[0] = "SETGROUPS")
+
         let memberRows = credentialsRows |> List.filter (fun row -> row.[0] = "MEMBER")
         setgroupsRows.Length |> shouldEqual 13
 
@@ -577,15 +607,28 @@ module TestCredentialChange =
             | None -> failwith $"%s{label}: no MEMBER row"
 
     [<Test>]
-    let ``Darwin root's setgroups of any list makes its first group the effective group and reports it as given`` () : unit =
-        let property (egid : GroupId, list : GroupId list) : unit =
-            let before =
-                systemWith darwin CoreDumps.Suppressed (Credentials.ofIds UserId.root egid [])
+    let ``Darwin root's setgroups of any list makes its first group the effective group and reports it as given``
+        ()
+        : unit
+        =
+        let property (egid : GroupId, list : GroupId list, coreDumps : CoreDumps) : unit =
+            let before = systemWith darwin coreDumps (Credentials.ofIds UserId.root egid [])
 
             let words = list |> List.map GroupId.toUInt32
 
-            match UnixCredentials.trySetgroups (Callers.leader before) (List.length words) (GroupListWords.Readable words) before with
+            match
+                UnixCredentials.trySetgroups
+                    (Callers.leader before)
+                    (List.length words)
+                    (GroupListWords.Readable words)
+                    before
+            with
             | Ok (SyscallAnswer.Completed 0L, after) ->
+                // Whether Darwin still dumps core after changing the groups
+                // is unmeasured, so a process that writes core dumps is
+                // refused; one that writes none goes on writing none.
+                coreDumps |> shouldEqual CoreDumps.Suppressed
+                (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Suppressed
                 let credentials = (Lone.proc after).Credentials
 
                 match list with
@@ -601,6 +644,9 @@ module TestCredentialChange =
                 list |> shouldEqual []
                 refused |> shouldEqual egid
                 egid <> gid 0u |> shouldEqual true
+            | Error SetGroupsRefusal.DumpabilityUnmodelled ->
+                coreDumps |> shouldEqual CoreDumps.Written
+                (list <> [] || egid = gid 0u) |> shouldEqual true
             | other -> failwith $"setgroups(%A{words}) from effective group %O{egid} answered %A{other}"
 
         let gen =
@@ -608,7 +654,8 @@ module TestCredentialChange =
                 let! egid = Gen.oneof [ Gen.constant (gid 0u) ; CredentialsGen.groupId ]
                 let! count = Gen.choose (0, 16)
                 let! list = Gen.listOfLength count CredentialsGen.groupId
-                return egid, list
+                let! coreDumps = Gen.elements [ CoreDumps.Written ; CoreDumps.Suppressed ]
+                return egid, list, coreDumps
             }
 
         Check.One (Config.QuickThrowOnFailure, Prop.forAll (Arb.fromGen gen) property)

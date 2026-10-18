@@ -102,6 +102,11 @@ type internal SetGroupsRefusal =
     /// Darwin takes it as a group like any other, even as the effective
     /// group, and this kernel holds no such group ID.
     | MinusOneGroup of index : int
+    /// A privileged Darwin process that writes core dumps would change its
+    /// groups. Darwin may then mark the process as having changed its
+    /// credentials, after which whether it dumps core turns on the
+    /// `kern.sugid_coredump` sysctl; neither is measured or modelled.
+    | DumpabilityUnmodelled
     /// The C library's signal to the process's other threads would reach one
     /// this kernel cannot answer for.
     | SetxidSignal of SetxidSignalRefusal
@@ -116,6 +121,8 @@ module internal SetGroupsRefusal =
             $"the process is privileged and asks for no groups, from effective group %O{effectiveGroup}. Darwin then holds one group, which was measured only from effective group 0, where it is 0; from any other it may be 0 or the effective group."
         | SetGroupsRefusal.MinusOneGroup index ->
             $"the process is privileged and the list holds (gid_t)-1 at index %d{index}. Darwin takes it as a group like any other (as the effective group when it comes first), and this kernel holds no such group ID: it reads -1 as \"leave the ID unchanged\" everywhere else."
+        | SetGroupsRefusal.DumpabilityUnmodelled ->
+            "the process is privileged, writes core dumps, and would change its groups. Darwin may then mark it as having changed its credentials (P_SUGID), after which whether it dumps core turns on the kern.sugid_coredump sysctl; neither has been measured, and this kernel models neither."
         | SetGroupsRefusal.SetxidSignal refusal -> SetxidSignalRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -123,6 +130,7 @@ module internal SetGroupsRefusal =
         match refusal with
         | SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup _ -> RefusalKind.Unmodelled
         | SetGroupsRefusal.MinusOneGroup _ -> RefusalKind.Unmodelled
+        | SetGroupsRefusal.DumpabilityUnmodelled -> RefusalKind.Unmodelled
         | SetGroupsRefusal.SetxidSignal _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `getresuid(2)` or `getresgid(2)`.
@@ -624,19 +632,31 @@ module UnixCredentials =
                     }
             }
 
-        // Darwin's list, whose first group is the effective group.
-        let installedOnDarwin (effective : GroupId) (rest : GroupId list) =
-            SyscallAnswer.Completed 0L,
-            { system with
-                Process =
-                    { system.Process with
-                        Credentials =
-                            { system.Process.Credentials with
-                                EffectiveGroup = effective
-                                SupplementaryGroups = rest
-                            }
-                    }
-            }
+        // Darwin's list, whose first group is the effective group. A process
+        // that writes no core dumps goes on writing none: no credential flag
+        // lifts the suppression.
+        let installedOnDarwin
+            (effective : GroupId)
+            (rest : GroupId list)
+            : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SetGroupsRefusal>
+            =
+            match system.Process.CoreDumps with
+            | CoreDumps.Written -> Error SetGroupsRefusal.DumpabilityUnmodelled
+            | CoreDumps.Suppressed ->
+
+            Ok (
+                SyscallAnswer.Completed 0L,
+                { system with
+                    Process =
+                        { system.Process with
+                            Credentials =
+                                { system.Process.Credentials with
+                                    EffectiveGroup = effective
+                                    SupplementaryGroups = rest
+                                }
+                        }
+                }
+            )
 
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
@@ -680,7 +700,7 @@ module UnixCredentials =
                     if effective <> wheel then
                         Error (SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup effective)
                     else
-                        Ok (installedOnDarwin wheel [])
+                        installedOnDarwin wheel []
                 else
 
                 assertWordsAgree size words
@@ -694,7 +714,7 @@ module UnixCredentials =
                 | None ->
 
                 match words |> List.map (GroupId.parseOrFail "UnixCredentials.setgroups") with
-                | effective :: rest -> Ok (installedOnDarwin effective rest)
+                | effective :: rest -> installedOnDarwin effective rest
                 | [] ->
                     failwith
                         "UnixCredentials.setgroups: a list of at least one group read as none (this is a bug in this library)."
@@ -749,6 +769,8 @@ module UnixCredentials =
     /// Refused for a privileged Darwin process whose list holds `(gid_t)-1`,
     /// which Darwin takes as a group and this kernel cannot hold, or that asks
     /// for no groups from an effective group other than 0, which is
+    /// unmeasured; for a privileged Darwin process that writes core dumps and
+    /// would change its groups, since whether it still dumps core afterwards is
     /// unmeasured; and under Linux, whatever the call would answer, while
     /// another thread blocks signal 33, is asleep in a call, or owes a return
     /// to user mode, since the C library reaches every other thread with that

@@ -240,7 +240,10 @@ module TestGetGroups =
     // ------------------------------------------------------------------ Darwin
 
     [<Test>]
-    let ``Darwin getgroups reports the effective group and then the supplementary groups, screened as measured`` () : unit =
+    let ``Darwin getgroups reports the effective group and then the supplementary groups, screened as measured``
+        ()
+        : unit
+        =
         let property (effective : GroupId, groups : GroupId list, size : int, destination : UserBuffer) : unit =
             let system =
                 Credentials.ofIds (uid 501u) effective groups
@@ -396,7 +399,9 @@ module TestGetGroupsAgainstHost =
                     | SimulatedUnixFlavour.Darwin ->
                         match listed with
                         | first :: rest when first = effective -> rest
-                        | _ -> failwith $"Darwin reported %A{listed}, which does not start with the effective group %O{effective}"
+                        | _ ->
+                            failwith
+                                $"Darwin reported %A{listed}, which does not start with the effective group %O{effective}"
 
                 let system : UnixSystem<int, string> =
                     UnixSystem.initial platform
