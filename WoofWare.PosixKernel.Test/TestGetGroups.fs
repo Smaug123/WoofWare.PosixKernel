@@ -13,7 +13,8 @@ open WoofWare.PosixKernel
 ///
 /// The rows come from `docs/plans/2026-08-23-posix-kernel-extraction/getgroups.c`,
 /// run on Linux 6.18.5 (aarch64, root in the container, forking a child per
-/// list) and on Darwin 27.0 at uid 501; its output is beside it.
+/// list) and on Darwin 27.0 at uid 501; its output is beside it. Which list
+/// Darwin reports is `TestCredentialChange`'s, from Darwin's root runs.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestGetGroups =
@@ -239,34 +240,80 @@ module TestGetGroups =
     // ------------------------------------------------------------------ Darwin
 
     [<Test>]
-    let ``Darwin getgroups answers a negative size and refuses every other call`` () : unit =
-        let property (groups : GroupId list, size : int, destination : UserBuffer) : unit =
+    let ``Darwin getgroups reports the effective group and then the supplementary groups, screened as measured``
+        ()
+        : unit
+        =
+        let property (effective : GroupId, groups : GroupId list, size : int, destination : UserBuffer) : unit =
             let system =
-                Credentials.ofIds (uid 501u) (gid 20u) groups
+                Credentials.ofIds (uid 501u) effective groups
                 |> systemWith SimulatedUnixPlatform.macOsArm64
+
+            let reported = effective :: groups
+            let count = List.length reported
 
             let actual =
                 UnixDescriptor.tryGetgroups (Callers.leader system) destination size system
 
+            // The screens, in the order `getgroups.c` found them on Darwin as on
+            // Linux: the sign of the size, a size of 0 asking only for the
+            // count, a size too small for the list, and only then the copy.
             if size < 0 then
-                // Measured at -1, -2, -16, -65536, INT_MIN + 1 and INT_MIN,
-                // with the process's own list; no list can make a negative
-                // size acceptable.
+                actual |> shouldEqual (failed UnixError.EINVAL)
+            elif size = 0 then
+                actual |> shouldEqual (Ok (GetGroupsAnswer.Counted count))
+            elif size < count then
                 actual |> shouldEqual (failed UnixError.EINVAL)
             else
-                actual
-                |> shouldEqual (Error (GetGroupsRefusal.UnmeasuredGroupList SimulatedUnixFlavour.Darwin))
+                match destination with
+                | UserBuffer.Mapped -> actual |> shouldEqual (Ok (GetGroupsAnswer.Copied reported))
+                | UserBuffer.Unmapped _ -> actual |> shouldEqual (failed UnixError.EFAULT)
+                | UserBuffer.Opaque ->
+                    actual
+                    |> shouldEqual (Error (GetGroupsRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
+                | UserBuffer.Addressless ->
+                    actual
+                    |> shouldEqual (Error (GetGroupsRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
         let gen =
             gen {
-                let! count = Gen.choose (0, 16)
+                let! effective = CredentialsGen.groupId
+                let! count = Gen.choose (0, 15)
                 let! groups = Gen.listOfLength count CredentialsGen.groupId
-                let! size = sizeAround count
+                let! size = sizeAround (count + 1)
                 let! destination = destinationGen
-                return groups, size, destination
+                return effective, groups, size, destination
             }
 
         Check.One (config, Prop.forAll (Arb.fromGen gen) property)
+
+    [<Test>]
+    let ``Darwin getgroups answers the uid-501 rows of getgroups.c`` () : unit =
+        // The login list `20,12,61,100,701`, whose first group is the effective
+        // group.
+        let system =
+            Credentials.ofIds (uid 501u) (gid 20u) ([ 12u ; 61u ; 100u ; 701u ] |> List.map gid)
+            |> systemWith SimulatedUnixPlatform.macOsArm64
+
+        let nothing = UserBuffer.Unmapped 0UL
+        let login = [ 20u ; 12u ; 61u ; 100u ; 701u ]
+
+        for size, destination, expected in
+            [
+                0, UserBuffer.Mapped, Ok (GetGroupsAnswer.Counted 5)
+                1, UserBuffer.Mapped, failed UnixError.EINVAL
+                4, UserBuffer.Mapped, failed UnixError.EINVAL
+                5, UserBuffer.Mapped, copied login
+                7, UserBuffer.Mapped, copied login
+                -1, UserBuffer.Mapped, failed UnixError.EINVAL
+                Int32.MinValue, UserBuffer.Mapped, failed UnixError.EINVAL
+                5, nothing, failed UnixError.EFAULT
+                6, nothing, failed UnixError.EFAULT
+                4, nothing, failed UnixError.EINVAL
+                -1, nothing, failed UnixError.EINVAL
+            ] do
+            (size, destination, UnixDescriptor.tryGetgroups (Callers.leader system) destination size system)
+            |> shouldEqual (size, destination, expected)
 
     [<Test>]
     let ``each flavour's report is the one its platform names`` () : unit =
@@ -277,7 +324,7 @@ module TestGetGroups =
         |> shouldEqual GroupListReport.SortedSupplementaryGroups
 
         SimulatedUnixPlatform.groupListReport SimulatedUnixPlatform.macOsArm64
-        |> shouldEqual GroupListReport.Unmeasured
+        |> shouldEqual GroupListReport.EffectiveGroupThenSupplementaryGroups
 
 /// `getgroups(2)` on the machine running the test, asked what the model is
 /// asked with this process's own credentials. Nothing here can change the
@@ -342,15 +389,28 @@ module TestGetGroupsAgainstHost =
                 // The process's supplementary groups are whatever the kernel
                 // installed; on Linux they are reported as installed (sorted),
                 // so handing the model the reported list is handing it the
-                // installed one.
+                // installed one. Darwin reports its effective group first and
+                // then the supplementary groups.
+                let effective = GroupId.parseOrFail context (HostCalls.getEGid ())
+
+                let supplementary =
+                    match flavour with
+                    | SimulatedUnixFlavour.Linux -> listed
+                    | SimulatedUnixFlavour.Darwin ->
+                        match listed with
+                        | first :: rest when first = effective -> rest
+                        | _ ->
+                            failwith
+                                $"Darwin reported %A{listed}, which does not start with the effective group %O{effective}"
+
                 let system : UnixSystem<int, string> =
                     UnixSystem.initial platform
                     |> (Launched.bootWith
                             (Launched.credentials (
                                 Credentials.ofIds
                                     (UserId.parseOrFail context (HostCalls.getEUid ()))
-                                    (GroupId.parseOrFail context (HostCalls.getEGid ()))
-                                    listed
+                                    effective
+                                    supplementary
                             ))
                             UnixSystem.pipedStandardStreams
                             0
@@ -368,12 +428,6 @@ module TestGetGroupsAgainstHost =
 
                         match UnixDescriptor.tryGetgroups (Callers.leader system) classified size system with
                         | Ok answer -> (size, where, answer) |> shouldEqual (size, where, expected)
-                        | Error (GetGroupsRefusal.UnmeasuredGroupList refused) ->
-                            // The model refuses Darwin's list outright, and only
-                            // there; a negative size is answered on both.
-                            (size, where, refused) |> shouldEqual (size, where, SimulatedUnixFlavour.Darwin)
-                            flavour |> shouldEqual SimulatedUnixFlavour.Darwin
-                            size >= 0 |> shouldEqual true
                         | Error refusal -> failwith $"getgroups(%d{size}, %s{where}) was refused: %A{refusal}"
             finally
                 Marshal.FreeHGlobal storage

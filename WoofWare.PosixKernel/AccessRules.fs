@@ -159,17 +159,17 @@ module internal AccessRules =
         )
 
     /// <summary>
-    /// Whether a caller standing as <c>standing</c> towards an inode whose content is
-    /// <c>content</c> and whose permission bits are <c>bits</c> is refused what
-    /// <c>question</c> asks, which <c>access(2)</c> answers EACCES.
+    /// The errno, if any, with which a caller standing as <c>standing</c> towards an
+    /// inode whose content is <c>content</c> and whose permission bits are <c>bits</c>
+    /// is refused what <c>question</c> asks.
     /// </summary>
     /// <remarks>
     /// Each bit asked is judged alone, and the call is refused if any one of them is.
-    /// Read and write are <c>PermissionBits.deniedTo</c>'s. Execute is search on a
-    /// directory, which <c>deniedTo</c> answers too, and on anything else is
-    /// <c>PermissionBits.executionDenied</c>'s under <c>rule</c>, which is where a
-    /// privileged caller can be refused, or refused an answer. <c>F_OK</c> is refused
-    /// nothing.
+    /// Read and write are <c>PermissionBits.deniedTo</c>'s, and refused EACCES. Execute
+    /// is search on a directory, which <c>deniedTo</c> answers too, and on anything
+    /// else is <c>PermissionBits.executionDenied</c>'s under <c>rule</c>, which is where
+    /// a privileged caller can be refused (EACCES on Linux, EPERM on Darwin), or
+    /// refused an answer. <c>F_OK</c> is refused nothing.
     /// </remarks>
     let denied
         (rule : PrivilegedExecution)
@@ -177,7 +177,7 @@ module internal AccessRules =
         (content : InodeContent)
         (bits : PermissionBits)
         (question : AccessQuestion)
-        : Result<bool, ExecutionRefusal>
+        : Result<UnixError option, ExecutionRefusal>
         =
         // Measured by `access-rules.c` against exactly this rule, with no
         // mismatch: Linux 6.18.5 over all 4096 modes, every one of the eight
@@ -185,26 +185,46 @@ module internal AccessRules =
         // itself, for the owner, a member of the group by its effective gid
         // and by a supplementary group, anyone else, and root; Darwin 27.0 at
         // uid 501 over the same for the owner, and its symbolic links over
-        // every mode `lchmod` gives them.
-        let execute : Result<bool, ExecutionRefusal> =
+        // every mode `lchmod` gives them; and Darwin 27.0 as root
+        // (`docs/probes/darwin-root/root-files.c`), each of R_OK, W_OK and
+        // X_OK alone over all 4096 modes, for root and for uid 501 in groups
+        // 20 and 701, on files, directories and links asked about themselves
+        // that root, uid 501 and uid 502 own.
+        let execute : Result<UnixError option, ExecutionRefusal> =
             if not question.Execute then
-                Ok false
+                Ok None
             else
 
+            let executionDenied (target : ExecutionTarget) =
+                PermissionBits.executionDenied rule standing target bits
+
             match content with
-            | InodeContent.Directory _ -> Ok (PermissionBits.deniedTo standing AccessRequest.SearchDirectory bits)
-            | InodeContent.RegularFile _
-            | InodeContent.Socket _
-            | InodeContent.Fifo _
-            | InodeContent.CharacterDevice _
-            | InodeContent.Symlink _ -> PermissionBits.executionDenied rule standing bits
+            | InodeContent.Directory _ ->
+                Ok (
+                    if PermissionBits.deniedTo standing AccessRequest.SearchDirectory bits then
+                        Some UnixError.EACCES
+                    else
+                        None
+                )
+            | InodeContent.RegularFile _ -> executionDenied ExecutionTarget.RegularFile
+            | InodeContent.Socket _ -> executionDenied ExecutionTarget.Socket
+            | InodeContent.Fifo _ -> executionDenied ExecutionTarget.Fifo
+            | InodeContent.CharacterDevice _ -> executionDenied ExecutionTarget.CharacterDevice
+            | InodeContent.Symlink _ -> executionDenied ExecutionTarget.Symlink
+
+        let readOrWriteDenied =
+            question.Read && PermissionBits.deniedTo standing AccessRequest.Read bits
+            || question.Write && PermissionBits.deniedTo standing AccessRequest.Write bits
 
         match execute with
         | Error refusal -> Error refusal
-        | Ok executeDenied ->
-
-        Ok (
-            executeDenied
-            || question.Read && PermissionBits.deniedTo standing AccessRequest.Read bits
-            || question.Write && PermissionBits.deniedTo standing AccessRequest.Write bits
-        )
+        | Ok None -> Ok (if readOrWriteDenied then Some UnixError.EACCES else None)
+        | Ok (Some UnixError.EACCES) -> Ok (Some UnixError.EACCES)
+        | Ok (Some error) ->
+            // Only Darwin's root is refused execution with anything but EACCES,
+            // and its answer to a question that asks more than execution is
+            // unmeasured.
+            if question.Read || question.Write then
+                Error (ExecutionRefusal.UnmeasuredPrivilegedCombination bits)
+            else
+                Ok (Some error)

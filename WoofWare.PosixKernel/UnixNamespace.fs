@@ -141,9 +141,6 @@ type internal ReadLinkRefusal =
     | Buffer of BufferRefusal
     /// This kernel will not resolve the path.
     | Path of PathRefusal
-    /// Whether the caller may read the symbolic link at `inode` has not been
-    /// measured for this caller.
-    | UnmeasuredLinkRead of inode : InodeNumber * refusal : LinkReadRefusal
 
 [<RequireQualifiedAccess>]
 module internal ReadLinkRefusal =
@@ -153,15 +150,12 @@ module internal ReadLinkRefusal =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | ReadLinkRefusal.Path refusal -> PathRefusal.describe refusal
-        | ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal) ->
-            $"reading inode %O{inode}: %s{LinkReadRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadLinkRefusal) : RefusalKind =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
-        | ReadLinkRefusal.UnmeasuredLinkRead (_, inner) -> LinkReadRefusal.kind inner
 
 /// What `readlink(2)` puts in the caller's buffer and what it returns.
 [<RequireQualifiedAccess>]
@@ -538,9 +532,6 @@ type internal OpenRefusal =
     /// A descriptor the call would make lies at or above the bound this kernel
     /// assumes the process's `RLIMIT_NOFILE` reaches.
     | DescriptorLimit of DescriptorLimitRefusal
-    /// An `O_TRUNC` open of the file at `inode`, whose effect on the file's
-    /// set-ID bits has not been measured for this caller. Nothing was changed.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
     /// The flag word `flags` holds bits the simulated flavour defines and this
     /// kernel does not model, named in `unmodelled` in ascending order of bit.
     /// Nothing was read or changed.
@@ -565,8 +556,6 @@ module internal OpenRefusal =
     let describe (refusal : OpenRefusal) : string =
         match refusal with
         | OpenRefusal.DescriptorLimit refusal -> DescriptorLimitRefusal.describe refusal
-        | OpenRefusal.UnmeasuredSetIdChange (inode, refusal) ->
-            $"opening inode %O{inode} with O_TRUNC: %s{SetIdChangeRefusal.describe refusal}"
         | OpenRefusal.UnmodelledFlags (flags, unmodelled) ->
             let names = unmodelled |> List.map UnmodelledOpenFlag.name |> String.concat ", "
 
@@ -581,7 +570,6 @@ module internal OpenRefusal =
     let kind (refusal : OpenRefusal) : RefusalKind =
         match refusal with
         | OpenRefusal.DescriptorLimit _ -> RefusalKind.Unmodelled
-        | OpenRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | OpenRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | OpenRefusal.IoctlOnlyAccessMode _ -> RefusalKind.Unmodelled
         | OpenRefusal.UnmodelledDirectoryOpen _ -> RefusalKind.Unmodelled
@@ -1133,8 +1121,6 @@ module UnixNamespace =
             | InodeContent.RegularFile _ when flags.Truncate ->
                 match UnixDescriptor.truncateAt through inode 0L system with
                 | Ok system -> Ok (true, system)
-                | Error (TruncationRefusal.UnmeasuredSetIdChange (inode, refusal)) ->
-                    Error (OpenRefusal.UnmeasuredSetIdChange (inode, refusal))
                 // Truncating to zero cannot exceed a length limit.
                 | Error (TruncationRefusal.ExceedsRepresentableLength _ as refusal) ->
                     failwith
@@ -1422,12 +1408,11 @@ module UnixNamespace =
         // trailing separator ("ld/", "l/") follows the link whatever its mode.
         let standing = Standing.toward system.Process.Credentials record.Owner
 
-        match
+        if
             PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule system.Machine.UnixPlatform) standing bits
-        with
-        | Error refusal -> Error (ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal))
-        | Ok true -> Ok (ReadLinkAnswer.Failed UnixError.EACCES)
-        | Ok false ->
+        then
+            Ok (ReadLinkAnswer.Failed UnixError.EACCES)
+        else
 
         match verdict with
         | ReadLinkCapacityVerdict.Refuse _ ->

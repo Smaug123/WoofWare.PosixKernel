@@ -1280,7 +1280,6 @@ module TestVirtualFileSystemAgainstHost =
                 let modelSaid =
                     PermissionBits.parseOrFail "test" mode
                     |> PermissionBits.afterTruncation rule (Owners.owning privilege)
-                    |> Answered.unrefused
                     |> PermissionBits.toInt
 
                 if kernelSaid <> modelSaid then
@@ -1335,7 +1334,6 @@ module TestVirtualFileSystemAgainstHost =
                 let modelSaid =
                     PermissionBits.parseOrFail "test" mode
                     |> PermissionBits.afterContentChangingWrite rule (Owners.owning privilege)
-                    |> Answered.unrefused
                     |> PermissionBits.toInt
 
                 if kernelSaid <> modelSaid then
