@@ -544,8 +544,9 @@ The kernel holds no word: the word is the caller's memory.
 A wait screens its timeout, a relative time on the monotonic clock, and then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping; a timeout of zero sleeps too, as Linux's does.
 Both screen the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`).
 A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
-A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout with `EINTR`.
-A restarted wait reads its word again, so the client makes the call again; a wait with a timeout whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`.
+A timeout Linux saturates, of `KTIME_SEC_MAX` (9223372036) seconds or more or one that ends past the last instant the clock can represent, never expires: the park's timeout is `FutexTimeout.Unbounded`, and `UnixWait.deadlines` holds nothing for it. Any other timeout expires at its instant (`FutexTimeout.Until`), however far off.
+A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout, even one that never expires, with `EINTR`.
+A restarted wait reads its word again, so the client makes the call again; a wait with a deadline whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`, and one whose timeout never expires restarts, as one with no timeout does.
 Every other operation throws `UnmodelledException`, and Darwin, which has no `futex`, throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
@@ -816,6 +817,7 @@ The cases exist so that a client's matches already handle them when sleeps, FIFO
 A call that waits with a timeout (`poll`, `epoll_wait`, `kevent`, a `futex` wait) wakes once its deadline passes.
 With nothing runnable, the client asks `UnixWait.deadlines`, which answers each sleeping call's deadline as an instant, in nanoseconds since boot.
 The earliest is when the first of those calls times out: the client advances the clock by it less `UnixSystem.nanosecondsSinceBoot`, and asks `UnixWait.wake` again.
+A `futex` wait whose timeout never expires (`FutexTimeout.Unbounded`, see "Futexes") has no deadline there: advancing the clock never ends it, as no real machine stays up long enough to.
 
 A parked call holds the open file descriptions it waits on (`ParkedSyscall.descriptions`), as a real one holds a reference to each file: a description goes when no descriptor names it and no call holds it, so one closed under a sleeping call goes when the call returns.
 

@@ -593,9 +593,20 @@ module TestUnixWait =
                     ParkedSyscall.Futex
                         {
                             FutexAddress = 0x1000UL
-                            FutexDeadline = deadline
+                            FutexTimeout =
+                                match deadline with
+                                | None -> FutexTimeout.Untimed
+                                | Some deadline -> FutexTimeout.Until deadline
                             TakenByWake = taken
                         }
+
+            for taken in [ false ; true ] do
+                ParkedSyscall.Futex
+                    {
+                        FutexAddress = 0x1000UL
+                        FutexTimeout = FutexTimeout.Unbounded
+                        TakenByWake = taken
+                    }
 
             for mode in [ FlockMode.Shared ; FlockMode.Exclusive ] do
                 ParkedSyscall.Flock

@@ -875,7 +875,7 @@ module TestSyscallInterruption =
             ParkedSyscall.Futex
                 {
                     FutexAddress = 0x1000UL
-                    FutexDeadline = None
+                    FutexTimeout = FutexTimeout.Untimed
                     TakenByWake = false
                 }
         ]
@@ -921,9 +921,10 @@ module TestSyscallInterruption =
             | SimulatedUnixFlavour.Linux -> SignalRestartRule.RestartsUnderSaRestart
             | SimulatedUnixFlavour.Darwin -> SignalRestartRule.FailsWithEintr
         | ParkedSyscall.Futex wait ->
-            match wait.FutexDeadline with
-            | None -> SignalRestartRule.RestartsUnderSaRestart
-            | Some _ -> SignalRestartRule.FailsWithEintr
+            match wait.FutexTimeout with
+            | FutexTimeout.Untimed -> SignalRestartRule.RestartsUnderSaRestart
+            | FutexTimeout.Until _
+            | FutexTimeout.Unbounded -> SignalRestartRule.FailsWithEintr
 
     [<Test>]
     let ``the rule of every park on either flavour is the measured one`` () : unit =
@@ -947,6 +948,20 @@ module TestSyscallInterruption =
             for parked in oneParkOfEach do
                 (flavour, caseName parked, SyscallInterruption.ruleOf flavour parked)
                 |> shouldEqual (flavour, caseName parked, measuredRule flavour parked)
+
+            // A futex wait's rule turns on its timeout, of which
+            // `oneParkOfEach` holds one: here are the other two.
+            for timeout in [ FutexTimeout.Until 5L ; FutexTimeout.Unbounded ] do
+                let parked =
+                    ParkedSyscall.Futex
+                        {
+                            FutexAddress = 0x1000UL
+                            FutexTimeout = timeout
+                            TakenByWake = false
+                        }
+
+                (flavour, timeout, SyscallInterruption.ruleOf flavour parked)
+                |> shouldEqual (flavour, timeout, measuredRule flavour parked)
 
     [<Test>]
     let ``a thread parked in one syscall may be parked again in it, and in no other`` () : unit =

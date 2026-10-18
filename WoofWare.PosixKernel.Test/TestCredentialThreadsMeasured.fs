@@ -463,7 +463,11 @@ module TestCredentialThreadsMeasured =
             ParkedSyscall.Futex
                 {
                     FutexAddress = 0x1000UL
-                    FutexDeadline = if call = "futex-wait" then None else Some 400L
+                    FutexTimeout =
+                        if call = "futex-wait" then
+                            FutexTimeout.Untimed
+                        else
+                            FutexTimeout.Until 400L
                     TakenByWake = false
                 }
         | "read-pipe" ->
