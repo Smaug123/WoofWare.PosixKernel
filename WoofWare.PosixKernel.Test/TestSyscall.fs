@@ -431,23 +431,43 @@ module TestSyscall =
 
         faults |> shouldEqual []
 
-    /// What a function answers, as its `SteppedCall` case holds it: a call's
-    /// answer where the function answers a `CallProgress`, since `step`
-    /// resumes the call, and a tuple's parts as the case's fields.
-    let private steppedFields (answer : Type) : Type list =
-        let answered =
-            if
-                answer.IsGenericType
-                && answer.GetGenericTypeDefinition () = typedefof<CallProgress<int, int>>
-            then
-                answer.GetGenericArguments().[1]
-            else
-                answer
+    /// The function of `m`'s module that resumes a call paused as `paused`:
+    /// the one whose last argument is a `paused`.
+    let private resumptionOf (m : MethodInfo) (paused : Type) : MethodInfo =
+        // Compared as definitions before `instantiate`, which fails on a
+        // function generic in anything but the thread and handler.
+        let definition (t : Type) : Type =
+            if t.IsGenericType then t.GetGenericTypeDefinition () else t
 
-        if FSharpType.IsTuple answered then
-            FSharpType.GetTupleElements answered |> List.ofArray
+        let matches =
+            m.DeclaringType.GetMethods (BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
+            |> Array.filter (fun (candidate : MethodInfo) ->
+                let parameters = candidate.GetParameters ()
+
+                parameters.Length > 0
+                && definition parameters.[parameters.Length - 1].ParameterType = definition paused
+            )
+            |> Array.map instantiate
+
+        match matches with
+        | [| resumption |] -> resumption
+        | found -> failwith $"%s{m.Name}'s module has %d{found.Length} functions resuming a %s{paused.Name}, not one"
+
+    /// What `m` answers, as its `SteppedCall` case holds it: where it answers a
+    /// `CallProgress`, what the call's resumption answers, since `step`
+    /// resumes the call; and a tuple's parts as the case's fields.
+    let rec private steppedFields (m : MethodInfo) : Type list =
+        let answer = m.ReturnType
+
+        if
+            answer.IsGenericType
+            && answer.GetGenericTypeDefinition () = typedefof<CallProgress<int, int>>
+        then
+            steppedFields (resumptionOf m (answer.GetGenericArguments().[0]))
+        elif FSharpType.IsTuple answer then
+            FSharpType.GetTupleElements answer |> List.ofArray
         else
-            [ answered ]
+            [ answer ]
 
     [<Test>]
     let ``each SteppedCall case holds what its function answers`` () : unit =
@@ -462,7 +482,7 @@ module TestSyscall =
                         |> Array.map (fun (field : PropertyInfo) -> field.PropertyType)
                         |> List.ofArray
 
-                    let expected = steppedFields m.ReturnType
+                    let expected = steppedFields m
 
                     if fields <> expected then
                         yield $"%s{caseName} holds %A{fields}, but %s{name} answers %A{expected}"

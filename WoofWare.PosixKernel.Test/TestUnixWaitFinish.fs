@@ -548,6 +548,11 @@ module TestUnixWaitFinish =
                     UnixReadWrite.tryWriteWithBytes
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
+                    |> Result.map (fun (fate, delivery) ->
+                        match delivery with
+                        | None -> fate
+                        | Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
+                    )
 
             match fate with
             | Ok (ProcessFate.Continues (WriteOutcome.WouldBlock _, system)) -> Some system

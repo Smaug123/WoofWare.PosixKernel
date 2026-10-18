@@ -304,10 +304,11 @@ module TestFaultingFileWrite =
         let answered : Result<WriteAnswer * UnixSystem<int, string>, string> =
             if call = "write" then
                 UnixReadWrite.tryWrite caller fd buffer (uint64 count) system
+                |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
                 |> CallProgress.resumeWith (fun paused -> UnixReadWrite.tryWriteWithBytes bytes paused)
                 |> Result.map (fun fate ->
                     match fate with
-                    | ProcessFate.Continues (WriteOutcome.Returns answer, system) -> answer, system
+                    | ProcessFate.Continues (WriteOutcome.Returns answer, system), None -> answer, system
                     | other -> failwith $"write: %A{other}"
                 )
                 |> Result.mapError WriteRefusal.describe

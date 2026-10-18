@@ -287,6 +287,8 @@ module TestStepOracle =
             |> Result.mapError SyscallRefusal.PRead
         | Syscall.Write (fd, buffer, count) ->
             UnixReadWrite.tryWrite caller fd (bufferOf buffer) count system
+            // A write answered before its copy delivers nothing.
+            |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
             |> CallProgress.resumeWith (fun paused ->
                 UnixReadWrite.tryWriteWithBytes (copied buffer (PausedWrite.copyRange paused)) paused
             )
@@ -2126,8 +2128,8 @@ module TestStepOracle =
             // first bytes of each buffer, and no others.
             let afterWrite =
                 match UnixSystem.step leader calls.[0] system with
-                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system)) ->
-                    system
+                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system),
+                                     None) -> system
                 | other -> failwith $"write: %A{Stepped.view other}"
 
             let afterPWrite =
@@ -2224,7 +2226,7 @@ module TestStepOracle =
                         fun () ->
                             UnixReadWrite.tryWrite leader 3 unmapped 3UL system
                             |> answered
-                            |> Result.map SteppedCall.Write
+                            |> Result.map (fun fate -> SteppedCall.Write (fate, None))
                             |> Result.mapError SyscallRefusal.Write
                         Syscall.Send (10, CopiedArgument.Unmapped address, 4UL, 0),
                         fun () ->
@@ -2271,6 +2273,7 @@ module TestStepOracle =
                 // did before the copy is `TestFaultingFileWrite`'s.
                 match UnixSystem.tryStep leader (fst calls.[0]) system with
                 | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EFAULT),
-                                                                _))) -> ()
+                                                                _),
+                                         None)) -> ()
                 | Ok other -> failwith $"write through %O{unmapped}: %A{Stepped.view other}"
                 | Error refusal -> failwith $"write through %O{unmapped} was refused: %A{refusal}"
