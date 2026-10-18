@@ -223,9 +223,6 @@ module internal FStatAtRefusal =
 /// walks its path.
 [<RequireQualifiedAccess>]
 type internal ChModRefusal =
-    /// What the mode change would do to the inode at `inode` has not been
-    /// measured for this caller.
-    | UnmeasuredModeChange of inode : InodeNumber * refusal : ModeChangeRefusal
     /// This kernel will not resolve the path.
     | Path of PathRefusal
     /// An inotify watch could hear of the change, through a name this kernel
@@ -239,24 +236,18 @@ module internal ChModRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : ChModRefusal) : string =
         match refusal with
-        | ChModRefusal.UnmeasuredModeChange (inode, refusal) ->
-            $"changing the mode of inode %O{inode}: %s{ModeChangeRefusal.describe refusal}"
         | ChModRefusal.Path refusal -> PathRefusal.describe refusal
         | ChModRefusal.UnplacedChange refusal -> UnplacedChangeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ChModRefusal) : RefusalKind =
         match refusal with
-        | ChModRefusal.UnmeasuredModeChange (_, inner) -> ModeChangeRefusal.kind inner
         | ChModRefusal.Path inner -> PathRefusal.kind inner
         | ChModRefusal.UnplacedChange inner -> UnplacedChangeRefusal.kind inner
 
 /// Why this kernel will not answer an `fchmod(2)`.
 [<RequireQualifiedAccess>]
 type internal FChModRefusal =
-    /// What the mode change would do to the inode at `inode` has not been
-    /// measured for this caller.
-    | UnmeasuredModeChange of inode : InodeNumber * refusal : ModeChangeRefusal
     /// The descriptor is an end of a pipe the process was launched with, on a
     /// flavour where `fchmod` changes a pipe's mode if the caller may. Whether
     /// it may depends on the pipe's owner, which is the launcher's, and the
@@ -276,8 +267,6 @@ module internal FChModRefusal =
     /// entry point asked, and with which descriptor.
     let describe (refusal : FChModRefusal) : string =
         match refusal with
-        | FChModRefusal.UnmeasuredModeChange (inode, refusal) ->
-            $"changing the mode of inode %O{inode}: %s{ModeChangeRefusal.describe refusal}"
         | FChModRefusal.LaunchedPipe pipe ->
             $"the descriptor is an end of pipe %O{pipe}, which the process was launched with rather than one it made. Measured on Linux, fchmod on a pipe end changes the mode fstat then reports (0600 to 02750, say) if the caller owns the pipe or is privileged, and answers EPERM otherwise; this pipe's owner is whoever launched the process, which the launch table does not state, so either answer would be a guess."
         | FChModRefusal.Socket socket ->
@@ -287,7 +276,6 @@ module internal FChModRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FChModRefusal) : RefusalKind =
         match refusal with
-        | FChModRefusal.UnmeasuredModeChange (_, inner) -> ModeChangeRefusal.kind inner
         | FChModRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | FChModRefusal.Socket _ -> RefusalKind.Unmodelled
         | FChModRefusal.UnplacedChange inner -> UnplacedChangeRefusal.kind inner
@@ -1254,10 +1242,9 @@ module UnixPathResolution =
         tryFstatat caller dirfd path flags system
         |> Refusal.orRaise "UnixPathResolution.fstatat" FStatAtRefusal.kind FStatAtRefusal.describe
 
-    /// Why `changeModeOf` or `changeOwnerOf` will not answer: what the change
-    /// would do has not been measured for this caller (`'Unmeasured`, with the
-    /// inode), or an inotify watch could hear of it through a name this kernel
-    /// does not keep.
+    /// Why `changeOwnerOf` will not answer: what the change would do has not
+    /// been measured for this caller (`'Unmeasured`, with the inode), or an
+    /// inotify watch could hear of it through a name this kernel does not keep.
     [<RequireQualifiedAccess>]
     type private AttributeChangeRefusal<'Unmeasured> =
         | Unmeasured of inode : InodeNumber * refusal : 'Unmeasured
@@ -1278,23 +1265,22 @@ module UnixPathResolution =
     /// regular file, a device, a directory, or a symbolic link on a flavour
     /// whose links change (`SymlinkModeChange.ChangesLink`), this filesystem
     /// holds: EPERM changing nothing, or the new bits with `ctime` moved.
-    /// The caller reached `inode` `through` a path or a descriptor.
+    /// The caller reached `inode` `through` a path or a descriptor. Refused
+    /// only where an inotify watch could hear of the change through a name
+    /// this kernel does not keep.
     let private changeModeOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (through : ReachedThrough)
         (inode : InodeNumber)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, AttributeChangeRefusal<ModeChangeRefusal>>
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, UnplacedChangeRefusal>
         =
         let entry =
             VirtualFileSystem.get "UnixPathResolution.changeModeOf" inode system.Machine.FileSystem
 
-        let rule = SimulatedUnixPlatform.privilegedModeChange system.Machine.UnixPlatform
-
-        match PermissionBits.afterModeChange rule (Standing.toward system.Process.Credentials entry.Owner) mode with
-        | Error refusal -> Error (AttributeChangeRefusal.Unmeasured (inode, refusal))
-        | Ok ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
-        | Ok (ModeChange.Permitted bits) ->
+        match PermissionBits.afterModeChange (Standing.toward system.Process.Credentials entry.Owner) mode with
+        | ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+        | ModeChange.Permitted bits ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -1309,7 +1295,7 @@ module UnixPathResolution =
                 (VirtualFileSystem.setPermissions inode bits now system.Machine.FileSystem)
                 system.Machine
         with
-        | Error refusal -> Error (AttributeChangeRefusal.UnplacedChange refusal)
+        | Error refusal -> Error refusal
         | Ok machine ->
 
         Ok (
@@ -1361,7 +1347,7 @@ module UnixPathResolution =
 
         if changeable then
             changeModeOf through inode mode system
-            |> Result.mapError (attributeChangeRefusal ChModRefusal.UnmeasuredModeChange ChModRefusal.UnplacedChange)
+            |> Result.mapError ChModRefusal.UnplacedChange
         else
             Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
 
@@ -1408,8 +1394,8 @@ module UnixPathResolution =
     /// `mode` is the raw mode word, of which only the low twelve bits are read.
     /// An unprivileged caller that does not own the inode is answered EPERM.
     /// One that owns it gets every bit it asks for, except that `S_ISGID` is
-    /// silently dropped when it is not in the inode's group. What a privileged
-    /// caller gets is the platform's (`SimulatedUnixPlatform.privilegedModeChange`).
+    /// silently dropped when it is not in the inode's group. A privileged
+    /// caller gets exactly the twelve bits it asks for.
     ///
     /// A symbolic link in the final position is followed, so the link's target
     /// changes and a dangling link is ENOENT. Every other failure but EPERM is
@@ -1513,17 +1499,12 @@ module UnixPathResolution =
         | DescriptorAttributeTarget.LaunchedPipe pipeId -> Error (FChModRefusal.LaunchedPipe pipeId)
         | DescriptorAttributeTarget.Inode (inode, through) ->
             changeModeOf through inode mode system
-            |> Result.mapError (attributeChangeRefusal FChModRefusal.UnmeasuredModeChange FChModRefusal.UnplacedChange)
+            |> Result.mapError FChModRefusal.UnplacedChange
         | DescriptorAttributeTarget.Pipe (pipeId, status) ->
 
-        let rule = SimulatedUnixPlatform.privilegedModeChange system.Machine.UnixPlatform
-
-        match PermissionBits.afterModeChange rule (Standing.toward system.Process.Credentials status.Owner) mode with
-        | Error refusal ->
-            failwith
-                $"UnixPathResolution.fchmod: a Linux platform's mode-change rule refused a caller (%s{ModeChangeRefusal.describe refusal}), but Linux's rule answers every caller (this is a bug in this library)."
-        | Ok ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
-        | Ok (ModeChange.Permitted bits) ->
+        match PermissionBits.afterModeChange (Standing.toward system.Process.Credentials status.Owner) mode with
+        | ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+        | ModeChange.Permitted bits ->
 
         let changed =
             { status with
@@ -1918,10 +1899,7 @@ module UnixPathResolution =
             let cwd, through = currentDirectoryReached system
 
             changeModeOf through cwd mode system
-            |> Result.mapError (
-                attributeChangeRefusal ChModRefusal.UnmeasuredModeChange ChModRefusal.UnplacedChange
-                >> FChModAtRefusal.ChMod
-            )
+            |> Result.mapError (ChModRefusal.UnplacedChange >> FChModAtRefusal.ChMod)
         | AtPathTarget.Walked ->
             chmodParsed directory arguments.FinalSymlink path mode system
             |> Result.mapError FChModAtRefusal.ChMod
@@ -3063,8 +3041,8 @@ module UnixPathResolution =
                 arguments.Question
         with
         | Error refusal -> Error (AccessRefusal.UnmeasuredExecution (inode, refusal))
-        | Ok true -> Ok (SyscallAnswer.Failed UnixError.EACCES)
-        | Ok false -> Ok (SyscallAnswer.Completed 0L)
+        | Ok (Some error) -> Ok (SyscallAnswer.Failed error)
+        | Ok None -> Ok (SyscallAnswer.Completed 0L)
 
     /// `accessWithPath`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccessWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

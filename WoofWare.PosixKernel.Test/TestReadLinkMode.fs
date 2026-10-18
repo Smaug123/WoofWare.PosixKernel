@@ -12,7 +12,8 @@ open WoofWare.PosixKernel
 
 /// Whether `readlink(2)` and `readlinkat(2)` consult the symbolic link's own
 /// permission bits, held to `readlink-mode.c`'s rows end to end. Darwin answers
-/// EACCES to a caller whose standing selects a triple without the read bit,
+/// EACCES to an unprivileged caller whose standing selects a triple without the
+/// read bit, and root reads every link (`docs/probes/darwin-root/root-files.c`),
 /// once the path is known to name a link and before a size of zero or the
 /// buffer is looked at. Linux never looks, which links whose modes debugfs set
 /// on an ext4 image showed, since no syscall gives a Linux link any mode but
@@ -639,22 +640,21 @@ module TestReadLinkMode =
         match SimulatedUnixPlatform.flavour case.Platform with
         | SimulatedUnixFlavour.Linux -> if case.Capacity <= 0 then "EINVAL" else delivered ()
         | SimulatedUnixFlavour.Darwin ->
-            if case.Capacity < 0 then
-                "EINVAL"
-            elif case.User = 0u then
-                "refused"
-            else
-                let readBit =
-                    if case.LinkUser = case.User then
-                        0o400
-                    elif case.LinkGroup = case.Group || List.contains case.LinkGroup case.Supplementary then
-                        0o040
-                    else
-                        0o004
+            // Root reads every link (`docs/probes/darwin-root/root-files.c`).
+            let readBit =
+                if case.User = 0u then
+                    0
+                elif case.LinkUser = case.User then
+                    0o400
+                elif case.LinkGroup = case.Group || List.contains case.LinkGroup case.Supplementary then
+                    0o040
+                else
+                    0o004
 
-                if case.Mode &&& readBit = 0 then "EACCES"
-                elif case.Capacity = 0 then "ok:"
-                else delivered ()
+            if case.Capacity < 0 then "EINVAL"
+            elif case.Mode &&& readBit <> readBit then "EACCES"
+            elif case.Capacity = 0 then "ok:"
+            else delivered ()
 
     let private answered (case : Case) : string =
         let caller =
@@ -683,12 +683,7 @@ module TestReadLinkMode =
             else
                 readlink "l" case.Buffer case.Capacity system
 
-        match answer with
-        | Error (ReadLinkRefusal.UnmeasuredLinkRead (_, LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, linkBits))) when
-            standing = Standing.toward caller linkOwner && linkBits = bits case.Mode
-            ->
-            "refused"
-        | answer -> rendered answer
+        rendered answer
 
     [<Test>]
     let ``readlink and readlinkat answer every mode and caller as the probe's rule predicts`` () : unit =
@@ -714,14 +709,9 @@ module TestReadLinkMode =
 
                     for mode in 0..0o7777 do
                         PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule linux) standing (bits mode)
-                        |> shouldEqual (Ok false)
+                        |> shouldEqual false
 
-                        let expected =
-                            match privilege with
-                            | CallerPrivilege.Privileged ->
-                                Error (LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, bits mode))
-                            | CallerPrivilege.Unprivileged ->
-                                Ok (PermissionBits.deniedTo standing AccessRequest.Read (bits mode))
+                        let expected = PermissionBits.deniedTo standing AccessRequest.Read (bits mode)
 
                         PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule darwin) standing (bits mode)
                         |> shouldEqual expected

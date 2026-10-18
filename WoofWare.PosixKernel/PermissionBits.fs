@@ -25,9 +25,9 @@ type CallerPrivilege =
 /// </summary>
 /// <remarks>
 /// There is deliberately no case for executing anything but a directory, because
-/// root is not exempt from that question as it is from these three: Linux grants
-/// root <c>X_OK</c> on a non-directory only when at least one of the three execute
-/// bits is set, and Darwin's answer for root has not been measured. Ask
+/// root is not exempt from that question as it is from these three: both flavours
+/// grant root <c>X_OK</c> on a regular file only when at least one of the three
+/// execute bits is set, and they refuse it with different errnos. Ask
 /// <c>PermissionBits.executionDenied</c> instead, which takes the platform's
 /// rule.
 /// </remarks>
@@ -230,28 +230,49 @@ module internal SetIdChangeRefusal =
 /// is not a directory: `X_OK` on a regular file or a symbolic link.
 ///
 /// An unprivileged caller's rule is the same on every modelled Unix: it is
-/// refused unless the triple its standing selects has the execute bit.
+/// refused EACCES unless the triple its standing selects has the execute bit.
 [<RequireQualifiedAccess>]
 type PrivilegedExecution =
     /// Granted exactly when at least one of the three execute bits is set,
     /// whichever triple it is in, and whether or not the caller owns the inode
-    /// or is in its group.
+    /// or is in its group; otherwise refused EACCES.
     ///
     /// This is Linux.
     | NeedsAnExecuteBit
-    /// What a privileged caller is granted has not been measured, so a call
-    /// that asks is refused rather than guessed at.
+    /// On a regular file, granted exactly when at least one of the three
+    /// execute bits is set, whoever owns it, and otherwise refused EPERM
+    /// rather than EACCES. On a symbolic link asked about itself, granted
+    /// whatever its mode. What a privileged caller is granted on a FIFO, a
+    /// socket or a device has not been measured, so a call that asks is refused
+    /// rather than guessed at.
     ///
-    /// This is Darwin, where measuring it needs root.
-    | Unmeasured
+    /// This is Darwin.
+    | RegularFileNeedsAnExecuteBit
+
+/// What a caller asks to execute, when it asks `X_OK` of something that is not
+/// a directory.
+[<RequireQualifiedAccess>]
+type internal ExecutionTarget =
+    | RegularFile
+    | Symlink
+    | Fifo
+    | Socket
+    | CharacterDevice
 
 /// Why this library will not say whether a caller may execute something: the
 /// kernel's answer for that caller has not been measured.
 [<RequireQualifiedAccess>]
 type internal ExecutionRefusal =
-    /// A privileged caller, under `PrivilegedExecution.Unmeasured`, standing
-    /// as `standing` towards an inode carrying `bits`.
-    | UnmeasuredPrivilegedCaller of standing : Standing * bits : PermissionBits
+    /// A privileged caller, under `PrivilegedExecution.RegularFileNeedsAnExecuteBit`,
+    /// asking to execute `target`, which is neither a regular file nor a
+    /// symbolic link.
+    | UnmeasuredPrivilegedTarget of target : ExecutionTarget
+    /// A privileged caller's `access(2)`, under
+    /// `PrivilegedExecution.RegularFileNeedsAnExecuteBit`, asking `X_OK`
+    /// together with `R_OK` or `W_OK` of a regular file carrying `bits`, none of
+    /// which is an execute bit. Each question alone was measured (read and write
+    /// granted, execute refused EPERM); together they were not.
+    | UnmeasuredPrivilegedCombination of bits : PermissionBits
 
 [<RequireQualifiedAccess>]
 module internal ExecutionRefusal =
@@ -259,13 +280,16 @@ module internal ExecutionRefusal =
     /// which call it was answering and which inode it was.
     let describe (refusal : ExecutionRefusal) : string =
         match refusal with
-        | ExecutionRefusal.UnmeasuredPrivilegedCaller (standing, bits) ->
-            $"whether Darwin lets a privileged caller, standing %A{standing} towards it, execute a non-directory carrying %O{bits} has not been measured. What has been measured: every unprivileged caller's answer, which is the owner, group or other triple's execute bit. Linux grants root execution exactly when some execute bit is set; measuring Darwin's root needs root."
+        | ExecutionRefusal.UnmeasuredPrivilegedTarget target ->
+            $"whether Darwin lets a privileged caller execute a %O{target} has not been measured. What has been measured, as root: a regular file is executable exactly when some execute bit is set, and otherwise EPERM; a symbolic link asked about itself always is."
+        | ExecutionRefusal.UnmeasuredPrivilegedCombination bits ->
+            $"what Darwin's access(2) answers a privileged caller asking X_OK together with R_OK or W_OK of a regular file carrying %O{bits} has not been measured. Each alone was, as root: R_OK and W_OK are granted, and X_OK of a file with no execute bit is EPERM rather than EACCES."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ExecutionRefusal) : RefusalKind =
         match refusal with
-        | ExecutionRefusal.UnmeasuredPrivilegedCaller _ -> RefusalKind.Unmodelled
+        | ExecutionRefusal.UnmeasuredPrivilegedTarget _ -> RefusalKind.Unmodelled
+        | ExecutionRefusal.UnmeasuredPrivilegedCombination _ -> RefusalKind.Unmodelled
 
 /// Whether reading a symbolic link's target, `readlink(2)`, consults the
 /// link's own permission bits.
@@ -277,51 +301,10 @@ type LinkReadRule =
     /// This is Linux, where no syscall gives a link any mode but 0777.
     | ModeIgnored
     /// An unprivileged caller is refused unless the triple its standing
-    /// selects has the read bit. What a privileged caller is granted has not
-    /// been measured, so a call that asks is refused rather than guessed at.
+    /// selects has the read bit. A privileged caller reads any link.
     ///
-    /// This is Darwin, where measuring the privileged caller needs root.
+    /// This is Darwin.
     | ReadBitOfSelectedTriple
-
-/// Why this library will not say whether a caller may read a symbolic link's
-/// target: the kernel's answer for that caller has not been measured.
-[<RequireQualifiedAccess>]
-type internal LinkReadRefusal =
-    /// A privileged caller, under `LinkReadRule.ReadBitOfSelectedTriple`,
-    /// standing as `standing` towards a link carrying `bits`.
-    | UnmeasuredPrivilegedCaller of standing : Standing * bits : PermissionBits
-
-[<RequireQualifiedAccess>]
-module internal LinkReadRefusal =
-    /// What this library knows about why it will not answer. A client adds
-    /// which call it was answering and which link it was.
-    let describe (refusal : LinkReadRefusal) : string =
-        match refusal with
-        | LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, bits) ->
-            $"whether Darwin lets a privileged caller, standing %A{standing} towards it, read the target of a symbolic link carrying %O{bits} has not been measured. What has been measured: an unprivileged caller is refused unless the owner, group or other triple its standing selects has the read bit. Measuring Darwin's root needs root."
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : LinkReadRefusal) : RefusalKind =
-        match refusal with
-        | LinkReadRefusal.UnmeasuredPrivilegedCaller _ -> RefusalKind.Unmodelled
-
-/// What a privileged caller's `chmod(2)` or `fchmod(2)` does to the mode it
-/// asks for.
-///
-/// An unprivileged caller's rule is the same on every modelled Unix, so it is
-/// not a parameter: see `UnixPathResolution.chmod`.
-[<RequireQualifiedAccess>]
-type PrivilegedModeChange =
-    /// The inode gets exactly the twelve bits asked for, whether or not the
-    /// caller owns it and whether or not it is in the inode's group.
-    ///
-    /// This is Linux.
-    | SetsRequestedBits
-    /// What a privileged caller's mode change does has not been measured, so
-    /// the change is refused rather than guessed at.
-    ///
-    /// This is Darwin, where measuring it needs root.
-    | Unmeasured
 
 /// What `chmod(2)` or `fchmod(2)` does to one inode's mode, for one caller.
 [<RequireQualifiedAccess>]
@@ -332,28 +315,6 @@ type internal ModeChange =
     /// The inode's permission bits become `bits`, which need not be the bits
     /// asked for.
     | Permitted of bits : PermissionBits
-
-/// Why this library will not say what a `chmod(2)` or `fchmod(2)` does: the
-/// kernel's answer for that caller has not been measured.
-[<RequireQualifiedAccess>]
-type internal ModeChangeRefusal =
-    /// A privileged caller, under `PrivilegedModeChange.Unmeasured`, standing
-    /// as `standing` towards the inode and asking for `requested`.
-    | UnmeasuredPrivilegedCaller of standing : Standing * requested : PermissionBits
-
-[<RequireQualifiedAccess>]
-module internal ModeChangeRefusal =
-    /// What this library knows about why it will not answer. A client adds
-    /// which call it was answering and which inode it was.
-    let describe (refusal : ModeChangeRefusal) : string =
-        match refusal with
-        | ModeChangeRefusal.UnmeasuredPrivilegedCaller (standing, requested) ->
-            $"what Darwin's chmod does for a privileged caller, standing %A{standing} towards the inode and asking for %O{requested}, has not been measured. What has been measured: every unprivileged caller, owner or not, in the inode's group or not, over every mode. Measuring the privileged rows needs root on Darwin."
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : ModeChangeRefusal) : RefusalKind =
-        match refusal with
-        | ModeChangeRefusal.UnmeasuredPrivilegedCaller _ -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
 module PermissionBits =
@@ -390,7 +351,11 @@ module PermissionBits =
     // a file and a directory (`access-rules.c`). Darwin 27.0 at uid 501: the
     // owner over all 4096 modes through `access(2)`, and spot rows for the
     // group and other triples (`ownership-probe.c`, and `access-rules.c`'s
-    // scan of other users' inodes).
+    // scan of other users' inodes); and as root
+    // (`docs/probes/darwin-root/root-files.c`), uid 501 in groups 20 and 701
+    // over all 4096 modes of inodes uid 501 and uid 502 own, in each group
+    // and in none, through `open(2)`, `access(2)`, search, creating an entry
+    // and `readlink(2)`.
     let private selectedTripleLacks (standing : Standing) (ownerBit : int) (bits : PermissionBits) : bool =
         let bit =
             if standing.Owns then ownerBit
@@ -415,9 +380,10 @@ module PermissionBits =
     /// </example>
     let internal deniedTo (standing : Standing) (needed : AccessRequest) (bits : PermissionBits) : bool =
         match standing.Privilege, needed with
-        // Root bypasses each of these three. It does not bypass executing a
-        // non-directory, which is why `AccessRequest` cannot ask that; see
-        // `executionDenied`.
+        // Root bypasses each of these three, measured on both flavours over
+        // all 4096 modes of inodes it owns and inodes it does not. It does not
+        // bypass executing a non-directory, which is why `AccessRequest`
+        // cannot ask that; see `executionDenied`.
         | CallerPrivilege.Privileged, AccessRequest.Read
         | CallerPrivilege.Privileged, AccessRequest.Write
         | CallerPrivilege.Privileged, AccessRequest.SearchDirectory -> false
@@ -432,14 +398,14 @@ module PermissionBits =
         selectedTripleLacks standing ownerBit bits
 
     /// <summary>
-    /// Whether a caller standing as <c>standing</c> towards something that is not a
-    /// directory, carrying <c>bits</c>, is refused executing it: <c>X_OK</c> on a regular
-    /// file or a symbolic link.
+    /// The errno, if any, with which a caller standing as <c>standing</c> towards
+    /// <c>target</c>, carrying <c>bits</c>, is refused executing it: <c>X_OK</c> on a
+    /// regular file or a symbolic link.
     /// </summary>
     /// <remarks>
-    /// An unprivileged caller is refused unless the triple its standing selects has the
-    /// execute bit, exactly as <c>deniedTo</c> selects a triple. A privileged caller is
-    /// <c>rule</c>'s to answer: see <c>PrivilegedExecution</c>.
+    /// An unprivileged caller is refused EACCES unless the triple its standing selects
+    /// has the execute bit, exactly as <c>deniedTo</c> selects a triple. A privileged
+    /// caller is <c>rule</c>'s to answer: see <c>PrivilegedExecution</c>.
     ///
     /// <c>X_OK</c> on a directory is search, which root is never refused; ask
     /// <c>deniedTo</c> with <c>AccessRequest.SearchDirectory</c> for that.
@@ -447,49 +413,66 @@ module PermissionBits =
     let internal executionDenied
         (rule : PrivilegedExecution)
         (standing : Standing)
+        (target : ExecutionTarget)
         (bits : PermissionBits)
-        : Result<bool, ExecutionRefusal>
+        : Result<UnixError option, ExecutionRefusal>
         =
         // Measured by `access-rules.c` on Linux 6.18.5 (ext4): root, owning
         // the inode or not, over all 4096 modes, is granted X_OK on a regular
         // file exactly when `bits &&& 0o111` is nonzero, and on a symbolic
         // link asked about itself (0777) always. A real root with an effective
-        // non-root uid is granted the same through `access(2)`.
+        // non-root uid is granted the same through `access(2)`. Darwin 27.0
+        // (`docs/probes/darwin-root/root-files.c`): root, over all 4096 modes
+        // of regular files root and uid 502 own, in groups root is in and not,
+        // is granted X_OK exactly when `bits &&& 0o111` is nonzero and is
+        // otherwise EPERM; and on symbolic links of every mode, asked about
+        // themselves, always.
+        let noExecuteBit = toInt bits &&& 0o111 = 0
+
         match standing.Privilege with
+        | CallerPrivilege.Unprivileged ->
+            Ok (
+                if selectedTripleLacks standing 0o100 bits then
+                    Some UnixError.EACCES
+                else
+                    None
+            )
         | CallerPrivilege.Privileged ->
-            match rule with
-            | PrivilegedExecution.NeedsAnExecuteBit -> Ok (toInt bits &&& 0o111 = 0)
-            | PrivilegedExecution.Unmeasured -> Error (ExecutionRefusal.UnmeasuredPrivilegedCaller (standing, bits))
-        | CallerPrivilege.Unprivileged -> Ok (selectedTripleLacks standing 0o100 bits)
+
+        match rule with
+        | PrivilegedExecution.NeedsAnExecuteBit -> Ok (if noExecuteBit then Some UnixError.EACCES else None)
+        | PrivilegedExecution.RegularFileNeedsAnExecuteBit ->
+            match target with
+            | ExecutionTarget.RegularFile -> Ok (if noExecuteBit then Some UnixError.EPERM else None)
+            | ExecutionTarget.Symlink -> Ok None
+            | ExecutionTarget.Fifo
+            | ExecutionTarget.Socket
+            | ExecutionTarget.CharacterDevice -> Error (ExecutionRefusal.UnmeasuredPrivilegedTarget target)
 
     /// <summary>
     /// Whether a caller standing as <c>standing</c> towards a symbolic link carrying
     /// <c>bits</c> is refused reading its target, under <c>rule</c>.
     /// </summary>
     /// <remarks>
-    /// Under <c>LinkReadRule.ReadBitOfSelectedTriple</c> an unprivileged caller is
-    /// judged exactly as <c>deniedTo</c> judges <c>AccessRequest.Read</c>, and a
-    /// privileged one is refused an answer.
+    /// Under <c>LinkReadRule.ReadBitOfSelectedTriple</c> a caller is judged exactly as
+    /// <c>deniedTo</c> judges <c>AccessRequest.Read</c>, so a privileged one is
+    /// refused nothing.
     /// </remarks>
-    let internal linkReadDenied
-        (rule : LinkReadRule)
-        (standing : Standing)
-        (bits : PermissionBits)
-        : Result<bool, LinkReadRefusal>
-        =
+    let internal linkReadDenied (rule : LinkReadRule) (standing : Standing) (bits : PermissionBits) : bool =
         // Measured by `readlink-mode.c`. Linux 6.18.5 (ext4, the modes set by
         // debugfs): every mode 0 to 07777, for a link uid 1000 owns, one in its
         // group and one in neither, read by uid 1000 and by root, all read.
         // Darwin 27.0 at uid 501: the owner over all 4096 modes, in the link's
         // group and out of it, read exactly when the owner's read bit is set;
         // root's links of 0700 (refused), 0644 and 0755 (read), and one of
-        // 0755 in the caller's group (read).
+        // 0755 in the caller's group (read). Darwin 27.0 as root
+        // (`docs/probes/darwin-root/root-files.c`): root reads links of all
+        // 4096 modes, its own and uid 502's, in groups it is in and not; uid
+        // 501 reads uid 502's links of every mode exactly when the group or
+        // other triple its groups select has the read bit.
         match rule with
-        | LinkReadRule.ModeIgnored -> Ok false
-        | LinkReadRule.ReadBitOfSelectedTriple ->
-            match standing.Privilege with
-            | CallerPrivilege.Privileged -> Error (LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, bits))
-            | CallerPrivilege.Unprivileged -> Ok (deniedTo standing AccessRequest.Read bits)
+        | LinkReadRule.ModeIgnored -> false
+        | LinkReadRule.ReadBitOfSelectedTriple -> deniedTo standing AccessRequest.Read bits
 
     /// What the sticky bit of a directory carrying <c>directoryBits</c> says about
     /// removing, renaming or replacing one of its entries, for a caller standing as
@@ -612,14 +595,10 @@ module PermissionBits =
     /// inode's group. That holds for directories as for regular files, and the sticky bit
     /// is kept on a regular file.
     ///
-    /// What a privileged caller gets is <c>rule</c>'s to say; see <c>PrivilegedModeChange</c>.
+    /// A privileged caller gets exactly the twelve bits it asks for, whether or not it owns the
+    /// inode and whether or not it is in the inode's group.
     /// </remarks>
-    let internal afterModeChange
-        (rule : PrivilegedModeChange)
-        (standing : Standing)
-        (mode : int)
-        : Result<ModeChange, ModeChangeRefusal>
-        =
+    let internal afterModeChange (standing : Standing) (mode : int) : ModeChange =
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/chmod-rules.c`,
         // with no mismatch against this rule. Linux 6.18.5 (ext4 and tmpfs):
         // all 4096 modes on a file and on a directory, for the owner in the
@@ -629,23 +608,24 @@ module PermissionBits =
         // high halves from `0o10000` to `0xFFFFF000`, none of which was read.
         // Darwin 27.0 at uid 501: the same sweeps for the owner in and out of
         // the group; a non-owner in the group and out of it, on a file and a
-        // directory, asking for the mode the inode already had (EPERM).
+        // directory, asking for the mode the inode already had (EPERM). Darwin
+        // 27.0 as root (`docs/probes/darwin-root/root-files.c`): root sets all
+        // 4096 modes exactly on a file, a directory and (through
+        // `fchmodat(AT_SYMLINK_NOFOLLOW)`) a symbolic link, its own and uid
+        // 502's, in a group it is in and one it is not; and uid 501 is EPERM
+        // on uid 502's inodes for every mode.
         let requested = parseOrFail "PermissionBits.afterModeChange" (mode &&& widest)
 
         match standing.Privilege with
-        | CallerPrivilege.Privileged ->
-            match rule with
-            | PrivilegedModeChange.SetsRequestedBits -> Ok (ModeChange.Permitted requested)
-            | PrivilegedModeChange.Unmeasured ->
-                Error (ModeChangeRefusal.UnmeasuredPrivilegedCaller (standing, requested))
+        | CallerPrivilege.Privileged -> ModeChange.Permitted requested
         | CallerPrivilege.Unprivileged ->
 
         if not standing.Owns then
-            Ok ModeChange.Forbidden
+            ModeChange.Forbidden
         elif standing.InGroup then
-            Ok (ModeChange.Permitted requested)
+            ModeChange.Permitted requested
         else
-            Ok (ModeChange.Permitted (PermissionBits (toInt requested &&& ~~~setGroupId)))
+            ModeChange.Permitted (PermissionBits (toInt requested &&& ~~~setGroupId))
 
     // When an unprivileged process changes a file's contents, Linux strips
     // `S_ISUID` whatever the execute bits say (`04644` becomes `00644`), and

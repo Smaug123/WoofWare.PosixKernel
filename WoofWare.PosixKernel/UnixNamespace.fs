@@ -141,9 +141,6 @@ type internal ReadLinkRefusal =
     | Buffer of BufferRefusal
     /// This kernel will not resolve the path.
     | Path of PathRefusal
-    /// Whether the caller may read the symbolic link at `inode` has not been
-    /// measured for this caller.
-    | UnmeasuredLinkRead of inode : InodeNumber * refusal : LinkReadRefusal
 
 [<RequireQualifiedAccess>]
 module internal ReadLinkRefusal =
@@ -153,15 +150,12 @@ module internal ReadLinkRefusal =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | ReadLinkRefusal.Path refusal -> PathRefusal.describe refusal
-        | ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal) ->
-            $"reading inode %O{inode}: %s{LinkReadRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadLinkRefusal) : RefusalKind =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
-        | ReadLinkRefusal.UnmeasuredLinkRead (_, inner) -> LinkReadRefusal.kind inner
 
 /// What `readlink(2)` puts in the caller's buffer and what it returns.
 [<RequireQualifiedAccess>]
@@ -1422,12 +1416,11 @@ module UnixNamespace =
         // trailing separator ("ld/", "l/") follows the link whatever its mode.
         let standing = Standing.toward system.Process.Credentials record.Owner
 
-        match
+        if
             PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule system.Machine.UnixPlatform) standing bits
-        with
-        | Error refusal -> Error (ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal))
-        | Ok true -> Ok (ReadLinkAnswer.Failed UnixError.EACCES)
-        | Ok false ->
+        then
+            Ok (ReadLinkAnswer.Failed UnixError.EACCES)
+        else
 
         match verdict with
         | ReadLinkCapacityVerdict.Refuse _ ->
