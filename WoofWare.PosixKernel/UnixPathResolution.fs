@@ -1401,7 +1401,8 @@ module UnixPathResolution =
     /// changes and a dangling link is ENOENT. Every other failure but EPERM is
     /// the path resolution's own.
     ///
-    /// Refuses where the mode change has not been measured for this caller.
+    /// Refuses where an inotify watch could hear of the change through a name
+    /// this kernel does not keep.
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
     /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
