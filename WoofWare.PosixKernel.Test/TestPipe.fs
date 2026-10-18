@@ -1438,6 +1438,7 @@ module TestPipe =
             let answer fd system =
                 match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
                 | TerminalAttributesAnswer.NotATerminal error -> error
+                | TerminalAttributesAnswer.Attributes _ -> failwith $"fd %d{fd} is a terminal"
 
             for fd in [ 0 ; 1 ; 2 ; r ; w ] do
                 answer fd system |> shouldEqual UnixError.ENOTTY

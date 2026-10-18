@@ -723,7 +723,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixDescriptor.bytesAvailable` answers.
     | BytesAvailable of answer : BytesAvailableAnswer
     /// What `UnixDescriptor.fileClone` answers.
-    | FileClone of error : UnixError
+    | FileClone of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.terminalAttributes` answers.
     | TerminalAttributes of answer : TerminalAttributesAnswer
     /// What `UnixDescriptor.effectiveUserId` answers.
