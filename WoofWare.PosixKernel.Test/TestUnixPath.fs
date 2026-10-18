@@ -187,7 +187,7 @@ module TestUnixPath =
     [<Test>]
     let ``FileName parseOrFail names the offending boundary`` () : unit =
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 DirectoryEntryName.parseOrFail "seed manifest entry" ".."
                 |> ignore<DirectoryEntryName>
             )
@@ -398,7 +398,9 @@ module TestUnixPath =
     [<Test>]
     let ``parseOrFail names the offending boundary`` () : unit =
         let exn =
-            Assert.Throws<Exception> (fun () -> UnixPath.parseOrFail "seed manifest path" "a\000b" |> ignore<UnixPath>)
+            Assert.Throws<ArgumentException> (fun () ->
+                UnixPath.parseOrFail "seed manifest path" "a\000b" |> ignore<UnixPath>
+            )
 
         exn.Message |> shouldContainText "seed manifest path"
 

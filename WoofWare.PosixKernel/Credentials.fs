@@ -37,14 +37,18 @@ module UserId =
         else
             Some (UserId candidate)
 
-    /// As `parse`, but failing with `context` in the message if `candidate` is
-    /// `(uid_t)-1`.
+    /// As `parse`, but throwing `ArgumentException`, with `context` in the
+    /// message, if `candidate` is `(uid_t)-1`.
     let parseOrFail (context : string) (candidate : uint32) : UserId =
         match parse candidate with
         | Some uid -> uid
         | None ->
-            failwith
-                $"%s{context}: %d{candidate} is (uid_t)-1, which is not a user ID a process can hold; setresuid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%d{candidate} is (uid_t)-1, which is not a user ID a process can hold; setresuid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            )
 
 /// A group ID: a `gid_t` a process can hold.
 ///
@@ -78,14 +82,18 @@ module GroupId =
         else
             Some (GroupId candidate)
 
-    /// As `parse`, but failing with `context` in the message if `candidate` is
-    /// `(gid_t)-1`.
+    /// As `parse`, but throwing `ArgumentException`, with `context` in the
+    /// message, if `candidate` is `(gid_t)-1`.
     let parseOrFail (context : string) (candidate : uint32) : GroupId =
         match parse candidate with
         | Some gid -> gid
         | None ->
-            failwith
-                $"%s{context}: %d{candidate} is (gid_t)-1, which is not a group ID a process can hold; setresgid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%d{candidate} is (gid_t)-1, which is not a group ID a process can hold; setresgid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            )
 
 /// Who a process is: the IDs a kernel consults when it decides what the
 /// process may do.

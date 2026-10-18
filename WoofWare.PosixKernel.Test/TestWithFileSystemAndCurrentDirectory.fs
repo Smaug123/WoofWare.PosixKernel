@@ -322,7 +322,7 @@ module TestWithFileSystemAndCurrentDirectory =
             Map.ofList [ Unchecked.defaultof<DirectoryEntryName>, SeedEntry.file noBytes ]
 
         let exn =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.ArgumentException> (fun () ->
                 UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
                 |> UnixBootImage.tryWithFileSystem createdAt Owners.linuxDefault forged
                 |> ignore<Result<UnixBootImage<int, string>, FileSystemSeedFault>>

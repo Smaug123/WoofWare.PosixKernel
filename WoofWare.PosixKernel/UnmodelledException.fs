@@ -30,6 +30,10 @@ type internal RefusalKind =
     /// The value passed as `parameter` lies outside the range any machine
     /// could have. `ArgumentOutOfRangeException`.
     | OutOfRange of parameter : string
+    /// The reference passed as `parameter` is null, which only
+    /// `Unchecked.defaultof` or C# `default` can make it.
+    /// `ArgumentNullException`.
+    | Null of parameter : string
     /// The call is one the documentation rules out at this point.
     /// `InvalidOperationException`.
     | Misuse
@@ -49,6 +53,7 @@ module internal Refusal =
         | RefusalKind.Unmodelled -> UnmodelledException message
         | RefusalKind.Contradictory parameter -> System.ArgumentException (message, parameter)
         | RefusalKind.OutOfRange parameter -> System.ArgumentOutOfRangeException (parameter, message)
+        | RefusalKind.Null parameter -> System.ArgumentNullException (parameter, message)
         | RefusalKind.Misuse -> System.InvalidOperationException message
         | RefusalKind.NotOnPlatform -> System.PlatformNotSupportedException message
 
