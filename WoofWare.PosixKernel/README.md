@@ -76,7 +76,7 @@ Besides the syscalls, a client calls these between them (the system argument is 
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
 | waking the sleeping threads that can go on | `UnixWait.wake` | `(Caller * Set<WakePrimitive>) list * UnixSystem` |
 | whether one sleeping thread could go on | `UnixWait.satisfied (caller : Caller)` | `Set<WakePrimitive> option` |
-| finishing a woken thread's call | `UnixWait.finish (caller : Caller)` | `FinishedCall` |
+| finishing a woken thread's call | `UnixWait.finish (caller : Caller) (call : Syscall)` | `FinishedCall` |
 | whether a thread owes a return to user mode | `UnixSignal.owesReturn (caller : Caller)` | `bool` |
 | when sleeping calls time out | `UnixWait.deadlines` | `int64 list` |
 | another process starting | `UnixSystem.launch (launch : ProcessLaunch)` | `ProcessId * UnixSystem` |
@@ -636,7 +636,7 @@ These calls have no function, and a client should refuse them rather than guess:
 
 A real kernel copies an argument in from the caller's memory at a point in the call, and what happens before that point is observable: a bad descriptor is `EBADF` whatever the buffer holds.
 So a call that copies bytes in stops there.
-`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.sendto`, `UnixReadWrite.recvfrom`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`, and `UnixWait.finish` holds `finishWrite`'s in `FinishedCall.PipeWrite` and `FinishedCall.ConnectionWrite`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
+`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.sendto`, `UnixReadWrite.recvfrom`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
 The paused call's `copyRange` says which bytes of the caller's buffer to copy, and its resume function (`UnixReadWrite.writeWithBytes`, `sendWithBytes`, `pwriteWithBytes`, `UnixSocket.bindWithAddress`, `UnixConnection.connectWithAddress`, `UnixSocket.setsockoptWithValue`) takes exactly those and finishes the call, answering the same type `CallProgress.Answered` carries; `writeWithBytes` answers beside it the bytes the write delivered out of the machine (see "The far end of a launched pipe").
 A `getsockopt` stops where the kernel reads the caller's length cell instead, and `UnixSocket.getsockoptWithLength` takes the `socklen_t` it holds.
 Nothing else can be done to the system in between, since the paused call holds it.
@@ -715,7 +715,7 @@ let make (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSyst
 // Once a wake has ended a thread's sleep: finish its call, and return to user mode;
 // on a restart, step the same call again.
 let resume (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-    match UnixWait.finish caller system with
+    match UnixWait.finish caller call system with
     | FinishedCall.Accept (AcceptOutcome.Interrupted, system) ->
         match returnToUser caller system with
         | Some InterruptedCall.Restarts, system ->
@@ -781,7 +781,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 **Writing.** A write stops where the kernel copies from the caller's buffer, as every call that copies in does (see "Calls that copy in from the caller's memory").
 
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
-2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again, as `UnixWait.finish` does in `FinishedCall.PipeWrite` or `FinishedCall.ConnectionWrite`: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
+2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step. `UnixWait.finish` makes the whole step, copying the bytes from the buffer of the `Syscall` it is given (see "Sleeping and waking").
 
 Every answer is a `ProcessFate<WriteOutcome>` (`writeWithBytes` answers a `Delivery option` beside it, as "The far end of a launched pipe" describes): the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
@@ -817,7 +817,10 @@ Advancing the clock, a call that changes nothing, and dispatching a thread to th
 A sweep that wakes nobody answers a new system, equal to the one it was given, which remembers the sweep: so the client keeps the system `wake` answers, as it keeps every other.
 What a system remembers is no part of its value, and two systems that differ only in that are equal.
 
-`UnixWait.finish caller` finishes the call the woken thread `caller` names is parked in, through the finishing function of the call's family.
+`UnixWait.finish caller call` finishes the call the woken thread `caller` names is parked in, through the finishing function of the call's family.
+`call` is the `Syscall` the thread made (see "One entry point"), as a client that makes calls through `UnixSystem.step` already holds it, with what the caller's memory holds now: a woken write copies the next of its bytes from its buffer as the buffer is when the call is finished, so `finish` hands them to `UnixReadWrite.writeWithBytes` from `call`'s buffer, and never stops partway.
+`finish` reads no other call's arguments, but throws `ArgumentException` for a `call` whose case parks no thread where `caller` is parked: `Syscall.Read` for a thread parked in a write to a pipe, say, or `Syscall.Write` for one parked in a `send` to a connected socket.
+A `sendto` with a NULL destination is a `send`, so `Syscall.SendTo` with `CopiedArgument.Unmapped 0UL` as its destination finishes a `send` too.
 It answers a `FinishedCall`, whose case is named as the thread's `ParkedSyscall` case is and holds exactly what that function answers: the call's answer, the thread parked again, asleep, for a new wake, or the call interrupted by a signal (`Interrupted`), whose end the thread's return to user mode says (see "The return to user mode").
 A client that wants a family's own answer type calls its finishing function instead:
 
@@ -833,7 +836,7 @@ A client that wants a family's own answer type calls its finishing function inst
 | `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (caller : Caller)` |
 | `ParkedSyscall.Futex` (a `futex` wait) | `UnixFutex.finishFutexWait (caller : Caller)` |
 
-Each answers what the call that parked answered, as in the tables above, and `UnixWait.finish` holds that answer in the `FinishedCall` case of the same name.
+Each answers what the call that parked answered, as in the tables above, and `UnixWait.finish` holds that answer in the `FinishedCall` case of the same name: for a write, what `writeWithBytes` answers where `finishWrite` stops at the copy.
 
 `ParkedSyscall.Sleep` (a `nanosleep` or `clock_nanosleep`, carrying a `ParkedSleep`), `ParkedSyscall.FifoOpen` (a blocking `open` of one end of a FIFO, carrying a `ParkedFifoOpen`), `ParkedSyscall.Select` (a `select` or `pselect`, carrying a `ParkedSelect`, whose representation is internal), `ParkedSyscall.SignalWait` (a `sigwait`, `sigwaitinfo` or `sigtimedwait`, carrying a `ParkedSignalWait`), `ParkedSyscall.DatagramReceive` (a blocking receive on a datagram socket, carrying a `ParkedDatagramReceive`), `ParkedSyscall.DatagramSend` (a blocking Linux Unix-domain datagram send, carrying a `ParkedDatagramSend`) and `ParkedSyscall.Connect` (a blocking Linux `connect` to a full listener, carrying a `ParkedConnect`) are reserved: nothing parks a thread in any of them yet, and none has a finishing function, so `UnixWait.finish` throws `UnmodelledException` for a thread parked in one, and `UnixSystem.checkInvariants` reports a thread parked in one as a defect.
 The payloads of the datagram parks and the connect park have internal representations too, as do `FinishedSleep`, `FinishedFifoOpen`, `FinishedSelect`, `FinishedSignalWait`, `FinishedDatagramReceive`, `FinishedDatagramSend` and `FinishedConnect`, which `FinishedCall.Sleep`, `FinishedCall.FifoOpen` and the other cases named for the reserved parks hold.
@@ -914,7 +917,7 @@ let written =
 let woken =
     match UnixWait.wake written with
     | [ woken, _ ], written when woken = second ->
-        match UnixWait.finish second written with
+        match UnixWait.finish second (Syscall.Read (readFd, UserBuffer.Mapped, 64UL)) written with
         | FinishedCall.PipeRead (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
             printfn "thread 1 read %s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
             resume second system
@@ -1125,7 +1128,7 @@ let signalled =
 let restarted =
     match UnixWait.wake signalled with
     | [ woken, _ ], woken' when woken = second ->
-        match UnixWait.finish second woken' with
+        match UnixWait.finish second (Syscall.Read (readFd, UserBuffer.Mapped, 64UL)) woken' with
         | FinishedCall.PipeRead (ReadOutcome.Interrupted, system) ->
             printfn "the read was interrupted"
 

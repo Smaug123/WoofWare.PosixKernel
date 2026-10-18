@@ -303,7 +303,9 @@ module TestHugeTimeoutMeasured =
         (system : UnixSystem<int, string>)
         : SyscallOutcome * UnixSystem<int, string>
         =
-        match UnixWait.finish (Caller.make pid 1) system with
+        let caller = Caller.make pid 1
+
+        match UnixWait.finish caller (ParkedCall.ofThread caller system) system with
         | FinishedCall.Futex (outcome, system) -> outcome, system
         | other -> failwith $"finish answered %s{UnionCaseName.ofValue other}"
 
@@ -393,7 +395,9 @@ module TestHugeTimeoutMeasured =
         | Parked of UnixSystem<int, string>
 
     let private finishesEmpty (row : Row) (pid : ProcessId) (system : UnixSystem<int, string>) : unit =
-        match UnixWait.finish (Caller.make pid 0) system with
+        let caller = Caller.make pid 0
+
+        match UnixWait.finish caller (ParkedCall.ofThread caller system) system with
         | FinishedCall.Poll (PollOutcome.Answered (_, 0), _)
         | FinishedCall.KqueuePoll (PollOutcome.Answered (_, 0), _)
         | FinishedCall.EpollWait (EpollWaitOutcome.Answered [], _)

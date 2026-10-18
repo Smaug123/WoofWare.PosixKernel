@@ -535,38 +535,19 @@ module TestUnixWaitFinish =
 
         let caller = Callers.thread sleeper system
 
-        let write
-            (progress : CallProgress<PausedWrite<int, string>, ProcessFate<WriteOutcome<int>, int, string>>)
-            : UnixSystem<int, string> option
-            =
-            let fate =
-                match progress with
-                | CallProgress.Answered fate -> Ok fate
-                | CallProgress.NeedsCopyIn paused ->
-                    let range = PausedWrite.copyRange paused
-
-                    UnixReadWrite.tryWriteWithBytes
-                        (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
-                        paused
-                    |> Result.map (fun (fate, delivery) ->
-                        match delivery with
-                        | None -> fate
-                        | Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
-                    )
-
+        let write (fate : ProcessFate<WriteOutcome<int>, int, string>) : UnixSystem<int, string> option =
             match fate with
-            | Ok (ProcessFate.Continues (WriteOutcome.WouldBlock _, system)) -> Some system
-            | Ok (ProcessFate.Continues (_, system)) -> returnOfSleeper system
-            | Ok (ProcessFate.ProcessEnded _) -> None
-            | Error _ -> Some system
+            | ProcessFate.Continues (WriteOutcome.WouldBlock _, system) -> Some system
+            | ProcessFate.Continues (_, system) -> returnOfSleeper system
+            | ProcessFate.ProcessEnded _ -> None
 
         let answered (sleepsAgain : bool) (after : UnixSystem<int, string>) : UnixSystem<int, string> option =
             if sleepsAgain then Some after else returnOfSleeper after
 
-        match UnixWait.tryFinish caller system with
+        match UnixWait.tryFinish caller (ParkedCall.ofThread caller system) system with
         | Error _ -> Some system
-        | Ok (FinishedCall.PipeWrite progress)
-        | Ok (FinishedCall.ConnectionWrite progress) -> write progress
+        | Ok (FinishedCall.PipeWrite fate)
+        | Ok (FinishedCall.ConnectionWrite fate) -> write fate
         | Ok (FinishedCall.EpollWait (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.Kevent (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.Flock (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
@@ -696,7 +677,10 @@ module TestUnixWaitFinish =
             match UnixThreadState.park state with
             | Some {
                        State = ParkState.Woken _
-                   } -> cover (FinishOracle.agree (Callers.thread thread woken) woken)
+                   } ->
+                let caller = Callers.thread thread woken
+                cover (FinishOracle.agree caller woken)
+                FinishOracle.refusesMisuse caller woken |> List.iter cover
             | Some {
                        State = ParkState.Asleep
                    }
@@ -785,6 +769,15 @@ module TestUnixWaitFinish =
         labelled "NeedsCopyIn" |> shouldBeGreaterThan 45
         labelled "refused" |> shouldBeGreaterThan 27
 
+        // Every kind of call, given a Syscall of another kind; and a write,
+        // given a buffer it cannot copy from, both where it copies and where it
+        // does not.
+        for kind, _, _ in floors do
+            labelled $"misuse: %s{kind} given another call" |> shouldBeGreaterThan 0
+
+        labelled "misuse: a write that copies given" |> shouldBeGreaterThan 0
+        labelled "misuse: a write that copies nothing given" |> shouldBeGreaterThan 0
+
     /// A thread parked in each of the reserved calls, which nothing parks a
     /// thread in yet, as the tests of each reserved park forge one, the
     /// descriptions they hold being the standard input's.
@@ -862,8 +855,9 @@ module TestUnixWaitFinish =
             for parked in parks do
                 let woken = awake |> Lone.Parking.park sleeper parked |> ForgedPark.woken sleeper
                 let caller = Callers.thread sleeper woken
+                let call = ParkedCall.ofPark parked
 
-                match UnixWait.tryFinish caller woken with
+                match UnixWait.tryFinish caller call woken with
                 | Error (FinishRefusal.Reserved refused) -> refused |> shouldEqual parked
                 | Error refusal -> failwith $"%O{flavour}, %A{parked}: refused with %A{refusal}"
                 | Ok finished ->
@@ -871,7 +865,7 @@ module TestUnixWaitFinish =
 
                 let thrown =
                     try
-                        UnixWait.finish caller woken |> ignore<FinishedCall<int, string>>
+                        UnixWait.finish caller call woken |> ignore<FinishedCall<int, string>>
                         None
                     with e ->
                         Some e

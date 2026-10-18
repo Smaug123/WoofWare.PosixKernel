@@ -1207,9 +1207,13 @@ module TestBlockingPipe =
                     let expected, after = referenceFinish thread reference
 
                     // `UnixWait.finish` answers as the family's finishing
-                    // function does.
+                    // function does, and refuses a Syscall that does not
+                    // describe the call.
                     let woken = Woken.thread thread system
                     FinishOracle.agree (Callers.thread thread woken) woken |> ignore<string>
+
+                    FinishOracle.refusesMisuse (Callers.thread thread woken) woken
+                    |> ignore<string list>
 
                     let seen, actual =
                         match call with

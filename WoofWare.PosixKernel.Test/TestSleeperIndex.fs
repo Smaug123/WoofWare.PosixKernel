@@ -281,9 +281,11 @@ module TestSleeperIndex =
             else
                 let pid, thread = woken.[random.Next woken.Length]
 
+                let caller = Caller.make pid thread
+
                 // A finish this kernel refuses, such as of a Darwin poll both
                 // ready and past its deadline, changes nothing.
-                match UnixWait.tryFinish (Caller.make pid thread) system with
+                match UnixWait.tryFinish caller (ParkedCall.ofThread caller system) system with
                 | Error _ -> pipes, system
                 | Ok finished ->
                     cover Label.Finished

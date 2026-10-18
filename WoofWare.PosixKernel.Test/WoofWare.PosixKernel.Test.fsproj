@@ -30,6 +30,7 @@
     <Compile Include="ForgedThread.fs" />
     <Compile Include="ForgedSocket.fs" />
     <Compile Include="Stepped.fs" />
+    <Compile Include="ParkedCall.fs" />
     <Compile Include="IlCalls.fs" />
     <Compile Include="Woken.fs" />
     <Compile Include="Interruptions.fs" />
