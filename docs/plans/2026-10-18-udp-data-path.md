@@ -129,6 +129,7 @@ first) or bound to 0.0.0.0 or 127.0.0.1.
 | 20 and 3 queued, peeks of 10, 100, and 10 with `MSG_TRUNC` | 10, 20, **20**; both stay | 10, 20, **10**; both stay |
 | `sendto` of 0 bytes | 0; the receiver holds one empty datagram, which a `recv` takes and answers 0 | same |
 | `sendto` of 0 bytes from NULL or an unmapped buffer | 0, and the datagram is sent | same |
+| a connected `send` or `write` from an unmapped buffer (H3) | `EFAULT` at 5 and 9217 bytes, `EMSGSIZE` at 65508 and above: the size is judged first | `EFAULT` at 5 bytes, `EMSGSIZE` at 9217 and above |
 | a fresh sender's `sendto` of 5 bytes from an unmapped buffer | `EFAULT`, nothing sent; **the sender is bound** | `EFAULT`, nothing sent; **the sender is not bound** |
 | `read` of an unconnected socket holding a datagram | the datagram | same |
 
@@ -597,7 +598,9 @@ of that window.
   if that socket is connected (2.8, L16). Where that is a tie (L16, Linux's
   two sockets connected to one peer), the send is refused.
 - **No error** when a candidate exists but its queue is full (L13), and none
-  for an unconnected sender (L4).
+  where the reply lookup finds no socket, or an unconnected one (L4). So an
+  unconnected sender never learns of its own datagram's error, though a
+  connected socket sharing its endpoint may (L16).
 - **Darwin's 100 ms window** (2.8, X) is one machine-wide record: the
   four-tuple and kernel-clock time of the last datagram answered with the
   error. It is not in any receiver, since it outlives its socket and counts
@@ -697,8 +700,9 @@ unmeasured bit, as today, rather than ignoring it as both kernels do.
   receiver for each datagram.
 - A new `SocketWake.DatagramSent` raises an OUT edge on the sender after each
   send (G6).
-- A new `SocketWake.ErrorRaised` raises ERR on the sender when the ICMP error
-  is set (G7).
+- A new `SocketWake.ErrorRaised` raises ERR when the ICMP error is set (G7),
+  on the socket the reply lookup chose and that holds the error, which need
+  not be the sender (L16).
 
 **Darwin.** `poll` and `kevent` on a datagram socket stay refused until their
 own stage (U6), which answers issue #12 for UDP. That stage's facts are in

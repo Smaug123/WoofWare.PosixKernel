@@ -726,6 +726,22 @@ static void section_h(void)
             close(r); close(s);
         }
     }
+    // H3: a connected send or write from an unmapped buffer, of a size the
+    // socket takes and of sizes it does not: which answer comes first.
+    {
+        size_t sz[] = { 5, 9217, 65508, 70000 };
+        for (int call = 0; call < 2; call++) {
+            for (unsigned i = 0; i < sizeof sz / sizeof *sz; i++) {
+                int r = bound(), c = bound();
+                struct sockaddr_in to = lo(portof(r));
+                connect(c, (struct sockaddr *)&to, sizeof to);
+                ssize_t a = call ? write(c, (void *)1, sz[i]) : send(c, (void *)1, sz[i], 0); int ea = errno;
+                SETTLE();
+                printf("H3 a connected %s of %zu from an unmapped buffer: %s; the receiver holds %s\n", call ? "write" : "send", sz[i], res(a, ea), drain(r));
+                close(r); close(c);
+            }
+        }
+    }
     // A larger SO_SNDBUF on Darwin, and a smaller one on both.
     for (int which = 0; which < 2; which++) {
         int sb = which == 0 ? 65536 : 2048;
@@ -1087,9 +1103,11 @@ static void section_l(void)
         else sent = sendto(b, "x", 1, 0, (struct sockaddr *)&toP, sizeof toP);
         int es = errno;
         SETTLE();
+        const char *levelA = revents(a);
+        const char *levelB = revents(b);
         int errA = sock_error(a);
         int errB = sock_error(b);
-        printf("L16 %s (A's connect %d; B's bind %s; B's send %s): SO_ERROR A %d, B %d\n", names[row], ca, res(bb, eb), res(sent, es), errA, errB);
+        printf("L16 %s (A's connect %d; B's bind %s; B's send %s): A %s, B %s; SO_ERROR A %d, B %d\n", names[row], ca, res(bb, eb), res(sent, es), levelA, levelB, errA, errB);
         close(a); close(b);
         usleep(150000);
     }
@@ -1210,8 +1228,11 @@ static void section_n(void)
         // re-send to read the source
         sendto(s, "z", 1, 0, (struct sockaddr *)&a, sizeof a);
         SETTLE();
-        g = recvfrom(r, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&from, &len);
-        printf("N source seen for a send to 127.0.0.2 from a 0.0.0.0-bound sender: %s from %s:%u\n", res(g, errno), inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+        g = recvfrom(r, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&from, &len); int eg = errno;
+        if (g >= 0)
+            printf("N source seen for a send to 127.0.0.2 from a 0.0.0.0-bound sender: %s from %s:%u\n", res(g, eg), inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+        else
+            printf("N source seen for a send to 127.0.0.2 from a 0.0.0.0-bound sender: %s, so no source\n", res(g, eg));
         close(s);
     }
     // Descriptors that are not UDP sockets.
