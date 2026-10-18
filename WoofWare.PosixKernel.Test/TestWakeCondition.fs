@@ -162,7 +162,7 @@ module TestWakeCondition =
 
         let created (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             match UnixInotify.tryInotifyInit1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"creating an inotify instance: %A{other}"
 
         let queuedFd, system = created system

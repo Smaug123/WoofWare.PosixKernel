@@ -421,12 +421,11 @@ module TestOpenFlagWord =
 
                                 let modelled =
                                     match OpenOutcomes.openPath (argument column) row.Word 0o644 system with
-                                    | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
-                                    | Ok (SyscallAnswer.Completed fd, after) ->
+                                    | Ok (DescriptorAnswer.Failed error, _) -> $"%A{error}"
+                                    | Ok (DescriptorAnswer.Returned fd, after) ->
                                         // F_GETFL (3) and F_GETFD (1), which
                                         // the probe printed as it closed the
                                         // descriptor.
-                                        let fd = int fd
 
                                         $"ok/%s{flagWord fd 3 after}/%s{flagWord fd 1 after}" + aftermath after
                                     | Error refusal -> $"refused (%s{OpenRefusal.describe refusal})"
@@ -497,10 +496,10 @@ module TestOpenFlagWord =
         (flags : OpenFlags)
         (path : PathArgumentBytes)
         (system : UnixSystem<int, string>)
-        : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>
         =
         match Lone.UnixPathResolution.copyIn path system with
-        | Error error -> Ok (SyscallAnswer.Failed error, system)
+        | Error error -> Ok (DescriptorAnswer.Failed error, system)
         | Ok path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory path flags 0o644 system
 
     [<Test>]

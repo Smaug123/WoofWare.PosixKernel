@@ -91,7 +91,7 @@ module TestBlockingAccept =
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup (Callers.leader system) fd system with
-        | SyscallAnswer.Completed newFd, system -> int newFd, system
+        | DescriptorAnswer.Returned newFd, system -> newFd, system
         | other, _ -> failwith $"dup of %d{fd} answered %A{other}"
 
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -1554,10 +1554,10 @@ module TestBlockingAccept =
                     let answer, after = Answered.dup (Callers.leader system) fd system
 
                     match Map.tryFind fd reference.Fds with
-                    | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+                    | None -> answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
                     | Some named ->
                         let lowest = lowestFree reference
-                        answer |> shouldEqual (SyscallAnswer.Completed (int64 lowest))
+                        answer |> shouldEqual (DescriptorAnswer.Returned lowest)
 
                         if reference.Parks |> Map.exists (fun _ park -> park.Through.IsNone) then
                             cover $"%s{flavourName} dup: a number an ended accept was made through"

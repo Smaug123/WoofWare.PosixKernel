@@ -142,7 +142,7 @@ module TestStartingDirectory =
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -221,11 +221,12 @@ module TestStartingDirectory =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok created) -> Some created
+                | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
                 match UnixKqueue.tryKqueue (Callers.leader system) system with
-                | Ok created -> Some created
+                | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+                | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | other -> failwith $"%s{context}: the probe has no dirfd kind called %s{other}"
 
@@ -888,10 +889,10 @@ module TestStartingDirectory =
         | SimulatedUnixFlavour.Linux -> 0x200
         | SimulatedUnixFlavour.Darwin -> 0x400
 
-    let private renderedOpen (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) : string =
+    let private renderedOpen (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) : string =
         match result with
-        | Ok (SyscallAnswer.Completed _, _) -> "ok"
-        | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
+        | Ok (DescriptorAnswer.Returned _, _) -> "ok"
+        | Ok (DescriptorAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"refused: %s{OpenRefusal.describe refusal}"
 
     let private replayOpenAt (envelope : Envelope) : unit =
@@ -967,7 +968,7 @@ module TestStartingDirectory =
                 failwith $"%s{context}: %d{opened} opens and the table is still not full at the bound %d{bound}"
 
             match OpenOutcomes.openPath (PathArg.ofText "f") 0 0 system with
-            | Ok (SyscallAnswer.Completed _, system) -> fill (opened + 1) system
+            | Ok (DescriptorAnswer.Returned _, system) -> fill (opened + 1) system
             | Error (OpenRefusal.DescriptorLimit _) -> system
             | other -> failwith $"%s{context}: filling the table: %A{other}"
 
@@ -2962,7 +2963,7 @@ module TestStartingDirectory =
 
             let fd, held =
                 match Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 asRoot with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -3023,7 +3024,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -3081,7 +3082,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -3162,7 +3163,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3178,7 +3179,7 @@ module TestStartingDirectory =
             let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
-            let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) =
+            let outcome (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) =
                 match result with
                 | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system, (Lone.fileDescriptors system))
                 | Error refusal -> Error refusal
@@ -3223,7 +3224,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3293,7 +3294,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3370,7 +3371,7 @@ module TestStartingDirectory =
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3443,7 +3444,7 @@ module TestStartingDirectory =
 
             let openedAsRoot (directory : string) (system : UnixSystem<int, string>) =
                 match Answered.openPath (UnixPath.parseOrFail context directory) readOnly 0 system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{directory}) did not open: %O{other}"
 
             let oldFd, held = openedAsRoot cwd asRoot
@@ -3507,7 +3508,7 @@ module TestStartingDirectory =
             match
                 Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 (walkSystem platform Owners.root cwd)
             with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
         let withCaller (cwdInode : InodeNumber) =
@@ -3750,13 +3751,13 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
             elif held = "epoll" then
                 match UnixPoll.tryEpollCreate1 (Callers.leader asRoot) 0 asRoot with
-                | Ok (Ok created) -> created
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             else
                 let path = held.Substring (held.IndexOf ':' + 1)
 
                 match Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 asRoot with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
         fd,

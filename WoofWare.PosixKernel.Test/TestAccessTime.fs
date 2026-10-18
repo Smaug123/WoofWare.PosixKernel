@@ -139,8 +139,8 @@ module TestAccessTime =
 
     let private openFile (cell : Cell) (target : string) (word : int) : int * Cell =
         match step cell (Syscall.Open (path target, word, 0o644)) with
-        | SteppedCall.Open (SyscallOutcome.Answered (SyscallAnswer.Completed fd), system) ->
-            int fd,
+        | SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Returned fd), system) ->
+            fd,
             { cell with
                 System = system
             }

@@ -453,7 +453,7 @@ module internal Lone =
             (flags : OpenFlags)
             (mode : int)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+            : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
             WoofWare.PosixKernel.UnixNamespace.openPathParsed directory path flags mode (view system)
             |> unviewed

@@ -297,7 +297,7 @@ module TestFirstWake =
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
                 match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"open: %A{other}"
 
             let holder, system = opened system
@@ -462,7 +462,7 @@ module TestFirstWake =
                 // this library does not model: see `divergent`.
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (leader system) 0 system with
-                    | Ok (Ok (fd, system)) -> fd, system
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 let system =
@@ -689,7 +689,7 @@ module TestFirstWake =
 
         let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open: %A{other}"
 
         let holder, system = opened system

@@ -393,7 +393,7 @@ module TestConnectedTransfer =
         | SimulatedUnixFlavour.Linux ->
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid system)) 0 system with
-                | Ok (Ok created) -> created
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"epoll_create1: %A{other}"
 
             let events =
@@ -900,7 +900,7 @@ module TestConnectedTransfer =
             // it first, while its peer is still open.
             let c, system =
                 match UnixDescriptor.dup2 caller c 20 system with
-                | SyscallAnswer.Completed 20L, system ->
+                | DescriptorAnswer.Returned 20, system ->
                     match UnixDescriptor.close caller c system with
                     | SyscallAnswer.Completed 0L, system -> 20, system
                     | other -> failwith $"%s{row}: close: %A{other}"

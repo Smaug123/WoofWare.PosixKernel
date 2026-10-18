@@ -901,9 +901,8 @@ module TestBlockingPipe =
                 // system and reference after it.
                 let closing
                     (fd : int)
-                    (call :
-                        UnixSystem<int, string> -> Result<SyscallAnswer * UnixSystem<int, string>, CloseRefusal<int>>)
-                    (expectedAnswer : SyscallAnswer)
+                    (call : UnixSystem<int, string> -> Result<'Answer * UnixSystem<int, string>, CloseRefusal<int>>)
+                    (expectedAnswer : 'Answer)
                     (install : Reference -> Reference)
                     (system : UnixSystem<int, string>)
                     (reference : Reference)
@@ -1070,7 +1069,7 @@ module TestBlockingPipe =
                                                 $"dup2 onto %d{newFd} reached the bound: %s{DescriptorLimitRefusal.describe refusal}"
                                     )
                                 )
-                                (SyscallAnswer.Completed (int64 newFd))
+                                (DescriptorAnswer.Returned newFd)
                                 (fun reference ->
                                     { reference with
                                         Fds = Map.add newFd named reference.Fds
@@ -1084,8 +1083,8 @@ module TestBlockingPipe =
                     | named ->
                         let expected =
                             match named with
-                            | Some _ when newFd >= 0 -> SyscallAnswer.Completed (int64 newFd)
-                            | _ -> SyscallAnswer.Failed UnixError.EBADF
+                            | Some _ when newFd >= 0 -> DescriptorAnswer.Returned newFd
+                            | _ -> DescriptorAnswer.Failed UnixError.EBADF
 
                         match UnixDescriptor.tryDup2 (caller system) oldFd newFd system with
                         | Ok (answer, after) ->
@@ -1106,12 +1105,12 @@ module TestBlockingPipe =
                     let answer, after = Answered.dup (caller system) fd system
 
                     match Map.tryFind fd reference.Fds with
-                    | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+                    | None -> answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
                     | Some named ->
                         let lowest =
                             Seq.initInfinite id |> Seq.find (fun n -> not (Map.containsKey n reference.Fds))
 
-                        answer |> shouldEqual (SyscallAnswer.Completed (int64 lowest))
+                        answer |> shouldEqual (DescriptorAnswer.Returned lowest)
 
                         reference <-
                             { reference with
@@ -1841,7 +1840,7 @@ module TestBlockingPipe =
             let system =
                 if dupKept then
                     match Answered.dup (Callers.leader system) 3 system with
-                    | SyscallAnswer.Completed _, system -> system
+                    | DescriptorAnswer.Returned _, system -> system
                     | other -> failwith $"%A{other}"
                 else
                     system
@@ -1891,7 +1890,7 @@ module TestBlockingPipe =
             let system =
                 if dupKept then
                     match Answered.dup (Callers.leader system) 4 system with
-                    | SyscallAnswer.Completed _, system -> system
+                    | DescriptorAnswer.Returned _, system -> system
                     | other -> failwith $"%A{other}"
                 else
                     system
@@ -1935,7 +1934,7 @@ module TestBlockingPipe =
 
     let private dupped (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup (Callers.leader system) fd system with
-        | SyscallAnswer.Completed newFd, system -> int newFd, system
+        | DescriptorAnswer.Returned newFd, system -> newFd, system
         | other -> failwith $"dup of %d{fd}: %A{other}"
 
     /// Measured (`close-ends-call.c`, sections P1-P5, and `pipe-blocking.c`

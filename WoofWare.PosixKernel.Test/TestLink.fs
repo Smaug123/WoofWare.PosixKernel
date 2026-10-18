@@ -674,7 +674,7 @@ module TestLink =
             }
 
         match Answered.openPath (UnixPath.parseOrFail context p) flags 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private linuxEmptyPath : int = 0x1000

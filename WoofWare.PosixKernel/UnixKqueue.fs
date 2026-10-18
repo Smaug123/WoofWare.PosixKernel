@@ -236,7 +236,7 @@ module UnixKqueue =
     /// `tryKqueue` once `Entry` has admitted its caller.
     let private tryKqueueIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<int * ProcessView<'Thread, 'Handler>, KqueueRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, KqueueRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -267,13 +267,13 @@ module UnixKqueue =
                     (DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true))
                     registry
 
-        Ok (fd, UnixSystemState.withFileDescriptors registry system)
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
     /// `kqueue`, with a refusal answered as the `Error` rather than raised.
     let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
         =
         Entry.call
             "UnixKqueue.kqueue"
@@ -288,13 +288,16 @@ module UnixKqueue =
     /// descriptor onto it, the lowest one not in use. The description is
     /// blocking, and the descriptor has `FD_CLOEXEC` and `FD_CLOFORK`.
     ///
-    /// Under the Linux flavour every call is refused: Linux has no kqueue.
+    /// Every answer is `DescriptorAnswer.Returned`: with no descriptor left
+    /// below the bound (`SimulatedUnixPlatform.descriptorBound`) the call is
+    /// refused. Under the Linux flavour every call is refused: Linux has no
+    /// kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : int * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryKqueue caller system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe

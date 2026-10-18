@@ -150,14 +150,14 @@ module UnixInotify =
     let private tryInotifyInit1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
         if flags &&& ~~~(InotifyInitFlags.CloseOnExec ||| InotifyInitFlags.NonBlock) <> 0 then
-            Ok (Error UnixError.EINVAL)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         else
 
         let owner = system.Process.Credentials.EffectiveUser
@@ -168,7 +168,7 @@ module UnixInotify =
             instancesOf owner system.Machine
             >= system.Machine.InotifyLimits.MaxUserInstances
         then
-            Ok (Error UnixError.EMFILE)
+            Ok (DescriptorAnswer.Failed UnixError.EMFILE, system)
         else
 
         match
@@ -196,20 +196,20 @@ module UnixInotify =
                     (flags &&& InotifyInitFlags.CloseOnExec <> 0))
                 registry
 
-        Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
     /// `inotifyInit1`, with a refusal answered as the `Error` rather than raised.
     let internal tryInotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
         =
         Entry.call
             "UnixInotify.inotifyInit1"
             CallerRequirement.Running
             caller
-            (Shape.result (Shape.result Shape.withSystem))
+            (Shape.result Shape.withSystem)
             (tryInotifyInit1In flags)
             system
 
@@ -232,7 +232,7 @@ module UnixInotify =
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryInotifyInit1 caller flags system
         |> Refusal.orRaise "UnixInotify.inotifyInit1" InotifyRefusal.kind InotifyRefusal.describe

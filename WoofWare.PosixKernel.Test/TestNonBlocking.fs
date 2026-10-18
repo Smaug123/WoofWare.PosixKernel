@@ -469,11 +469,12 @@ module TestNonBlocking =
         match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"expected an epoll instance, got %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok (fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
             | Error refusal -> failwith $"expected a kqueue, got %A{refusal}"
 
     /// Measured: the bit toggles on both an epoll instance and a kqueue, and the

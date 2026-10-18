@@ -62,7 +62,7 @@ module TestInotifyInvariants =
 
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-        | Ok (Ok created) -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"inotify_init1: %A{other}"
 
     let private add (fd : int) (path : string) (mask : uint32) (system : UnixSystem<int, string>) =
@@ -302,7 +302,7 @@ module TestInotifyInvariants =
     let ``a read parked on something other than an instance is a defect`` () : unit =
         let fd, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader linux) 0 linux with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         let id = idOf fd system
@@ -475,8 +475,8 @@ module TestInotifyInvariants =
                 pid
                 (fun view ->
                     match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) 0x800 view with
-                    | Ok (Ok (fd, view)) -> Ok fd, view
-                    | Ok (Error error) -> Error error, view
+                    | Ok (DescriptorAnswer.Returned fd, view) -> Ok fd, view
+                    | Ok (DescriptorAnswer.Failed error, view) -> Error error, view
                     | Error refusal -> failwith $"%A{refusal}"
                 )
 
@@ -535,13 +535,13 @@ module TestInotifyInvariants =
     let ``step answers inotify_init1 and inotify_rm_watch as the functions do`` () : unit =
         let viaStep =
             match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x800) linux with
-            | Ok (SteppedCall.InotifyInit1 (Ok (fd, system))) -> fd, system
+            | Ok (SteppedCall.InotifyInit1 (DescriptorAnswer.Returned fd, system)) -> fd, system
             | other -> failwith $"%A{Result.map Stepped.view other}"
 
         viaStep |> shouldEqual (init1 0x800 linux)
 
         UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux
-        |> Stepped.resultShouldBe (Ok (SteppedCall.InotifyInit1 (Error UnixError.EINVAL)))
+        |> Stepped.resultShouldBe (Ok (SteppedCall.InotifyInit1 (DescriptorAnswer.Failed UnixError.EINVAL, linux)))
 
         let system, _, _ = instance
 
@@ -711,11 +711,12 @@ module TestInotifyInvariants =
                 | Error refusal -> failwith $"%A{call} by %d{thread}: %s{SyscallRefusal.describe refusal}"
                 | Ok stepped ->
                     match call, stepped with
-                    | _, SteppedCall.InotifyInit1 (Ok (_, after))
+                    | _, SteppedCall.InotifyInit1 (DescriptorAnswer.Returned _, after)
                     | _, SteppedCall.InotifyAddWatch (_, after)
                     | _, SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Failed _), after)
-                    | _, SteppedCall.Dup (SyscallAnswer.Completed _, after) -> system <- after
-                    | _, SteppedCall.InotifyInit1 (Error UnixError.EMFILE) -> ()
+                    | _, SteppedCall.Dup (DescriptorAnswer.Returned _, after) -> system <- after
+                    | _, SteppedCall.InotifyInit1 (DescriptorAnswer.Failed UnixError.EMFILE, after) ->
+                        after |> shouldEqual system
                     | Syscall.InotifyRmWatch (fd, _), SteppedCall.InotifyRmWatch (_, after) ->
                         system <- after
 
@@ -741,7 +742,7 @@ module TestInotifyInvariants =
                         // sleep.
                         elif not (wouldSleep fd) then
                             failwith $"the leader's read of %d{fd} slept"
-                    | Syscall.Dup fd, SteppedCall.Dup (SyscallAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
+                    | Syscall.Dup fd, SteppedCall.Dup (DescriptorAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
                         ()
                     | Syscall.Close fd, SteppedCall.Close (answer, after) ->
                         if asleep && answer = SyscallAnswer.Completed 0L then

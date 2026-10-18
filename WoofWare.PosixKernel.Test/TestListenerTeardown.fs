@@ -202,7 +202,7 @@ module TestListenerTeardown =
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                    | Ok (Ok created) -> created
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 // The probe's registration is level-triggered, which this
@@ -414,7 +414,7 @@ module TestListenerTeardown =
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                    | Ok (Ok created) -> created
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 let interest =

@@ -201,8 +201,8 @@ let path (text : string) : PathArgumentBytes =
 let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 
 match UnixNamespace.openPath leader (path "/etc/hostname") 0 0 system with
-| SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
-    match UnixReadWrite.read leader (int fd) UserBuffer.Mapped 64UL system with
+| OpenOutcome.Answered (DescriptorAnswer.Returned fd), system ->
+    match UnixReadWrite.read leader fd UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
         printf "%s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
     | outcome, _ -> failwith $"unexpected read: %A{outcome}"
@@ -248,7 +248,7 @@ A syscall answers what the kernel does: perhaps an errno (a `UnixError`), or the
 A call that can end the process answers a `ProcessFate`: `ProcessFate.Continues (outcome, system)`, with the call's own outcome and the system the process carries on as, or `ProcessFate.ProcessEnded (ended, system)`, with how the process ended and the system without it, since the process is gone from the system as it ends (see "Threads, and the end of the process").
 Those calls are a write or `send` that raises `SIGPIPE`, `kill` and `pthreadKill`, the return to user mode, and a thread's exit.
 
-A few functions answer a `Result` whose `Error` is an errno: those whose own failure is a value the client reports to the process, such as `UnixSocket.socket`, `UnixPoll.epollCreate1`, `UnixSignal.kill` and `UnixClock.clockGettime`, and the four that answer nothing else, `UnixSignal.sigaction`, `UnixSignal.sigactionSyscall`, `UnixSignal.pthreadSigmask` and `UnixSignal.rtSigprocmask`.
+A few functions answer a `Result` whose `Error` is an errno: those whose own failure is a value the client reports to the process, such as `UnixSignal.kill` and `UnixClock.clockGettime`, and the four that answer nothing else, `UnixSignal.sigaction`, `UnixSignal.sigactionSyscall`, `UnixSignal.pthreadSigmask` and `UnixSignal.rtSigprocmask`.
 A function that cannot fail, such as `UnixClock.gettimeofday`, answers without a `Result` at all.
 The errors of the parsers that build a value, such as `UnixByteString.ofString`'s, say what was wrong with the input.
 
@@ -278,8 +278,8 @@ let caller = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 // socket(AF_INET, SOCK_STREAM, 0), in Linux's numbering.
 let fd, socketSystem =
     match UnixSocket.socket caller 2 1 0 system with
-    | Ok (fd, system) -> fd, system
-    | Error error -> failwith $"socket failed with %O{error}"
+    | DescriptorAnswer.Returned fd, system -> fd, system
+    | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
 // Linux's struct sockaddr_in: the family in host order, then the port and the address in network order.
 let sockaddr (address : byte[]) : byte[] =
@@ -347,14 +347,15 @@ A buffer is a `UserBuffer` (see "User memory"), which says whether the address t
 
 A `SyscallAnswer` is the `int64` a call returns (`SyscallAnswer.Completed`), or the errno it fails with (`SyscallAnswer.Failed`).
 A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread asleep (`SyscallOutcome.WouldBlock`), or the call interrupted by a signal (`SyscallOutcome.Interrupted`), whose end the thread's return to user mode says (see "The return to user mode").
+A `DescriptorAnswer` is the descriptor a call that makes one returns (`DescriptorAnswer.Returned`), or the errno it fails with (`DescriptorAnswer.Failed`); an `OpenOutcome` is a `DescriptorAnswer` (`OpenOutcome.Answered`) or the thread asleep (`OpenOutcome.WouldBlock`).
 
 #### Descriptors
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `dup(2)` | `UnixDescriptor.dup (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup2(2)` | `UnixDescriptor.dup2 (caller : Caller) (oldFd : int) (newFd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup3(2)` | `UnixDescriptor.dup3 (caller : Caller) (oldFd : int) (newFd : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `dup(2)` | `UnixDescriptor.dup (caller : Caller) (fd : int)` | `DescriptorAnswer * UnixSystem` |
+| `dup2(2)` | `UnixDescriptor.dup2 (caller : Caller) (oldFd : int) (newFd : int)` | `DescriptorAnswer * UnixSystem` |
+| `dup3(2)` | `UnixDescriptor.dup3 (caller : Caller) (oldFd : int) (newFd : int) (flags : int)` | `DescriptorAnswer * UnixSystem` |
 | `fcntl(2)`: `F_DUPFD`, `F_DUPFD_CLOEXEC`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL` | `UnixDescriptor.fcntl (caller : Caller) (fd : int) (command : int) (argument : int)` | `SyscallAnswer * UnixSystem` |
 | `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (caller : Caller) (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
 | `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (caller : Caller) (fd : int)` | `bool option` |
@@ -401,8 +402,8 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (caller : Caller) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `open(2)` | `UnixNamespace.openPath (caller : Caller) (path : PathArgumentBytes) (flags : int) (mode : int)` | `OpenOutcome * UnixSystem` |
+| `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `OpenOutcome * UnixSystem` |
 | `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (caller : Caller) (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
@@ -426,8 +427,8 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 | `linkat(2)` | `UnixNamespace.linkat (caller : Caller) (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int) (flags : int)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
 | `link(2)` or `linkat(2)`, given the new path | `UnixNamespace.linkWithDestination (newpath : PathArgumentBytes) (paused : PausedLink)` | `SyscallAnswer * UnixSystem` |
 
-`UnixNamespace.openPath` and `UnixNamespace.openat` answer a `SyscallOutcome` because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
-Nothing makes a FIFO yet, so both always answer `SyscallOutcome.Answered`.
+`UnixNamespace.openPath` and `UnixNamespace.openat` answer an `OpenOutcome` because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
+Nothing makes a FIFO yet, so both always answer `OpenOutcome.Answered`.
 
 A Linux directory compares names byte for byte.
 Darwin's APFS takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it: `é` as U+00E9 and as `e` followed by U+0301, or `K` and U+212A KELVIN SIGN.
@@ -461,7 +462,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `socket(2)` | `UnixSocket.socket (caller : Caller) (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
+| `socket(2)` | `UnixSocket.socket (caller : Caller) (domain : int) (socketType : int) (protocol : int)` | `DescriptorAnswer * UnixSystem` |
 | `bind(2)` | `UnixSocket.bind (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
 | `bind(2)`, given the bytes | `UnixSocket.bindWithAddress (copied : ImmutableArray<byte>) (paused : PausedBind)` | `BindAnswer * UnixSystem` |
 | `connect(2)` | `UnixConnection.connect (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
@@ -502,10 +503,10 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 | Call | Function | Answers |
 | --- | --- | --- |
 | `poll(2)` | `UnixPoll.poll (caller : Caller) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
-| `epoll_create1(2)` | `UnixPoll.epollCreate1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `epoll_create1(2)` | `UnixPoll.epollCreate1 (caller : Caller) (flags : int)` | `DescriptorAnswer * UnixSystem` |
 | `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
 | `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
-| Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
+| Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `DescriptorAnswer * UnixSystem` |
 | Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
@@ -534,7 +535,7 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (caller : Caller) (flags : int)` | `DescriptorAnswer * UnixSystem` |
 | `inotify_add_watch(2)` | `UnixInotify.inotifyAddWatch (caller : Caller) (fd : int) (mask : uint32)` | `CallProgress<PausedInotifyAddWatch, SyscallAnswer * UnixSystem>` |
 | `inotify_add_watch(2)`, given the path | `UnixInotify.inotifyAddWatchWithPath (path : PathArgumentBytes) (paused : PausedInotifyAddWatch)` | `SyscallAnswer * UnixSystem` |
 | `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (caller : Caller) (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
@@ -714,7 +715,7 @@ let listener, opened =
     let installed = make first (Syscall.SigAction (usr1, Some restarting)) booted
 
     match UnixSystem.step first (Syscall.Socket (2, 1, 0)) installed with
-    | SteppedCall.Socket (Ok (fd, system)) -> fd, snd (returnToUser first system)
+    | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, snd (returnToUser first system)
     | stepped -> failwith $"unexpected from socket: %A{stepped}"
 
 // It listens on the socket, which nothing will connect to, and starts thread 1, which
@@ -1182,9 +1183,9 @@ let first = Seq.exactlyOne (UnixSystem.processIds booted)
 let second, both = UnixSystem.launch launch booted
 
 // dup(1), made by thread 0 of the process `pid`.
-let dup (pid : ProcessId) (system : UnixSystem<int, unit>) : int64 * UnixSystem<int, unit> =
+let dup (pid : ProcessId) (system : UnixSystem<int, unit>) : int * UnixSystem<int, unit> =
     match UnixSystem.step (Caller.make pid 0) (Syscall.Dup 1) system with
-    | SteppedCall.Dup (SyscallAnswer.Completed fd, system) -> fd, system
+    | SteppedCall.Dup (DescriptorAnswer.Returned fd, system) -> fd, system
     | _ -> failwith "unexpected from dup"
 
 // Each process numbers its own descriptors, so each gets 3.

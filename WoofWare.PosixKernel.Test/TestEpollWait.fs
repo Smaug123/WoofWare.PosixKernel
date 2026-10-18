@@ -48,7 +48,7 @@ module TestEpollWait =
 
     let private createEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-        | Ok (Ok (fd, system)) -> fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"expected an epoll instance, got %A{other}"
 
     /// A Linux-flavoured system with threads 1 to 6 registered, a listening socket

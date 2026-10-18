@@ -297,6 +297,16 @@ module TestDirectorySize =
         | SyscallAnswer.Failed error ->
             failwith $"%s{what} failed with %O{error}, but the history is valid by construction"
 
+    let private openedFd
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error ->
+            failwith $"%s{what} failed with %O{error}, but the history is valid by construction"
+
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
@@ -307,9 +317,9 @@ module TestDirectorySize =
         | DirectorySizeOp.Create path ->
             let fd, system =
                 Answered.openPath (rooted path) creating 0o644 system
-                |> completed $"creat %s{path}"
+                |> openedFd $"creat %s{path}"
 
-            closeFd (int fd) system
+            closeFd fd system
         | DirectorySizeOp.MakeDirectory path ->
             Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
             |> completed $"mkdir %s{path}"
@@ -349,9 +359,9 @@ module TestDirectorySize =
             |> applyToModel (DirectorySizeOp.MakeDirectory "o")
 
         let fd, system =
-            Answered.openPath (rooted "d") reading 0 system |> completed "open d"
+            Answered.openPath (rooted "d") reading 0 system |> openedFd "open d"
 
-        int fd, system
+        fd, system
 
     let private modelSize (system : UnixSystem<int, string>) : int64 =
         match

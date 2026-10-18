@@ -318,9 +318,12 @@ module TestPollEntryCount =
             match SimulatedUnixPlatform.flavour platform with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.epollCreate1 caller 0 system with
-                | Ok (fd, system) -> fd, system
-                | Error error -> failwith $"epoll_create1: %O{error}"
-            | SimulatedUnixFlavour.Darwin -> UnixKqueue.kqueue caller system
+                | DescriptorAnswer.Returned fd, system -> fd, system
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
+            | SimulatedUnixFlavour.Darwin ->
+                match UnixKqueue.kqueue caller system with
+                | DescriptorAnswer.Returned fd, system -> fd, system
+                | DescriptorAnswer.Failed error, _ -> failwith $"kqueue: %O{error}"
 
         system, writeEnd, queue
 

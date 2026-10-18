@@ -28,8 +28,8 @@ module internal DirectoryReading =
         : Result<int, UnixError> * UnixSystem<'Thread, 'Handler>
         =
         match Answered.openPath path flags 0 system with
-        | SyscallAnswer.Completed fd, system -> Ok (int fd), system
-        | SyscallAnswer.Failed error, system -> Error error, system
+        | DescriptorAnswer.Returned fd, system -> Ok fd, system
+        | DescriptorAnswer.Failed error, system -> Error error, system
 
     /// Every entry `fd` yields until end-of-directory. A failure or a refusal
     /// fails the fixture, as does a position that never reaches the end.

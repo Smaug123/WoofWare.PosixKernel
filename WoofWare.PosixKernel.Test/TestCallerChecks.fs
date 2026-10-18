@@ -740,7 +740,7 @@ module TestCallerChecks =
             // Out of the way of the descriptors the calls above name.
             let view =
                 match UnixDescriptor.dup2 leader listener listenerFd view with
-                | SyscallAnswer.Completed _, view -> UnixDescriptor.close leader listener view |> snd
+                | DescriptorAnswer.Returned _, view -> UnixDescriptor.close leader listener view |> snd
                 | other -> failwith $"dup2 of the listener: %A{other}"
 
             match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
@@ -760,13 +760,16 @@ module TestCallerChecks =
             match SimulatedUnixPlatform.flavour platform with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.epollCreate1 leader 0 view with
-                | Ok (epoll, view) ->
+                | DescriptorAnswer.Returned epoll, view ->
                     match UnixPoll.epollWait waiter epoll 1 UserBuffer.Mapped -1 view with
                     | EpollWaitOutcome.WouldBlock _, view -> view
                     | other -> failwith $"the epoll_wait: expected it to sleep, got %A{other}"
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
             | SimulatedUnixFlavour.Darwin ->
-                let kq, view = UnixKqueue.kqueue leader view
+                let kq, view =
+                    match UnixKqueue.kqueue leader view with
+                    | DescriptorAnswer.Returned kq, view -> kq, view
+                    | DescriptorAnswer.Failed error, _ -> failwith $"kqueue: %O{error}"
 
                 match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null view with
                 | KeventOutcome.WouldBlock _, view -> view

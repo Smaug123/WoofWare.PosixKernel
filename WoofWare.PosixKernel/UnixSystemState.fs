@@ -623,6 +623,18 @@ type SyscallAnswer =
     /// descriptor table before it can discover the conflict that fails it.
     | Failed of error : UnixError
 
+/// What a call that makes a descriptor answered: `open(2)` and `openat(2)`
+/// (inside an `OpenOutcome`), `dup(2)`, `dup2(2)`, `dup3(2)`, `socket(2)`,
+/// `epoll_create1(2)`, `inotify_init1(2)` and `kqueue(2)`.
+[<RequireQualifiedAccess>]
+type DescriptorAnswer =
+    /// The entry point returns `fd`, which now names the open file
+    /// description the call made or duplicated.
+    | Returned of fd : int
+    /// The entry point returns its failure sentinel, and the client stores
+    /// `error` wherever its libc keeps errno.
+    | Failed of error : UnixError
+
 /// A process that has ended, and how. Only a syscall that ends the process
 /// makes one, and answers it beside the system without the process
 /// (`ProcessFate.ProcessEnded`, `UnixThreadLifecycle.exitGroup`).

@@ -477,6 +477,11 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> "ok"
         | SyscallAnswer.Failed error -> $"%A{error}"
 
+    let private descriptorText (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned _ -> "ok"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
+
     let private statText (policy : SymlinkPolicy) (p : string) (system : UnixSystem<int, string>) : string =
         match
             UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofPath (path p)) system
@@ -505,7 +510,7 @@ module TestProtectedFiles =
         : string * UnixSystem<int, string>
         =
         match OpenFlagWords.openPath (PathArg.ofPath (path p)) flags 0o644 system with
-        | Ok (answer, after) -> answerText answer, after
+        | Ok (answer, after) -> descriptorText answer, after
         | Error refusal -> failwith $"open(%s{p}) was refused: %A{refusal}"
 
     let private exists (p : string) (system : UnixSystem<int, string>) : bool =
@@ -793,6 +798,11 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> WalkOutcome.Answered None
         | SyscallAnswer.Failed error -> WalkOutcome.Answered (Some error)
 
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : WalkOutcome =
+        match answer with
+        | DescriptorAnswer.Returned _ -> WalkOutcome.Answered None
+        | DescriptorAnswer.Failed error -> WalkOutcome.Answered (Some error)
+
     let private ofStep (result : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : WalkOutcome =
         match result with
         | Ok stepped ->
@@ -820,9 +830,9 @@ module TestProtectedFiles =
         | Error (ReadLinkRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
-    let private ofOpen (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
+    let private ofOpen (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
         match result with
-        | Ok (answer, _) -> ofSyscallAnswer answer
+        | Ok (answer, _) -> ofDescriptorAnswer answer
         | Error (OpenRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 

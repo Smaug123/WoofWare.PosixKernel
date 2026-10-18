@@ -206,6 +206,13 @@ module internal FcntlWorld =
         | SyscallAnswer.Completed value -> $"ok %d{value}"
         | SyscallAnswer.Failed error -> $"%A{error}"
 
+    /// A descriptor-making call's answer as the probe prints a number: "ok <n>"
+    /// or the errno.
+    let descriptorNumber (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned fd -> $"ok %d{fd}"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
+
     /// `F_GETFL` of `fd`, as the probe prints it.
     let statusFlags (fd : int) (system : UnixSystem<int, string>) : string = word (fst (fcntl fd GetFl 0 system))
 
@@ -215,7 +222,7 @@ module internal FcntlWorld =
     /// `open(2)` of `path` with the raw word `flags`, which must succeed.
     let openRaw (flags : int) (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match OpenOutcomes.openPath (PathArg.ofText path) flags 0o644 system with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"open(%s{path}, 0x%x{flags}): %A{other}"
 
     /// `open(2)` of `path` with `flags`, which must succeed.
@@ -323,7 +330,7 @@ module internal FcntlWorld =
                 NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Default
 
             match UnixSocket.trySocket (Callers.leader system) domain (kind ||| extra) protocol system with
-            | Ok (Ok created) -> Some created
+            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
             | other -> failwith $"socket with 0x%x{extra}: %A{other}"
 
         let socket domain kind =
@@ -403,15 +410,16 @@ module internal FcntlWorld =
         | "accepted-from-nonblocking" -> Some (accepted 5000us true system)
         | "port" when linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> Some created
+            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
             | other -> failwith $"epoll_create1(0): %A{other}"
         | "port-cloexec" when linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) LinuxEpollCloseOnExec system with
-            | Ok (Ok created) -> Some created
+            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
             | other -> failwith $"epoll_create1(EPOLL_CLOEXEC): %A{other}"
         | "port" ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok created -> Some created
+            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue: %O{error}"
             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
         | "null-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)
         | "null-wronly" when linux -> Some (openWith (opening FileAccessMode.WriteOnly) "/dev/null" system)

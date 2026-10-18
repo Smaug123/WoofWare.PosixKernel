@@ -2291,7 +2291,7 @@ module TestShutdownAgainstHost =
                 | SimulatedUnixFlavour.Linux ->
                     let ep, s =
                         match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                        | Ok (Ok created) -> created
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let s =

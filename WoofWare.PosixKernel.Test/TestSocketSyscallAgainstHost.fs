@@ -89,8 +89,8 @@ module TestSocketSyscallAgainstHost =
                 let library =
                     match UnixSocket.trySocket (Callers.leader system) domain kind protocol system with
                     | Error _ -> None
-                    | Ok (Error error) -> Some (Error (UnixError.toRawErrnoUnder numbering error))
-                    | Ok (Ok (fd, after)) ->
+                    | Ok (DescriptorAnswer.Failed error, _) -> Some (Error (UnixError.toRawErrnoUnder numbering error))
+                    | Ok (DescriptorAnswer.Returned fd, after) ->
                         let socket =
                             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
                             | Some (OpenFileTarget.Socket socketId) ->

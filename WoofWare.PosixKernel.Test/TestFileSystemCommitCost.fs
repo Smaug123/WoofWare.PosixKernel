@@ -46,7 +46,7 @@ module TestFileSystemCommitCost =
             | SimulatedUnixFlavour.Darwin -> 0x2 ||| 0x200
 
         match UnixNamespace.openat caller (AtDirectory.atFdCwd flavour) (PathArg.ofText path) flags 0o644 system with
-        | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system -> int fd, resume caller system
+        | OpenOutcome.Answered (DescriptorAnswer.Returned fd), system -> fd, resume caller system
         | outcome, _ -> failwith $"expected the open of %s{path} to succeed: %A{outcome}"
 
     let private close (caller : Caller<int>) (fd : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
@@ -62,8 +62,8 @@ module TestFileSystemCommitCost =
     /// `caller` makes an inotify instance (Linux), and answers its descriptor.
     let private inotify (caller : Caller<int>) (system : UnixSystem<int, unit>) : int * UnixSystem<int, unit> =
         match UnixInotify.inotifyInit1 caller 0 system with
-        | Ok (fd, system) -> fd, resume caller system
-        | Error error -> failwith $"expected inotify_init1 to make an instance: %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, resume caller system
+        | DescriptorAnswer.Failed error, _ -> failwith $"expected inotify_init1 to make an instance: %O{error}"
 
     /// `caller`'s instance `fd` watches `path` for `IN_MODIFY | IN_ATTRIB |
     /// IN_DELETE_SELF`.

@@ -107,7 +107,8 @@ module TestCallHolds =
             Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok (_, system) -> system
+            | Ok (DescriptorAnswer.Returned _, system) -> system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
             | Error refusal -> failwith $"kqueue: %A{refusal}"
 
     /// The first of the process's threads parked in no call, to make a call

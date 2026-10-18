@@ -137,7 +137,7 @@ module internal OpenFlagWords =
         (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         OpenOutcomes.openPathIn pid path (encode (UnixSystem.platform system) flags) mode system
 
@@ -147,6 +147,6 @@ module internal OpenFlagWords =
         (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         openPathIn (Lone.pid system) path flags mode system

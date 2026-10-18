@@ -446,7 +446,7 @@ module TestHugeTimeoutMeasured =
 
             let epfd, system =
                 match step pid 0 (Syscall.EpollCreate1 0) system with
-                | SteppedCall.EpollCreate1 (Ok (epfd, system)) -> epfd, system
+                | SteppedCall.EpollCreate1 (DescriptorAnswer.Returned epfd, system) -> epfd, system
                 | other -> failwith $"epoll_create1 answered %A{Stepped.view other}"
 
             let started =
@@ -465,7 +465,7 @@ module TestHugeTimeoutMeasured =
 
             let kq, system =
                 match step pid 0 Syscall.Kqueue system with
-                | SteppedCall.Kqueue (kq, system) -> kq, system
+                | SteppedCall.Kqueue (DescriptorAnswer.Returned kq, system) -> kq, system
                 | other -> failwith $"kqueue answered %A{Stepped.view other}"
 
             let timeout =

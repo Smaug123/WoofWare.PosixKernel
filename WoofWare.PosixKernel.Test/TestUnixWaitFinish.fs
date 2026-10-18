@@ -343,8 +343,8 @@ module TestUnixWaitFinish =
 
             let epoll, system =
                 match UnixPoll.epollCreate1 leader 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
 
             let system =
                 match
@@ -403,7 +403,7 @@ module TestUnixWaitFinish =
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
                 match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, returned system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, returned system
                 | other -> failwith $"open: %A{other}"
 
             let holder, system = opened system
@@ -464,8 +464,8 @@ module TestUnixWaitFinish =
         | Sleep.InotifyRead ->
             let fd, system =
                 match UnixInotify.inotifyInit1 (Callers.leader system) 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"inotify_init1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"inotify_init1: %O{error}"
 
             let system =
                 match Eager.tryInotifyAddWatch fd (PathArg.ofText "/") 0x100u system with

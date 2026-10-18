@@ -840,7 +840,7 @@ module UnixNamespace =
         (flags : OpenFlags)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
         // Measured (`openat-limit.c`): Linux's empty path is ENOENT even with
         // no descriptor left, since its copy-in refuses it; Darwin has
@@ -848,7 +848,7 @@ module UnixNamespace =
         match
             (SimulatedUnixPlatform.startingPointRules system.Machine.UnixPlatform).EmptyPath, UnixPath.isEmpty path
         with
-        | EmptyPathRule.NoSuchEntryBeforeDescriptor, true -> Ok (SyscallAnswer.Failed UnixError.ENOENT, system)
+        | EmptyPathRule.NoSuchEntryBeforeDescriptor, true -> Ok (DescriptorAnswer.Failed UnixError.ENOENT, system)
         | EmptyPathRule.NoSuchEntryBeforeDescriptor, false
         | EmptyPathRule.NoSuchEntryAfterDescriptor, _ ->
 
@@ -887,7 +887,7 @@ module UnixNamespace =
             (through : ReachedThrough)
             (inode : InodeNumber)
             (system : ProcessView<'Thread, 'Handler>)
-            : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>
+            : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>
             =
             let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
             let descriptorFlags = DescriptorFlags.closingOnExec flavour flags.CloseOnExec
@@ -939,7 +939,7 @@ module UnixNamespace =
                         flags.Access
                         (UnixSystemState.fileDescriptors system)
 
-            Ok (SyscallAnswer.Completed (int64 fd), UnixSystemState.withFileDescriptors registry system)
+            Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
         if
             flags.Directory
@@ -965,12 +965,12 @@ module UnixNamespace =
                     path
                     system
             with
-            | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
+            | Error (PathFailure.Errno error) -> Ok (DescriptorAnswer.Failed error, system)
             | Error (PathFailure.Refused refusal) -> Error (OpenRefusal.Path refusal)
             | Ok resolution ->
 
             match OpenDirRules.verdict credentials resolution system.Machine.FileSystem with
-            | OpenDirVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
+            | OpenDirVerdict.Refuse error -> Ok (DescriptorAnswer.Failed error, system)
             | OpenDirVerdict.Open inode ->
                 opened false (ReachedThrough.ofResolved resolution.Target system.Machine.FileSystem) inode system
         else
@@ -993,7 +993,7 @@ module UnixNamespace =
                 TrailingSeparatorPolicy.Demand
 
         match UnixPathResolution.resolvePathFull directory policy trailingSeparatorPolicy path system with
-        | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
+        | Error (PathFailure.Errno error) -> Ok (DescriptorAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (OpenRefusal.Path refusal)
         | Ok resolution ->
 
@@ -1008,7 +1008,7 @@ module UnixNamespace =
                 resolution
                 system.Machine.FileSystem
         with
-        | CreatingOpenVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
+        | CreatingOpenVerdict.Refuse error -> Ok (DescriptorAnswer.Failed error, system)
         | CreatingOpenVerdict.Create (directory, name) ->
             let inode, system =
                 createRegularFile "UnixNamespace.openPath" directory name mode system
@@ -1028,7 +1028,7 @@ module UnixNamespace =
             // above selects: without it the resolver would have followed the link
             // (or failed ENOENT on a dangling one). ELOOP rather than anything
             // more specific is what both Unixes answer.
-            Ok (SyscallAnswer.Failed UnixError.ELOOP, system)
+            Ok (DescriptorAnswer.Failed UnixError.ELOOP, system)
         | InodeContent.Directory _ when FileAccessMode.permitsWrite flags.Access || flags.Truncate ->
             // Measured on both flavours, for `O_WRONLY` and `O_RDWR` alike, and
             // at uid 0 as well as uid 1000: a directory cannot be opened for
@@ -1044,7 +1044,7 @@ module UnixNamespace =
             // includes `O_CREAT | O_RDONLY | O_TRUNC` on the flavour whose
             // `RefusesExistingDirectory` is false, where the verdict is therefore
             // `OpenExisting` on the directory itself.
-            Ok (SyscallAnswer.Failed UnixError.EISDIR, system)
+            Ok (DescriptorAnswer.Failed UnixError.EISDIR, system)
         | InodeContent.Socket _ ->
             failwith
                 $"UnixNamespace.openPath: resolution returned inode %O{inode}, which is a socket. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
@@ -1096,7 +1096,7 @@ module UnixNamespace =
                 && PermissionBits.deniedTo standing AccessRequest.Write permissionBits)
 
         if denied then
-            Ok (SyscallAnswer.Failed UnixError.EACCES, system)
+            Ok (DescriptorAnswer.Failed UnixError.EACCES, system)
         else
 
         // Only now, with every refusal discharged: measured, a refused open
@@ -1143,15 +1143,15 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
+        : Result<OpenOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
         // No open sleeps yet: nothing can make an object whose open waits.
         let answered
-            (result : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>)
-            : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
+            (result : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, OpenRefusal>)
+            : Result<OpenOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
             =
             result
-            |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
+            |> Result.map (fun (answer, system) -> OpenOutcome.Answered answer, system)
 
         // Before the path is copied in: measured (`open-flags.c`), each
         // kernel screens the word whatever the path pointer is.
@@ -1173,11 +1173,11 @@ module UnixNamespace =
 
         match OpenFlagWord.decode system.Machine.UnixPlatform flags with
         | OpenFlagWord.Decoding.Refused refusal -> Error refusal
-        | OpenFlagWord.Decoding.Fails error -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
+        | OpenFlagWord.Decoding.Fails error -> Ok (OpenOutcome.Answered (DescriptorAnswer.Failed error), system)
         | OpenFlagWord.Decoding.Decoded flags ->
 
         match UnixPathResolution.copyIn path system with
-        | Error error -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
+        | Error error -> Ok (OpenOutcome.Answered (DescriptorAnswer.Failed error), system)
         | Ok path -> openPathParsed directory path flags mode system |> answered
 
     /// `tryOpenPath` once `Entry` has admitted its caller.
@@ -1186,7 +1186,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
+        : Result<OpenOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
         openFrom AtDirectory.CurrentDirectory path flags mode system
 
@@ -1197,7 +1197,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<OpenOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         Entry.call
             "UnixNamespace.openPath"
@@ -1211,12 +1211,12 @@ module UnixNamespace =
     /// makes, and return a descriptor onto what it names. It is `openat` from
     /// `AT_FDCWD`.
     ///
-    /// The answer is a `SyscallOutcome` because an open can sleep on a real
+    /// The answer is an `OpenOutcome` because an open can sleep on a real
     /// kernel: a blocking open of one end of a FIFO waits until the other end
     /// is opened. Nothing in this version makes a FIFO, so every open is
-    /// answered at once (`SyscallOutcome.Answered`), and never `WouldBlock` or
-    /// `Interrupted`. `caller` must be one of the process's threads, and must not
-    /// already be parked: a thread blocks in one syscall at a time.
+    /// answered at once (`OpenOutcome.Answered`), and never `WouldBlock`.
+    /// `caller` must be one of the process's threads, and must not already be
+    /// parked: a thread blocks in one syscall at a time.
     ///
     /// `flags` is raw, in the simulated flavour's own `<fcntl.h>` numbering,
     /// which differs between Linux's architectures as well as between
@@ -1255,7 +1255,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
+        : OpenOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryOpenPath caller path flags mode system
         |> Refusal.orRaise "UnixNamespace.openPath" OpenRefusal.kind OpenRefusal.describe
@@ -1267,7 +1267,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
+        : Result<OpenOutcome * ProcessView<'Thread, 'Handler>, OpenRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         openFrom (AtDirectory.decode flavour dirfd) path flags mode system
@@ -1280,7 +1280,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<OpenOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         Entry.call
             "UnixNamespace.openat"
@@ -1308,7 +1308,7 @@ module UnixNamespace =
         (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
+        : OpenOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryOpenat caller dirfd path flags mode system
         |> Refusal.orRaise "UnixNamespace.openat" OpenRefusal.kind OpenRefusal.describe

@@ -104,6 +104,11 @@ module TestDeviceFileSystem =
         | SyscallAnswer.Failed error -> Some error
         | SyscallAnswer.Completed _ -> None
 
+    let private openFailed (answer : DescriptorAnswer * UnixSystem<int, string>) : UnixError option =
+        match fst answer with
+        | DescriptorAnswer.Failed error -> Some error
+        | DescriptorAnswer.Returned _ -> None
+
     /// A name that is no device's: generated, so that no particular unlisted
     /// name is all that is checked.
     let private unknownNameGen : Gen<string> =
@@ -513,7 +518,7 @@ module TestDeviceFileSystem =
 
         let fd, system =
             match Answered.openPath (UnixPath.parseOrFail context "/dev") DirectoryReading.flags 0 system with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"opening /dev: %A{other}"
 
         UnixPathResolution.fstatfs (Callers.leader system) fd system
@@ -782,7 +787,7 @@ module TestDeviceFileSystem =
                 0o644
                 root
         with
-        | Ok answer -> failed answer |> shouldEqual (Some UnixError.EEXIST)
+        | Ok answer -> openFailed answer |> shouldEqual (Some UnixError.EEXIST)
         | Error refusal -> failwith $"refused: %s{OpenRefusal.describe refusal}"
 
     [<Test>]
@@ -812,7 +817,7 @@ module TestDeviceFileSystem =
                     0
                     system
             with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"opening /f: %A{other}"
 
         UnixDescriptor.tryFileClone (Callers.leader system) file dev system
@@ -839,7 +844,7 @@ module TestDeviceFileSystem =
                 0
                 system
         with
-        | Ok answer -> failed answer |> shouldEqual (Some UnixError.ENOTDIR)
+        | Ok answer -> openFailed answer |> shouldEqual (Some UnixError.ENOTDIR)
         | Error refusal -> failwith $"refused: %s{OpenRefusal.describe refusal}"
 
         Eager.tryAccess (PathArg.ofText "/dev/urandom") 6 system

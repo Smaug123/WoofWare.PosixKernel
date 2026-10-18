@@ -137,7 +137,7 @@ module TestSyscallInterruption =
 
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (fd, system)) -> fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"expected an epoll instance, got %A{other}"
 
             match

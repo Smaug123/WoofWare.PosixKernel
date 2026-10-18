@@ -946,16 +946,15 @@ module TestMultiProcessFuzz =
 
         result
 
-    /// `logged`, for a call that answers an errno as its `Error`, or what it
-    /// made and the system.
-    let private loggedMade<'a, 'r>
+    /// `logged`, for a call that makes a descriptor.
+    let private loggedMade<'r>
         (log : string -> unit)
-        (result : Result<Result<'a * UnixSystem<int, string>, UnixError>, 'r>)
-        : Result<Result<'a * UnixSystem<int, string>, UnixError>, 'r>
+        (result : Result<DescriptorAnswer * UnixSystem<int, string>, 'r>)
+        : Result<DescriptorAnswer * UnixSystem<int, string>, 'r>
         =
         match result with
-        | Ok (Ok (made, _)) -> log $"  made %A{made}"
-        | Ok (Error error) -> log $"  failed %A{error}"
+        | Ok (DescriptorAnswer.Returned made, _) -> log $"  made %A{made}"
+        | Ok (DescriptorAnswer.Failed error, _) -> log $"  failed %A{error}"
         | Error refusal -> log $"  refused %A{refusal}"
 
         result
@@ -1349,8 +1348,10 @@ module TestMultiProcessFuzz =
             |> answered
         | Op.EpollCreate ->
             match UnixPoll.tryEpollCreate1 (Caller.make pid thread) 0 view |> loggedMade log with
-            | Ok (Ok (_, after)) -> Made.Answered after
-            | Ok (Error _) -> Made.Answered view
+            | Ok (DescriptorAnswer.Returned _, after) -> Made.Answered after
+            | Ok (DescriptorAnswer.Failed _, after) ->
+                after |> shouldEqual view
+                Made.Answered after
             | Error _ -> Made.Refused
         | Op.EpollAdd (epoll, fd) ->
             match pick epoll (ofKind pid isEpoll view), pick fd sockets with
@@ -1494,8 +1495,10 @@ module TestMultiProcessFuzz =
                 UnixInotify.tryInotifyInit1 (Caller.make pid thread) (if nonBlocking then 0x800 else 0) view
                 |> loggedMade log
             with
-            | Ok (Ok (_, after)) -> Made.Answered after
-            | Ok (Error _) -> Made.Answered view
+            | Ok (DescriptorAnswer.Returned _, after) -> Made.Answered after
+            | Ok (DescriptorAnswer.Failed _, after) ->
+                after |> shouldEqual view
+                Made.Answered after
             | Error _ -> Made.Refused
         | Op.InotifyWatch (inotify, dir) ->
             match pick inotify (ofKind pid isInotify view) with
@@ -1530,8 +1533,10 @@ module TestMultiProcessFuzz =
         | Op.InotifyAwait dir ->
             match UnixInotify.tryInotifyInit1 (Caller.make pid thread) 0 view |> loggedMade log with
             | Error _ -> Made.Refused
-            | Ok (Error _) -> Made.Answered view
-            | Ok (Ok (fd, view)) ->
+            | Ok (DescriptorAnswer.Failed _, after) ->
+                after |> shouldEqual view
+                Made.Answered after
+            | Ok (DescriptorAnswer.Returned fd, view) ->
 
             match
                 Eager.tryInotifyAddWatchAs
@@ -1981,7 +1986,7 @@ module TestMultiProcessFuzz =
             | SimulatedUnixFlavour.Linux ->
                 let epoll, view =
                     match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid view)) 0 view with
-                    | Ok (Ok created) -> created
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
