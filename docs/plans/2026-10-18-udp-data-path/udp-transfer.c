@@ -27,7 +27,8 @@
 //   Q  several sockets on one port
 //   S  sleeping receivers: how many one datagram wakes
 //   W  other flags
-//   X  how often sends to a port nobody holds raise the ICMP error
+//   X  how often sends to a port nobody holds raise the ICMP error, and which
+//      earlier error suppresses one
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -1706,6 +1707,41 @@ static void section_x(void)
         int second = sock_error(c);
         printf("X7 an unconnected sendto an unheld port (SO_ERROR %d), then connect to it and send 20 ms later: SO_ERROR %d\n", first, second);
         close(c);
+    }
+    // X8: interleaved senders. Each step is a send by one of up to three
+    // sockets, each connected to its own port of P, Q and R, nobody holding
+    // any; 8 ms later the sender's SO_ERROR is read (and taken), and printed
+    // as 1 if it held the error. "A>P" is socket A, connected to P.
+    {
+        static const struct { const char *name; int dest[3]; int steps; int who[4]; } rows[] = {
+            { "A>P A>P A>P", { 0 }, 3, { 0, 0, 0 } },
+            { "A>P B>P A>P", { 0, 0 }, 3, { 0, 1, 0 } },
+            { "A>P B>Q A>P", { 0, 1 }, 3, { 0, 1, 0 } },
+            { "A>P A>P B>P A>P", { 0, 0 }, 4, { 0, 0, 1, 0 } },
+            { "A>P B>Q C>R A>P", { 0, 1, 2 }, 4, { 0, 1, 2, 0 } },
+            { "A>P B>Q A>P B>Q", { 0, 1 }, 4, { 0, 1, 0, 1 } },
+        };
+        for (unsigned row = 0; row < sizeof rows / sizeof *rows; row++) {
+            usleep(300000);
+            uint16_t ports[3] = { unheld_port(), unheld_port(), unheld_port() };
+            int socks[3] = { -1, -1, -1 };
+            int nsock = 0;
+            for (int k = 0; k < rows[row].steps; k++) if (rows[row].who[k] + 1 > nsock) nsock = rows[row].who[k] + 1;
+            for (int i = 0; i < nsock; i++) {
+                socks[i] = bound();
+                struct sockaddr_in to = lo(ports[rows[row].dest[i]]);
+                connect(socks[i], (struct sockaddr *)&to, sizeof to);
+            }
+            printf("X8 %s:", rows[row].name);
+            for (int k = 0; k < rows[row].steps; k++) {
+                int w = rows[row].who[k];
+                send(socks[w], "x", 1, 0);
+                usleep(8000);
+                printf(" %c%d", 'A' + w, sock_error(socks[w]) != 0);
+            }
+            printf("\n");
+            for (int i = 0; i < nsock; i++) close(socks[i]);
+        }
     }
     {
         usleep(300000);

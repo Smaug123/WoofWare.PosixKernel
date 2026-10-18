@@ -319,16 +319,22 @@ with ICMP "port unreachable".
   and likewise whether L2's second send, made at once, met it.
 - **How often** (X). **Linux** raises an error for every such datagram: sends
   15 ms apart, sends every 40 ms, and 80 sockets sending at once each got one.
-  **Darwin** answers a datagram with the error only if 100 ms have passed
-  since one on the same four-tuple (local address and port, remote address and
-  port) was answered.
+  **Darwin** keeps one record, for the whole machine, of the last datagram it
+  answered with the error. It answers a datagram unless that datagram is on
+  the record's four-tuple (local address and port, remote address and port)
+  and less than 100 ms have passed since.
   - The boundary is at 100 ms, to within Darwin's delivery jitter. A second
     send 100 ms or more after the first always raised an error (5 of 5, in
     every run). One 95 or 98 ms after raised one at most once in 5, and one
     85 ms or less after, never.
   - A send the window suppresses does not extend it. Sends every 40 ms raised
     errors at 0, 120, 240 and 360 ms.
-  - **It belongs to the four-tuple, not the socket** (X6):
+  - **It is one record, not one per four-tuple** (X8). With sockets A, B and C
+    connected to unheld ports P, Q and R, `A>P A>P B>P A>P` raises, suppresses,
+    raises, raises. B's datagram replaced the record, so A's third is answered
+    within the window. `A>P B>Q A>P B>Q` raises all four, and `A>P A>P A>P`
+    only the first.
+  - **It is of the four-tuple, not the socket** (X6):
     - a socket that reconnects to another unheld port gets an error at once;
     - one that reconnects back to the first within the window gets none;
     - a new socket bound to the same local endpoint and connected to the same
@@ -572,15 +578,14 @@ of that window.
   socket's datagram finds no receiver at all.
 - **No error** when a candidate exists but its queue is full (L13), and none
   for an unconnected sender (L4).
-- **Darwin's 100 ms window** (2.8, X) is a machine-wide table, by the kernel
-  clock, of when each four-tuple last had a datagram answered with the error.
-  It is not in any receiver, since it outlives its socket and counts
+- **Darwin's 100 ms window** (2.8, X) is one machine-wide record: the
+  four-tuple and kernel-clock time of the last datagram answered with the
+  error. It is not in any receiver, since it outlives its socket and counts
   unconnected senders.
-  - A datagram to no one is answered only once the clock has moved 100 ms
-    past its four-tuple's entry, and the answer moves the entry. A connected
-    sender then has the error pending.
-  - An entry older than 100 ms answers nothing, so it can be dropped, which
-    keeps the table to the four-tuples answered in the last 100 ms.
+  - A datagram to no one is answered unless it is on the record's four-tuple
+    and the clock has moved less than 100 ms past the record. An answer
+    replaces the record; a suppressed datagram leaves it alone.
+  - A connected sender whose datagram is answered has the error pending.
   - The clock moves only when the client says, so the answer is a function of
     the history.
 - Every reader of the slot takes it, as the 2.8 table says: one function per

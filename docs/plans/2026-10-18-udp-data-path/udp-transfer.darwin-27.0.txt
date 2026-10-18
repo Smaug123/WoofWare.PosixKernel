@@ -1,11 +1,11 @@
 Darwin 27.0.0 arm64
 ProductName:		macOS ProductVersion:		27.0.1 BuildVersion:		26A434 
 uid=501
-A1 sendto then an immediate MSG_DONTWAIT recv, 1000 trials: delivered=121 EAGAIN=879
-A2 sender unbound: before sendto getsockname=0.0.0.0:0 sendto=5 after getsockname=0.0.0.0:57339; recvfrom=5 from=127.0.0.1:57339 len=16
-A2 sender bound 0.0.0.0:0: before sendto getsockname=0.0.0.0:52620 sendto=5 after getsockname=0.0.0.0:52620; recvfrom=5 from=127.0.0.1:52620 len=16
-A2 sender bound 127.0.0.1:0: before sendto getsockname=127.0.0.1:64483 sendto=5 after getsockname=127.0.0.1:64483; recvfrom=5 from=127.0.0.1:64483 len=16
-A3 receiver bound 0.0.0.0, sent to 127.0.0.1: sendto=5 recvfrom=5 from=127.0.0.1:49333
+A1 sendto then an immediate MSG_DONTWAIT recv, 1000 trials: delivered=88 EAGAIN=912
+A2 sender unbound: before sendto getsockname=0.0.0.0:0 sendto=5 after getsockname=0.0.0.0:49601; recvfrom=5 from=127.0.0.1:49601 len=16
+A2 sender bound 0.0.0.0:0: before sendto getsockname=0.0.0.0:64175 sendto=5 after getsockname=0.0.0.0:64175; recvfrom=5 from=127.0.0.1:64175 len=16
+A2 sender bound 127.0.0.1:0: before sendto getsockname=127.0.0.1:57554 sendto=5 after getsockname=127.0.0.1:57554; recvfrom=5 from=127.0.0.1:57554 len=16
+A3 receiver bound 0.0.0.0, sent to 127.0.0.1: sendto=5 recvfrom=5 from=127.0.0.1:55048
 B1 datagrams of 10, 20, 30; four recvs of 100: 10 20 30 -1 EAGAIN
 B2 read(2) of an unconnected socket holding one datagram of 3: 3, then -1 EAGAIN
 C1 a datagram of 100 then one of 4; recv of 10, then of 200: 10 (first bytes abc), then 4 (the next datagram if 4)
@@ -17,8 +17,8 @@ C6 recv of 0 MSG_DONTWAIT on an empty queue: 0
 C7 recv of 0 into NULL on an empty queue: 0
 C8 recv of 10 into an unmapped buffer, datagram of 100 queued: -1 EFAULT; then 100
 C9 recv of 0 into an unmapped buffer, datagram of 100 queued: 0; then none
-C10 recv of 10 into an unmapped buffer, a datagram of 100 from 127.0.0.1:61142 queued: FIONREAD 116; -1 EFAULT; FIONREAD 100; then recvfrom 100, addrlen 0, address aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; FIONREAD 0
-C10 recv(MSG_PEEK) of 10 into an unmapped buffer, a datagram of 100 from 127.0.0.1:59188 queued: FIONREAD 116; -1 EFAULT; FIONREAD 116; then recvfrom 100, addrlen 16, address 1002e7347f0000010000000000000000; FIONREAD 0
+C10 recv of 10 into an unmapped buffer, a datagram of 100 from 127.0.0.1:55675 queued: FIONREAD 116; -1 EFAULT; FIONREAD 100; then recvfrom 100, addrlen 0, address aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; FIONREAD 0
+C10 recv(MSG_PEEK) of 10 into an unmapped buffer, a datagram of 100 from 127.0.0.1:51876 queued: FIONREAD 116; -1 EFAULT; FIONREAD 116; then recvfrom 100, addrlen 16, address 1002caa47f0000010000000000000000; FIONREAD 0
 D1 peeks of 10, 100, and 10 with MSG_TRUNC, datagrams of 20 and 3: 10 20 10; then the queue holds 20,3
 D2 peek of an empty queue: -1 EAGAIN
 E0 empty queue: poll=1 revents=0x104 FIONREAD=0
@@ -99,7 +99,7 @@ I1 datagrams of 65507, trial 2: sent=0 failed=4000 (first EMSGSIZE); FIONREAD be
 I2 SO_RCVBUF set to 4096 (reads 4096), datagrams of 100: sent=4000 queued=22
 I2 SO_RCVBUF set to 65536 (reads 65536), datagrams of 100: sent=4000 queued=342
 J1 r holds 'early' from s2, connects to s1 (0); s2 sends 'late', s1 sends 's1': r receives early|s1
-J2 r disconnects with AF_UNSPEC (-1) and keeps 0.0.0.0:53113; s2 sends 'after': r receives after
+J2 r disconnects with AF_UNSPEC (-1) and keeps 0.0.0.0:57604; s2 sends 'after': r receives after
 J3 r connects to 127.0.0.1:port of a socket bound to 0.0.0.0 (0); that socket sends: r receives fromany
 K1 connected to r: write=1 send=1 sendto(NULL)=1 sendto(r)=-1 EISCONN sendto(r2)=-1 EISCONN; r receives w|s|n; r2 receives none
 K2 r sends to c: read=4 then read=-1 EAGAIN
@@ -110,7 +110,7 @@ L3 connected to an unheld port, after a send: SO_ERROR=61 then 0; recv=-1 EAGAIN
 L4 unconnected sendto an unheld port: 1; then poll=1 revents=0x104; recv=-1 EAGAIN; sendto again=1; SO_ERROR=0
 L5 an error pending, then the peer binds (0) and sends 'data': FIONREAD=36; poll=1 revents=0x145; c receives data|ECONNREFUSED; SO_ERROR=0
 L6 write then write: -1 ECONNREFUSED; read after the second write's error=-1 EAGAIN
-L7 an error pending, then connect elsewhere (to port 54118): -1 ECONNREFUSED; SO_ERROR=0; getpeername 0 port 54118
+L7 an error pending, then connect elsewhere (to port 49779): -1 ECONNREFUSED; SO_ERROR=0; getpeername 0 port 49779
 L8 an error pending, recv of 0: -1 ECONNREFUSED; SO_ERROR=0
 L9 a blocking recv; another process sends through the socket at 100 ms: -1 ECONNREFUSED
 L10 bound 0.0.0.0, connected to an unheld port, after a send: SO_ERROR=61
@@ -127,47 +127,47 @@ N NULL address, length 0: -1 EDESTADDRREQ; afterwards getsockname=0.0.0.0:0; rec
 N good address, length 0: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 8: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 15: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
-N good address, length 16: 1; afterwards getsockname=0.0.0.0:64635; receiver holds 1
+N good address, length 16: 1; afterwards getsockname=0.0.0.0:52169; receiver holds 1
 N good address, length 17: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 128: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 129: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N good address, length 200: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N unmapped address, length 16: -1 EFAULT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N NULL address, length 16: -1 EDESTADDRREQ; afterwards getsockname=0.0.0.0:0; receiver holds none
-N AF_UNSPEC, length 16: 1; afterwards getsockname=0.0.0.0:62528; receiver holds 1
+N AF_UNSPEC, length 16: 1; afterwards getsockname=0.0.0.0:58829; receiver holds 1
 N AF_INET6 in a sockaddr_in, length 16: -1 EAFNOSUPPORT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N family 99, length 16: -1 EAFNOSUPPORT; afterwards getsockname=0.0.0.0:0; receiver holds none
 N AF_INET6 ::1, length 28: -1 EINVAL; afterwards getsockname=0.0.0.0:0; receiver holds none
 N 127.0.0.1 port 0: -1 EADDRNOTAVAIL; afterwards getsockname=0.0.0.0:0; receiver holds none
-N 0.0.0.0 at the receiver's port: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:52905; receiver holds none
-N 127.0.0.2 at the receiver's port (receiver bound 0.0.0.0): 1; afterwards getsockname=0.0.0.0:56177; receiver holds none
-N 255.255.255.255: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:49854; receiver holds none
-N good address, sin_zero 0xff: 1; afterwards getsockname=0.0.0.0:60410; receiver holds 1
-N good address, sin_len 0: 1; afterwards getsockname=0.0.0.0:64375; receiver holds 1
-N good address, sin_len 255: 1; afterwards getsockname=0.0.0.0:56778; receiver holds 1
-N good address, sin_len 8: 1; afterwards getsockname=0.0.0.0:62162; receiver holds 1
-N 127.0.0.2 at a receiver bound 127.0.0.1: 1; afterwards getsockname=0.0.0.0:65462; receiver holds none
+N 0.0.0.0 at the receiver's port: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:65238; receiver holds none
+N 127.0.0.2 at the receiver's port (receiver bound 0.0.0.0): 1; afterwards getsockname=0.0.0.0:60194; receiver holds none
+N 255.255.255.255: -1 EHOSTUNREACH; afterwards getsockname=0.0.0.0:64368; receiver holds none
+N good address, sin_zero 0xff: 1; afterwards getsockname=0.0.0.0:56421; receiver holds 1
+N good address, sin_len 0: 1; afterwards getsockname=0.0.0.0:58197; receiver holds 1
+N good address, sin_len 255: 1; afterwards getsockname=0.0.0.0:61504; receiver holds 1
+N good address, sin_len 8: 1; afterwards getsockname=0.0.0.0:53460; receiver holds 1
+N 127.0.0.2 at a receiver bound 127.0.0.1: 1; afterwards getsockname=0.0.0.0:50787; receiver holds none
 N source seen for a send to 127.0.0.2 from a 0.0.0.0-bound sender: -1 EAGAIN from 0.0.0.0:0
 N sendto a pipe: -1 ENOTSOCK; a closed descriptor: -1 EBADF; a closed descriptor with an unmapped buffer: -1 EBADF; with an unmapped address: -1 EBADF
 N recvfrom a pipe: -1 ENOTSOCK; a closed descriptor: -1 EBADF
-O0 sender is 127.0.0.1:57986
+O0 sender is 127.0.0.1:60732
 O1 addrlen 0: 3; addrlen out 0; first 20 bytes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 O1 addrlen 1: 3; addrlen out 16; first 20 bytes 10aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 O1 addrlen 2: 3; addrlen out 16; first 20 bytes 1002aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 4: 3; addrlen out 16; first 20 bytes 1002e282aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 8: 3; addrlen out 16; first 20 bytes 1002e2827f000001aaaaaaaaaaaaaaaaaaaaaaaa
-O1 addrlen 15: 3; addrlen out 16; first 20 bytes 1002e2827f00000100000000000000aaaaaaaaaa
-O1 addrlen 16: 3; addrlen out 16; first 20 bytes 1002e2827f0000010000000000000000aaaaaaaa
-O1 addrlen 17: 3; addrlen out 16; first 20 bytes 1002e2827f0000010000000000000000aaaaaaaa
-O1 addrlen 28: 3; addrlen out 16; first 20 bytes 1002e2827f0000010000000000000000aaaaaaaa
-O1 addrlen 128: 3; addrlen out 16; first 20 bytes 1002e2827f0000010000000000000000aaaaaaaa
+O1 addrlen 4: 3; addrlen out 16; first 20 bytes 1002ed3caaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+O1 addrlen 8: 3; addrlen out 16; first 20 bytes 1002ed3c7f000001aaaaaaaaaaaaaaaaaaaaaaaa
+O1 addrlen 15: 3; addrlen out 16; first 20 bytes 1002ed3c7f00000100000000000000aaaaaaaaaa
+O1 addrlen 16: 3; addrlen out 16; first 20 bytes 1002ed3c7f0000010000000000000000aaaaaaaa
+O1 addrlen 17: 3; addrlen out 16; first 20 bytes 1002ed3c7f0000010000000000000000aaaaaaaa
+O1 addrlen 28: 3; addrlen out 16; first 20 bytes 1002ed3c7f0000010000000000000000aaaaaaaa
+O1 addrlen 128: 3; addrlen out 16; first 20 bytes 1002ed3c7f0000010000000000000000aaaaaaaa
 O2 NULL address, addrlen 16: 3; addrlen out 16
 O3 an address, NULL addrlen: 3; then the queue holds none
 O4 addrlen 0xffffffff: 3; addrlen out 16; then the queue holds none
 O5 unmapped address, addrlen 16: 3; then the queue holds none
 O6 an address, unmapped addrlen: -1 EFAULT; then the queue holds 3
 O7 an empty queue, addrlen 99: -1 EAGAIN; addrlen out 99; address aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-O8 a connected receiver: 3 from 127.0.0.1:57986 len 16
+O8 a connected receiver: 3 from 127.0.0.1:60732 len 16
 P1 recvmsg, iovecs of 4 and 4, datagram of 6: 6; contents ABCD|EF..; namelen 16; controllen 0; flags 0x0
 P2 recvmsg of 10, datagram of 100: 10; flags 0x10 (MSG_TRUNC is 0x10)
 P3 recvmsg of 10 with MSG_TRUNC, datagram of 100: 10; flags 0x10
@@ -202,7 +202,7 @@ X0 net.inet.icmp.icmplim=-1
 X1 a send raising an error, taken, and another 15 ms after the first: the first raised one in 5 of 5, the second in 0 of 5
 X1 a send raising an error, taken, and another 50 ms after the first: the first raised one in 5 of 5, the second in 0 of 5
 X1 a send raising an error, taken, and another 85 ms after the first: the first raised one in 5 of 5, the second in 0 of 5
-X1 a send raising an error, taken, and another 95 ms after the first: the first raised one in 5 of 5, the second in 1 of 5
+X1 a send raising an error, taken, and another 95 ms after the first: the first raised one in 5 of 5, the second in 0 of 5
 X1 a send raising an error, taken, and another 98 ms after the first: the first raised one in 5 of 5, the second in 0 of 5
 X1 a send raising an error, taken, and another 100 ms after the first: the first raised one in 5 of 5, the second in 5 of 5
 X1 a send raising an error, taken, and another 102 ms after the first: the first raised one in 5 of 5, the second in 5 of 5
@@ -212,11 +212,17 @@ X1 a send raising an error, taken, and another 500 ms after the first: the first
 X4 sends every 40 ms, SO_ERROR 15 ms after each: 61 0 0 61 0 0 61 0 0 61 0 0
 X5 two sockets connected to one unheld port, sending 5 ms apart: SO_ERROR 61 and 61
 X2 two sockets, each connected to its own unheld port, sending 5 ms apart: SO_ERROR 61 and 61
-X6 c sends again (control): the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:50873
-X6 c reconnects to another unheld port Q and sends: the first raised 61; the second send 1, then SO_ERROR 61; the socket is 127.0.0.1:53233
-X6 c reconnects to Q, then back to P, and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:54747
-X6 c closes; a new socket bound to L connects to P and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:54372
-X6 a new socket bound elsewhere connects to P and sends: the first raised 61; the second send 1, then SO_ERROR 61; the socket is 127.0.0.1:60075
-X6 c disconnects (AF_UNSPEC), rebinds to L, reconnects to P and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:62668
+X6 c sends again (control): the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:58896
+X6 c reconnects to another unheld port Q and sends: the first raised 61; the second send 1, then SO_ERROR 61; the socket is 127.0.0.1:63374
+X6 c reconnects to Q, then back to P, and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:52327
+X6 c closes; a new socket bound to L connects to P and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:51648
+X6 a new socket bound elsewhere connects to P and sends: the first raised 61; the second send 1, then SO_ERROR 61; the socket is 127.0.0.1:62369
+X6 c disconnects (AF_UNSPEC), rebinds to L, reconnects to P and sends: the first raised 61; the second send 1, then SO_ERROR 0; the socket is 127.0.0.1:51010
 X7 an unconnected sendto an unheld port (SO_ERROR 0), then connect to it and send 20 ms later: SO_ERROR 0
+X8 A>P A>P A>P: A1 A0 A0
+X8 A>P B>P A>P: A1 B1 A1
+X8 A>P B>Q A>P: A1 B1 A1
+X8 A>P A>P B>P A>P: A1 A0 B1 A1
+X8 A>P B>Q C>R A>P: A1 B1 C1 A1
+X8 A>P B>Q A>P B>Q: A1 B1 A1 B1
 X3 80 sockets, each connected to an unheld port, sending at once: 80 errors
