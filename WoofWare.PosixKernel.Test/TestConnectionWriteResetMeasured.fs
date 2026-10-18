@@ -440,6 +440,6 @@ module TestConnectionWriteResetMeasured =
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->
             n |> shouldBeGreaterThan drained
             n |> shouldBeSmallerThan (int64 bytes.Length)
-            UnixThreadTable.parkedFor 1 (Lone.threads after) |> shouldEqual None
+            Lone.parkedIn 1 after |> shouldEqual None
             soError client after |> fst |> shouldEqual "EPIPE"
         | other -> failwith $"expected the woken write to return, got %A{other}"

@@ -108,7 +108,7 @@ module TestUnixThreadLifecycle =
                 // The process's SIGUSR2 is deliverable to the leader, which
                 // blocks nothing, so it owes a return to user mode, as it would
                 // had the signal been sent.
-                |> Lone.mapThreads (UnixThreadTable.owe 0 OwedReturn.SignalDue)
+                |> ForgedThread.owing (Callers.thread 0 system) OwedReturn.SignalDue
 
             let after = exitOrFail 1 system
 
@@ -145,7 +145,7 @@ module TestUnixThreadLifecycle =
                 system |> withThread 1 |> withThread 2 |> Lone.Parking.park 2 (flockOn queue)
 
             let park =
-                match UnixThreadTable.parkOf 2 (Lone.threads system) with
+                match Lone.parkOf 2 system with
                 | Some park -> park
                 | None -> failwith "expected thread 2 to be parked"
 
@@ -238,7 +238,7 @@ module TestUnixThreadLifecycle =
         for platform in platforms do
             let system, queue = world platform
             let system = system |> withThread 1 |> Lone.Parking.park 0 (flockOn queue)
-            let park = UnixThreadTable.parkOf 0 (Lone.threads system) |> Option.get
+            let park = Lone.parkOf 0 system |> Option.get
 
             let refused =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
@@ -632,7 +632,7 @@ module TestUnixThreadLifecycle =
                         UnixSystem.tryStep (Callers.thread thread system) call system
 
                     if Set.contains thread model.Parked then
-                        let park = UnixThreadTable.parkOf thread (Lone.threads system) |> Option.get
+                        let park = Lone.parkOf thread system |> Option.get
 
                         let refused =
                             Assert.Throws<System.InvalidOperationException> (fun () -> result () |> ignore)
@@ -719,7 +719,7 @@ module TestUnixThreadLifecycle =
                         ThreadIdAllocator.live after.Machine.ThreadIds
                         |> shouldEqual (
                             Set.remove
-                                (UnixThreadState.osThreadId (UnixThreadTable.get thread (Lone.threads system)))
+                                (UnixThreadState.osThreadId (Lone.thread thread system))
                                 (ThreadIdAllocator.live system.Machine.ThreadIds)
                         )
 
@@ -775,11 +775,8 @@ module TestUnixThreadLifecycle =
             // invariant that a thread with a deliverable signal owes a return
             // is not asked of states built so.
             let after =
-                after
-                |> Lone.mapThreads (fun threads ->
-                    (threads, Map.keys (UnixThreadTable.byName threads) |> List.ofSeq)
-                    ||> List.fold (fun threads name -> UnixThreadTable.settle name threads)
-                )
+                (after, Map.keys (Lone.threadMap after) |> List.ofSeq)
+                ||> List.fold (fun after name -> ForgedThread.settled (Callers.thread name after) after)
 
             // The thread set is exactly the model's, and no per-thread entry outlives its thread.
             Lone.threadMap after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live

@@ -1,5 +1,6 @@
 namespace WoofWare.PosixKernel.Test
 
+open System.Reflection
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -34,7 +35,7 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``a spawned thread is readable`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 7 3))
+        let threads = (Lone.threadTable (initial |> withThread 7 3))
 
         UnixThreadState.cpu (UnixThreadTable.get 7 threads) |> shouldEqual (CpuId 3)
         idOf 7 threads |> shouldEqual 4243UL
@@ -84,7 +85,7 @@ module TestUnixThreadTable =
                     Ordinal = ParkOrdinal 0L
                     State = ParkState.Asleep
                 }
-                (Lone.threads system)
+                (Lone.threadTable system)
 
         UnixThreadTable.parkedFor 7 parked
         |> shouldEqual (Some (ParkedSyscall.EpollWait wait))
@@ -125,3 +126,16 @@ module TestUnixThreadTable =
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [ 3 ])
+
+    /// A client names a thread by its own identity, and the process holds a thread
+    /// by that name only from its creation to its exit; so the library has no
+    /// public question about one thread by its name, and a client looks the
+    /// name up in `UnixSystem.threads` and reads the state it finds.
+    [<Test>]
+    let ``UnixThreadTable asks nothing about a single thread by its name`` () : unit =
+        let table =
+            typeof<VirtualFileSystem>.Assembly.GetType ("WoofWare.PosixKernel.UnixThreadTable", true)
+
+        table.GetMethods (BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
+        |> Array.map (fun (f : MethodInfo) -> f.Name)
+        |> shouldEqual [| "reconcile" |]

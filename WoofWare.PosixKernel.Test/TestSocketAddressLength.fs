@@ -433,7 +433,7 @@ module TestSocketAddressLength =
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
                     queueOf listenerFd after |> shouldEqual []
-                    UnixThreadTable.parkedFor 1 (Lone.threads after) |> shouldEqual None
+                    Lone.parkedIn 1 after |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
                 | Ok (AcceptOutcome.Accepted _, _), false -> ()
                 | other, _ -> failwith $"%O{platform} 0x%08x{word}: got %A{other}"

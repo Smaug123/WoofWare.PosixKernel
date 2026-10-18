@@ -94,7 +94,7 @@ module TestKqueue =
 
         match UnixKqueue.tryFinishKevent (Callers.thread thread system) system with
         | Ok (outcome, finished) ->
-            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+            Lone.parkedIn thread finished |> shouldEqual None
             outcome, finished
         | Error refusal ->
             failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
@@ -303,13 +303,13 @@ module TestKqueue =
             after |> shouldEqual before
         | "rv=0", "-", "slept=0", KeventOutcome.Answered [] -> after |> shouldEqual before
         | "rv=0", "-", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread (Lone.threads after) with
+            match Lone.parkedIn thread after with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = Some deadline
                                          }) -> deadline - now |> shouldBeSmallerThan probeTimer
             | other -> failwith $"expected a park with a deadline, got %A{other}"
         | "rv=-1", "EINTR", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread (Lone.threads after) with
+            match Lone.parkedIn thread after with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = None
                                          }) -> ()
@@ -618,7 +618,7 @@ module TestKqueue =
             | Error expected, actual -> actual |> shouldEqual (Error expected)
             | Ok (Some expected), actual -> actual |> shouldEqual (Ok (expected, system))
             | Ok None, Ok (KeventOutcome.WouldBlock _, parked) ->
-                match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
+                match Lone.parkedIn 1 parked with
                 | Some (ParkedSyscall.Kevent wait) ->
                     wait.Kqueue |> shouldEqual (idOf fd system)
                     wait.Fd |> shouldEqual fd
@@ -731,7 +731,7 @@ module TestKqueue =
             )
         )
 
-        match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
+        match Lone.parkedIn 1 parked with
         | Some (ParkedSyscall.Kevent wait) ->
             wait
             |> shouldEqual

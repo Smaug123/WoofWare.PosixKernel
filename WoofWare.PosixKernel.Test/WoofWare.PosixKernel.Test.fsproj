@@ -25,6 +25,7 @@
     <Compile Include="Lone.fs" />
     <Compile Include="QueueAccounts.fs" />
     <Compile Include="Callers.fs" />
+    <Compile Include="ForgedThread.fs" />
     <Compile Include="Stepped.fs" />
     <Compile Include="IlCalls.fs" />
     <Compile Include="Woken.fs" />

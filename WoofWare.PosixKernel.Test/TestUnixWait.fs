@@ -124,7 +124,7 @@ module TestUnixWait =
         | Op.Park thread ->
             // A re-park is a woken thread's.
             let system =
-                match UnixThreadTable.parkOf thread (Lone.threads system) with
+                match Lone.parkOf thread system with
                 | Some _ -> ForgedPark.woken thread system
                 | None -> system
 
@@ -171,17 +171,16 @@ module TestUnixWait =
                 // Every other thread keeps its park, ordinal and all.
                 for thread in Map.keys (Lone.threadMap before) do
                     if Some thread <> subject then
-                        UnixThreadTable.parkOf thread (Lone.threads after)
-                        |> shouldEqual (UnixThreadTable.parkOf thread (Lone.threads before))
+                        Lone.parkOf thread after |> shouldEqual (Lone.parkOf thread before)
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
                 match op with
                 | Op.Park thread ->
-                    if (UnixThreadTable.parkOf thread (Lone.threads before)).IsSome then
+                    if (Lone.parkOf thread before).IsSome then
                         cover ParkLabel.Repark
 
-                    match UnixThreadTable.parkOf thread (Lone.threads after) with
+                    match Lone.parkOf thread after with
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
                         park.Syscall |> shouldEqual (parkOfThread thread)
@@ -193,7 +192,7 @@ module TestUnixWait =
 
                         after, Some park.Ordinal
                 | Op.Unpark thread ->
-                    UnixThreadTable.parkOf thread (Lone.threads after) |> shouldEqual None
+                    Lone.parkOf thread after |> shouldEqual None
                     after, lastMinted
                 | Op.AdvanceClock _
                 | Op.CreateEpoll
@@ -242,10 +241,10 @@ module TestUnixWait =
         woken |> shouldEqual [ 3, fired ; 4, fired ]
 
         for thread in [ 3 ; 4 ] do
-            let before = UnixThreadTable.parkOf thread (Lone.threads released) |> Option.get
+            let before = Lone.parkOf thread released |> Option.get
             before.State |> shouldEqual ParkState.Asleep
 
-            UnixThreadTable.parkOf thread (Lone.threads after)
+            Lone.parkOf thread after
             |> shouldEqual (
                 Some
                     { before with
@@ -255,7 +254,7 @@ module TestUnixWait =
 
         // Nothing else moved.
         after
-        |> Lone.mapThreads (fun _ -> Lone.threads released)
+        |> ForgedThread.threadsAsIn (Lone.pid released) released
         |> shouldEqual released
 
         Lone.wake after |> fst |> shouldEqual []
@@ -380,7 +379,7 @@ module TestUnixWait =
             Lone.UnixParkState.unpark 1 parked
 
         Lone.Parking.park 1 (parkOfThread 3) cleared
-        |> fun system -> UnixThreadTable.parkedFor 1 (Lone.threads system)
+        |> Lone.parkedIn 1
         |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]
@@ -395,7 +394,7 @@ module TestUnixWait =
     [<Test>]
     let ``a park's state moves only by a wake and a woken thread's re-park`` () : unit =
         let parked = system |> Lone.Parking.park 1 (parkOfThread 1)
-        let park = UnixThreadTable.parkOf 1 (Lone.threads parked) |> Option.get
+        let park = Lone.parkOf 1 parked |> Option.get
         park.State |> shouldEqual ParkState.Asleep
 
         let woken =
@@ -411,13 +410,13 @@ module TestUnixWait =
 
         // A park that starts woken.
         let exn =
-            Assert.Throws<exn> (fun () -> UnixThreadTable.withPark 2 woken (Lone.threads system) |> ignore)
+            Assert.Throws<exn> (fun () -> ForgedThread.parked (Callers.thread 2 system) woken system |> ignore)
 
         exn.Message |> shouldContainText "woken already"
 
         // A rewrite in place that changes the state.
         let exn =
-            Assert.Throws<exn> (fun () -> UnixThreadTable.withPark 1 woken (Lone.threads parked) |> ignore)
+            Assert.Throws<exn> (fun () -> ForgedThread.parked (Callers.thread 1 parked) woken parked |> ignore)
 
         exn.Message |> shouldContainText "changes its state"
 
@@ -426,19 +425,21 @@ module TestUnixWait =
         let wokenSystem = ForgedPark.woken 1 parked
         let reparked = Lone.Parking.park 1 (parkOfThread 1) wokenSystem
 
-        (UnixThreadTable.parkOf 1 (Lone.threads reparked) |> Option.get).State
-        |> shouldEqual ParkState.Asleep
+        (Lone.parkOf 1 reparked |> Option.get).State |> shouldEqual ParkState.Asleep
 
-        let wokenPark = UnixThreadTable.parkOf 1 (Lone.threads wokenSystem) |> Option.get
+        let wokenPark = Lone.parkOf 1 wokenSystem |> Option.get
 
-        UnixThreadTable.withPark 1 wokenPark (Lone.threads wokenSystem)
-        |> UnixThreadTable.parkOf 1
+        ForgedThread.parked (Callers.thread 1 wokenSystem) wokenPark wokenSystem
+        |> Lone.parkOf 1
         |> shouldEqual (Some wokenPark)
 
         // A park is woken once.
         let exn =
             Assert.Throws<exn> (fun () ->
-                UnixThreadTable.markWoken 1 (Set.singleton WakePrimitive.SignalDeliverable) (Lone.threads wokenSystem)
+                ForgedThread.woken
+                    (Callers.thread 1 wokenSystem)
+                    (Set.singleton WakePrimitive.SignalDeliverable)
+                    wokenSystem
                 |> ignore
             )
 
@@ -458,7 +459,7 @@ module TestUnixWait =
 
         // Held, it parks.
         Lone.Parking.parkWaiting 3 (parkOfThread 3) system
-        |> fun parked -> UnixThreadTable.parkedFor 3 (Lone.threads parked)
+        |> Lone.parkedIn 3
         |> shouldEqual (Some (parkOfThread 3))
 
         // A signal deliverable to the thread is the finishing call's to

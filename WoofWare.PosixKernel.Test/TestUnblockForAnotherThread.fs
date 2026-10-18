@@ -330,7 +330,7 @@ module TestUnblockForAnotherThread =
     let private asleep (world : World) (thread : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
         let parkedOrNot (what : string) (result : Result<'outcome * UnixSystem<int, string>, 'refusal>) =
             match result with
-            | Ok (_, system) when (UnixThreadTable.parkOf thread (Lone.threads system)).IsSome -> Some system
+            | Ok (_, system) when (Lone.parkOf thread system).IsSome -> Some system
             | Ok _ -> None
             | Error refusal -> failwith $"%s{what} was refused: %A{refusal}"
 

@@ -538,7 +538,7 @@ module TestStepOracle =
         ||> List.fold (fun system thread ->
             system
             |> Option.bind (fun system ->
-                match UnixThreadTable.owedBy thread (Lone.threads system) with
+                match Lone.owedBy thread system with
                 | Some _ -> returned (Callers.thread thread system) system
                 | None -> Some system
             )

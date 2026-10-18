@@ -53,6 +53,11 @@
         root = ./WoofWare.PosixKernel;
         fileset = pkgs.lib.fileset.fileFilter (f: f.hasExt "fs") ./WoofWare.PosixKernel;
       };
+      # The test project's .fs files, without build output, as the test-boundaries check reads them.
+      testSources = pkgs.lib.fileset.toSource {
+        root = ./WoofWare.PosixKernel.Test;
+        fileset = pkgs.lib.fileset.fileFilter (f: f.hasExt "fs") ./WoofWare.PosixKernel.Test;
+      };
     in {
       packages = let
         deps = builtins.fromJSON (builtins.readFile ./nix/deps.json);
@@ -86,6 +91,21 @@
             ${pkgs.bash}/bin/bash ${./scripts/test-client-references.sh} \
               ${./scripts/check-client-references.py}
             ${pkgs.python3}/bin/python3 ${./scripts/check-client-references.py} ${librarySources}
+            touch $out
+          '';
+        # Fails `nix flake check` when a test file outside a rule's allowlist names a kernel
+        # internal that the test helpers hide: the thread table, which tests read through `Proc`
+        # and `Lone` and forge through `ForgedThread`. A test holding the representation must
+        # change whenever it does, though nothing the test asserts has. Runs the checker's own
+        # contract first, so that a change to the checker cannot quietly retire it.
+        test-boundaries =
+          pkgs.runCommand "test-boundaries" {
+            buildInputs = [pkgs.python3 pkgs.bash];
+          }
+          ''
+            ${pkgs.bash}/bin/bash ${./scripts/test-test-boundaries.sh} \
+              ${./scripts/check-test-boundaries.py}
+            ${pkgs.python3}/bin/python3 ${./scripts/check-test-boundaries.py} ${testSources}
             touch $out
           '';
         # The docstring-attachment check is the oracle a definition-moving commit is held

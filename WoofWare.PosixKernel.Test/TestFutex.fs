@@ -148,7 +148,7 @@ module TestFutex =
         | other -> failwith $"pthread_kill answered %A{other}"
 
     let private owed (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : OwedReturn option =
-        UnixThreadTable.owedBy thread (Proc.threads pid system)
+        Proc.owedBy (Caller.make pid thread) system
 
     let private failed (error : UnixError) : SyscallOutcome =
         SyscallOutcome.Answered (SyscallAnswer.Failed error)
@@ -432,7 +432,7 @@ module TestFutex =
 
     /// The timeout of the futex wait `thread` of `pid` is parked in.
     let private parkedTimeout (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : FutexTimeout =
-        match UnixThreadTable.parkedFor thread (Proc.threads pid system) with
+        match Proc.parkedIn (Caller.make pid thread) system with
         | Some (ParkedSyscall.Futex wait) -> wait.FutexTimeout
         | other -> failwith $"thread %d{thread} is parked in %A{other}, not a futex wait"
 
@@ -1291,7 +1291,7 @@ module TestFutex =
                                    } -> true
                             | _ -> false
 
-                        let owes = (UnixThreadTable.owedBy t (Proc.threads pid system)).IsSome
+                        let owes = (Proc.owedBy (Caller.make pid t) system).IsSome
 
                         match op with
                         | Op.FinishAll when woken -> Some (p, t)
@@ -1324,7 +1324,7 @@ module TestFutex =
             |> Map.toList
             |> List.map (fun (t, state) ->
                 let shown =
-                    match UnixThreadState.park state, UnixThreadTable.owedBy t (Proc.threads pid system) with
+                    match UnixThreadState.park state, Proc.owedBy (Caller.make pid t) system with
                     | Some park, None ->
                         match park.Syscall with
                         | ParkedSyscall.Futex wait ->

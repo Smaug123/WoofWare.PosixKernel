@@ -374,7 +374,7 @@ module TestEpollWait =
             match waits milliseconds ready with
             | Ok (EpollWaitOutcome.Answered events, answered) ->
                 events |> shouldEqual delivered
-                UnixThreadTable.parkedFor thread (Lone.threads answered) |> shouldEqual None
+                Lone.parkedIn thread answered |> shouldEqual None
                 pendingEntries answered |> shouldEqual 0
             | other -> failwith $"expected the event, got %A{other}"
 
@@ -388,7 +388,7 @@ module TestEpollWait =
 
             match waits 0 stale with
             | Ok (EpollWaitOutcome.Answered [], answered) ->
-                UnixThreadTable.parkedFor thread (Lone.threads answered) |> shouldEqual None
+                Lone.parkedIn thread answered |> shouldEqual None
                 // The walk consumed the stale entry even though it delivered nothing.
                 pendingEntries answered |> shouldEqual 0
                 answered |> shouldEqual (snd (Lone.EpollReadyList.drain queueId 8 stale))
@@ -439,7 +439,7 @@ module TestEpollWait =
 
             let events, finished = finishes expired
             events |> shouldEqual []
-            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+            Lone.parkedIn thread finished |> shouldEqual None
 
         let bounded =
             Gen.zip positiveTimeout start
@@ -459,7 +459,7 @@ module TestEpollWait =
 
             Lone.deadlines parked |> shouldEqual []
 
-            match UnixThreadTable.parkedFor thread (Lone.threads parked) with
+            match Lone.parkedIn thread parked with
             | Some (ParkedSyscall.EpollWait wait) ->
                 wait
                 |> shouldEqual
@@ -488,7 +488,7 @@ module TestEpollWait =
 
             let events, finished = finishes ready
             events |> shouldEqual delivered
-            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+            Lone.parkedIn thread finished |> shouldEqual None
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip positiveTimeout start)) property)
 
@@ -523,8 +523,7 @@ module TestEpollWait =
     let ``a wake whose event goes stale parks again on the same deadline, behind every other park`` () : unit =
         let _, parked = parks 5 idle
 
-        let ordinalBefore =
-            (UnixThreadTable.parkOf thread (Lone.threads parked)).Value.Ordinal
+        let ordinalBefore = (Lone.parkOf thread parked).Value.Ordinal
 
         let ready = parked |> after 1L |> signal
 
@@ -539,8 +538,7 @@ module TestEpollWait =
 
         Lone.deadlines reparked |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
-        let ordinalAfter =
-            (UnixThreadTable.parkOf thread (Lone.threads reparked)).Value.Ordinal
+        let ordinalAfter = (Lone.parkOf thread reparked).Value.Ordinal
 
         ordinalAfter |> shouldBeGreaterThan ordinalBefore
 
@@ -615,7 +613,7 @@ module TestEpollWait =
                 | Ok (EpollWaitOutcome.WouldBlock condition, parked) -> condition, parked
                 | other -> failwith $"expected a park, got %A{other}"
 
-            match UnixThreadTable.parkedFor thread (Lone.threads parked) with
+            match Lone.parkedIn thread parked with
             | Some (ParkedSyscall.EpollWait wait) -> wait.Buffer |> shouldEqual buffer
             | other -> failwith $"expected an epoll_wait, got %A{other}"
 
@@ -628,8 +626,7 @@ module TestEpollWait =
             let expired = after (5L * nanosecondsPerMillisecond) parked |> Woken.thread thread
 
             match UnixPoll.tryFinishEpollWait (Callers.thread thread expired) expired with
-            | Ok (EpollWaitOutcome.Answered [], finished) ->
-                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+            | Ok (EpollWaitOutcome.Answered [], finished) -> Lone.parkedIn thread finished |> shouldEqual None
             | other -> failwith $"expected the wait to time out, got %A{other}"
 
     // ------------------------------------------------------------------
@@ -716,7 +713,7 @@ module TestEpollWait =
                 ||> List.fold (fun system park ->
                     // A re-park is a woken thread's.
                     let system =
-                        match UnixThreadTable.parkOf park.Waiter (Lone.threads system) with
+                        match Lone.parkOf park.Waiter system with
                         | Some _ -> ForgedPark.woken park.Waiter system
                         | None -> system
 

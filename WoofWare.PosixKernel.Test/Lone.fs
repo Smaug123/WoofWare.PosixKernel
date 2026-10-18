@@ -73,37 +73,59 @@ module internal Lone =
         =
         Proc.mapState (only "mapProc" system) f system
 
-    /// The only process's threads, as the internal functions of
-    /// `UnixThreadTable` take them.
-    let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The only process's thread table, as the internal functions of
+    /// `UnixThreadTable` take it: for the tests of the table itself. Every
+    /// other test asks about one thread at a time (`thread`, `parkOf`,
+    /// `parkedIn`, `owedBy`), or reads `threadMap`.
+    let threadTable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : ThreadTable<'Thread>
         =
-        Proc.threads (only "threads" system) system
+        Proc.threadTable (only "threadTable" system) system
 
-    /// The only process's threads, by the client's name for each.
+    /// The only process's threads, by the client's name for each, read from
+    /// its thread table as `Proc.threadMap` reads them.
     let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
         Proc.threadMap (only "threadMap" system) system
 
-    /// `system` with the only process's threads rewritten by `f`.
-    let mapThreads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (f : ThreadTable<'Thread> -> ThreadTable<'Thread>)
+    /// The only process's thread `thread`, as a client reads it. Fails loudly
+    /// unless the process has that thread.
+    let thread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        : UnixThreadState
         =
-        Proc.mapThreads (only "mapThreads" system) f system
+        Proc.thread (Caller.make (only "thread" system) thread) system
 
-    /// `system` with the only process's threads, by the client's name for
-    /// each, rewritten by `f`, for a test that forges a state no call reaches.
-    let mapThreadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+    /// The park the only process's thread `thread` is in, with its place in
+    /// park order, if it is parked (`UnixThreadState.park`).
+    let parkOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        : ThreadPark option
         =
-        Proc.mapThreadMap (only "mapThreadMap" system) f system
+        Proc.parkOf (Caller.make (only "parkOf" system) thread) system
+
+    /// The syscall the only process's thread `thread` is parked in, if any
+    /// (`UnixThreadState.parkedIn`).
+    let parkedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ParkedSyscall option
+        =
+        Proc.parkedIn (Caller.make (only "parkedIn" system) thread) system
+
+    /// What the only process's thread `thread` owes before it makes another
+    /// call, if anything (`UnixThreadState.Owes`).
+    let owedBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : OwedReturn option
+        =
+        Proc.owedBy (Caller.make (only "owedBy" system) thread) system
 
     /// The only process's leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

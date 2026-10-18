@@ -134,7 +134,7 @@ module TestSigsuspend =
     /// The thread the probe makes a call from: the main thread, or, while it
     /// is in its call, the helper (`with_helper`).
     let private sender (system : UnixSystem<int, string>) : Caller<int> =
-        match UnixThreadTable.parkedFor main (Lone.threads system) with
+        match Lone.parkedIn main system with
         | None -> Callers.thread main system
         | Some _ -> Callers.thread helper system
 
@@ -299,7 +299,7 @@ module TestSigsuspend =
     /// finishes the call, and returns if the call ends.
     let private wakeIfDue : Step =
         fun r ->
-            match UnixThreadTable.parkedFor main (Lone.threads r.System) with
+            match Lone.parkedIn main r.System with
             | None -> Ok r
             | Some ParkedSyscall.SigSuspend ->
                 match Lone.wake r.System with
@@ -1006,7 +1006,7 @@ module TestSigsuspend =
                 (step, SignalState.maskToRestore main signals |> Option.map SignalMask.toWord)
                 |> shouldEqual (step, model.Restore |> Option.map words)
 
-                (step, UnixThreadTable.parkedFor main (Lone.threads system))
+                (step, Lone.parkedIn main system)
                 |> shouldEqual (step, (if model.Parked then Some ParkedSyscall.SigSuspend else None))
 
                 (step,
@@ -1349,7 +1349,7 @@ module TestSigsuspend =
             | other -> failwith $"poll: %A{other}"
 
         let parked =
-            UnixThreadTable.parkedFor main (Lone.threads polling)
+            Lone.parkedIn main polling
             |> Option.defaultWith (fun () -> failwith "the poll did not park")
 
         polling

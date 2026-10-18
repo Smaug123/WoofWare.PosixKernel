@@ -19,7 +19,7 @@ module TestSignalDue =
 
     /// What `caller`'s thread owes before it makes another call.
     let private owed (caller : Caller<int>) (system : UnixSystem<int, string>) : OwedReturn option =
-        UnixThreadTable.owedBy (Caller.thread caller) (Proc.threads (Caller.processId caller) system)
+        Proc.owedBy caller system
 
     /// `caller`'s return to user mode, at which it takes nothing.
     let private resumes (caller : Caller<int>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -787,16 +787,15 @@ module TestSignalDue =
         let mutable frames : Map<int, HandlerFrameId list> = Map.empty
         let mutable ended = false
 
-        let threads () : ThreadTable<int> = Proc.threads pid system
+        let threads () : Map<int, UnixThreadState> = Proc.threadMap pid system
 
-        let live (thread : int) : bool =
-            UnixThreadTable.contains thread (threads ())
+        let live (thread : int) : bool = Map.containsKey thread (threads ())
 
         let owes (thread : int) : bool =
-            (UnixThreadTable.owedBy thread (threads ())).IsSome
+            (Proc.owedBy (Caller.make pid thread) system).IsSome
 
         let parked (thread : int) : bool =
-            (UnixThreadTable.get thread (threads ())).Parked.IsSome
+            (Proc.thread (Caller.make pid thread) system).Parked.IsSome
 
         // Takes `after` as the system, counting each thread it left owing a
         // return it did not owe, and holds it to every rule.
@@ -805,7 +804,7 @@ module TestSignalDue =
 
             for KeyValue (thread, state) in Proc.threadMap pid after do
                 let owedBefore =
-                    match UnixThreadTable.tryFind thread before with
+                    match Map.tryFind thread before with
                     | Some before -> before.Owes.IsSome
                     | None -> false
 
@@ -918,7 +917,7 @@ module TestSignalDue =
             match step with
             | Step.Finish -> finishAll ()
             | Step.Spawn parent ->
-                let child = (UnixThreadTable.byName (threads ()) |> Map.keys |> Seq.max) + 1
+                let child = (threads () |> Map.keys |> Seq.max) + 1
 
                 if child < mostThreads && live parent && not (parked parent) && returned parent then
                     match UnixThreadLifecycle.trySpawn (Caller.make pid parent) child (CpuId 0) system with

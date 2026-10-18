@@ -94,7 +94,7 @@ module TestSleeperIndex =
     /// The thread `thread` of `pid` is running its own code: parked in no
     /// call and owing no return to user mode.
     let private running (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : bool =
-        let threads = Proc.threads pid system
+        let threads = Proc.threadTable pid system
 
         UnixThreadTable.contains thread threads
         && (UnixThreadTable.parkOf thread threads).IsNone
@@ -109,7 +109,7 @@ module TestSleeperIndex =
                 UnixSystem.threads pid system
                 |> Map.keys
                 |> Seq.filter (fun thread ->
-                    let threads = Proc.threads pid system
+                    let threads = Proc.threadTable pid system
 
                     (UnixThreadTable.parkOf thread threads).IsNone
                     && (UnixThreadTable.owedBy thread threads).IsSome
@@ -191,7 +191,7 @@ module TestSleeperIndex =
             | Ok (ProcessFate.ProcessEnded (_, system)) -> Map.remove pid pipes, system
             | Error _ -> pipes, system
         | 3 when running pid thread system && random.Next 3 = 0 ->
-            if not (UnixThreadTable.parked (Proc.threads pid system)).IsEmpty then
+            if not (UnixThreadTable.parked (Proc.threadTable pid system)).IsEmpty then
                 cover Label.ProcessEndedWithParks
 
             let _, system = UnixThreadLifecycle.exitGroup caller 0 system
@@ -370,7 +370,7 @@ module TestSleeperIndex =
     let ``the tables' records of parked threads survive random walks of the tables' own changes`` () : unit =
         let booted = twoProcessors SimulatedUnixPlatform.linuxX64
         let proc = Proc.state (Lone.pid booted) booted
-        let state = UnixThreadTable.get 0 (Lone.threads booted)
+        let state = UnixThreadTable.get 0 (Lone.threadTable booted)
 
         let property (seed : int) : unit =
             let random = Random seed

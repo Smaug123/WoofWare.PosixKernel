@@ -235,7 +235,7 @@ module TestHugeTimeoutMeasured =
         if not (List.isEmpty woken) then
             failwith $"the probe found the call asleep %d{watch} ns in, and the model woke %A{woken}: %s{row.Line}"
 
-        UnixThreadTable.parkedFor thread (Proc.threads pid watched)
+        Proc.parkedIn (Caller.make pid thread) watched
         |> Option.isSome
         |> shouldEqual true
 

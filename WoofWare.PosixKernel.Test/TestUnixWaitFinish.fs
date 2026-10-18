@@ -519,7 +519,7 @@ module TestUnixWaitFinish =
     /// refused; or `None` if the process ended.
     let private finishSleeper (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
         let woken =
-            match UnixThreadTable.parkOf sleeper (Lone.threads system) with
+            match Lone.parkOf sleeper system with
             | Some {
                        State = ParkState.Woken _
                    } -> true

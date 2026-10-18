@@ -26,7 +26,8 @@ module TestUnixSystemStep =
         not (Set.isEmpty (Lone.WakeCondition.satisfied waiter condition system))
 
     /// A system with thread `name` registered, since a park is recorded against a
-    /// thread and `UnixThreadTable` is loudly partial in names it has never minted.
+    /// thread, and the kernel is loudly partial in thread names it has never
+    /// minted.
     let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Threads.ensure name system
 
@@ -3535,7 +3536,7 @@ module TestUnixSystemStep =
             )
         )
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn)
+        Lone.parkedIn waiterThread parkedIn
         |> shouldEqual (
             Some (
                 ParkedSyscall.Flock
@@ -3547,8 +3548,7 @@ module TestUnixSystemStep =
         )
 
         // ...and the holder, whose call was answered, is not parked.
-        UnixThreadTable.parkedFor holderThread (Lone.threads parkedIn)
-        |> shouldEqual None
+        Lone.parkedIn holderThread parkedIn |> shouldEqual None
 
     [<Test>]
     let ``a granted or failed flock records no park`` () : unit =
@@ -3558,12 +3558,12 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
             |> granted
 
-        UnixThreadTable.parkedFor holderThread (Lone.threads held) |> shouldEqual None
+        Lone.parkedIn holderThread held |> shouldEqual None
 
         // A non-blocking contended acquisition fails rather than parks.
         match UnixDescriptor.tryFlock (Callers.thread waiterThread held) second (2 ||| 4) held with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) ->
-            UnixThreadTable.parkedFor waiterThread (Lone.threads after) |> shouldEqual None
+            Lone.parkedIn waiterThread after |> shouldEqual None
         | other -> failwith $"expected EAGAIN, got %A{other}"
 
     [<Test>]
@@ -3720,8 +3720,8 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread taken) taken
             |> parked
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads beaten)
-        |> shouldEqual (UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn))
+        Lone.parkedIn waiterThread beaten
+        |> shouldEqual (Lone.parkedIn waiterThread parkedIn)
 
         // Granted: the record is gone, and the thread may issue an flock again.
         let freed =
@@ -3733,8 +3733,7 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread freed) freed
             |> granted
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads finished)
-        |> shouldEqual None
+        Lone.parkedIn waiterThread finished |> shouldEqual None
 
         UnixDescriptor.tryFlock (Callers.thread waiterThread finished) second 8 finished
         |> granted
@@ -4307,7 +4306,7 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
             |> parked
 
-        match UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn) with
+        match Lone.parkedIn waiterThread parkedIn with
         | Some parked -> WakeCondition.ofPark parked |> shouldEqual condition
         | None -> failwith "expected the park to have been recorded"
 

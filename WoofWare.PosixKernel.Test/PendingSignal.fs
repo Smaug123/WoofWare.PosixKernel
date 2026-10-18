@@ -94,7 +94,7 @@ module PendingSignal =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let owed = UnixThreadTable.owedBy transferrer (Lone.threads system)
+        let owed = Lone.owedBy transferrer system
 
         match owed, transferrerHasSignal pending with
         | Some OwedReturn.SignalDue, true

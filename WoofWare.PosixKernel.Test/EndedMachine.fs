@@ -24,9 +24,7 @@ module EndedMachine =
         |> Set.contains (Caller.processId caller)
         |> shouldEqual false
 
-        let before =
-            before
-            |> Proc.mapThreads (Caller.processId caller) (UnixThreadTable.settle (Caller.thread caller))
+        let before = before |> ForgedThread.settled caller
 
         let _, exited = UnixThreadLifecycle.exitGroup caller 0 before
         after |> shouldEqual exited

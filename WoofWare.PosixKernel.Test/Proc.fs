@@ -3,13 +3,14 @@ namespace WoofWare.PosixKernel.Test
 open WoofWare.PosixKernel
 
 /// A test's reach into the internals of the process `pid` of a system that
-/// may hold others: its own state, its threads, its leader, and its
+/// may hold others: its own state, each of its threads, its leader, and its
 /// descriptor table with the machine's open file descriptions; and the view
 /// of the system from it, for a test that calls a function working on one
 /// process's view. Every test reads and writes those through here, or through
-/// `Lone` on a system holding one process, rather than through the
-/// `UnixSystem` record's fields or `UnixSystemState`, so that a change to what
-/// a `UnixSystem` holds changes these modules alone.
+/// `Lone` on a system holding one process, and forges a thread's state through
+/// `ForgedThread`, rather than through the `UnixSystem` record's fields or
+/// `UnixSystemState`, so that a change to what a `UnixSystem` holds changes
+/// these modules alone.
 ///
 /// Each function fails loudly unless `system` holds the process `pid`.
 [<RequireQualifiedAccess>]
@@ -105,32 +106,27 @@ module internal Proc =
             )
             system
 
-    /// The process `pid`'s threads, as the internal functions of
-    /// `UnixThreadTable` take them.
-    let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The process `pid`'s thread table, as the internal functions of
+    /// `UnixThreadTable` take it: for the tests of the table itself, and for
+    /// `ForgedThread`. Every other test asks about one thread at a time
+    /// (`thread`, `parkOf`, `parkedIn`, `owedBy`), or reads `threadMap`.
+    let threadTable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : ThreadTable<'Thread>
         =
-        (slot "threads" pid system).Threads
+        (slot "threadTable" pid system).Threads
 
-    /// The process `pid`'s threads, by the client's name for each.
-    let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (pid : ProcessId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Map<'Thread, UnixThreadState>
-        =
-        UnixThreadTable.byName (threads pid system)
-
-    /// `system` with the process `pid`'s threads rewritten by `f`.
-    let mapThreads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `system` with the process `pid`'s thread table rewritten by `f`: for
+    /// `ForgedThread`, through which every test forges a thread's state.
+    let mapThreadTable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (f : ThreadTable<'Thread> -> ThreadTable<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
         mapSlot
-            "mapThreads"
+            "mapThreadTable"
             pid
             (fun slot ->
                 { slot with
@@ -139,15 +135,57 @@ module internal Proc =
             )
             system
 
-    /// `system` with the process `pid`'s threads, by the client's name for
-    /// each, rewritten by `f`, for a test that forges a state no call reaches.
-    let mapThreadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The process `pid`'s threads, by the client's name for each, read from
+    /// its thread table rather than through `UnixSystem.threads`, so that a
+    /// test may hold the one to the other.
+    let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        : Map<'Thread, UnixThreadState>
         =
-        mapThreads pid (UnixThreadTable.byName >> f >> UnixThreadTable.ofMap) system
+        UnixThreadTable.byName (threadTable pid system)
+
+    /// The thread `caller` names, as a client reads it (`UnixSystem.threads`).
+    /// Fails loudly unless its process has that thread.
+    let thread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixThreadState
+        =
+        let threads = UnixSystem.threads (Caller.processId caller) system
+
+        match Map.tryFind (Caller.thread caller) threads with
+        | Some state -> state
+        | None ->
+            failwith
+                $"Proc.thread: asked about %O{caller}, but its process has the threads %A{Map.keys threads |> List.ofSeq}"
+
+    /// The park the thread `caller` names is in, with its place in park order,
+    /// if it is parked (`UnixThreadState.park`).
+    let parkOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ThreadPark option
+        =
+        UnixThreadState.park (thread caller system)
+
+    /// The syscall the thread `caller` names is parked in, if any
+    /// (`UnixThreadState.parkedIn`).
+    let parkedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ParkedSyscall option
+        =
+        UnixThreadState.parkedIn (thread caller system)
+
+    /// What the thread `caller` names owes before it makes another call, if
+    /// anything (`UnixThreadState.Owes`).
+    let owedBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : OwedReturn option
+        =
+        (thread caller system).Owes
 
     /// The process `pid`'s leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

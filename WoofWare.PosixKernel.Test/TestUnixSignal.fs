@@ -650,11 +650,11 @@ module TestUnixSignal =
                             Signals = signals
                         }
                     )
-                    |> Lone.mapThreads (UnixThreadTable.settle case.Returning)
+                    |> ForgedThread.settled (Callers.thread case.Returning system)
 
                 if goesOn then
                     returned
-                    |> Lone.mapThreads (UnixThreadTable.owe case.Returning OwedReturn.SignalDue)
+                    |> ForgedThread.owing (Callers.thread case.Returning system) OwedReturn.SignalDue
                 else
 
                 let marked =
@@ -665,9 +665,10 @@ module TestUnixSignal =
 
                 (returned, marked)
                 ||> Set.fold (fun returned thread ->
-                    match UnixThreadTable.owedBy thread (Lone.threads returned) with
+                    match Lone.owedBy thread returned with
                     | None when deliverable signals thread ->
-                        returned |> Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue)
+                        returned
+                        |> ForgedThread.owing (Callers.thread thread returned) OwedReturn.SignalDue
                     | Some _
                     | None -> returned
                 )

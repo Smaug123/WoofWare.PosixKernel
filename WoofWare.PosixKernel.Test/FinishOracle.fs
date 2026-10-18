@@ -161,7 +161,7 @@ module internal FinishOracle =
         : string
         =
         let parked =
-            match UnixThreadTable.parkOf (Caller.thread caller) (Proc.threads (Caller.processId caller) system) with
+            match Proc.parkOf caller system with
             | Some {
                        Syscall = parked
                        State = ParkState.Woken _
@@ -427,9 +427,10 @@ module internal FinishOracle =
             | Ok finished ->
                 systemOf finished
                 |> Option.bind (fun system ->
-                    match ProcessTable.tryFind (ProcessId.toInt32 (Caller.processId caller)) system.Processes with
-                    | Some slot -> UnixThreadTable.owedBy (Caller.thread caller) slot.Threads
-                    | None -> None
+                    if Set.contains (Caller.processId caller) (UnixSystem.processIds system) then
+                        Proc.owedBy caller system
+                    else
+                        None
                 )
             | Error _ -> None
 

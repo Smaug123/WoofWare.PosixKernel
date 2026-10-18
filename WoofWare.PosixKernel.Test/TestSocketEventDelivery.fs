@@ -1143,7 +1143,7 @@ module TestSocketEventDelivery =
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             OpenFileTable.descriptions closed.Machine.OpenFiles
             |> Map.containsKey (
-                match UnixThreadTable.parkedFor 1 (Lone.threads closed) with
+                match Lone.parkedIn 1 closed with
                 | Some (ParkedSyscall.EpollWait wait) -> wait.Epoll
                 | other -> failwith $"expected the wait to stay parked, got %A{other}"
             )

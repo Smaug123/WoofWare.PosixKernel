@@ -889,7 +889,7 @@ module TestKeventRegistration =
                 match UnixKqueue.tryFinishKevent (Callers.thread 2 system) system with
                 | Ok (KeventOutcome.Answered [ event ], finished) ->
                     event |> shouldEqual expected
-                    UnixThreadTable.parkedFor 2 (Lone.threads finished) |> shouldEqual None
+                    Lone.parkedIn 2 finished |> shouldEqual None
                     finished
                 | other -> failwith $"expected thread 2 to take the event, got %A{other}"
 
