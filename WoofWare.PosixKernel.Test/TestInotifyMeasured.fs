@@ -1473,6 +1473,7 @@ module TestInotifyMeasured =
         let isatty =
             match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
+            | TerminalAttributesAnswer.Attributes _ -> "isatty=1"
 
         let pread () =
             match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0L system with
@@ -1514,8 +1515,8 @@ module TestInotifyMeasured =
 
         let ficlone =
             match UnixDescriptor.tryFileClone (Callers.leader system) fd other system with
-            | Ok error -> $"-1 %O{error}"
-            | Error refusal -> failwith $"%A{refusal}"
+            | Ok (SyscallAnswer.Failed error, _) -> $"-1 %O{error}"
+            | other -> failwith $"%A{other}"
 
         let getdents =
             match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with

@@ -459,14 +459,29 @@ module internal BytesAvailableRefusal =
         | BytesAvailableRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | BytesAvailableRefusal.UnmodelledTarget _ -> RefusalKind.Unmodelled
 
+/// The settings of a terminal, as `tcgetattr(3)` writes them into the
+/// caller's `struct termios`.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `TerminalAttributesAnswer.Attributes`.
+type TerminalSettings =
+    // What it holds is the design of terminals, which this kernel does not
+    // model yet.
+    internal | TerminalSettings
+
 /// What `tcgetattr(3)` answered, which is also what `isatty(3)` answers: it is
 /// `tcgetattr` with the answer reduced to 1 or 0 and the errno left as it was.
-///
-/// Nothing this kernel models is a terminal, so the one case is a failure.
 [<RequireQualifiedAccess>]
 type TerminalAttributesAnswer =
     /// `tcgetattr` returns -1 and `isatty` returns 0, each with this errno.
     | NotATerminal of error : UnixError
+    /// `fd` is a terminal: `tcgetattr` returns 0, having written `settings`
+    /// into the caller's `struct termios`, and `isatty` returns 1.
+    ///
+    /// Reserved: nothing this kernel models is a terminal, so nothing in this
+    /// version answers it.
+    | Attributes of settings : TerminalSettings
 
 /// Why this kernel will not answer an `ioctl(2)` of `FICLONE`.
 [<RequireQualifiedAccess>]
@@ -1663,8 +1678,9 @@ module UnixDescriptor =
         tryBytesAvailable caller fd destination system
         |> Refusal.orRaise "UnixDescriptor.bytesAvailable" BytesAvailableRefusal.kind BytesAvailableRefusal.describe
 
-    /// `tryFileClone` once `Entry` has admitted its caller.
-    let private tryFileCloneIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The errno a `FICLONE` from `source` to `destination` fails with: no
+    /// filesystem this kernel answers for can share contents.
+    let private fileCloneFailure<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : int)
         (source : int)
         (system : ProcessView<'Thread, 'Handler>)
@@ -1756,19 +1772,29 @@ module UnixDescriptor =
         | EmulatedFileSystemType.Apfs
         | EmulatedFileSystemType.Nfs as fileSystem -> Error (FileCloneRefusal.UnmeasuredFileSystem fileSystem)
 
+    /// `tryFileClone` once `Entry` has admitted its caller.
+    let private tryFileCloneIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (destination : int)
+        (source : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FileCloneRefusal>
+        =
+        fileCloneFailure destination source system
+        |> Result.map (fun error -> SyscallAnswer.Failed error, system)
+
     /// `fileClone`, with a refusal answered as the `Error` rather than raised.
     let internal tryFileClone<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (destination : int)
         (source : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixError, FileCloneRefusal>
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FileCloneRefusal>
         =
         Entry.call
             "UnixDescriptor.fileClone"
             CallerRequirement.Running
             caller
-            Shape.answer
+            (Shape.result Shape.withSystem)
             (tryFileCloneIn destination source)
             system
 
@@ -1777,11 +1803,12 @@ module UnixDescriptor =
     /// share the contents of the file `source` names.
     ///
     /// No filesystem this kernel answers for can share contents, so the answer
-    /// is always an errno: EBADF for a descriptor the process does not hold,
-    /// EXDEV for two objects on different filesystems, EISDIR if either is a
-    /// directory, EINVAL if either is not a regular file, EBADF for a
-    /// destination not open for writing or a source not open for reading, and
-    /// otherwise EOPNOTSUPP on a tmpfs. Changes nothing.
+    /// is always `SyscallAnswer.Failed`: EBADF for a descriptor the process
+    /// does not hold, EXDEV for two objects on different filesystems, EISDIR
+    /// if either is a directory, EINVAL if either is not a regular file, EBADF
+    /// for a destination not open for writing or a source not open for
+    /// reading, and otherwise EOPNOTSUPP on a tmpfs. The system comes back
+    /// unchanged; a clone that succeeded would change the destination.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and `FICLONE` is a Linux request.</exception>
     let fileClone<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1789,7 +1816,7 @@ module UnixDescriptor =
         (destination : int)
         (source : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : UnixError
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryFileClone caller destination source system
         |> Refusal.orRaise "UnixDescriptor.fileClone" FileCloneRefusal.kind FileCloneRefusal.describe
@@ -1837,8 +1864,9 @@ module UnixDescriptor =
         TerminalAttributesAnswer.NotATerminal error
 
     /// `tcgetattr(3)`, and so `isatty(3)`: whether `fd` is a terminal. None of
-    /// the objects this kernel models is one, so the answer is always the errno
-    /// saying why not, which depends on the object and the flavour.
+    /// the objects this kernel models is one, so the answer is always
+    /// `TerminalAttributesAnswer.NotATerminal`, with the errno saying why not,
+    /// which depends on the object and the flavour.
     ///
     /// Changes nothing.
     let terminalAttributes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

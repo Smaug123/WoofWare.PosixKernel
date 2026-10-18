@@ -187,7 +187,7 @@ module TestCallerChecks =
                 )
             running
                 "UnixDescriptor.fileClone"
-                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore<UnixError>)
+                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore)
             running
                 "UnixDescriptor.terminalAttributes"
                 (fun caller system ->

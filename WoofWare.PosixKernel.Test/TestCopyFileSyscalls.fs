@@ -337,9 +337,14 @@ module TestCopyFileSyscalls =
                 let destination, system = make outKind "kdst" system
 
                 match UnixDescriptor.tryFileClone (Callers.leader system) destination source system with
-                | Ok error ->
+                | Ok (SyscallAnswer.Failed error, after) ->
                     if $"%O{error}" <> measured then
                         failwith $"in=%s{inKind} out=%s{outKind}: measured %s{measured}, the model answered %O{error}"
+
+                    after |> shouldEqual system
+                | Ok (SyscallAnswer.Completed result, _) ->
+                    failwith
+                        $"in=%s{inKind} out=%s{outKind}: measured %s{measured}, the model completed with %d{result}"
                 | Error refusal ->
                     failwith $"in=%s{inKind} out=%s{outKind}: refused, %s{FileCloneRefusal.describe refusal}"
 
@@ -359,6 +364,7 @@ module TestCopyFileSyscalls =
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         UnixDescriptor.tryFileClone (Callers.leader darwin) outFd inFd darwin
+        |> Result.map fst
         |> shouldEqual (Error (FileCloneRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         let nfs =
@@ -375,6 +381,7 @@ module TestCopyFileSyscalls =
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         UnixDescriptor.tryFileClone (Callers.leader nfs) outFd inFd nfs
+        |> Result.map fst
         |> shouldEqual (Error (FileCloneRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // A refusal the descriptors earn first is still answered.
@@ -955,11 +962,11 @@ module TestCopyFileSyscalls =
         | other -> failwith $"%A{other}"
 
         match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FileClone (outFd, inFd)) system with
-        | Ok (SteppedCall.FileClone error) ->
-            Ok error
+        | Ok (SteppedCall.FileClone (answer, after)) ->
+            Ok (answer, after)
             |> shouldEqual (UnixDescriptor.tryFileClone (Callers.leader system) outFd inFd system)
 
-            error |> shouldEqual UnixError.EOPNOTSUPP
+            answer |> shouldEqual (SyscallAnswer.Failed UnixError.EOPNOTSUPP)
         | other -> failwith $"%A{other}"
 
     // ------------------------------------------------------------- futimens

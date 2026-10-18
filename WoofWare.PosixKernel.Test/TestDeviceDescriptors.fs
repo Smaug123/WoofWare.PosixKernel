@@ -1043,16 +1043,16 @@ module TestDeviceDescriptors =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
         UnixDescriptor.tryFileClone (Callers.leader system) nullFd fileFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) fileFd nullFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) urandomFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) nullFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
     [<Test>]
     let ``copy_file_range to, from or between devices is EINVAL`` () : unit =
