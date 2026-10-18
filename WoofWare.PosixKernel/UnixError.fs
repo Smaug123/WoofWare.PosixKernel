@@ -1167,12 +1167,17 @@ module UnixError =
     /// Throws for an error the chosen platform does not have, such as <c>ENOKEY</c> under Darwin:
     /// no number is right for it there. <c>tryToRawErrnoUnder</c> answers <c>None</c> instead.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentException">The chosen platform does not have <c>error</c>.</exception>
     let toRawErrnoUnder (reporting : RawErrnoNumbering) (error : UnixError) : int =
         match tryToRawErrnoUnder reporting error with
         | Some raw -> raw
         | None ->
-            failwith
-                $"UnixError.toRawErrnoUnder: %O{error} does not exist under the %O{reporting} numbering (its numbering is %A{rawNumbering error}), so no number is right for it there. Whatever produced it for a %O{reporting} process has answered with another flavour's error."
+            raise (
+                Refusal.exceptionOf
+                    "UnixError.toRawErrnoUnder"
+                    (RefusalKind.Contradictory "error")
+                    $"%O{error} does not exist under the %O{reporting} numbering (its numbering is %A{rawNumbering error}), so no number is right for it there. Whatever produced it for a %O{reporting} process has answered with another flavour's error."
+            )
 
     /// <summary>
     /// Whether the integer is an errno which is portable across all WoofWare.PosixKernel's modelled Unixes.

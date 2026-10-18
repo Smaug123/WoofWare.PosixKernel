@@ -160,8 +160,11 @@ module TestUnixError =
                     refused <- refused + 1
 
                     let exn =
-                        Assert.Throws<Exception> (fun () -> UnixError.toRawErrnoUnder numbering error |> ignore<int>)
+                        Assert.Throws<ArgumentException> (fun () ->
+                            UnixError.toRawErrnoUnder numbering error |> ignore<int>
+                        )
 
+                    exn.ParamName |> shouldEqual "error"
                     exn.Message |> shouldContainText (caseName error)
                     exn.Message |> shouldContainText (sprintf "%O" numbering)
 
