@@ -17,6 +17,9 @@
 //   user  - the limit is the user's, not the process's: a sibling process of
 //           the same user holds `limit` real-time signals queued while this
 //           one sends.
+//   bare  - a send whose allocation failed leaves the pending bit alone: what
+//           that instance counts against the limit, and what an allocated
+//           instance of the same signal does beside it.
 //   other - the queue of a different user: as root only, a child that becomes
 //           uid 1000 (with its limit lowered) and holds `limit` signals queued
 //           is sent sigqueue by root, and root's own queue is empty.
@@ -254,6 +257,91 @@ static void user_body(int fd, void *arg)
     write(fd, out, len);
 }
 
+/* Take one instance of `sig` alone, and say what it carried. */
+static void take_one(int sig, char *out, size_t n)
+{
+    sigset_t one;
+    sigemptyset(&one);
+    sigaddset(&one, sig);
+    struct timespec zero = { 0, 0 };
+    siginfo_t si;
+    int s = sigtimedwait(&one, &si, &zero);
+    size_t len = strlen(out);
+    if (s < 0) snprintf(out + len, n - len, " took-%s:none", signame(sig));
+    else snprintf(out + len, n - len, " took-%s:%s/pid=%s", signame(s), codename(si.si_code), si.si_pid == getpid() ? "own" : si.si_pid == 0 ? "0" : "other");
+}
+
+static void sigq_into(char *out, size_t n)
+{
+    char q[64];
+    sigq(q, sizeof q);
+    size_t len = strlen(out);
+    snprintf(out + len, n - len, " sigq=%s", q);
+}
+
+/* A signal whose allocation failed is held as the pending bit alone: what
+ * that instance counts against the limit, and what becomes of it beside an
+ * instance that was allocated. */
+static void bare_body(int fd, void *arg)
+{
+    int row = (int)(long)arg;
+    block_all();
+    char out[2048] = "";
+    int len = 0;
+    switch (row) {
+    case 0:
+        /* A real-time instance with no allocation, then an allocated one of
+         * the same signal once there is room again. */
+        set_limit(1);
+        len = snprintf(out, sizeof out, "section=bare row=rt-bare-then-allocated limit=1 sigqueue(RTMIN)=%s", errname(send_by("sigqueue", SIGRTMIN)));
+        len += snprintf(out + len, sizeof out - len, " kill(RTMIN+1)=%s", errname(send_by("kill", SIGRTMIN + 1)));
+        sigq_into(out, sizeof out);
+        take_one(SIGRTMIN, out, sizeof out);
+        sigq_into(out, sizeof out);
+        len = (int)strlen(out);
+        len += snprintf(out + len, sizeof out - len, " sigqueue(RTMIN+1)=%s", errname(send_by("sigqueue", SIGRTMIN + 1)));
+        sigq_into(out, sizeof out);
+        break;
+    case 1:
+        /* An allocated real-time instance, then a kill of the same signal with
+         * no room. */
+        set_limit(1);
+        len = snprintf(out, sizeof out, "section=bare row=rt-allocated-then-bare limit=1 sigqueue(RTMIN+1)=%s", errname(send_by("sigqueue", SIGRTMIN + 1)));
+        len += snprintf(out + len, sizeof out - len, " kill(RTMIN+1)=%s", errname(send_by("kill", SIGRTMIN + 1)));
+        sigq_into(out, sizeof out);
+        break;
+    case 2:
+        /* A standard instance with no allocation does not count: with it
+         * pending, there is room for an allocated one. */
+        set_limit(1);
+        len = snprintf(out, sizeof out, "section=bare row=standard-bare-counts limit=1 sigqueue(RTMIN)=%s", errname(send_by("sigqueue", SIGRTMIN)));
+        len += snprintf(out + len, sizeof out - len, " pthread_kill(USR1)=%s", errname(send_by("pthread_kill", SIGUSR1)));
+        sigq_into(out, sizeof out);
+        take_one(SIGRTMIN, out, sizeof out);
+        sigq_into(out, sizeof out);
+        len = (int)strlen(out);
+        len += snprintf(out + len, sizeof out - len, " sigqueue(RTMIN+1)=%s", errname(send_by("sigqueue", SIGRTMIN + 1)));
+        sigq_into(out, sizeof out);
+        break;
+    case 3:
+        /* A standard instance with no allocation on the thread, sent to the
+         * thread again (coalesced?), then sent to the process, which has a
+         * pending set of its own and allocates past the limit. */
+        set_limit(0);
+        len = snprintf(out, sizeof out, "section=bare row=standard-bare-twice-then-kill limit=0 pthread_kill(USR1)=%s", errname(send_by("pthread_kill", SIGUSR1)));
+        len += snprintf(out + len, sizeof out - len, " pthread_kill(USR1)=%s", errname(send_by("pthread_kill", SIGUSR1)));
+        len += snprintf(out + len, sizeof out - len, " kill(USR1)=%s", errname(send_by("kill", SIGUSR1)));
+        sigq_into(out, sizeof out);
+        break;
+    }
+    len = (int)strlen(out);
+    len += snprintf(out + len, sizeof out - len, " drained:");
+    int count = drain(out, sizeof out);
+    len = (int)strlen(out);
+    len += snprintf(out + len, sizeof out - len, " count=%d\n", count);
+    write(fd, out, len);
+}
+
 static void other_body(int fd, void *arg)
 {
     (void)arg;
@@ -373,6 +461,7 @@ int main(void)
         in_child(mixed_body, &b);
     }
     for (int m = 0; m < 3; m++) in_child(user_body, (void *)methods[m]);
+    for (long row = 0; row < 4; row++) in_child(bare_body, (void *)row);
     if (geteuid() == 0) in_child(other_body, NULL);
     else printf("# not root: section other skipped\n");
 #endif

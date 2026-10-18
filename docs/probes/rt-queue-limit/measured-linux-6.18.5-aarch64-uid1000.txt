@@ -22,4 +22,8 @@ section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=pthread_kill sig=RTMIN+
 section=user limit=4 sibling-holds=4 method=kill sig=RTMIN answer=0 sigq=4/4 drained: RTMIN+0/SI_USER/pid=0 count=1
 section=user limit=4 sibling-holds=4 method=sigqueue sig=RTMIN answer=EAGAIN sigq=4/4 drained: count=0
 section=user limit=4 sibling-holds=4 method=pthread_kill sig=RTMIN answer=EAGAIN sigq=4/4 drained: count=0
+section=bare row=rt-bare-then-allocated limit=1 sigqueue(RTMIN)=0 kill(RTMIN+1)=0 sigq=1/1 took-RTMIN+0:SI_QUEUE/pid=own sigq=0/1 sigqueue(RTMIN+1)=0 sigq=1/1 drained: RTMIN+1/SI_QUEUE/pid=own count=1
+section=bare row=rt-allocated-then-bare limit=1 sigqueue(RTMIN+1)=0 kill(RTMIN+1)=0 sigq=1/1 drained: RTMIN+1/SI_QUEUE/pid=own count=1
+section=bare row=standard-bare-counts limit=1 sigqueue(RTMIN)=0 pthread_kill(USR1)=0 sigq=1/1 took-RTMIN+0:SI_QUEUE/pid=own sigq=0/1 sigqueue(RTMIN+1)=0 sigq=1/1 drained: USR1/SI_USER/pid=0 RTMIN+1/SI_QUEUE/pid=own count=2
+section=bare row=standard-bare-twice-then-kill limit=0 pthread_kill(USR1)=0 pthread_kill(USR1)=0 kill(USR1)=0 sigq=1/0 drained: USR1/SI_USER/pid=0 USR1/SI_USER/pid=own count=2
 # not root: section other skipped
