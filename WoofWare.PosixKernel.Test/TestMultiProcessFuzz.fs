@@ -1767,7 +1767,7 @@ module TestMultiProcessFuzz =
             }
         | Made.Delivered (delivery, view) ->
             { world with
-                Machine = Machines.unfocus view world.Machine
+                System = Machines.unfocus view world.System
                 Delivered = delivery :: world.Delivered
             }
         | Made.Sleeps view ->
