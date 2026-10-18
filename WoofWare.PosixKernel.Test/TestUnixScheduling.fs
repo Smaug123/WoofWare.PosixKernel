@@ -147,11 +147,16 @@ module TestUnixScheduling =
         /// A dispatch onto a processor the machine does not have, which throws.
         | BeyondDispatch
 
-    let private throws (f : unit -> 'a) : bool =
+    /// Whether `f` throws, failing the test if it throws anything but an
+    /// `'Exception` exactly.
+    let private throws<'Exception, 'a when 'Exception :> exn> (f : unit -> 'a) : bool =
         try
             f () |> ignore<'a>
             false
-        with _ ->
+        with e ->
+            if e.GetType () <> typeof<'Exception> then
+                failwith $"expected %s{typeof<'Exception>.Name}, got %O{e}"
+
             true
 
     let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.Machine
@@ -304,7 +309,7 @@ module TestUnixScheduling =
                     let cpu = CpuId (List.item (k % List.length cpus) cpus)
                     cover Reached.BeyondDispatch
 
-                    throws (fun () ->
+                    throws<ArgumentOutOfRangeException, _> (fun () ->
                         UnixScheduling.dispatch (Caller.make thread.Pid thread.Name) cpu (viewOf thread.Pid world)
                     )
                     |> shouldEqual true
@@ -539,10 +544,10 @@ module TestUnixScheduling =
                     if not parked && lastDispatched thread.Serial world.Events then
                         cover Reached.DisplacedGetCpu
 
-                    if not (throws (fun () -> UnixScheduling.tryGetcpu caller view)) then
+                    if not (throws<InvalidOperationException, _> (fun () -> UnixScheduling.tryGetcpu caller view)) then
                         failwith $"getcpu answered for a thread not running, or parked: %s{context ()}"
             elif parked then
-                if not (throws (fun () -> UnixScheduling.tryGetcpu caller view)) then
+                if not (throws<InvalidOperationException, _> (fun () -> UnixScheduling.tryGetcpu caller view)) then
                     failwith $"getcpu answered for a parked thread: %s{context ()}"
             else
                 UnixScheduling.tryGetcpu caller view
@@ -638,7 +643,11 @@ module TestUnixScheduling =
             UnixScheduling.runningOn (Caller.make pid 0) (Machines.viewOf pid machine)
 
         let getcpu (pid : ProcessId) (machine : UnixSystem<int, string>) : bool =
-            not (throws (fun () -> UnixScheduling.tryGetcpu (Caller.make pid 0) (Machines.viewOf pid machine)))
+            not (
+                throws<InvalidOperationException, _> (fun () ->
+                    UnixScheduling.tryGetcpu (Caller.make pid 0) (Machines.viewOf pid machine)
+                )
+            )
 
         let mutable machine = machine
 

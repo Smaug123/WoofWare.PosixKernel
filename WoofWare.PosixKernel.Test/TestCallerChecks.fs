@@ -558,11 +558,21 @@ module TestCallerChecks =
             anyThread
                 "UnixScheduling.dispatch"
                 (fun caller system -> UnixScheduling.dispatch caller (CpuId 0) system |> ignore)
-            // No thread has been dispatched, so `getcpu` fails loudly, and
-            // Darwin has none, each once the caller is checked.
+            // No thread has been dispatched, and `getcpu` of a thread not running
+            // throws `InvalidOperationException` too, so the caller is
+            // dispatched first wherever `dispatch` admits it. Darwin has no
+            // `getcpu`, which it refuses once the caller is checked.
             running
                 "UnixScheduling.getcpu"
-                (fun caller system -> UnixScheduling.getcpu caller system |> ignore<GetCpuAnswer>)
+                (fun caller system ->
+                    let system =
+                        try
+                            UnixScheduling.dispatch caller (CpuId 0) system
+                        with :? InvalidOperationException ->
+                            system
+
+                    UnixScheduling.getcpu caller system |> ignore<GetCpuAnswer>
+                )
             running "UnixSystem.processId" (fun caller system -> UnixSystem.processId caller system |> ignore)
             running "UnixSystem.umask" (fun caller system -> UnixSystem.umask caller 0o022 system |> ignore)
             // Each case of `step` is made through its own function, which names

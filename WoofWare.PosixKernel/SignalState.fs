@@ -395,8 +395,9 @@ module SignalState =
 
     /// `mask` as a kernel holds it: without SIGKILL and SIGSTOP, which it drops
     /// silently, and with every other bit, one that names no signal included.
-    /// Fails loudly on a mask made under another numbering, whose bits name
-    /// other signals.
+    /// Throws `ArgumentException`, naming `parameter`, the argument the client
+    /// passed the mask in, on a mask made under another numbering, whose bits
+    /// name other signals.
     ///
     /// Measured by the signal fuzzer's harness
     /// (`WoofWare.PosixKernel.Test/signalFuzz/harness.c`) on Linux 6.18.5 and
@@ -406,11 +407,21 @@ module SignalState =
     /// the same two: an `sa_mask` of every bit was stored and held while the
     /// handler ran less exactly those two, so with Darwin's bit 31 and Linux's
     /// 32 and 33, through glibc and the raw `rt_sigaction` alike.
-    let private maskable (operation : string) (numbering : SignalNumbering) (mask : SignalMask) : SignalMask =
+    let private maskable
+        (operation : string)
+        (parameter : string)
+        (numbering : SignalNumbering)
+        (mask : SignalMask)
+        : SignalMask
+        =
         match SignalMask.numbering mask with
         | ValueSome other when other <> numbering ->
-            failwith
-                $"SignalState.%s{operation}: the mask %O{mask} was made under the %O{other} numbering, and this process reads signals under %O{numbering}."
+            raise (
+                Refusal.exceptionOf
+                    $"SignalState.%s{operation}"
+                    (RefusalKind.Contradictory parameter)
+                    $"the mask %O{mask} was made under the %O{other} numbering, and this process reads signals under %O{numbering}."
+            )
         | _ -> SignalMask.without (Set.ofList [ Signal.SIGKILL ; Signal.SIGSTOP ]) mask
 
     let private withDisposition
@@ -510,7 +521,7 @@ module SignalState =
             | SignalDisposition.Catch action ->
                 SignalDisposition.Catch
                     { action with
-                        Mask = maskable "setDisposition" numbering action.Mask
+                        Mask = maskable "setDisposition" "newAction" numbering action.Mask
                     }
 
         // Measured on Linux 6.18.5 and Darwin 25.6.0 (2026-09-23), and swept
@@ -577,7 +588,7 @@ module SignalState =
     /// client calls `UnixSignal.pthreadSigmask` or its neighbours, which decode
     /// `how` and screen what the C library screens first.
     ///
-    /// Fails loudly on a set made under another numbering.
+    /// Throws `ArgumentException` on a set made under another numbering.
     let internal changeMask
         (numbering : SignalNumbering)
         (change : SignalMaskChange)
@@ -586,7 +597,7 @@ module SignalState =
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        let set = maskable "changeMask" numbering set
+        let set = maskable "changeMask" "set" numbering set
         let current = maskOf thread state
 
         let changed =
@@ -626,7 +637,7 @@ module SignalState =
     ///
     /// Fails loudly if `thread` already has a mask to restore (a client that
     /// made a second call without returning to user mode from the first), and
-    /// on a mask made under another numbering.
+    /// throws `ArgumentException` on a mask made under another numbering.
     let internal suspend
         (numbering : SignalNumbering)
         (thread : 'Thread)
@@ -638,7 +649,7 @@ module SignalState =
             failwith
                 $"SignalState.suspend: thread %O{thread} already has a mask to restore from an earlier sigsuspend, so it has not returned to user mode since, and cannot be making another call (this is a bug in the client)."
 
-        let temporary = maskable "suspend" numbering temporary
+        let temporary = maskable "suspend" "mask" numbering temporary
 
         { state with
             MasksToRestore = Map.add thread (maskOf thread state) state.MasksToRestore
@@ -1318,7 +1329,10 @@ module SignalState =
             else
                 SignalMask.union mask action.Mask |> SignalMask.add numbering signal
 
-        maskable "onReturnToUser" numbering blocked
+        // Both masks were screened as they were set, by `changeMask`,
+        // `suspend` and `setDisposition`; the last took the handler's mask as
+        // `UnixSignal.sigaction`'s `newAction`.
+        maskable "onReturnToUser" "newAction" numbering blocked
 
     /// Whether delivering `signal` under `SA_RESETHAND` resets its disposition.
     let private resetsHand (numbering : SignalNumbering) (signal : Signal) : bool =
@@ -1558,8 +1572,8 @@ module SignalState =
     /// `sigreturn(2)`: pop `thread`'s innermost frame, `frame`, as
     /// `UnixSignal.sigreturn` states.
     ///
-    /// Fails loudly unless `frame` is `thread`'s innermost frame: handlers return
-    /// innermost first, so anything else is a bug in the client.
+    /// Throws `ArgumentException` unless `frame` is `thread`'s innermost frame:
+    /// handlers return innermost first, so anything else is a bug in the client.
     let internal sigreturn
         (thread : 'Thread)
         (frame : HandlerFrameId)
@@ -1579,5 +1593,9 @@ module SignalState =
             }
             |> withMask thread innermost.SavedMask
         | frames ->
-            failwith
-                $"SignalState.sigreturn: %O{frame} is not thread %O{thread}'s innermost handler frame (its frames, innermost first, are %O{frames |> List.map (fun f -> f.Id)})."
+            raise (
+                Refusal.exceptionOf
+                    "UnixSignal.sigreturn"
+                    (RefusalKind.Contradictory "frame")
+                    $"%O{frame} is not thread %O{thread}'s innermost handler frame (its frames, innermost first, are %O{frames |> List.map (fun f -> f.Id)})."
+            )

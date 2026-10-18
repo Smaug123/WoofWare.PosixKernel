@@ -208,6 +208,54 @@ module internal SigprocmaskRefusal =
         match refusal with
         | SigprocmaskRefusal.DarwinUnblockedForAnotherThread _ -> RefusalKind.Unmodelled
 
+/// Why this kernel will not answer an `rt_sigprocmask`.
+[<RequireQualifiedAccess>]
+type internal RtSigprocmaskRefusal =
+    /// This flavour has no such system call: Darwin's raw `sigprocmask` and
+    /// `__pthread_sigmask` are `UnixSignal.sigprocmask` and
+    /// `UnixSignal.pthreadSigmask`.
+    | NoSuchCall of flavour : SimulatedUnixFlavour
+
+[<RequireQualifiedAccess>]
+module internal RtSigprocmaskRefusal =
+    /// What this kernel knows about why it cannot answer. The client supplies
+    /// its own half: which thread made the call.
+    let describe (refusal : RtSigprocmaskRefusal) : string =
+        match refusal with
+        | RtSigprocmaskRefusal.NoSuchCall flavour ->
+            $"a %O{flavour} process has no rt_sigprocmask system call; its raw sigprocmask and __pthread_sigmask are UnixSignal.sigprocmask and UnixSignal.pthreadSigmask."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : RtSigprocmaskRefusal) : RefusalKind =
+        match refusal with
+        | RtSigprocmaskRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
+
+/// Why this kernel will not answer an `rt_sigsuspend`. One it has parked is
+/// finished as a `sigsuspend` is, by `UnixSignal.finishSigsuspend`.
+[<RequireQualifiedAccess>]
+type internal RtSigsuspendRefusal =
+    /// This flavour has no such system call: Darwin's `sigsuspend` is
+    /// `UnixSignal.sigsuspend`.
+    | NoSuchCall of flavour : SimulatedUnixFlavour
+    /// What `sigsuspend` refuses, which `rt_sigsuspend` refuses too.
+    | Sigsuspend of SigsuspendRefusal
+
+[<RequireQualifiedAccess>]
+module internal RtSigsuspendRefusal =
+    /// What this kernel knows about why it cannot answer. The client supplies
+    /// its own half: which thread made the call.
+    let describe (refusal : RtSigsuspendRefusal) : string =
+        match refusal with
+        | RtSigsuspendRefusal.NoSuchCall flavour ->
+            $"a %O{flavour} process has no rt_sigsuspend system call; its sigsuspend is UnixSignal.sigsuspend."
+        | RtSigsuspendRefusal.Sigsuspend inner -> SigsuspendRefusal.describe inner
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : RtSigsuspendRefusal) : RefusalKind =
+        match refusal with
+        | RtSigsuspendRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
+        | RtSigsuspendRefusal.Sigsuspend inner -> SigsuspendRefusal.kind inner
+
 /// What a thread's return to user mode did, as `UnixSignal.onReturnToUser`
 /// answers it, if it did not end the process (see `ProcessFate`): run the
 /// handlers of the caught signals it took, or apply a signal's kernel default;
@@ -786,8 +834,9 @@ module UnixSignal =
     /// `onReturnToUser` again, since signals the frame blocked may now be
     /// deliverable, and the thread owes that return if one is.
     ///
-    /// Fails loudly unless `frame` is the thread's innermost frame: handlers
-    /// return innermost first, so anything else is a bug in the client.
+    /// Throws `ArgumentException` unless `frame` is the thread's innermost
+    /// frame: handlers return innermost first, so anything else is a bug in the
+    /// client.
     let sigreturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (frame : HandlerFrameId)
@@ -810,8 +859,12 @@ module UnixSignal =
         : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, UnixError>, ThreadKillRefusal>
         =
         if not (Map.containsKey target system.Threads) then
-            failwith
-                $"UnixSignal.pthreadKill: thread %O{target} is not one of the process's threads (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixSignal.pthreadKill"
+                    (RefusalKind.Contradictory "target")
+                    $"thread %O{target} is not one of the process's threads (this is a bug in the client)."
+            )
 
         let numbering = UnixSystemState.signalNumbering system
 
@@ -881,8 +934,8 @@ module UnixSignal =
     /// pending without the information it was sent with, counting against
     /// nothing.
     ///
-    /// Fails loudly if `target` is not one of the process's threads, which is a
-    /// bug in the client.
+    /// Throws `ArgumentException` if `target` is not one of the process's
+    /// threads, which is a bug in the client.
     let pthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (target : 'Thread)
@@ -1100,9 +1153,9 @@ module UnixSignal =
     ///
     /// An unnamed `how` with a set is `EINVAL`, and changes nothing.
     ///
-    /// Fails loudly if `caller` names no thread, or is asleep in a syscall, each
-    /// of which is a bug in the client; and on a set made under another
-    /// numbering.
+    /// Throws `InvalidOperationException` if `caller` names no thread, or is
+    /// asleep in a syscall, and `ArgumentException` on a set made under another
+    /// numbering, each of which is a bug in the client.
     let pthreadSigmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (how : int32)
@@ -1232,12 +1285,10 @@ module UnixSignal =
         (set : SignalMask option)
         (sigsetSize : uint64)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>
+        : Result<Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>, RtSigprocmaskRefusal>
         =
         match UnixSystemState.signalNumbering system with
-        | SignalNumbering.Darwin ->
-            failwith
-                "UnixSignal.rtSigprocmask: a Darwin process has no rt_sigprocmask system call; its raw sigprocmask and __pthread_sigmask are UnixSignal.sigprocmask and UnixSignal.pthreadSigmask (this is a bug in the client)."
+        | SignalNumbering.Darwin -> Error (RtSigprocmaskRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
         | SignalNumbering.Linux ->
 
         // Measured by `sigprocmask-ops.c` on Linux 6.18.5: every size from 0
@@ -1245,9 +1296,27 @@ module UnixSignal =
         // set, with a NULL set, and with a NULL set and an unnamed `how`, and
         // wrote nothing to `oldset`. Blocking every bit left 0xfffffffffffbfeff.
         if sigsetSize <> 8UL then
-            Error UnixError.EINVAL
+            Ok (Error UnixError.EINVAL)
         else
-            changeMaskUnder MaskScope.Caller Set.empty thread how set system
+            Ok (changeMaskUnder MaskScope.Caller Set.empty thread how set system)
+
+    /// `rtSigprocmask`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal tryRtSigprocmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (how : int32)
+        (set : SignalMask option)
+        (sigsetSize : uint64)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>, RtSigprocmaskRefusal>
+        =
+        Entry.call
+            "UnixSignal.rtSigprocmask"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.result Shape.withSystem))
+            (rtSigprocmaskIn (Caller.thread caller) how set sigsetSize)
+            system
 
     /// Linux's `rt_sigprocmask(2)`, made as a system call rather than through
     /// the C library, by `caller`: as `pthreadSigmask`, except that it takes
@@ -1257,10 +1326,10 @@ module UnixSignal =
     /// A `sigsetSize` other than 8 is `EINVAL`, before anything else is
     /// looked at, a NULL set included.
     ///
-    /// Fails loudly on a Darwin process, which has no such system call: its raw
-    /// `sigprocmask` and `__pthread_sigmask` answered exactly as the C
-    /// library's calls on every row measured, so `sigprocmask` and
-    /// `pthreadSigmask` serve them.
+    /// Throws `PlatformNotSupportedException` on a Darwin process, which has no
+    /// such system call: its raw `sigprocmask` and `__pthread_sigmask` answered
+    /// exactly as the C library's calls on every row measured, so `sigprocmask`
+    /// and `pthreadSigmask` serve them.
     let rtSigprocmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (how : int32)
@@ -1269,13 +1338,8 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
-        Entry.call
-            "UnixSignal.rtSigprocmask"
-            CallerRequirement.Running
-            caller
-            (Shape.result Shape.withSystem)
-            (rtSigprocmaskIn (Caller.thread caller) how set sigsetSize)
-            system
+        tryRtSigprocmask caller how set sigsetSize system
+        |> Refusal.orRaise "UnixSignal.rtSigprocmask" RtSigprocmaskRefusal.kind RtSigprocmaskRefusal.describe
 
     /// `sigpending` once `Entry` has admitted its caller.
     let private sigpendingIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1398,10 +1462,10 @@ module UnixSignal =
     /// Measured by `docs/plans/2026-08-23-posix-kernel-extraction/sigsuspend-mask.c`
     /// on Linux 6.18.5 (glibc 2.41) and Darwin 27.0.0.
     ///
-    /// Fails loudly if `caller` names no thread, is asleep in a syscall, or has a
-    /// mask to restore from an earlier call (it has not returned to user mode
-    /// since), each of which is a bug in the client; and on a mask made under
-    /// another numbering.
+    /// Throws `InvalidOperationException` if `caller` names no thread, is
+    /// asleep in a syscall, or has a mask to restore from an earlier call (it
+    /// has not returned to user mode since), and `ArgumentException` on a mask
+    /// made under another numbering, each of which is a bug in the client.
     let sigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (mask : SignalMask)
@@ -1455,18 +1519,17 @@ module UnixSignal =
         (mask : SignalMask)
         (sigsetSize : uint64)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, RtSigsuspendRefusal>
         =
         match UnixSystemState.signalNumbering system with
-        | SignalNumbering.Darwin ->
-            failwith
-                "UnixSignal.rtSigsuspend: a Darwin process has no rt_sigsuspend system call; its sigsuspend is UnixSignal.sigsuspend (this is a bug in the client)."
+        | SignalNumbering.Darwin -> Error (RtSigsuspendRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
         | SignalNumbering.Linux ->
 
         if sigsetSize <> 8UL then
             Ok (SigsuspendOutcome.Failed UnixError.EINVAL, system)
         else
             trySigsuspendIn thread mask system
+            |> Result.mapError RtSigsuspendRefusal.Sigsuspend
 
     /// `rtSigsuspend`, with a refusal answered as the `Error` rather than raised.
     let internal tryRtSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1474,7 +1537,7 @@ module UnixSignal =
         (mask : SignalMask)
         (sigsetSize : uint64)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, RtSigsuspendRefusal>
         =
         Entry.call
             "UnixSignal.rtSigsuspend"
@@ -1492,7 +1555,8 @@ module UnixSignal =
     /// at, and changes nothing: measured by `sigsuspend-mask.c` with every size
     /// from 0 to 16 but 8, and 128.
     ///
-    /// Fails loudly on a Darwin process, which has no such system call.
+    /// Throws `PlatformNotSupportedException` on a Darwin process, which has no
+    /// such system call.
     let rtSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (mask : SignalMask)
@@ -1501,7 +1565,7 @@ module UnixSignal =
         : SigsuspendOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryRtSigsuspend caller mask sigsetSize system
-        |> Refusal.orRaise "UnixSignal.rtSigsuspend" SigsuspendRefusal.kind SigsuspendRefusal.describe
+        |> Refusal.orRaise "UnixSignal.rtSigsuspend" RtSigsuspendRefusal.kind RtSigsuspendRefusal.describe
 
     /// `tryFinishSigsuspend` once `Entry` has admitted its caller.
     let internal tryFinishSigsuspendIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

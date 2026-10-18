@@ -1301,7 +1301,7 @@ module TestUnixSystemInvariants =
         let linux = spawned SimulatedUnixPlatform.linuxX64
 
         linux
-        |> UnixSystem.writePidMaxSysctl "test" 1000
+        |> UnixSystem.writePidMaxSysctl 1000
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 

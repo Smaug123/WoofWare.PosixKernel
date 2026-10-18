@@ -60,8 +60,12 @@ module internal UnixSchedulingState =
     /// reading can be represented.
     let advanceClock (nanoseconds : int64) (scheduling : UnixSchedulingState) : UnixSchedulingState =
         if nanoseconds < 0L then
-            failwith
-                $"UnixSchedulingState.advanceClock: %d{nanoseconds} ns is negative, and every clock this kernel models is monotonic."
+            raise (
+                Refusal.exceptionOf
+                    "UnixSystem.advanceClock"
+                    (RefusalKind.OutOfRange "nanoseconds")
+                    $"%d{nanoseconds} ns is negative, and every clock this kernel models is monotonic."
+            )
 
         // Unreachable through the public API, which builds no machine but through
         // this function and `UnixSystem.initial`; checked because
@@ -71,8 +75,12 @@ module internal UnixSchedulingState =
                 $"UnixSchedulingState.advanceClock: the machine has been up for %d{scheduling.NanosecondsSinceBoot} ns, which is negative. No uptime can be; the machine was assembled without this function."
 
         if nanoseconds > System.Int64.MaxValue - scheduling.NanosecondsSinceBoot then
-            failwith
-                $"UnixSchedulingState.advanceClock: advancing %d{scheduling.NanosecondsSinceBoot} ns of uptime by %d{nanoseconds} ns passes %d{System.Int64.MaxValue} ns (about 292 years), the longest uptime this kernel represents."
+            raise (
+                Refusal.exceptionOf
+                    "UnixSystem.advanceClock"
+                    (RefusalKind.OutOfRange "nanoseconds")
+                    $"advancing %d{scheduling.NanosecondsSinceBoot} ns of uptime by %d{nanoseconds} ns passes %d{System.Int64.MaxValue} ns (about 292 years), the longest uptime this kernel represents."
+            )
 
         { scheduling with
             NanosecondsSinceBoot = scheduling.NanosecondsSinceBoot + nanoseconds

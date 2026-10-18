@@ -326,6 +326,35 @@ module TestUnixThreadLifecycle =
 
         exn.Message |> shouldContainText "names no thread"
 
+    [<Test>]
+    let ``spawning a name that is already a thread, or onto a processor the machine lacks, is the client's mistake``
+        ()
+        : unit
+        =
+        for platform in platforms do
+            let system, _ = world platform
+            let system = system |> withThread 1
+
+            let taken =
+                Assert.Throws<System.ArgumentException> (fun () ->
+                    UnixThreadLifecycle.spawn (Callers.thread 0 system) 1 (CpuId 0) system
+                    |> ignore<SpawnAnswer * UnixSystem<int, string>>
+                )
+
+            taken.ParamName |> shouldEqual "child"
+            taken.Message |> shouldContainText "already names a thread"
+
+            let count = UnixSystem.processorCount system
+
+            for cpu in [ count ; count + 1 ; -1 ] do
+                let beyond =
+                    Assert.Throws<System.ArgumentOutOfRangeException> (fun () ->
+                        UnixThreadLifecycle.spawn (Callers.thread 0 system) 2 (CpuId cpu) system
+                        |> ignore<SpawnAnswer * UnixSystem<int, string>>
+                    )
+
+                beyond.ParamName |> shouldEqual "cpu"
+
     /// One step of a generated sequence, naming threads 0 to 4.
     [<RequireQualifiedAccess>]
     type private Op =

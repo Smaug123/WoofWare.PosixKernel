@@ -77,6 +77,16 @@ type internal ThreadIdAllocation =
     /// Darwin does next has not been measured.
     | DarwinCounterExhausted
 
+/// Why this kernel will not take a write of Linux's `kernel.pid_max` sysctl.
+[<RequireQualifiedAccess>]
+type internal PidMaxRefusal =
+    /// This flavour has no such setting: Darwin's thread IDs come from a 64-bit
+    /// counter that no setting bounds.
+    | NoSuchSetting of flavour : SimulatedUnixFlavour
+    /// `pidMax` is outside the values Linux's sysctl accepts, and it answers
+    /// EINVAL.
+    | OutOfRange of pidMax : int32
+
 [<RequireQualifiedAccess>]
 module ThreadIdAllocator =
 
@@ -96,8 +106,11 @@ module ThreadIdAllocator =
     // `docs/plans/2026-08-23-posix-kernel-extraction/pid-allocation.c`: writing
     // `/proc/sys/kernel/pid_max` accepts exactly 301..4194304, and answers EINVAL for
     // every other value swept.
+    let private acceptsPidMax (pidMax : int32) : bool =
+        pidMax >= linuxPidMaxFloor && pidMax <= linuxPidMaxCeiling
+
     let private assertPidMax (context : string) (pidMax : int32) : unit =
-        if pidMax < linuxPidMaxFloor || pidMax > linuxPidMaxCeiling then
+        if not (acceptsPidMax pidMax) then
             failwith
                 $"%s{context}: %d{pidMax} is not a pid_max Linux accepts; it must be between %d{linuxPidMaxFloor} and %d{linuxPidMaxCeiling} (the sysctl answers EINVAL outside that range)."
 
@@ -138,21 +151,24 @@ module ThreadIdAllocator =
             Live = Set.singleton leader
         }
 
-    /// The Linux allocator `allocator` is, with its `pid_max` set to `pidMax`.
-    ///
-    /// Throws for a Darwin allocator, which has no `pid_max`, and for a value
-    /// Linux does not accept.
-    let internal withPidMax (context : string) (pidMax : int32) (allocator : ThreadIdAllocator) : ThreadIdAllocator =
+    /// The Linux allocator `allocator` is, with its `pid_max` set to `pidMax`,
+    /// or why that cannot be: a Darwin allocator has no `pid_max`, and Linux
+    /// accepts only 301 to 4194304.
+    let internal tryWithPidMax
+        (pidMax : int32)
+        (allocator : ThreadIdAllocator)
+        : Result<ThreadIdAllocator, PidMaxRefusal>
+        =
         match allocator.Counter with
         | ThreadIdCounter.Linux (cursor, _) ->
-            assertPidMax context pidMax
-
-            { allocator with
-                Counter = ThreadIdCounter.Linux (cursor, pidMax)
-            }
-        | ThreadIdCounter.Darwin _ ->
-            failwith
-                $"%s{context}: Darwin has no pid_max; its thread IDs come from a 64-bit counter that no setting bounds."
+            if not (acceptsPidMax pidMax) then
+                Error (PidMaxRefusal.OutOfRange pidMax)
+            else
+                Ok
+                    { allocator with
+                        Counter = ThreadIdCounter.Linux (cursor, pidMax)
+                    }
+        | ThreadIdCounter.Darwin _ -> Error (PidMaxRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin)
 
     /// Whether `id` is one `allocator` could have handed out: on Linux, one below
     /// the greatest `pid_max` Linux takes, and on Darwin, one below the counter.
@@ -233,3 +249,19 @@ module ThreadIdAllocator =
         { allocator with
             Live = Set.remove id allocator.Live
         }
+
+[<RequireQualifiedAccess>]
+module internal PidMaxRefusal =
+    /// What this kernel knows about why it will not take the write.
+    let describe (refusal : PidMaxRefusal) : string =
+        match refusal with
+        | PidMaxRefusal.NoSuchSetting flavour ->
+            $"%O{flavour} has no pid_max; its thread IDs come from a 64-bit counter that no setting bounds."
+        | PidMaxRefusal.OutOfRange pidMax ->
+            $"%d{pidMax} is not a pid_max Linux accepts; it must be between %d{ThreadIdAllocator.linuxPidMaxFloor} and %d{ThreadIdAllocator.linuxPidMaxCeiling} (the sysctl answers EINVAL outside that range)."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : PidMaxRefusal) : RefusalKind =
+        match refusal with
+        | PidMaxRefusal.NoSuchSetting _ -> RefusalKind.NotOnPlatform
+        | PidMaxRefusal.OutOfRange _ -> RefusalKind.OutOfRange "pidMax"

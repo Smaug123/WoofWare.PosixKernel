@@ -8425,7 +8425,7 @@ WoofWare.PosixKernel.UnixSystem.threads [static method]: WoofWare.PosixKernel.Pr
 WoofWare.PosixKernel.UnixSystem.umask [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PermissionBits * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSystem.unprivilegedPortStart [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.UInt16
 WoofWare.PosixKernel.UnixSystem.userBufferCheck [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UserBufferCheck
-WoofWare.PosixKernel.UnixSystem.writePidMaxSysctl [static method]: string -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixSystem.writePidMaxSysctl [static method]: int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem`2 inherit obj, implements WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.UnixSystem`2.Equals [method]: (WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.UnixSystemDefect inherit obj

@@ -318,7 +318,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
-A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, or while it owes a return to user mode (see "The return to user mode"), the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
+A call that a real kernel would not let happen at all is a bug in the client, and throws `InvalidOperationException`: a thread making a syscall while it is asleep in another, or while it owes a return to user mode (see "The return to user mode"), the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
 
 ### Unions that gain cases
@@ -1260,7 +1260,7 @@ The kernel keeps what Linux keeps.
 Each thread has a processor, the one it last ran on, or before it first runs, the one its creator named (`ProcessLaunch.create`, `UnixThreadLifecycle.spawn`); `UnixThreadState.cpu` reports it, for a thread found in `UnixSystem.threads`.
 Each processor runs at most one thread, so a dispatch displaces whichever thread the processor ran before, whatever process it belongs to; that thread keeps the processor as its own, as a preempted thread does.
 A thread stops running when it parks in a syscall, and when it exits or its process ends; a parked thread may still be dispatched, which is how a woken thread gets back onto a processor to finish its call.
-`UnixScheduling.runningOn` says where a thread is running, and `UnixScheduling.getcpu` answers only for a running thread, failing loudly for any other: a thread making a syscall is running, so a client whose records say otherwise has a bug.
+`UnixScheduling.runningOn` says where a thread is running, and `UnixScheduling.getcpu` answers only for a running thread, throwing `InvalidOperationException` for any other: a thread making a syscall is running, so a client whose records say otherwise has a bug.
 Nothing else requires its caller to have been dispatched, so a client that never reads placement need never report it, and a woken thread's call can be finished without a dispatch first.
 Every processor named must be one the machine has (`UnixSystem.processorCount`).
 Not built yet: recording the processor time a thread used, and a default policy (round-robin, and PCT, probabilistic concurrency testing) as a module that knows nothing of the kernel.
