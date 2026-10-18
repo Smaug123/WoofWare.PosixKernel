@@ -28,7 +28,7 @@ module TestSignalDue =
         | other -> failwith $"%O{caller}'s return to user mode: expected it to take nothing, got %A{other}"
 
     let private signo (system : UnixSystem<int, string>) (signal : Signal) : int =
-        Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signal
+        Signal.toRawSignoUnder (Kernel.signalNumbering system) signal
 
     /// `sigaction(signal, disposition)` by `caller`, followed by its return to
     /// user mode.
@@ -78,7 +78,7 @@ module TestSignalDue =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
 
         match
             UnixSignal.pthreadSigmask

@@ -337,7 +337,7 @@ module TestInodeOwner =
                 vfs
             |> ok
 
-        system.Machine.FileSystem |> shouldEqual withDevices
+        UnixSystem.fileSystem system |> shouldEqual withDevices
 
     [<Test>]
     let ``every inode of a seed without owners belongs to the default owner`` () : unit =

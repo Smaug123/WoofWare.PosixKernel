@@ -34,12 +34,13 @@ module TestEpollCtl =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
     let private linux : UnixSystem<int, string> =
         systemOn SimulatedUnixPlatform.linuxX64
@@ -54,7 +55,7 @@ module TestEpollCtl =
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
@@ -66,7 +67,7 @@ module TestEpollCtl =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let socket =
@@ -86,18 +87,19 @@ module TestEpollCtl =
 
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> withRegistry registry
 
     let private idleSocket (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
@@ -106,8 +108,8 @@ module TestEpollCtl =
     let private withFile (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite
@@ -118,7 +120,7 @@ module TestEpollCtl =
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match
             FileDescriptorRegistry.dup
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 fd
                 (Lone.fileDescriptors system)
         with
@@ -901,19 +903,19 @@ module TestEpollCtl =
     let ``only an ADD consumes an ordinal`` () : unit =
         let queueFd, system = withEpoll linux
         let socketFd, system = idleSocket system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 0L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 0L
 
         let system = applied queueFd add socketFd (EpollEvents.In ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd modify socketFd (EpollEvents.Out ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd del socketFd 0u system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd add socketFd (EpollEvents.In ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 2L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 2L
 
     /// A failure or a refusal consumes nothing: the ordinal is taken by the
     /// commit, which did not happen.

@@ -286,24 +286,24 @@ module TestDeviceDescriptors =
         for registry in
             [
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -314,8 +314,8 @@ module TestDeviceDescriptors =
             | other -> failwith $"expected one kind mismatch, got %A{other}"
 
         FileDescriptorRegistry.openCharacterDevice
-            (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-            (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -344,8 +344,8 @@ module TestDeviceDescriptors =
         for device in [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ] do
             let fd, registry =
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device
@@ -362,7 +362,7 @@ module TestDeviceDescriptors =
             UnixSystem.checkInvariants system
             |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
             |> shouldEqual []
 
     [<Test>]
@@ -1147,7 +1147,7 @@ module TestDeviceDescriptors =
 
             let queueFd, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
@@ -1189,4 +1189,4 @@ module TestDeviceDescriptors =
             |> Result.map (fun bytes -> bytes.Length)
             |> shouldEqual (Ok (if device = CharacterDevice.Null then 0 else 8))
 
-            closed.Machine.FileSystem |> shouldEqual booted.Machine.FileSystem
+            UnixSystem.fileSystem closed |> shouldEqual (UnixSystem.fileSystem booted)

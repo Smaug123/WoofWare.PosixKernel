@@ -76,7 +76,7 @@ module TestV6OnlyAfterRefusalMeasured =
         (system : UnixSystem<int, string>)
         : Result<SetSockOptAnswer * UnixSystem<int, string>, SocketOptionRefusal>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.ipv6OptionLevel platform
         let optionName = SimulatedUnixPlatform.ipv6OnlyOption platform
 
@@ -95,7 +95,7 @@ module TestV6OnlyAfterRefusalMeasured =
         | Error refusal -> Error refusal
 
     let private getV6Only (fd : int) (system : UnixSystem<int, string>) : int =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         match
             Lone.UnixSocket.tryGetsockoptLength
@@ -111,7 +111,7 @@ module TestV6OnlyAfterRefusalMeasured =
         | Error refusal -> failwith $"IPV6_V6ONLY read refused: %s{SocketOptionRefusal.describe refusal}"
 
     let private takeError (fd : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         match
             Lone.UnixSocket.tryGetsockoptLength
@@ -138,7 +138,7 @@ module TestV6OnlyAfterRefusalMeasured =
         CopyIn.inet6Mapped platform endpoint
 
     let private connect (fd : int) (destination : Ipv4Endpoint) (system : UnixSystem<int, string>) =
-        match CopyIn.connect fd UserBuffer.Mapped 28u (mapped system.Machine.UnixPlatform destination) system with
+        match CopyIn.connect fd UserBuffer.Mapped 28u (mapped (UnixSystem.platform system) destination) system with
         | Ok result -> result
         | Error refusal -> failwith $"connect: refused %s{ConnectRefusal.describe refusal}"
 
@@ -187,8 +187,8 @@ module TestV6OnlyAfterRefusalMeasured =
                     if group 2 = "b" then
                         system
                     else
-                        Lone.UnixSystemState.withFileDescriptors
-                            (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
+                        Lone.withFileDescriptors
+                            (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                             system
 
                 let answer, system = connect fd (loopback 1us) system
@@ -209,8 +209,8 @@ module TestV6OnlyAfterRefusalMeasured =
 
                 // The probe makes the socket blocking again after its poll.
                 let system =
-                    Lone.UnixSystemState.withFileDescriptors
-                        (FileDescriptorRegistry.setNonBlocking fd false (Lone.UnixSystemState.fileDescriptors system))
+                    Lone.withFileDescriptors
+                        (FileDescriptorRegistry.setNonBlocking fd false (Lone.fileDescriptors system))
                         system
 
                 match group 7, value, setV6Only fd value system with

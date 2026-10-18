@@ -1947,7 +1947,7 @@ module TestShutdownAgainstHost =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -1963,7 +1963,7 @@ module TestShutdownAgainstHost =
         CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
 
     let private kernelBind (fd : int) (port : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (loopback system.Machine.UnixPlatform port) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (loopback (UnixSystem.platform system) port) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"bind: %A{other}"
 
@@ -1976,7 +1976,7 @@ module TestShutdownAgainstHost =
     let private kernelPortOf (fd : int) (system : UnixSystem<int, string>) : int =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> int binding.Endpoint.Port
             | None -> failwith $"fd %d{fd} is unbound"
         | other -> failwith $"fd %d{fd} names %A{other}"

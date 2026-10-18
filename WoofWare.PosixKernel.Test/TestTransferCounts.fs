@@ -102,15 +102,15 @@ module TestTransferCounts =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     content
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -119,12 +119,13 @@ module TestTransferCounts =
         fd,
         (Lone.withFileDescriptors
             (FileDescriptorRegistry.setOffset fd position registry)
-            { system with
-                Machine =
-                    { system.Machine with
+            (Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            })
+                )
+                system))
 
     let internal positionOf (fd : int) (system : UnixSystem<int, string>) : int64 =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
@@ -691,8 +692,8 @@ module TestTransferCounts =
         let reopen (inode : InodeNumber) (mode : FileAccessMode) =
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system inode)
                     inode
                     mode
@@ -707,8 +708,8 @@ module TestTransferCounts =
         | "dir" ->
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     registry
@@ -717,7 +718,7 @@ module TestTransferCounts =
         | "event queue" ->
             // The flavour's own: an epoll instance, or a kqueue.
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin ->
                     FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
@@ -728,14 +729,14 @@ module TestTransferCounts =
         | "socket" ->
             let fd, registry =
                 FileDescriptorRegistry.createSocket
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     socketId
                     registry
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
                             Map.ofList
                                 [
@@ -751,7 +752,8 @@ module TestTransferCounts =
                                     }
                                 ]
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
         | "readonly" ->
             let fd, system = withFile (ImmutableArray.CreateRange (contentOf 5)) 0L system
@@ -763,8 +765,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -781,8 +783,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -822,7 +824,7 @@ module TestTransferCounts =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGPIPE
                                 SignalDisposition.Ignore
                                 proc.Signals
@@ -970,8 +972,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -1046,8 +1048,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)

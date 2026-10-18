@@ -93,7 +93,8 @@ module TestSocketSyscallAgainstHost =
                     | Ok (Ok (fd, after)) ->
                         let socket =
                             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
-                            | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId after.Machine
+                            | Some (OpenFileTarget.Socket socketId) ->
+                                UnixMachineState.socket socketId (Kernel.machine after)
                             | other -> failwith $"descriptor %d{fd} names %A{other}"
 
                         let soType =

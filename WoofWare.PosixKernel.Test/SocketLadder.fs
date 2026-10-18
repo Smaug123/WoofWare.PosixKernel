@@ -143,7 +143,7 @@ module SocketLadder =
 
     let socketOf (fd : int) (system : UnixSystem<int, string>) : SocketDescription =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-        | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId system.Machine
+        | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine system)
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     let local (socket : SocketDescription) : Ipv4Endpoint =

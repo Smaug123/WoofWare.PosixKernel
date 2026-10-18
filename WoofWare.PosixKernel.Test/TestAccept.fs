@@ -28,13 +28,14 @@ module TestAccept =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalIpv4Addresses = []
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
 
     let private platforms : SimulatedUnixPlatform list =
@@ -61,21 +62,22 @@ module TestAccept =
         =
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A stream socket in the IPv4 domain, in `phase`.
@@ -117,22 +119,23 @@ module TestAccept =
                             ClientAddress = loopback (40000us + uint16 index)
                             FinsExchangedAt = None
                             ServerAddress = serverAddress
-                            Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+                            Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet (Kernel.machine system)
                         }
 
                     ids @ [ id ], Map.add id connection connections, ConnectionId (next + 1L)
                 )
-                ([], system.Machine.Connections, system.Machine.NextConnectionId)
+                ([], (Kernel.machine system).Connections, (Kernel.machine system).NextConnectionId)
                 [ 0 .. count - 1 ]
 
         ids,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections = connections
                     NextConnectionId = next
                 }
-        }
+            )
+            system
 
     /// A listener holding `queued` completed connections, and the descriptor it
     /// is open on. `SocketId 0L` throughout, so tests can name it.
@@ -168,7 +171,7 @@ module TestAccept =
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{AcceptRefusal.describe refusal}"
 
     let private queueOf (socketId : SocketId) (system : UnixSystem<int, string>) : ConnectionId list =
-        match (UnixMachineState.socket socketId system.Machine).Phase with
+        match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
         | SocketPhase.Listening listenState -> ListenState.connections listenState
         | other -> failwith $"expected Listening, got %A{other}"
 
@@ -202,7 +205,7 @@ module TestAccept =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
-        let accepted = UnixMachineState.socket acceptedId system.Machine
+        let accepted = UnixMachineState.socket acceptedId (Kernel.machine system)
 
         accepted.Phase
         |> shouldEqual (SocketPhase.Established (List.head connections, ConnectionEnd.Server))
@@ -264,7 +267,7 @@ module TestAccept =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
-        (UnixMachineState.socket acceptedId system.Machine).ReuseAddress
+        (UnixMachineState.socket acceptedId (Kernel.machine system)).ReuseAddress
         |> shouldEqual true
 
     [<TestCaseSource(nameof platforms)>]
@@ -352,8 +355,8 @@ module TestAccept =
         // things a descriptor can name that are not sockets.
         let fileFd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly

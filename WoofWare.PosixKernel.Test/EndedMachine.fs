@@ -38,8 +38,8 @@ module EndedMachine =
         : unit
         =
         UnixSystem.processIds after |> shouldEqual Set.empty
-        ThreadIdAllocator.live after.Machine.ThreadIds |> shouldEqual Set.empty
-        ProcessIdTable.live after.Machine.ProcessIds |> shouldEqual Set.empty
-        after.Machine.CurrentDirectories |> shouldEqual Map.empty
-        OpenFileTable.descriptions after.Machine.OpenFiles |> shouldEqual Map.empty
+        ThreadIdAllocator.live (Kernel.machine after).ThreadIds |> shouldEqual Set.empty
+        ProcessIdTable.live (Kernel.machine after).ProcessIds |> shouldEqual Set.empty
+        (Kernel.machine after).CurrentDirectories |> shouldEqual Map.empty
+        OpenFileTable.descriptions (UnixSystem.openFiles after) |> shouldEqual Map.empty
         UnixSystem.checkInvariants after |> shouldEqual []

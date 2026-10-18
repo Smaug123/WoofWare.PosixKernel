@@ -567,12 +567,13 @@ module TestPermissionStanding =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -913,15 +914,15 @@ module TestPermissionStanding =
                     (SimulatedUnixPlatform.pathLimits SimulatedUnixPlatform.macOsArm64)
                     Owners.root
                     SymlinkProtection.Off
-                    (VirtualFileSystem.root system.Machine.FileSystem)
+                    (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     SymlinkPolicy.NoFollowFinal
                     (path ("/st/" + p))
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Error _ -> "absent"
             | Ok inode ->
                 let entry =
-                    VirtualFileSystem.get "TestPermissionStanding" inode system.Machine.FileSystem
+                    VirtualFileSystem.get "TestPermissionStanding" inode (UnixSystem.fileSystem system)
 
                 let kind =
                     match entry.Content with
@@ -1151,7 +1152,7 @@ module TestPermissionStanding =
     // ------------------------------------------------------------- strips, end to end
 
     let private modeOf (p : string) (system : UnixSystem<int, string>) : int =
-        match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system) with
         | Some inode -> PermissionBits.toInt (Inode.permissions inode)
         | None -> failwith $"%s{p} is absent"
 
@@ -1271,7 +1272,7 @@ module TestPermissionStanding =
                     system
             with
             | Ok (SteppedCall.UnlinkAt (SyscallAnswer.Completed 0L, after)) ->
-                VirtualFileSystem.tryGetContent (inodeAt tree p) after.Machine.FileSystem
+                VirtualFileSystem.tryGetContent (inodeAt tree p) (UnixSystem.fileSystem after)
                 |> Option.isSome
                 |> shouldEqual false
             | other -> failwith $"unlinkat(%s{p}, 0x%x{flags}) answered %A{Result.map Stepped.view other}"

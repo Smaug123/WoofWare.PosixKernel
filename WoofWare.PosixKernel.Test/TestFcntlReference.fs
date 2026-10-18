@@ -543,7 +543,7 @@ module TestFcntlReference =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals
@@ -924,7 +924,7 @@ module TestFcntlReference =
                         failwith $"%s{where ()}: F_GETFL of %d{fd} refused: %s{SyscallRefusal.describe refusal}"
 
                 // Every description's status is its machine's flavour's.
-                for KeyValue (id, description) in OpenFileTable.descriptions system.Machine.OpenFiles do
+                for KeyValue (id, description) in OpenFileTable.descriptions (UnixSystem.openFiles system) do
                     if not (statusIsOf (SimulatedUnixPlatform.flavour platform) description.Status) then
                         failwith
                             $"%s{where ()}: description %O{id}'s status %A{description.Status} is not %O{platform}'s"

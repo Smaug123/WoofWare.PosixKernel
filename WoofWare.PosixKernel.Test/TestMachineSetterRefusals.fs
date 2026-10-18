@@ -58,7 +58,7 @@ module TestMachineSetterRefusals =
         let property (platform : SimulatedUnixPlatform, value : int) : unit =
             match UnixBootImage.tryWithSoMaxConn (Some value) (imageOn platform), value >= 1 with
             | Ok image, true ->
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.SoMaxConn
+                UnixSystem.soMaxConn (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
                 |> shouldEqual value
             | Error refusal, false -> refusal |> shouldEqual (SoMaxConnRefusal.NotPositive value)
             | Ok _, false -> failwith $"%d{value} was admitted on %O{platform}"
@@ -75,8 +75,8 @@ module TestMachineSetterRefusals =
 
             (UnixBootImage.tryWithSoMaxConn (Some 1) (imageOn platform)
              |> Configured.expectOk SoMaxConnRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.SoMaxConn
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> UnixSystem.soMaxConn)
             |> shouldEqual 1
 
     // ------------------------------------------------------ processor count
@@ -86,8 +86,9 @@ module TestMachineSetterRefusals =
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
             match UnixBootImage.tryWithProcessorCount count (imageOn platform), count >= 1 with
             | Ok image, true ->
-                UnixMachineState.processorCount
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine
+                UnixMachineState.processorCount (
+                    Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
+                )
                 |> shouldEqual count
             | Error refusal, false -> refusal |> shouldEqual (ProcessorCountRefusal.NotPositive count)
             | Ok _, false -> failwith $"%d{count} was admitted on %O{platform}"
@@ -105,7 +106,7 @@ module TestMachineSetterRefusals =
             UnixBootImage.tryWithProcessorCount 1 (imageOn platform)
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual 1
 
     // ------------------------------------------------ ephemeral port range
@@ -225,7 +226,7 @@ module TestMachineSetterRefusals =
                 UnixSystem.ephemeralPortRange system |> shouldEqual (low, high)
                 UnixSystem.unprivilegedPortStart system |> shouldEqual effectiveStart
                 // Rewound into the range, so the first ephemeral port is its low end.
-                system.Machine.NextEphemeralPort |> shouldEqual low
+                (Kernel.machine system).NextEphemeralPort |> shouldEqual low
             | SimulatedUnixFlavour.Linux, Error refusal ->
                 refusal
                 |> shouldEqual $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, effectiveStart)}"
@@ -308,7 +309,7 @@ module TestMachineSetterRefusals =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.PipeDevice
+                (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).PipeDevice
                 |> shouldEqual device
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -338,8 +339,9 @@ module TestMachineSetterRefusals =
         for platform in platforms do
             (UnixBootImage.tryWithPipeDevice None (imageOn platform)
              |> Configured.expectOk PipeDeviceRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.PipeDevice
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> Kernel.machine)
+                .PipeDevice
             |> shouldEqual (UnixMachineState.defaultPipeDevice (SimulatedUnixPlatform.flavour platform))
 
     // -------------------------------------------------------------- describe

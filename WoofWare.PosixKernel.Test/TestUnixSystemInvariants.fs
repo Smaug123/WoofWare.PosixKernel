@@ -34,12 +34,13 @@ module TestUnixSystemInvariants =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
 
     /// `system` launched with no descriptors at all, and so no pipes: the base
@@ -49,12 +50,13 @@ module TestUnixSystemInvariants =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot Map.empty 0 (CpuId 0)
 
-        { bare with
-            Machine =
-                { bare.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            bare
 
     /// A sound system is the control every row below is a single edit away
     /// from: without it, a row that reported *some* defect would pass while
@@ -96,9 +98,9 @@ module TestUnixSystemInvariants =
                             }
                         ])
                     (OpenFileDescriptionId 1L))
-                { unlaunched with
-                    Machine =
-                        { unlaunched.Machine with
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.ofList
                                     [
@@ -115,7 +117,8 @@ module TestUnixSystemInvariants =
                                     ]
                             NextSocketId = SocketId 1L
                         }
-                })
+                    )
+                    unlaunched))
 
         UnixSystem.checkInvariants forged
         |> shouldEqual [ UnixSystemDefect.SocketPhaseKindMismatch (SocketId 0L, kind, phase) ]
@@ -157,12 +160,13 @@ module TestUnixSystemInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Machine =
-                { system.Machine with
-                    OpenFiles = OpenFileTable.mapStatus id (fun _ -> status) system.Machine.OpenFiles
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    OpenFiles = OpenFileTable.mapStatus id (fun _ -> status) machine.OpenFiles
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``a description whose status is another flavour's is a defect`` () : unit =
@@ -278,9 +282,9 @@ module TestUnixSystemInvariants =
                             }
                         ])
                     (OpenFileDescriptionId 1L))
-                { unlaunched with
-                    Machine =
-                        { unlaunched.Machine with
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.ofList
                                     [
@@ -306,7 +310,7 @@ module TestUnixSystemInvariants =
                                             ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                             // No socket is the server end: it has closed.
                                             Transfer =
-                                                TcpBufferSizing.newTransfer SocketDomain.Inet unlaunched.Machine
+                                                TcpBufferSizing.newTransfer SocketDomain.Inet machine
                                                 |> TcpTransfer.close
                                                     ConnectionEnd.Server
                                                     false
@@ -317,7 +321,8 @@ module TestUnixSystemInvariants =
                                     ]
                             NextConnectionId = connection
                         }
-                })
+                    )
+                    unlaunched))
 
         UnixSystem.checkInvariants forged
         |> shouldEqual [ UnixSystemDefect.NextConnectionIdNotFresh (connection, connection) ]
@@ -367,12 +372,13 @@ module TestUnixSystemInvariants =
                             }
                         ])
                     (OpenFileDescriptionId 1L))
-                { unlaunched with
-                    Machine =
-                        { unlaunched.Machine with
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             NextEventRegistrationOrdinal = ordinal
                         }
-                })
+                    )
+                    unlaunched))
 
         // The registration's target, description 1, is no description, which
         // the open file table's own rules report.
@@ -421,13 +427,13 @@ module TestUnixSystemInvariants =
     let private inodeOf (path : string) : InodeNumber =
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits standing.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform standing))
                 Owners.root
                 SymlinkProtection.Off
-                (VirtualFileSystem.root standing.Machine.FileSystem)
+                (VirtualFileSystem.root (UnixSystem.fileSystem standing))
                 SymlinkPolicy.Follow
                 (UnixPath.parseOrFail context path)
-                standing.Machine.FileSystem
+                (UnixSystem.fileSystem standing)
         with
         | Ok inode -> inode
         | Error error -> failwith $"could not resolve %s{path} in the test seed: %O{error}."
@@ -455,7 +461,7 @@ module TestUnixSystemInvariants =
         // all reads as "not a directory" rather than as its own defect, which is
         // what lets one rule cover both. A row asserting only the file case
         // would leave a checker that special-cased `Some` passing.
-        let absent = VirtualFileSystem.nextInode standing.Machine.FileSystem
+        let absent = VirtualFileSystem.nextInode (UnixSystem.fileSystem standing)
 
         standing
         |> Lone.mapProc (fun proc ->
@@ -652,7 +658,7 @@ module TestUnixSystemInvariants =
 
     [<Test>]
     let ``a park stamped at or past the next ordinal is a defect`` () : unit =
-        let next = twoParked.Machine.NextParkOrdinal
+        let next = (Kernel.machine twoParked).NextParkOrdinal
 
         forgeOrdinal 2 next twoParked
         |> UnixSystem.checkInvariants
@@ -665,7 +671,7 @@ module TestUnixSystemInvariants =
     let ``a thread parked on a live epoll instance or file is sound`` () : unit =
         let queueFd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         let queueId =
@@ -726,23 +732,24 @@ module TestUnixSystemInvariants =
     /// `system` holding one socket, open on a descriptor so that the socket
     /// table's own rules are satisfied.
     let private withSocket (socket : SocketDescription) : SocketId * UnixSystem<int, string> =
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let _, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         socketId,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     let private boundAt (port : uint16) : Ipv4Binding option =
@@ -1145,12 +1152,13 @@ module TestUnixSystemInvariants =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { linux with
-            Machine =
-                { linux.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Mount = EmulatedMount.Apfs ApfsMount.defaults
                 }
-        }
+            )
+            linux
         |> UnixSystem.checkInvariants
         |> shouldEqual
             [
@@ -1161,12 +1169,13 @@ module TestUnixSystemInvariants =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
         |> fun darwin ->
-            { darwin with
-                Machine =
-                    { darwin.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Mount = EmulatedMount.Nfs
                     }
-            }
+                )
+                darwin
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -1179,19 +1188,20 @@ module TestUnixSystemInvariants =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let devRoot =
-            VirtualFileSystem.mounts linux.Machine.FileSystem
+            VirtualFileSystem.mounts (UnixSystem.fileSystem linux)
             |> Map.toList
             |> List.exactlyOne
             |> fst
 
         UnixSystem.checkInvariants linux |> shouldEqual []
 
-        { linux with
-            Machine =
-                { linux.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     DeviceMount = DeviceFileSystemMount.Devfs
                 }
-        }
+            )
+            linux
         |> UnixSystem.checkInvariants
         |> shouldEqual
             [
@@ -1253,27 +1263,14 @@ module TestUnixSystemInvariants =
         // leader's thread ID.
         let moved (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             let pid = Lone.pid system
-            let slot = ProcessTable.find "test" (ProcessId.toInt32 pid) system.Processes
 
-            { system with
-                Machine =
-                    { system.Machine with
-                        ProcessIds =
-                            system.Machine.ProcessIds
-                            |> ProcessIdTable.remove pid
-                            |> ProcessIdTable.add seventeen
-                    }
-                Processes =
-                    ProcessTable.empty
-                    |> ProcessTable.add
-                        (ProcessId.toInt32 seventeen)
-                        { slot with
-                            Process =
-                                { slot.Process with
-                                    ProcessId = seventeen
-                                }
-                        }
-            }
+            system
+            |> Kernel.mapMachine (fun machine ->
+                { machine with
+                    ProcessIds = machine.ProcessIds |> ProcessIdTable.remove pid |> ProcessIdTable.add seventeen
+                }
+            )
+            |> Proc.renumber pid seventeen
 
         let linux = spawned SimulatedUnixPlatform.linuxX64
 
@@ -1315,18 +1312,19 @@ module TestUnixSystemInvariants =
             let replaced = UnixThreadState.osThreadId (Lone.thread 1 linux)
 
             foreign,
-            { linux with
-                Machine =
-                    { linux.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         // Recording the foreign ID as live in place of the one it
                         // replaces, so that what the counter could have minted is
                         // all that is wrong.
                         ThreadIds =
-                            { linux.Machine.ThreadIds with
-                                Live = linux.Machine.ThreadIds.Live |> Set.remove replaced |> Set.add foreign
+                            { machine.ThreadIds with
+                                Live = machine.ThreadIds.Live |> Set.remove replaced |> Set.add foreign
                             }
                     }
-            }
+                )
+                linux
             |> ForgedThread.withState
                 (Callers.thread 1 linux)
                 { Lone.thread 1 linux with
@@ -1341,7 +1339,7 @@ module TestUnixSystemInvariants =
         UnixSystem.checkInvariants at
         |> shouldEqual
             [
-                UnixSystemDefect.OsThreadIdNotMintable (Callers.ofDefault 1, foreign, at.Machine.ThreadIds)
+                UnixSystemDefect.OsThreadIdNotMintable (Callers.ofDefault 1, foreign, (Kernel.machine at).ThreadIds)
             ]
 
         // Darwin: an id the counter has not reached, which it would hand out again.
@@ -1350,19 +1348,21 @@ module TestUnixSystemInvariants =
         let behind =
             (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
              |> Launched.leaderThreadId 4242UL
-             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-                .Machine.ThreadIds
+             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+             |> Kernel.machine)
+                .ThreadIds
             |> fun behind ->
                 { behind with
-                    Live = darwin.Machine.ThreadIds.Live
+                    Live = (Kernel.machine darwin).ThreadIds.Live
                 }
 
-        { darwin with
-            Machine =
-                { darwin.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     ThreadIds = behind
                 }
-        }
+            )
+            darwin
         |> UnixSystem.checkInvariants
         |> shouldEqual
             [
@@ -1384,12 +1384,13 @@ module TestUnixSystemInvariants =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let swapped (system : UnixSystem<int, string>) (from : UnixSystem<int, string>) =
-            { system with
-                Machine =
-                    { system.Machine with
-                        ThreadIds = from.Machine.ThreadIds
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        ThreadIds = (Kernel.machine from).ThreadIds
                     }
-            }
+                )
+                system
             |> UnixSystem.checkInvariants
 
         // Both leaders are 4242 and both counters are past it, so the flavour is all
@@ -1397,11 +1398,17 @@ module TestUnixSystemInvariants =
         swapped linux darwin
         |> shouldEqual
             [
-                UnixSystemDefect.ThreadIdAllocatorNotOfFlavour (SimulatedUnixFlavour.Linux, darwin.Machine.ThreadIds)
+                UnixSystemDefect.ThreadIdAllocatorNotOfFlavour (
+                    SimulatedUnixFlavour.Linux,
+                    (Kernel.machine darwin).ThreadIds
+                )
             ]
 
         swapped darwin linux
         |> shouldEqual
             [
-                UnixSystemDefect.ThreadIdAllocatorNotOfFlavour (SimulatedUnixFlavour.Darwin, linux.Machine.ThreadIds)
+                UnixSystemDefect.ThreadIdAllocatorNotOfFlavour (
+                    SimulatedUnixFlavour.Darwin,
+                    (Kernel.machine linux).ThreadIds
+                )
             ]

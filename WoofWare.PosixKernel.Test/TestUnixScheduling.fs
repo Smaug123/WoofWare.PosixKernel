@@ -680,7 +680,7 @@ module TestUnixScheduling =
             |> UnixScheduling.dispatch leader (CpuId 0)
             |> UnixScheduling.dispatch leader (CpuId 1)
 
-        system.Scheduling.Occupants
+        (Kernel.scheduling system).Occupants
         |> shouldEqual (Map.ofList [ CpuId 1, (Lone.thread 0 system).OsThreadId ])
 
         UnixScheduling.runningOn (Callers.thread 0 system) system
@@ -720,12 +720,13 @@ module TestUnixScheduling =
         (machine : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { machine with
-            Scheduling =
-                { machine.Scheduling with
+        Kernel.mapScheduling
+            (fun scheduling ->
+                { scheduling with
                     Occupants = Map.ofList occupants
                 }
-        }
+            )
+            machine
 
     let private threadIdOf (pid : ProcessId) (thread : int) (machine : UnixSystem<int, string>) : OsThreadId =
         (Proc.thread (Caller.make pid thread) (Machines.viewOf pid machine)).OsThreadId

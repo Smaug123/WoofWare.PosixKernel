@@ -20,7 +20,7 @@ module internal ReferenceWake =
         (system : UnixSystem<'Thread, 'Handler>)
         : (Caller<'Thread> * Set<WakePrimitive>) list
         =
-        let machine = system.Machine
+        let machine = Kernel.machine system
 
         let satisfied =
             asleep
@@ -29,16 +29,11 @@ module internal ReferenceWake =
                 let pid = Caller.processId caller
                 let thread = Caller.thread caller
 
-                let slot =
-                    match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
-                    | Some slot -> slot
-                    | None -> failwith $"ReferenceWake.wakes: the system holds no process %O{pid}"
-
                 match Proc.parkOf caller system with
                 | None -> failwith $"ReferenceWake.wakes: thread %O{thread} of process %O{pid} records no park"
                 | Some park ->
                     let fired =
-                        ProcessView.ofSlot pid slot system
+                        Proc.view pid system
                         |> WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall)
 
                     if Set.isEmpty fired then
@@ -49,10 +44,8 @@ module internal ReferenceWake =
             |> List.sortBy (fun (ordinal, _, _) -> ordinal)
 
         let finishing : Set<ExclusiveWaitQueue> =
-            ProcessTable.slots system.Processes
-            |> Seq.collect (fun (KeyValue (key, _)) ->
-                let pid = ProcessId.parseOrFail "ReferenceWake.wakes" key
-
+            UnixSystem.processIds system
+            |> Seq.collect (fun pid ->
                 Proc.threadMap pid system
                 |> Map.toSeq
                 |> Seq.filter (fun (thread, _) -> not (Set.contains (Caller.make pid thread) asleep))

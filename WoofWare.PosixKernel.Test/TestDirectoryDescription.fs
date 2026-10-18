@@ -625,7 +625,7 @@ module TestDirectoryDescription =
 
             let epoll, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
@@ -831,18 +831,19 @@ module TestDirectoryDescription =
         mismatched asFifo |> shouldEqual true
 
         let overFifoInode =
-            { asFifo with
-                Machine =
-                    { asFifo.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem =
                             CommittedFileSystem.initial (
                                 VirtualFileSystem.Unchecked.setContent
                                     inode
                                     (InodeContent.Fifo (PermissionBits.parseOrFail "test" 0o644))
-                                    asFifo.Machine.FileSystem
+                                    machine.FileSystem
                             )
                     }
-            }
+                )
+                asFifo
 
         mismatched overFifoInode |> shouldEqual false
 

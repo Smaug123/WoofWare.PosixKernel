@@ -99,9 +99,7 @@ module TestEntry =
 
     /// A view other than `view`, for a body to answer with.
     let private changed (view : ProcessView<int, string>) : ProcessView<int, string> =
-        { view with
-            Scheduling = UnixSchedulingState.advanceClock 1L view.Scheduling
-        }
+        Proc.unview view |> UnixSystem.advanceClock 1L |> Proc.view view.ProcessId
 
     let private same<'T when 'T : not struct> (expected : 'T) (actual : 'T) : bool =
         obj.ReferenceEquals (expected, actual)
@@ -110,7 +108,7 @@ module TestEntry =
     /// puts back into: a new value, with the view's process and machine.
     let private putBack (answered : ProcessView<int, string> option ref) (left : UnixSystem<int, string>) : bool =
         match answered.Value with
-        | Some view -> left = ProcessView.unfocus view
+        | Some view -> left = Proc.unview view
         | None -> false
 
     /// The process `view` is the view of, ended: how, and the view of it with
@@ -131,7 +129,7 @@ module TestEntry =
         match answered.Value with
         | Some (answeredEnded, dead) ->
             same answeredEnded ended
-            && left = ProcessView.unfocusWithout dead
+            && left = Proc.unviewWithout dead
             && not (Set.contains (EndedProcess.processId ended) (UnixSystem.processIds left))
         | None -> false
 

@@ -260,7 +260,7 @@ module TestDeviceFileSystem =
         Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
     let private timesOf (inode : InodeNumber) (system : UnixSystem<int, string>) : InodeTimes =
-        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system) with
         | Some inode -> inode.Times
         | None -> failwith $"inode %O{inode} is not in the filesystem"
 
@@ -331,7 +331,7 @@ module TestDeviceFileSystem =
             status.ModificationTime |> shouldEqual expected
             status.StatusChangeTime |> shouldEqual expected
 
-            timesOf (VirtualFileSystem.root system.Machine.FileSystem) system
+            timesOf (VirtualFileSystem.root (UnixSystem.fileSystem system)) system
             |> shouldEqual
                 {
                     Access = expected
@@ -561,7 +561,7 @@ module TestDeviceFileSystem =
         // Read from the inode graph, since a listing of `/dev` is refused on
         // both flavours.
         for platform, expected in [ linux, CharacterDevice.all ; darwin, [] ] do
-            let vfs = (booted platform).Machine.FileSystem
+            let vfs = UnixSystem.fileSystem (booted platform)
 
             let mountedRoot =
                 match VirtualFileSystem.tryGetContent (VirtualFileSystem.root vfs) vfs with
@@ -906,7 +906,7 @@ module TestDeviceFileSystem =
     [<Test>]
     let ``checkInvariants reports each forged mount defect`` () : unit =
         let system = booted linux
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let mountedRoot =
             match stat "/dev" system with

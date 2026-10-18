@@ -88,13 +88,13 @@ module TestCopyFileSyscalls =
             |> configure
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -122,7 +122,7 @@ module TestCopyFileSyscalls =
         | Error error -> failwith $"/%s{fileName}: %O{error}"
 
     let private entryOf (system : UnixSystem<int, string>) (fileName : string) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system fileName) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt system fileName) (UnixSystem.fileSystem system) with
         | Some entry -> entry
         | None -> failwith $"/%s{fileName} is absent"
 
@@ -149,8 +149,8 @@ module TestCopyFileSyscalls =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system (inodeAt system fileName))
                 (inodeAt system fileName)
                 access
@@ -204,10 +204,10 @@ module TestCopyFileSyscalls =
         | "dir" ->
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (ForgedName.ofInode system (VirtualFileSystem.root system.Machine.FileSystem))
-                    (VirtualFileSystem.root system.Machine.FileSystem)
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (ForgedName.ofInode system (VirtualFileSystem.root (UnixSystem.fileSystem system)))
+                    (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     (Lone.fileDescriptors system)
 
             fd, withRegistry registry system
@@ -405,7 +405,7 @@ module TestCopyFileSyscalls =
                         "abc", owner 0u 0u, 0o644, "abc"
                     ])
 
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         // The whole of a short file, from both offsets, then 0 at the end with
         // nothing moved.
@@ -425,10 +425,7 @@ module TestCopyFileSyscalls =
                 StatusChange = now
             }
 
-        let s2 =
-            { s with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L s.Scheduling
-            }
+        let s2 = UnixSystem.advanceClock 1_000_000_000L s
 
         let answer, after = copyFileRangeAnswer inFd outFd 11UL 0 s2
         answer |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -1007,15 +1004,15 @@ module TestCopyFileSyscalls =
 
             let target =
                 if kind = "dir" then
-                    VirtualFileSystem.root system.Machine.FileSystem
+                    VirtualFileSystem.root (UnixSystem.fileSystem system)
                 else
                     inodeAt system "ksrc"
 
-            let before = (VirtualFileSystem.tryGet target system.Machine.FileSystem).Value
+            let before = (VirtualFileSystem.tryGet target (UnixSystem.fileSystem system)).Value
 
             match futimens fd atime mtime system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
-                let entry = (VirtualFileSystem.tryGet target after.Machine.FileSystem).Value
+                let entry = (VirtualFileSystem.tryGet target (UnixSystem.fileSystem after)).Value
 
                 entry
                 |> shouldEqual
@@ -1024,18 +1021,19 @@ module TestCopyFileSyscalls =
                             {
                                 Access = atime
                                 Modification = mtime
-                                StatusChange = UnixMachineState.realtime system.Scheduling system.Machine
+                                StatusChange = UnixSystem.realtime system
                                 Birth = before.Times.Birth
                             }
                     }
 
                 // Nothing but that inode changed.
-                { after with
-                    Machine =
-                        { after.Machine with
-                            CommittedFileSystem = system.Machine.CommittedFileSystem
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            CommittedFileSystem = (Kernel.machine system).CommittedFileSystem
                         }
-                }
+                    )
+                    after)
                 |> shouldEqual system
             | other -> failwith $"%s{kind}: %A{other}"
 
@@ -1170,33 +1168,34 @@ module TestCopyFileRangeLarge =
             let inode, filesystem =
                 match
                     GraphMutators.createFile
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         (DirectoryEntryName.parseOrFail "TestCopyFileRangeLarge" "g")
                         (PermissionBits.parseOrFail "TestCopyFileRangeLarge" 0o644)
                         (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         TestTransferCounts.epoch
                         ImmutableArray.Empty
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok pair -> pair
                 | Error error -> failwith $"could not seed the destination: %O{error}"
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
                     (Lone.fileDescriptors system)
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
 
         match UnixReadWrite.tryCopyFileRange (Callers.leader system) source destination (uint64 length) 0 system with
