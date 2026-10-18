@@ -304,13 +304,6 @@ type internal WriteRefusal =
     | Inet6Binding of socket : SocketId
     /// The write would leave the file longer than this kernel can represent.
     | ExceedsRepresentableLength of inode : InodeNumber * offset : int64 * count : int
-    /// What writing to the file at `inode` would do to its set-ID bits has not
-    /// been measured for this writer.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
-    /// A write to the file at `inode` whose copy from the caller's buffer
-    /// faults, by a writer standing as `standing` towards it, for whom what
-    /// the write does to the file before the copy has not been measured.
-    | UnmeasuredFaultedWrite of inode : InodeNumber * standing : Standing
     /// A write asleep in a pipe or on a connected socket has an answer, and
     /// the library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
@@ -332,12 +325,6 @@ type internal WriteRefusal =
 module internal WriteRefusal =
     // Its own function because `write` and `pwrite` reach the same limit from
     // different offsets and must say the same thing about it.
-    let internal describeUnmeasuredSetIdChange (inode : InodeNumber) (refusal : SetIdChangeRefusal) : string =
-        $"writing to inode %O{inode}: %s{SetIdChangeRefusal.describe refusal}"
-
-    let internal describeUnmeasuredFaultedWrite (inode : InodeNumber) (standing : Standing) : string =
-        $"writing to inode %O{inode} from a buffer whose copy faults: the kernel answers EFAULT having already stripped the file's set-ID bits, grown it to the write's offset and perhaps moved its timestamps, and what this flavour does there has been measured only for an unprivileged writer who owns the file, not for one standing %A{standing} towards it."
-
     let internal describeExceedsRepresentableLength (inode : InodeNumber) (offset : int64) (count : int) : string =
         $"writing %d{count} bytes at offset %d{offset} of inode %O{inode} would leave the file longer than the %d{VirtualFileSystem.maxFileLength} bytes this kernel can represent. A real filesystem answers this without difficulty -- measured on ext4 and APFS alike, a one-byte write at offset 2^40 succeeds and leaves a sparse 1 TB file -- so this is a limit of the model, and refusing beats reporting an errno no kernel would have produced."
 
@@ -367,8 +354,6 @@ module internal WriteRefusal =
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which thread would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
         | WriteRefusal.ProcessEnd (target, refusal) ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE, whose default ends the process; %s{ProcessEndRefusal.describe refusal}"
-        | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
-        | WriteRefusal.UnmeasuredFaultedWrite (inode, standing) -> describeUnmeasuredFaultedWrite inode standing
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : WriteRefusal) : RefusalKind =
@@ -380,8 +365,6 @@ module internal WriteRefusal =
         | WriteRefusal.SendBuffer _ -> RefusalKind.Unmodelled
         | WriteRefusal.Inet6Binding _ -> RefusalKind.Unmodelled
         | WriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
-        | WriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
-        | WriteRefusal.UnmeasuredFaultedWrite _ -> RefusalKind.Unmodelled
         | WriteRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | WriteRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | WriteRefusal.InitProcess _ -> RefusalKind.Unmodelled
@@ -705,13 +688,6 @@ type internal PWriteRefusal =
     /// represent. Easier to reach than `write`'s: the offset is an argument
     /// rather than a position the description was walked to.
     | ExceedsRepresentableLength of inode : InodeNumber * offset : int64 * count : int
-    /// What writing to the file at `inode` would do to its set-ID bits has not
-    /// been measured for this writer.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
-    /// A write to the file at `inode` whose copy from the caller's buffer
-    /// faults, by a writer standing as `standing` towards it, for whom what
-    /// the write does to the file before the copy has not been measured.
-    | UnmeasuredFaultedWrite of inode : InodeNumber * standing : Standing
 
 [<RequireQualifiedAccess>]
 module internal PWriteRefusal =
@@ -725,18 +701,12 @@ module internal PWriteRefusal =
             // The same fact `write` reports, reached from an argument rather than
             // from the description's offset, so it says the same sentence.
             WriteRefusal.describeExceedsRepresentableLength inode offset count
-        | PWriteRefusal.UnmeasuredSetIdChange (inode, refusal) ->
-            WriteRefusal.describeUnmeasuredSetIdChange inode refusal
-        | PWriteRefusal.UnmeasuredFaultedWrite (inode, standing) ->
-            WriteRefusal.describeUnmeasuredFaultedWrite inode standing
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PWriteRefusal) : RefusalKind =
         match refusal with
         | PWriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PWriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
-        | PWriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
-        | PWriteRefusal.UnmeasuredFaultedWrite _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `copy_file_range(2)`.
 [<RequireQualifiedAccess>]
@@ -749,9 +719,6 @@ type internal CopyFileRangeRefusal =
     /// The copy would leave the destination longer than this kernel can
     /// represent.
     | ExceedsRepresentableLength of inode : InodeNumber * offset : int64 * count : int
-    /// What writing to the destination at `inode` would do to its set-ID bits
-    /// has not been measured for this writer.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
 
 [<RequireQualifiedAccess>]
 module internal CopyFileRangeRefusal =
@@ -765,8 +732,6 @@ module internal CopyFileRangeRefusal =
             $"both descriptors name regular files on a %O{fileSystem} mount, where whether a copy is made by the server, by the filesystem or by the generic page-cache path, and so how much one call moves, has not been measured."
         | CopyFileRangeRefusal.ExceedsRepresentableLength (inode, offset, count) ->
             WriteRefusal.describeExceedsRepresentableLength inode offset count
-        | CopyFileRangeRefusal.UnmeasuredSetIdChange (inode, refusal) ->
-            WriteRefusal.describeUnmeasuredSetIdChange inode refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : CopyFileRangeRefusal) : RefusalKind =
@@ -774,7 +739,6 @@ module internal CopyFileRangeRefusal =
         | CopyFileRangeRefusal.UnmodelledFlavour _ -> RefusalKind.NotOnPlatform
         | CopyFileRangeRefusal.UnmeasuredFileSystem _ -> RefusalKind.Unmodelled
         | CopyFileRangeRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
-        | CopyFileRangeRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
 
 /// What a `read` will operate on, once the descriptor's access mode has been
 /// checked and before its buffer is screened.
@@ -3457,10 +3421,6 @@ module UnixReadWrite =
                 Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT), faulted))
             | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
                 Error (WriteRefusal.ExceedsRepresentableLength (inode, offset, count))
-            | Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal) ->
-                Error (WriteRefusal.UnmeasuredSetIdChange (inode, refusal))
-            | Error (FaultedWriteRefusal.UnmeasuredWriter standing) ->
-                Error (WriteRefusal.UnmeasuredFaultedWrite (inode, standing))
         | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
         | UserBuffer.Mapped ->
@@ -3559,8 +3519,6 @@ module UnixReadWrite =
         with
         | Error (FileWriteRefusal.WouldExceedMaxLength (offset, count)) ->
             Error (WriteRefusal.ExceedsRepresentableLength (inode, offset, count))
-        | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
-            Error (WriteRefusal.UnmeasuredSetIdChange (inode, refusal))
         | Ok mutation ->
 
         // At the description's own offset, and advancing it by what moved — the
@@ -4192,8 +4150,6 @@ module UnixReadWrite =
         | WriteRefusal.SendBuffer _
         | WriteRefusal.Inet6Binding _
         | WriteRefusal.ExceedsRepresentableLength _
-        | WriteRefusal.UnmeasuredSetIdChange _
-        | WriteRefusal.UnmeasuredFaultedWrite _
         | WriteRefusal.Interruption _ ->
             failwith
                 $"UnixReadWrite: a send to a connected socket was refused with %A{refusal}, which only a write to another object, or a woken write, gives (this is a bug in this library)."
@@ -4513,8 +4469,6 @@ module UnixReadWrite =
             with
             | Error (FileWriteRefusal.WouldExceedMaxLength (offset, count)) ->
                 Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
-            | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
-                Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
             | Ok mutation ->
 
             // The description is left exactly where it was — the whole of
@@ -4554,10 +4508,6 @@ module UnixReadWrite =
         | Ok faulted -> Ok (WriteAnswer.Failed UnixError.EFAULT, faulted)
         | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
             Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
-        | Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal) ->
-            Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
-        | Error (FaultedWriteRefusal.UnmeasuredWriter standing) ->
-            Error (PWriteRefusal.UnmeasuredFaultedWrite (inode, standing))
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -5340,8 +5290,6 @@ module UnixReadWrite =
             with
             | Error (FileWriteRefusal.WouldExceedMaxLength (offset, count)) ->
                 Error (CopyFileRangeRefusal.ExceedsRepresentableLength (destinationInode, offset, count))
-            | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
-                Error (CopyFileRangeRefusal.UnmeasuredSetIdChange (destinationInode, refusal))
             | Ok mutation ->
 
             let through =

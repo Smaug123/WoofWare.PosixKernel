@@ -532,9 +532,6 @@ type internal OpenRefusal =
     /// A descriptor the call would make lies at or above the bound this kernel
     /// assumes the process's `RLIMIT_NOFILE` reaches.
     | DescriptorLimit of DescriptorLimitRefusal
-    /// An `O_TRUNC` open of the file at `inode`, whose effect on the file's
-    /// set-ID bits has not been measured for this caller. Nothing was changed.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
     /// The flag word `flags` holds bits the simulated flavour defines and this
     /// kernel does not model, named in `unmodelled` in ascending order of bit.
     /// Nothing was read or changed.
@@ -559,8 +556,6 @@ module internal OpenRefusal =
     let describe (refusal : OpenRefusal) : string =
         match refusal with
         | OpenRefusal.DescriptorLimit refusal -> DescriptorLimitRefusal.describe refusal
-        | OpenRefusal.UnmeasuredSetIdChange (inode, refusal) ->
-            $"opening inode %O{inode} with O_TRUNC: %s{SetIdChangeRefusal.describe refusal}"
         | OpenRefusal.UnmodelledFlags (flags, unmodelled) ->
             let names = unmodelled |> List.map UnmodelledOpenFlag.name |> String.concat ", "
 
@@ -575,7 +570,6 @@ module internal OpenRefusal =
     let kind (refusal : OpenRefusal) : RefusalKind =
         match refusal with
         | OpenRefusal.DescriptorLimit _ -> RefusalKind.Unmodelled
-        | OpenRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | OpenRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | OpenRefusal.IoctlOnlyAccessMode _ -> RefusalKind.Unmodelled
         | OpenRefusal.UnmodelledDirectoryOpen _ -> RefusalKind.Unmodelled
@@ -1127,8 +1121,6 @@ module UnixNamespace =
             | InodeContent.RegularFile _ when flags.Truncate ->
                 match UnixDescriptor.truncateAt through inode 0L system with
                 | Ok system -> Ok (true, system)
-                | Error (TruncationRefusal.UnmeasuredSetIdChange (inode, refusal)) ->
-                    Error (OpenRefusal.UnmeasuredSetIdChange (inode, refusal))
                 // Truncating to zero cannot exceed a length limit.
                 | Error (TruncationRefusal.ExceedsRepresentableLength _ as refusal) ->
                     failwith

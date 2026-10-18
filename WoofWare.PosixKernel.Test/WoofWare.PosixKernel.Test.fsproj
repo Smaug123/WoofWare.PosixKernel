@@ -70,6 +70,7 @@
     <Compile Include="Interruptible.fs" />
     <Compile Include="TestUnixThreadTable.fs" />
     <Compile Include="CredentialsGen.fs" />
+    <Compile Include="DarwinRootFiles.fs" />
     <Compile Include="TestCredentials.fs" />
     <Compile Include="TestInodeOwner.fs" />
     <Compile Include="TestPermissionStanding.fs" />
@@ -77,7 +78,6 @@
     <Compile Include="TestCredentialChange.fs" />
     <Compile Include="TestCredentialThreadsMeasured.fs" />
     <Compile Include="TestCredentialSetxid.fs" />
-    <Compile Include="DarwinRootFiles.fs" />
     <Compile Include="TestModeChange.fs" />
     <Compile Include="TestUmask.fs" />
     <Compile Include="TestAccess.fs" />
@@ -528,6 +528,7 @@
          docs/probes/faulting-file-write. `TestFaultingFileWrite` replays every
          row. -->
     <EmbeddedResource Include="..\docs\probes\faulting-file-write\darwin-27.0.0-arm64-apfs.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.darwin-27.0.0-arm64-apfs.txt" />
+    <EmbeddedResource Include="..\docs\probes\faulting-file-write\darwin-27.0.0-arm64-apfs-root.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.darwin-27.0.0-arm64-apfs-root.txt" />
     <EmbeddedResource Include="..\docs\probes\faulting-file-write\linux-6.18.5-aarch64-ext4.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.linux-6.18.5-aarch64-ext4.txt" />
     <EmbeddedResource Include="..\docs\probes\faulting-file-write\linux-6.18.5-aarch64-tmpfs.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.linux-6.18.5-aarch64-tmpfs.txt" />
     <!-- What Darwin answers root and uid 501 about another user's files,

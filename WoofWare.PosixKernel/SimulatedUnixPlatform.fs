@@ -749,7 +749,9 @@ module SimulatedUnixPlatform =
         // PROT_NONE page, on Linux 6.18.5 (tmpfs and ext4 alike, by the owner
         // in and out of the file's group, a non-owner in and out of it, and
         // root) and Darwin 27.0 (APFS, uid 501 owning the file, in and out of
-        // its group). On both, the call answers EFAULT having stripped the
+        // its group; and as root, uid 501 owning it, uid 502 not, and root
+        // writing uid 501's file and its own, which agree on everything but
+        // which set-ID bits go). On both, the call answers EFAULT having stripped the
         // set-ID bits a successful write strips and grown the file to the
         // write's offset, leaving the descriptor's offset where it was. Linux
         // runs `file_remove_privs` and `file_update_time` before the copy, so

@@ -121,10 +121,7 @@ type SetGroupIdOnWrite =
     /// <remarks>
     /// On all platforms, <c>S_ISUID</c> already behaves this way.
     ///
-    /// Only a writer who owns the file has been measured, and only a writer in the file's
-    /// group when the file is set-group-ID. Asked about a set-user-ID or set-group-ID file
-    /// on behalf of any other writer, privileged or not, the write is refused rather than
-    /// guessed at.
+    /// Whether the writer owns the file or is in its group makes no difference.
     /// </remarks>
     /// <example>
     /// This is the case on Darwin.
@@ -156,10 +153,8 @@ type SetIdBitsOnTruncation =
     /// even if a write to the same file by the same process would strip them.
     /// </summary>
     /// <remarks>
-    /// Only a truncating process that owns the file has been measured, and only one in the
-    /// file's group when the file is set-group-ID. Asked about a set-user-ID or set-group-ID
-    /// file on behalf of any other process, privileged or not, the truncation is refused
-    /// rather than guessed at.
+    /// Whether the truncating process owns the file, is in its group or is privileged makes
+    /// no difference.
     /// </remarks>
     /// <example>
     /// Darwin behaves this way.
@@ -193,38 +188,6 @@ type PermissionBits =
     override this.ToString () : string =
         match this with
         | PermissionBits bits -> "0o" + System.Convert.ToString(bits, 8).PadLeft (4, '0')
-
-/// Why this library will not say what a write or a truncation does to a file's
-/// set-user-ID and set-group-ID bits: the kernel's answer for that caller and
-/// that mode has not been measured.
-[<RequireQualifiedAccess>]
-type internal SetIdChangeRefusal =
-    /// A content-changing write, under `SetGroupIdOnWrite.StripAlways`, by a
-    /// caller standing as `standing` towards a file whose bits are `bits`.
-    | UnmeasuredDarwinWrite of standing : Standing * bits : PermissionBits
-    /// A truncation, under `SetIdBitsOnTruncation.Preserve`, by a caller
-    /// standing as `standing` towards a file whose bits are `bits`.
-    | UnmeasuredDarwinTruncation of standing : Standing * bits : PermissionBits
-
-[<RequireQualifiedAccess>]
-module internal SetIdChangeRefusal =
-    /// What this library knows about why it will not answer. A client adds
-    /// which call it was answering and which file it was.
-    let describe (refusal : SetIdChangeRefusal) : string =
-        let measured =
-            "What has been measured: a file with neither set-ID bit, a caller that owns the file and is in its group, and an unprivileged owner outside the group of a file without S_ISGID. Measuring the rest needs root or a second user on Darwin."
-
-        match refusal with
-        | SetIdChangeRefusal.UnmeasuredDarwinWrite (standing, bits) ->
-            $"what Darwin does to the set-ID bits of a %O{bits} file written to by a caller standing %A{standing} towards it has not been measured. %s{measured}"
-        | SetIdChangeRefusal.UnmeasuredDarwinTruncation (standing, bits) ->
-            $"what Darwin does to the set-ID bits of a %O{bits} file truncated by a caller standing %A{standing} towards it has not been measured. %s{measured}"
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : SetIdChangeRefusal) : RefusalKind =
-        match refusal with
-        | SetIdChangeRefusal.UnmeasuredDarwinWrite _ -> RefusalKind.Unmodelled
-        | SetIdChangeRefusal.UnmeasuredDarwinTruncation _ -> RefusalKind.Unmodelled
 
 /// What a privileged caller is granted when it asks to execute something that
 /// is not a directory: `X_OK` on a regular file or a symbolic link.
@@ -637,19 +600,6 @@ module PermissionBits =
         let clearsGroup = raw &&& groupExecute <> 0 || not standing.InGroup
         setUserId ||| (if clearsGroup then setGroupId else 0)
 
-    // Darwin's rules for a write and a truncation are measured only for a
-    // writer who owns the file, and who is in its group when the file is
-    // set-group-ID: an ordinary user cannot give a file it does not own a
-    // set-ID bit, nor set `S_ISGID` on a file outside its groups. A file with
-    // neither set-ID bit has nothing either rule could clear.
-    let private darwinMeasured (standing : Standing) (bits : PermissionBits) : bool =
-        let raw = toInt bits
-
-        raw &&& (setUserId ||| setGroupId) = 0
-        || standing.Owns
-           && (standing.InGroup
-               || raw &&& setGroupId = 0 && standing.Privilege = CallerPrivilege.Unprivileged)
-
     /// <summary>
     /// After a content-changing write to a regular file by a process standing as <c>standing</c>
     /// towards it, what permission bits now apply to the file?
@@ -665,9 +615,6 @@ module PermissionBits =
     /// `S_ISUID` is blatted on both platforms whatever the execute bits say, and the
     /// sticky bit is never touched on either. The whole of the disagreement is
     /// `S_ISGID` on a file that is not group-executable.
-    ///
-    /// Answers <c>SetIdChangeRefusal.UnmeasuredDarwinWrite</c> for a write whose answer under
-    /// <c>SetGroupIdOnWrite.StripAlways</c> has not been measured; see that case.
     /// </remarks>
     /// <param name="rule">
     /// Different platforms do different things to the set-group-ID on an unprivileged write.
@@ -684,7 +631,7 @@ module PermissionBits =
         (rule : SetGroupIdOnWrite)
         (standing : Standing)
         (bits : PermissionBits)
-        : Result<PermissionBits, SetIdChangeRefusal>
+        : PermissionBits
         =
         // Measured on Linux 6.18.5 (`permission-standing.c`): every one of the
         // 4096 modes, written through a descriptor by the owner in and out of
@@ -692,7 +639,10 @@ module PermissionBits =
         // and by a supplementary group, by a non-owner outside it, and by root,
         // with no mismatch. On Darwin 27.0 at uid 501, the owner in the file's
         // group over all 4096 modes, and the owner outside it over the 2048
-        // without `S_ISGID`. For example, non-root and in the file's group:
+        // without `S_ISGID`; and as root (`docs/probes/darwin-root/root-files.c`,
+        // SETID), over all 4096 modes, root writing its own files and uid
+        // 502's, and uid 501 writing its own and uid 502's, in each of its
+        // groups and in none. For example, non-root and in the file's group:
         //
         // | before | Linux | Darwin |
         // |---|---|---|
@@ -709,14 +659,8 @@ module PermissionBits =
         // | `00644` | `00644` | `00644` |
         //
         // ...and as root every row is left exactly as it was, on both.
-        match rule with
-        | SetGroupIdOnWrite.StripAlways when not (darwinMeasured standing bits) ->
-            Error (SetIdChangeRefusal.UnmeasuredDarwinWrite (standing, bits))
-        | SetGroupIdOnWrite.StripAlways
-        | SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup ->
-
         match standing.Privilege with
-        | CallerPrivilege.Privileged -> Ok bits
+        | CallerPrivilege.Privileged -> bits
         | CallerPrivilege.Unprivileged ->
 
         let raw = toInt bits
@@ -726,7 +670,7 @@ module PermissionBits =
             | SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup -> setIdBitsLinuxClears standing raw
             | SetGroupIdOnWrite.StripAlways -> setUserId ||| setGroupId
 
-        Ok (parseOrFail "PermissionBits.afterContentChangingWrite" (raw &&& ~~~cleared))
+        parseOrFail "PermissionBits.afterContentChangingWrite" (raw &&& ~~~cleared)
 
     /// <summary>
     /// After a truncation of a regular file by a process standing as <c>standing</c> towards it,
@@ -741,15 +685,12 @@ module PermissionBits =
     /// even ones which change no bytes.
     /// (This is by contrast to the situation with <c>afterContentChangingWrite</c>, which
     /// explicitly only applies to writes of at least one byte.)
-    ///
-    /// Answers <c>SetIdChangeRefusal.UnmeasuredDarwinTruncation</c> for a truncation whose answer
-    /// under <c>SetIdBitsOnTruncation.Preserve</c> has not been measured; see that case.
     /// </remarks>
     let internal afterTruncation
         (rule : SetIdBitsOnTruncation)
         (standing : Standing)
         (bits : PermissionBits)
-        : Result<PermissionBits, SetIdChangeRefusal>
+        : PermissionBits
         =
         // Measured as `afterContentChangingWrite` was, with `ftruncate(0)`,
         // `ftruncate` to the length the file already has, and (over the modes
@@ -769,13 +710,14 @@ module PermissionBits =
         // | `03755` | `01755` | `03755` |
         // | `01755` | `01755` | `01755` |
         //
-        // ...and as root every row is left exactly as it was, on both.
+        // ...and as root every row is left exactly as it was, on both. Darwin
+        // preserves every bit for every caller: root-files.c's SETID rows
+        // truncated (`ftruncate(0)`, `ftruncate` to the same length and
+        // `open(O_TRUNC)`) every mode as root and as uid 501, owner or not.
         match rule, standing.Privilege with
-        | SetIdBitsOnTruncation.Preserve, _ when not (darwinMeasured standing bits) ->
-            Error (SetIdChangeRefusal.UnmeasuredDarwinTruncation (standing, bits))
         | SetIdBitsOnTruncation.Preserve, _
-        | _, CallerPrivilege.Privileged -> Ok bits
+        | _, CallerPrivilege.Privileged -> bits
         | SetIdBitsOnTruncation.Strip, CallerPrivilege.Unprivileged ->
 
         let raw = toInt bits
-        Ok (parseOrFail "PermissionBits.afterTruncation" (raw &&& ~~~(setIdBitsLinuxClears standing raw)))
+        parseOrFail "PermissionBits.afterTruncation" (raw &&& ~~~(setIdBitsLinuxClears standing raw))
