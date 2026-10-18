@@ -1,0 +1,17 @@
+# socket-creator-uid: Darwin
+ACCEPT	listener=u502	acceptor=u504	client=u501	binder=u502	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56008
+ACCEPT	listener=u502	acceptor=u504	client=u501	binder=u504	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56008
+ACCEPT	listener=u502	acceptor=u504	client=u501	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56008
+ACCEPT	listener=u502	acceptor=u504	client=u501	binder=root	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56008
+ACCEPT	listener=u502	acceptor=u504	client=u501	control	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56008
+ACCEPT	listener=root	acceptor=u504	client=u501	binder=root	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56010
+ACCEPT	listener=root	acceptor=u504	client=u501	binder=u504	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56010
+ACCEPT	listener=root	acceptor=u504	client=u501	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56010
+ACCEPT	listener=root	acceptor=u504	client=u501	binder=root	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56010
+ACCEPT	listener=root	acceptor=u504	client=u501	control	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56010
+ACCEPT	listener=u502	acceptor=root	client=u501	binder=u502	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56012
+ACCEPT	listener=u502	acceptor=root	client=u501	binder=root	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56012
+ACCEPT	listener=u502	acceptor=root	client=u501	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56012
+ACCEPT	listener=u502	acceptor=root	client=u501	binder=root	baddr=0.0.0.0	(SO_REUSEADDR)	-> ok	port=56012
+ACCEPT	listener=u502	acceptor=root	client=u501	control	binder=u501	baddr=0.0.0.0	(SO_REUSEADDR)	-> EADDRINUSE	port=56012
+DONE	failures=0

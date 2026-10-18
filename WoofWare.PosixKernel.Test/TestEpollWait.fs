@@ -92,6 +92,7 @@ module TestEpollWait =
                             Queue = []
                             Drained = false
                         }
+                Uid = UserId.root
             }
 
         let listenerFd, registry =

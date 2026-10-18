@@ -875,6 +875,7 @@ module UnixMachineState =
             Claim = PortClaim.ofPortHold timeWait.PortHold
             ReuseAddress = timeWait.ReuseAddress
             Peer = Some timeWait.Remote
+            Owner = PortHolderOwner.ClosedSocket timeWait.SocketUid
         }
 
     /// What a socket in `phase` is, as a port holder.
@@ -922,6 +923,7 @@ module UnixMachineState =
                             Claim = PortClaim.ofPortHold binding.PortHold
                             ReuseAddress = socket.ReuseAddress
                             Peer = None
+                            Owner = PortHolderOwner.Socket socket.Uid
                         }
                 | _ -> None
             )
@@ -976,11 +978,12 @@ module UnixMachineState =
                                         PortClaim.ofPortHold binding.PortHold
                                 ReuseAddress = socket.ReuseAddress
                                 Peer = peer
+                                Owner = PortHolderOwner.Socket socket.Uid
                             }
                     | None ->
 
                     match (TcpTransfer.towards connectionEnd connection.Transfer).Receiver with
-                    | TcpEndState.Closed (reuseAddress, portHold) ->
+                    | TcpEndState.Closed (reuseAddress, portHold, uid) ->
                         Some
                             {
                                 Endpoint = local
@@ -992,6 +995,7 @@ module UnixMachineState =
                                         PortClaim.ofPortHold portHold
                                 ReuseAddress = reuseAddress
                                 Peer = peer
+                                Owner = PortHolderOwner.ClosedSocket uid
                             }
                     // A server end in an accept queue, whose listener's own
                     // binding holds the port; or an end a reset reached,
@@ -1006,6 +1010,7 @@ module UnixMachineState =
                                 Claim = PortClaim.Released
                                 ReuseAddress = false
                                 Peer = Some peer
+                                Owner = PortHolderOwner.NoSocket
                             }
                         )
                 )
@@ -1042,7 +1047,7 @@ module UnixMachineState =
 
         portHolders socketId socket.Kind machine
         |> Seq.map (fun holder ->
-            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress
+            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress socket.Uid
         )
         |> PortVerdict.ofAll
 
@@ -1234,13 +1239,14 @@ module UnixMachineState =
                 else
 
                 match (TcpTransfer.towards connectionEnd forgotten.Transfer).Receiver, forgotten.FinsExchangedAt with
-                | TcpEndState.Closed (reuseAddress, portHold), Some exchanged ->
+                | TcpEndState.Closed (reuseAddress, portHold, uid), Some exchanged ->
                     Some
                         {
                             Local = local
                             Remote = remote
                             ReuseAddress = reuseAddress
                             PortHold = portHold
+                            SocketUid = uid
                             EnteredAt = exchanged
                         }
                 | other, exchanged ->

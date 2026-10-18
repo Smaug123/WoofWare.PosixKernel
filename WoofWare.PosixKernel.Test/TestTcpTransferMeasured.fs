@@ -219,7 +219,7 @@ module TestTcpTransferMeasured =
         | answer, _ -> failwith $"a write of %d{count} by %A{writer} answered %A{answer}"
 
     let private close (closer : ConnectionEnd) (transfer : TcpTransfer) : TcpTransfer =
-        snd (TcpTransfer.close closer false PortHold.Reserved transfer)
+        snd (TcpTransfer.close closer false PortHold.Reserved UserId.root transfer)
 
     let private read
         (reader : ConnectionEnd)
@@ -254,7 +254,7 @@ module TestTcpTransferMeasured =
             | answer, _ -> failwith $"FIN_DRAINED: the drain answered %A{answer}"
         | State.Reset -> transfer |> writeExactly s 1000 |> close p
         | State.ResetData -> transfer |> writeExactly p 1000 |> writeExactly s 1000 |> close p
-        | State.LingerZero -> snd (TcpTransfer.abort p false PortHold.Reserved transfer)
+        | State.LingerZero -> snd (TcpTransfer.abort p false PortHold.Reserved UserId.root transfer)
         | State.FinWritten -> transfer |> close p |> writeExactly s 100
 
     let private readSeen (answer : TcpReadAnswer) : Seen =

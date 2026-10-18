@@ -202,6 +202,7 @@ module TestUnixSystemInitial =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Uid = UserId.root
             }
 
         let candidate (port : uint16) : Ipv4Binding =

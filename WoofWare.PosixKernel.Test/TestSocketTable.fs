@@ -120,6 +120,7 @@ module TestSocketTable =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
         }
@@ -211,7 +212,12 @@ module TestSocketTable =
         | Some description ->
             match description.Target with
             | OpenFileTarget.Socket socketId ->
-                UnixMachineState.socket socketId kernel.Machine |> shouldEqual someSocket
+                // A socket carries the uid of the process that made it.
+                UnixMachineState.socket socketId kernel.Machine
+                |> shouldEqual
+                    { someSocket with
+                        Uid = (Lone.proc kernel).Credentials.EffectiveUser
+                    }
             | other -> failwith $"expected a socket target, got %O{other}"
         | None -> failwith "the original descriptor should still be live"
 
@@ -1531,7 +1537,11 @@ module TestSocketTable =
                                         // closed.
                                         Transfer =
                                             TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
-                                            |> TcpTransfer.close ConnectionEnd.Client false PortHold.Connected
+                                            |> TcpTransfer.close
+                                                ConnectionEnd.Client
+                                                false
+                                                PortHold.Connected
+                                                UserId.root
                                             |> snd
                                     }
                                 ]
@@ -1599,7 +1609,12 @@ module TestSocketTable =
                                     Transfer =
                                         (TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine, closed)
                                         ||> List.fold (fun transfer closer ->
-                                            TcpTransfer.close closer false (ForgedConnection.portHold closer) transfer
+                                            TcpTransfer.close
+                                                closer
+                                                false
+                                                (ForgedConnection.portHold closer)
+                                                UserId.root
+                                                transfer
                                             |> snd
                                         )
                                 }
