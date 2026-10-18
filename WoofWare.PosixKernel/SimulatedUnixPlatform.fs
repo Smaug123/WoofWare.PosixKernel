@@ -669,21 +669,6 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> SetIdBitsOnTruncation.Strip
         | SimulatedUnixFlavour.Darwin -> SetIdBitsOnTruncation.Preserve
 
-    /// What this platform's `chmod(2)` and `fchmod(2)` do for a privileged
-    /// caller.
-    ///
-    /// Everything else about a mode change is unanimous: who may make one, the
-    /// `S_ISGID` an owner outside the inode's group loses, the bits above
-    /// `0o7777` that are ignored, and the `ctime` that moves.
-    let privilegedModeChange (platform : SimulatedUnixPlatform) : PrivilegedModeChange =
-        // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/chmod-rules.c`:
-        // on Linux 6.18.5 root sets all 4096 modes exactly, on a file and on a
-        // directory, whether it owns the inode or not and whether it is in the
-        // inode's group or not. Darwin 27.0 was measured at uid 501 only.
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux -> PrivilegedModeChange.SetsRequestedBits
-        | SimulatedUnixFlavour.Darwin -> PrivilegedModeChange.Unmeasured
-
     /// What this platform's `fchmodat(2)` does with `AT_SYMLINK_NOFOLLOW` when
     /// the path names a symbolic link.
     let symlinkModeChange (platform : SimulatedUnixPlatform) : SymlinkModeChange =
@@ -711,10 +696,12 @@ module SimulatedUnixPlatform =
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/access-rules.c`:
         // on Linux 6.18.5 root's `access(X_OK)` on a regular file is granted
         // exactly when some execute bit is set, over all 4096 modes, owning it
-        // or not, in its group or not. Darwin 27.0 was measured at uid 501 only.
+        // or not, in its group or not, and refused EACCES otherwise. On Darwin
+        // 27.0 (`docs/probes/darwin-root/root-files.c`) the same condition
+        // grants it, and it is refused EPERM otherwise.
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> PrivilegedExecution.NeedsAnExecuteBit
-        | SimulatedUnixFlavour.Darwin -> PrivilegedExecution.Unmeasured
+        | SimulatedUnixFlavour.Darwin -> PrivilegedExecution.RegularFileNeedsAnExecuteBit
 
     /// Who may change an inode's owner and group on this platform, and which
     /// set-ID bits a change clears.
@@ -762,7 +749,9 @@ module SimulatedUnixPlatform =
         // PROT_NONE page, on Linux 6.18.5 (tmpfs and ext4 alike, by the owner
         // in and out of the file's group, a non-owner in and out of it, and
         // root) and Darwin 27.0 (APFS, uid 501 owning the file, in and out of
-        // its group). On both, the call answers EFAULT having stripped the
+        // its group; and as root, uid 501 owning it, uid 502 not, and root
+        // writing uid 501's file and its own, which agree on everything but
+        // which set-ID bits go). On both, the call answers EFAULT having stripped the
         // set-ID bits a successful write strips and grown the file to the
         // write's offset, leaving the descriptor's offset where it was. Linux
         // runs `file_remove_privs` and `file_update_time` before the copy, so
@@ -1073,7 +1062,8 @@ module SimulatedUnixPlatform =
     let linkReadRule (platform : SimulatedUnixPlatform) : LinkReadRule =
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/readlink-mode.c`
         // on Linux 6.18.5 (root and uid 1000, links whose modes debugfs set
-        // on ext4) and Darwin 27.0 (uid 501). Darwin's root was not measured.
+        // on ext4) and Darwin 27.0 (uid 501); Darwin's root by
+        // `docs/probes/darwin-root/root-files.c`.
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> LinkReadRule.ModeIgnored
         | SimulatedUnixFlavour.Darwin -> LinkReadRule.ReadBitOfSelectedTriple

@@ -142,8 +142,9 @@ module internal UnixProcessState =
     /// saying nothing about which fact it is.
     ///
     /// A client should think before making a process root: root passes every
-    /// permission check this kernel models (on Darwin, the few whose answer for
-    /// root has not been measured are refused instead), and programs commonly
+    /// permission check this kernel models but executing a file with no execute
+    /// bit (on Darwin, the few whose answer for root has not been measured are
+    /// refused instead), and programs commonly
     /// skip their own guards when they find they are root. That is why
     /// `UnixSystem.defaultUserId` is not 0.
     let callerPrivilege<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

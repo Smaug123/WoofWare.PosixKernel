@@ -246,15 +246,6 @@ module TestPermissionStanding =
         let clearsGroup = bits &&& 0o010 <> 0 || not standing.InGroup
         bits &&& ~~~(0o4000 ||| (if clearsGroup then 0o2000 else 0))
 
-    /// Whether a Darwin row was measured: no set-ID bit to strip, or a writer
-    /// that owns the file and is in its group, or an unprivileged owner
-    /// outside the group of a file without `S_ISGID`.
-    let private darwinMeasured (standing : Standing) (bits : int) : bool =
-        bits &&& 0o6000 = 0
-        || standing.Owns
-           && (standing.InGroup
-               || bits &&& 0o2000 = 0 && standing.Privilege = CallerPrivilege.Unprivileged)
-
     [<Test>]
     let ``Linux's write and truncation strip S_ISGID from a writer outside the group, over every mode`` () : unit =
         for standing in allStandings do
@@ -265,35 +256,81 @@ module TestPermissionStanding =
                     SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
                     standing
                     (mode bits)
-                |> shouldEqual (Ok (mode expected))
+                |> shouldEqual (mode expected)
 
                 PermissionBits.afterTruncation SetIdBitsOnTruncation.Strip standing (mode bits)
-                |> shouldEqual (Ok (mode expected))
+                |> shouldEqual (mode expected)
 
     [<Test>]
-    let ``Darwin's write and truncation answer the measured rows and refuse the rest, over every mode`` () : unit =
+    let ``Darwin's write and truncation strip both set-ID bits and keep them, over every mode and standing`` () : unit =
         for standing in allStandings do
             for bits in allModes do
-                let write () =
-                    PermissionBits.afterContentChangingWrite SetGroupIdOnWrite.StripAlways standing (mode bits)
+                let written =
+                    match standing.Privilege with
+                    | CallerPrivilege.Privileged -> bits
+                    | CallerPrivilege.Unprivileged -> bits &&& ~~~0o6000
 
-                let truncate () =
-                    PermissionBits.afterTruncation SetIdBitsOnTruncation.Preserve standing (mode bits)
+                PermissionBits.afterContentChangingWrite SetGroupIdOnWrite.StripAlways standing (mode bits)
+                |> shouldEqual (mode written)
 
-                if darwinMeasured standing bits then
-                    let written =
-                        match standing.Privilege with
-                        | CallerPrivilege.Privileged -> bits
-                        | CallerPrivilege.Unprivileged -> bits &&& ~~~0o6000
+                PermissionBits.afterTruncation SetIdBitsOnTruncation.Preserve standing (mode bits)
+                |> shouldEqual (mode bits)
 
-                    write () |> shouldEqual (Ok (mode written))
-                    truncate () |> shouldEqual (Ok (mode bits))
-                else
-                    write ()
-                    |> shouldEqual (Error (SetIdChangeRefusal.UnmeasuredDarwinWrite (standing, mode bits)))
+    [<Test>]
+    let ``Darwin's root-files SETID rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // a file of each of the 4096 modes, owned by root, uid 501 or uid 502
+        // in groups 0, 20, 701 and 7777, opened O_WRONLY (with O_TRUNC for
+        // `open(O_TRUNC)`) by root or by uid 501 in groups 20 and 701, and
+        // then written one byte or none, or truncated. A cell is `.` when the
+        // mode is unchanged, the digit of the special bits dropped otherwise,
+        // and `A` where the open was EACCES.
+        let rows = DarwinRootFiles.section "SETID"
+        rows |> List.length |> shouldEqual 45
 
-                    truncate ()
-                    |> shouldEqual (Error (SetIdChangeRefusal.UnmeasuredDarwinTruncation (standing, mode bits)))
+        let changed (before : int) (after : PermissionBits) : char =
+            let after = PermissionBits.toInt after
+
+            if after = before then
+                '.'
+            else
+                char (int '0' + ((before &&& ~~~after) >>> 9))
+
+        let mismatches =
+            [
+                for row in rows do
+                    let standing = Standing.toward (DarwinRootFiles.credentialsOf row.Caller) row.Owner
+
+                    for bits in allModes do
+                        let written () =
+                            PermissionBits.afterContentChangingWrite SetGroupIdOnWrite.StripAlways standing (mode bits)
+                            |> changed bits
+
+                        let truncated () =
+                            PermissionBits.afterTruncation SetIdBitsOnTruncation.Preserve standing (mode bits)
+                            |> changed bits
+
+                        let modelled =
+                            if PermissionBits.deniedTo standing AccessRequest.Write (mode bits) then
+                                'A'
+                            else
+                                match row.Call with
+                                | "write(1)" -> written ()
+                                // A write of no bytes changes nothing.
+                                | "write(0)" -> '.'
+                                | "ftruncate(0)"
+                                | "ftruncate(same)"
+                                | "open(O_TRUNC)" -> truncated ()
+                                | other -> failwith $"unexpected SETID call %s{other}"
+
+                        if modelled <> row.Cells.[bits] then
+                            yield
+                                $"%s{row.Caller} %O{row.Owner} %s{row.Call} 0o%04o{bits}: measured %c{row.Cells.[bits]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
 
     [<Test>]
     let ``the measured Linux write rows, by writer`` () : unit =
@@ -322,10 +359,10 @@ module TestPermissionStanding =
                 SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
                 standing
                 (mode before)
-            |> shouldEqual (Ok (mode after))
+            |> shouldEqual (mode after)
 
             PermissionBits.afterTruncation SetIdBitsOnTruncation.Strip standing (mode before)
-            |> shouldEqual (Ok (mode after))
+            |> shouldEqual (mode after)
 
         // Root, not in the file's group: nothing moves.
         let root =
@@ -339,7 +376,7 @@ module TestPermissionStanding =
             SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
             root
             (mode 0o2666)
-        |> shouldEqual (Ok (mode 0o2666))
+        |> shouldEqual (mode 0o2666)
 
     // ------------------------------------------------------------- the creation strip
 
@@ -452,16 +489,16 @@ module TestPermissionStanding =
                     SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
                     standing
                     (mode bits)
-                |> shouldEqual (Ok (mode (ownerOnlyStrip privilege true bits)))
+                |> shouldEqual (mode (ownerOnlyStrip privilege true bits))
 
                 PermissionBits.afterContentChangingWrite SetGroupIdOnWrite.StripAlways standing (mode bits)
-                |> shouldEqual (Ok (mode (ownerOnlyStrip privilege false bits)))
+                |> shouldEqual (mode (ownerOnlyStrip privilege false bits))
 
                 PermissionBits.afterTruncation SetIdBitsOnTruncation.Strip standing (mode bits)
-                |> shouldEqual (Ok (mode (ownerOnlyStrip privilege true bits)))
+                |> shouldEqual (mode (ownerOnlyStrip privilege true bits))
 
                 PermissionBits.afterTruncation SetIdBitsOnTruncation.Preserve standing (mode bits)
-                |> shouldEqual (Ok (mode bits))
+                |> shouldEqual (mode bits)
 
                 PermissionBits.stickyRemoval standing standing (mode bits)
                 |> shouldEqual StickyRemoval.Unrestricted
@@ -1105,55 +1142,41 @@ module TestPermissionStanding =
             | other -> failwith $"open O_TRUNC %s{p}: %A{other}"
 
     [<Test>]
-    let ``write, pwrite, ftruncate and O_TRUNC refuse a Darwin set-ID change nobody has measured`` () : unit =
-        // uid 501 is in group 20 but does not own the file: a set-ID file
-        // changed by a non-owner has not been measured on Darwin.
+    let ``write, pwrite, ftruncate and O_TRUNC strip both set-ID bits for a Darwin non-owner, and truncation neither``
+        ()
+        : unit
+        =
+        // uid 501 in group 20 writing a 06666 file uid 1001 owns
+        // (`root-files.c`'s SETID rows, against uid 502's files).
         let vfs =
             VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
-            |> file "/f" (owner 1001u 20u) 0o4666
+            |> file "/f" (owner 1001u 20u) 0o6666
 
         let system = systemOn SimulatedUnixPlatform.macOsArm64 darwinCaller vfs
-        let inode = inodeAt vfs "/f"
-        let standing = Standing.toward darwinCaller (owner 1001u 20u)
-        let written = SetIdChangeRefusal.UnmeasuredDarwinWrite (standing, mode 0o4666)
 
-        let truncated =
-            SetIdChangeRefusal.UnmeasuredDarwinTruncation (standing, mode 0o4666)
+        let readWrite =
+            { readOnly with
+                Access = FileAccessMode.ReadWrite
+            }
 
         let fd, opened =
-            match
-                Answered.openPath
-                    { readOnly with
-                        Access = FileAccessMode.ReadWrite
-                    }
-                    (path "/f")
-                    0
-                    system
-            with
+            match Answered.openPath readWrite (path "/f") 0 system with
             | SyscallAnswer.Completed fd, opened -> int fd, opened
             | other -> failwith $"open: %A{other}"
 
         let one = ImmutableArray.Create 9uy
 
-        match WriteOutcomes.write fd one opened with
-        | Error refusal -> refusal |> shouldEqual (WriteRefusal.UnmeasuredSetIdChange (inode, written))
-        | Ok (answer, _) -> failwith $"write answered %A{answer}"
+        let changes : (string * (UnixSystem<int, string> -> UnixSystem<int, string>) * int) list =
+            [
+                "write", (fun system -> WriteOutcomes.write fd one system |> ok |> snd), 0o0666
+                "pwrite", (fun system -> WriteOutcomes.admitThenPwrite 0 fd one 0L system |> ok |> snd), 0o0666
+                "ftruncate",
+                (fun system -> UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system |> ok |> snd),
+                0o6666
+            ]
 
-        match WriteOutcomes.admitThenPwrite 0 fd one 0L opened with
-        | Error refusal -> refusal |> shouldEqual (PWriteRefusal.UnmeasuredSetIdChange (inode, written))
-        | Ok (answer, _) -> failwith $"pwrite answered %A{answer}"
-
-        match UnixDescriptor.tryFtruncate (Callers.leader opened) fd 0L opened with
-        | Error refusal ->
-            refusal
-            |> shouldEqual (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated))
-        | Ok (answer, _) -> failwith $"ftruncate answered %A{answer}"
-
-        match UnixSystem.tryStep (Callers.thread 0 opened) (Syscall.FTruncate (fd, 0L)) opened with
-        | Error refusal ->
-            refusal
-            |> shouldEqual (SyscallRefusal.FTruncate (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated)))
-        | Ok stepped -> failwith $"step answered %A{Stepped.view stepped}"
+        for label, change, expected in changes do
+            (label, change opened |> modeOf "/f") |> shouldEqual (label, expected)
 
         let truncating =
             { readOnly with
@@ -1161,22 +1184,9 @@ module TestPermissionStanding =
                 Truncate = true
             }
 
-        match OpenFlagWords.openPath truncating (PathArg.ofPath (path "/f")) 0 system with
-        | Error refusal -> refusal |> shouldEqual (OpenRefusal.UnmeasuredSetIdChange (inode, truncated))
-        | Ok (answer, _) -> failwith $"open(O_TRUNC) answered %A{answer}"
-
-        // Without a set-ID bit there is nothing to strip, and the same calls
-        // are answered.
-        let plain =
-            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
-            |> file "/f" (owner 1001u 20u) 0o666
-            |> systemOn SimulatedUnixPlatform.macOsArm64 darwinCaller
-
-        Answered.openPath truncating (path "/f") 0 plain
-        |> fst
-        |> function
-            | SyscallAnswer.Completed _ -> ()
-            | other -> failwith $"open(O_TRUNC) of a plain file: %A{other}"
+        match Answered.openPath truncating (path "/f") 0 system with
+        | SyscallAnswer.Completed _, truncated -> modeOf "/f" truncated |> shouldEqual 0o6666
+        | other -> failwith $"open(O_TRUNC): %A{other}"
 
     [<Test>]
     let ``unlink and rmdir surface Darwin's sticky refusal through the syscall step`` () : unit =
@@ -1486,13 +1496,7 @@ module TestPermissionStanding =
                 return Credentials.ofIds (uid user) (gid group) (supplementary |> List.map gid)
             }
 
-        let kinds =
-            [
-                "UnmeasuredDarwinWrite"
-                "UnmeasuredDarwinTruncation"
-                "DarwinPrivilegedCaller"
-                "DarwinDirectoryDisplacingDirectory"
-            ]
+        let kinds = [ "DarwinPrivilegedCaller" ; "DarwinDirectoryDisplacingDirectory" ]
 
         let property (cover : string -> unit) (vfs : VirtualFileSystem, caller : Credentials) : unit =
             refusalsMet (systemOn SimulatedUnixPlatform.linuxX64 caller vfs)
