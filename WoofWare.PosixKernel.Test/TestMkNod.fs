@@ -370,7 +370,6 @@ module TestMkNod =
         | MkNodRefusal.Socket -> "refused:sock"
         | MkNodRefusal.CharacterDevice dev -> $"refused:chr:0x%x{dev}"
         | MkNodRefusal.BlockDevice dev -> $"refused:blk:0x%x{dev}"
-        | MkNodRefusal.UnmeasuredPrivilegedCaller
         | MkNodRefusal.Path _ -> $"refused: %s{MkNodRefusal.describe refusal}"
 
     let private openRefusal (refusal : OpenRefusal) : string =
@@ -885,43 +884,111 @@ module TestMkNod =
     // ------------------------------------------------------------ Darwin's refusals
 
     [<Test>]
-    let ``Darwin refuses a FIFO for any caller, and a privileged caller's other types, before the path is read``
-        ()
-        : unit
-        =
-        // Nothing measured Darwin's root, and its FIFO is mkfifo(2), whose
-        // rules are not measured: each is refused ahead of every failure the
-        // path or the dirfd could give.
-        let darwinRoot =
-            { darwinUser with
-                Credentials = Owners.root
-                Label = "Darwin root"
+    let ``Darwin's root-files MKNOD rows, for root and for uid 501`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // every value of the type field, as root and as uid 501, at a free
+        // name in a 0777 directory root owns ("new"), an existing file, a
+        // missing parent, a trailing separator, the empty path and NULL.
+        // Root's path is walked first; then a FIFO, a character device and a
+        // block device are made (nodes this library does not model, so
+        // refused), and every other type is EINVAL. uid 501 is EPERM for every
+        // type but a FIFO before the path is read; its FIFO is mkfifo(2)'s,
+        // whose rules are not modelled, and is refused before the path.
+        let darwin = SimulatedUnixPlatform.macOsArm64
+
+        let rootOwner : InodeOwner =
+            {
+                User = UserId.root
+                Group = GroupId.parseOrFail context 0u
             }
 
-        [
-            for envelope in [ darwinUser ; darwinRoot ] do
-                for kind in 0..15 do
-                    let mode = (kind <<< 12) ||| 0o644
+        let vfs =
+            let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch rootOwner
 
-                    for dirfd, path in
-                        [
-                            -1, PathArgumentBytes.Unreadable
-                            -2, PathArg.ofText ""
-                            -2, PathArg.ofText "nx"
-                        ] do
-                        let system = cell envelope "/c/w/d" 0o022
+            let directory, vfs =
+                match
+                    GraphMutators.createDirectory
+                        (VirtualFileSystem.root vfs)
+                        (DirectoryEntryName.parseOrFail context "m")
+                        (PermissionBits.parseOrFail context 0o777)
+                        rootOwner
+                        epoch
+                        vfs
+                with
+                | Ok made -> made
+                | Error error -> failwith $"%O{error}"
 
-                        let actual =
-                            UnixNamespace.tryMknodat (Callers.leader system) dirfd path mode 0u system
-                            |> Result.map (fun (answer, _) -> answer)
+            match
+                GraphMutators.createFile
+                    directory
+                    (DirectoryEntryName.parseOrFail context "existing")
+                    (PermissionBits.parseOrFail context 0o644)
+                    rootOwner
+                    epoch
+                    ImmutableArray<byte>.Empty
+                    vfs
+            with
+            | Ok (_, vfs) -> vfs
+            | Error error -> failwith $"%O{error}"
 
-                        let want =
-                            match NodeTypeField.ofMode mode, envelope = darwinUser with
-                            | NodeTypeField.Fifo, _ -> Error MkNodRefusal.Fifo
-                            | _, true -> Ok (SyscallAnswer.Failed UnixError.EPERM)
-                            | _, false -> Error MkNodRefusal.UnmeasuredPrivilegedCaller
+        let rows = DarwinRootFiles.spot "MKNOD"
+        rows |> List.length |> shouldEqual 252
 
-                        if actual <> want then
-                            yield $"%s{envelope.Label} 0o%o{mode} dirfd %d{dirfd}: wanted %A{want}, got %A{actual}"
-        ]
-        |> shouldEqual []
+        for row in rows do
+            // caller, "type=010000", "perm=0644", "dev=126,0", "path=new", "-> ok", "node=..."
+            let value (field : string) = field.Substring (field.IndexOf '=' + 1)
+            let typeField = Convert.ToInt32 (value row.[1], 8)
+            let mode = typeField ||| Convert.ToInt32 (value row.[2], 8)
+
+            let dev =
+                match (value row.[3]).Split ',' with
+                | [| major ; minor |] -> (uint32 major <<< 24) ||| uint32 minor
+                | _ -> failwith $"unexpected dev %s{row.[3]}"
+
+            let path =
+                match value row.[4] with
+                | "new" -> PathArg.ofText "/m/new"
+                | "existing" -> PathArg.ofText "/m/existing"
+                | "missing-parent" -> PathArg.ofText "/m/nx/new"
+                | "trailing-slash" -> PathArg.ofText "/m/new/"
+                | "empty" -> PathArg.ofText ""
+                | "null" -> PathArgumentBytes.Unreadable
+                | other -> failwith $"unexpected path %s{other}"
+
+            let system : UnixSystem<int, string> =
+                UnixSystem.initial darwin
+                |> Launched.bootWith
+                    (Launched.credentials (DarwinRootFiles.credentialsOf row.[0]))
+                    UnixSystem.pipedStandardStreams
+                    0
+                    (CpuId 0)
+
+            let system =
+                { system with
+                    Machine =
+                        { system.Machine with
+                            CommittedFileSystem = CommittedFileSystem.initial vfs
+                        }
+                }
+
+            let unmodelledNode : MkNodRefusal option =
+                match NodeTypeField.ofMode mode with
+                | NodeTypeField.Fifo -> Some MkNodRefusal.Fifo
+                | NodeTypeField.CharacterDevice -> Some (MkNodRefusal.CharacterDevice dev)
+                | NodeTypeField.BlockDevice -> Some (MkNodRefusal.BlockDevice dev)
+                | _ -> None
+
+            let expected =
+                match row.[5], unmodelledNode with
+                | "-> ok", Some refusal -> Error refusal
+                | _, Some MkNodRefusal.Fifo when row.[0] = "u501" -> Error MkNodRefusal.Fifo
+                | answer, _ -> Ok answer
+
+            let actual =
+                match UnixNamespace.tryMknod (Callers.leader system) path mode dev system with
+                | Ok (SyscallAnswer.Failed error, _) -> Ok $"-> %s{string<UnixError> error}"
+                | Ok (answer, _) -> Ok $"-> %A{answer}"
+                | Error refusal -> Error refusal
+
+            ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]} %s{row.[4]}", $"%A{actual}")
+            |> shouldEqual ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]} %s{row.[4]}", $"%A{expected}")
