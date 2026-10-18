@@ -240,7 +240,7 @@ module TestUnixPathBytes =
             fst (Answered.mkdir (Callers.leader orphaned) (PathArg.ofPath (pathOf name)) 0o777 orphaned)
             |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
 
-            fst (Answered.openPath creating (pathOf name) 0o666 orphaned)
+            fst (Answered.openPath (pathOf name) creating 0o666 orphaned)
             |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
 
             match Eager.tryRename (PathArg.ofBytes (text "/d/f")) (PathArg.ofBytes name) orphaned with

@@ -503,7 +503,7 @@ module TestProtectedFiles =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofPath (path p)) 0o644 system with
+        match OpenFlagWords.openPath (PathArg.ofPath (path p)) flags 0o644 system with
         | Ok (answer, after) -> answerText answer, after
         | Error refusal -> failwith $"open(%s{p}) was refused: %A{refusal}"
 
@@ -908,7 +908,7 @@ module TestProtectedFiles =
                     | Ok (FileSystemStatisticsAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error refusal -> WalkOutcome.Refused refusal
                 )
-                "open", (fun p -> OpenOutcomes.openPath 0 (bytes p) 0 system |> ofOpen)
+                "open", (fun p -> OpenOutcomes.openPath (bytes p) 0 0 system |> ofOpen)
                 "openat", (fun p -> OpenOutcomes.openat atFdCwd (bytes p) 0 0 system |> ofOpen)
                 "chdir",
                 (fun p ->

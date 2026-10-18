@@ -439,7 +439,7 @@ module TestDeviceFileSystem =
                     refused |> shouldEqual (name unknown)
                 | other -> failwith $"stat %s{path}: expected a refusal, got %A{other}"
 
-            match OpenFlagWords.openPath creating (PathArg.ofText $"/dev/%s{unknown}") 0o644 system with
+            match OpenFlagWords.openPath (PathArg.ofText $"/dev/%s{unknown}") creating 0o644 system with
             | Error (OpenRefusal.Path (PathRefusal.UnmodelledDeviceName _)) -> ()
             | other -> failwith $"open(O_CREAT) /dev/%s{unknown}: expected a refusal, got %A{other}"
 
@@ -512,7 +512,7 @@ module TestDeviceFileSystem =
             |> shouldEqual expected
 
         let fd, system =
-            match Answered.openPath DirectoryReading.flags (UnixPath.parseOrFail context "/dev") 0 system with
+            match Answered.openPath (UnixPath.parseOrFail context "/dev") DirectoryReading.flags 0 system with
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"opening /dev: %A{other}"
 
@@ -775,10 +775,10 @@ module TestDeviceFileSystem =
         // A device's name is taken.
         match
             OpenFlagWords.openPath
+                (PathArg.ofText "/dev/null")
                 { creating with
                     Exclusive = true
                 }
-                (PathArg.ofText "/dev/null")
                 0o644
                 root
         with
@@ -805,10 +805,10 @@ module TestDeviceFileSystem =
         let file, system =
             match
                 Answered.openPath
+                    (UnixPath.parseOrFail context "/f")
                     { reading with
                         Access = FileAccessMode.ReadWrite
                     }
-                    (UnixPath.parseOrFail context "/f")
                     0
                     system
             with
@@ -832,10 +832,10 @@ module TestDeviceFileSystem =
 
         match
             OpenFlagWords.openPath
+                (PathArg.ofText "/dev/null")
                 { reading with
                     Directory = true
                 }
-                (PathArg.ofText "/dev/null")
                 0
                 system
         with

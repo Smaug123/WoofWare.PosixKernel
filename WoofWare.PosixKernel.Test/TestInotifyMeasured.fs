@@ -489,7 +489,7 @@ module TestInotifyMeasured =
             | Error refusal -> failwith $"%A{refusal}"
 
         let regular, s =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "w/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "w/f") 0 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -959,7 +959,7 @@ module TestInotifyMeasured =
         let fd, s = init1 nonblock system
 
         let regular, s =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 s) 0 (PathArg.ofText "g/f") 0 s with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 s) (PathArg.ofText "g/f") 0 0 s with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -1037,7 +1037,7 @@ module TestInotifyMeasured =
         let fd, system = init1 nonblock system
 
         let regular, system =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "g/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "g/f") 0 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 

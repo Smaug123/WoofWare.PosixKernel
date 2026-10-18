@@ -82,13 +82,13 @@ module TestNameEquivalence =
     [<Test>]
     let ``Darwin refuses an exclusive create of the NFD spelling of a name bound in NFC`` () : unit =
         let system =
-            match OpenFlagWords.openPath (openFlags true true) (arg nfc) 0o644 darwin with
+            match OpenFlagWords.openPath (arg nfc) (openFlags true true) 0o644 darwin with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | other -> failwith $"creating the NFC spelling: expected a descriptor, got %A{other}"
 
         // Measured on APFS (`docs/probes/name-equivalence`): EEXIST, since the
         // NFD spelling reaches the entry bound in NFC.
-        match OpenFlagWords.openPath (openFlags true true) (arg nfd) 0o644 system with
+        match OpenFlagWords.openPath (arg nfd) (openFlags true true) 0o644 system with
         | Error (OpenRefusal.Path (PathRefusal.UndecidedNameEquivalence (_, name, bound))) ->
             DirectoryEntryName.toByteString name |> shouldEqual (byteString nfd)
             DirectoryEntryName.toByteString bound |> shouldEqual (byteString nfc)
@@ -98,7 +98,7 @@ module TestNameEquivalence =
     [<Test>]
     let ``Linux creates the NFD spelling of a name bound in NFC as a second name`` () : unit =
         let created (system : UnixSystem<int, string>) (name : byte list) : UnixSystem<int, string> =
-            match OpenFlagWords.openPath (openFlags true true) (arg name) 0o644 system with
+            match OpenFlagWords.openPath (arg name) (openFlags true true) 0o644 system with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | other -> failwith $"creating %s{hexOf name}: expected a descriptor, got %A{other}"
 
@@ -287,7 +287,7 @@ module TestNameEquivalence =
 
     let private create (name : byte list) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
         let answer, system =
-            OpenFlagWords.openPath (openFlags true true) (arg name) 0o644 system
+            OpenFlagWords.openPath (arg name) (openFlags true true) 0o644 system
             |> answered OpenRefusal.describe
 
         errnoOf answer, system
@@ -455,7 +455,7 @@ module TestNameEquivalence =
                 | answer, system -> answer, "", system
             | "open(second,O_CREAT)" ->
                 match
-                    OpenFlagWords.openPath (openFlags true false) (arg second) 0o644 system
+                    OpenFlagWords.openPath (arg second) (openFlags true false) 0o644 system
                     |> answered OpenRefusal.describe
                 with
                 | SyscallAnswer.Completed fd as answer, system ->
@@ -678,7 +678,7 @@ module TestNameEquivalence =
                     | "OK", system -> system
                     | failed, _ -> failwith $"creating %s{hexOf first}: %s{failed}"
 
-                match OpenFlagWords.openPath (openFlags true true) (arg second) 0o644 system with
+                match OpenFlagWords.openPath (arg second) (openFlags true true) 0o644 system with
                 | Error (OpenRefusal.Path (PathRefusal.UndecidedNameEquivalence (_, name, bound))) ->
                     bytesOfName name |> shouldEqual second
                     bytesOfName bound |> shouldEqual first

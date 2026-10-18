@@ -98,10 +98,10 @@ module TestDeviceDescriptorsAgainstHost =
     let private modelOpen (access : FileAccessMode) (path : string) (system : UnixSystem<int, string>) =
         match
             OpenFlagWords.openPath
+                (PathArg.ofText path)
                 { reading with
                     Access = access
                 }
-                (PathArg.ofText path)
                 0
                 system
         with
@@ -314,7 +314,7 @@ module TestDeviceDescriptorsAgainstHost =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
                 for path in [ "/dev/null" ; "/dev/urandom" ] do
-                    match OpenFlagWords.openPath reading (PathArg.ofText path) 0 (booted flavour) with
+                    match OpenFlagWords.openPath (PathArg.ofText path) reading 0 (booted flavour) with
                     | Error (OpenRefusal.Path (PathRefusal.UnmodelledFileSystem _)) -> ()
                     | other -> failwith $"open %s{path} on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux ->

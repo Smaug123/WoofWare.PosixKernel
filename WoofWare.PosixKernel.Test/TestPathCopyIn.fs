@@ -137,7 +137,7 @@ module TestPathCopyIn =
         =
         let opened (flags : OpenFlags) =
             Some (fun path system ->
-                match OpenFlagWords.openPath flags path 0o644 system with
+                match OpenFlagWords.openPath path flags 0o644 system with
                 | Ok (answer, _) -> ofAnswer answer
                 | Error refusal -> failwith $"open refused: %s{OpenRefusal.describe refusal}"
             )
@@ -146,7 +146,7 @@ module TestPathCopyIn =
         // passed it.
         let openedRaw (word : int) =
             Some (fun path system ->
-                match OpenOutcomes.openPath word path 0o644 system with
+                match OpenOutcomes.openPath path word 0o644 system with
                 | Ok (answer, _) -> ofAnswer answer
                 | Error refusal -> failwith $"open refused: %s{OpenRefusal.describe refusal}"
             )
@@ -529,8 +529,8 @@ module TestPathCopyIn =
             holds (
                 changing
                     $"open %A{openFlags}"
-                    (fun path -> OpenFlagWords.openPath openFlags path 0o640)
-                    (fun path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory openFlags path 0o640)
+                    (fun path -> OpenFlagWords.openPath path openFlags 0o640)
+                    (fun path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory path openFlags 0o640)
             )
 
     [<Test>]

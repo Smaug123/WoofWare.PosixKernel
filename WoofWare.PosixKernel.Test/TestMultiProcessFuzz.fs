@@ -1267,8 +1267,8 @@ module TestMultiProcessFuzz =
             // makes a FIFO, so none can.
             UnixNamespace.tryOpenPath
                 (Caller.make pid thread)
-                (OpenFlagWords.encode (UnixSystem.platform view) openCreating)
                 (PathArg.ofText files.[path % files.Length])
+                (OpenFlagWords.encode (UnixSystem.platform view) openCreating)
                 0o644
                 view
             |> OpenOutcomes.answered
@@ -1977,7 +1977,7 @@ module TestMultiProcessFuzz =
                 | Ok (KeventOutcome.Answered [], view) -> view
                 | other -> failwith $"kevent: %A{other}"
 
-        match OpenFlagWords.openPathIn pid openCreating (PathArg.ofText files.[0]) 0o644 view with
+        match OpenFlagWords.openPathIn pid (PathArg.ofText files.[0]) openCreating 0o644 view with
         | Ok (_, view) -> view
         | Error refusal -> failwith $"open: %A{refusal}"
 
