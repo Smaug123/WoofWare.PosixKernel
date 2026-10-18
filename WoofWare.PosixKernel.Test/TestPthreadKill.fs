@@ -607,8 +607,10 @@ module TestPthreadKill =
             for signo in [ 0 ; -1 ; 15 ] do
                 let system = systemOn flavour
 
-                Assert.Throws<exn> (fun () ->
-                    UnixSignal.tryPthreadKill (Callers.leader system) worker signo system
-                    |> ignore<_>
-                )
-                |> ignore<exn>
+                let exn =
+                    Assert.Throws<System.ArgumentException> (fun () ->
+                        UnixSignal.tryPthreadKill (Callers.leader system) worker signo system
+                        |> ignore<_>
+                    )
+
+                exn.ParamName |> shouldEqual "target"

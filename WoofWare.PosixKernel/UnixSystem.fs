@@ -87,7 +87,8 @@ type internal SyscallRefusal<'Thread> =
     | PthreadKill of ThreadKillRefusal
     | SigProcMask of SigprocmaskRefusal<'Thread>
     | SigSuspend of SigsuspendRefusal
-    | RtSigSuspend of SigsuspendRefusal
+    | RtSigProcMask of RtSigprocmaskRefusal
+    | RtSigSuspend of RtSigsuspendRefusal
     | Pause of SigsuspendRefusal
     | ClockGetTime of ClockGettimeRefusal
     | GetRandom of GetRandomRefusal
@@ -192,7 +193,8 @@ module internal SyscallRefusal =
         | SyscallRefusal.PthreadKill refusal -> $"pthread_kill: %s{ThreadKillRefusal.describe refusal}"
         | SyscallRefusal.SigProcMask refusal -> $"sigprocmask: %s{SigprocmaskRefusal.describe refusal}"
         | SyscallRefusal.SigSuspend refusal -> $"sigsuspend: %s{SigsuspendRefusal.describe refusal}"
-        | SyscallRefusal.RtSigSuspend refusal -> $"rt_sigsuspend: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.RtSigProcMask refusal -> $"rt_sigprocmask: %s{RtSigprocmaskRefusal.describe refusal}"
+        | SyscallRefusal.RtSigSuspend refusal -> $"rt_sigsuspend: %s{RtSigsuspendRefusal.describe refusal}"
         | SyscallRefusal.Pause refusal -> $"pause: %s{SigsuspendRefusal.describe refusal}"
         | SyscallRefusal.ClockGetTime refusal -> $"clock_gettime: %s{ClockGettimeRefusal.describe refusal}"
         | SyscallRefusal.GetRandom refusal -> $"getrandom: %s{GetRandomRefusal.describe refusal}"
@@ -291,7 +293,8 @@ module internal SyscallRefusal =
         | SyscallRefusal.PthreadKill inner -> ThreadKillRefusal.kind inner
         | SyscallRefusal.SigProcMask inner -> SigprocmaskRefusal.kind inner
         | SyscallRefusal.SigSuspend inner -> SigsuspendRefusal.kind inner
-        | SyscallRefusal.RtSigSuspend inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.RtSigProcMask inner -> RtSigprocmaskRefusal.kind inner
+        | SyscallRefusal.RtSigSuspend inner -> RtSigsuspendRefusal.kind inner
         | SyscallRefusal.Pause inner -> SigsuspendRefusal.kind inner
         | SyscallRefusal.ClockGetTime inner -> ClockGettimeRefusal.kind inner
         | SyscallRefusal.GetRandom inner -> GetRandomRefusal.kind inner
@@ -1144,9 +1147,9 @@ module UnixSystem =
     /// Let `nanoseconds` pass on the machine: every clock it has moves forward
     /// by that much. Advancing by zero changes nothing.
     ///
-    /// Throws for a negative amount, since no clock this kernel models runs
-    /// backwards, and for one that would take the uptime past
-    /// `Int64.MaxValue` nanoseconds (about 292 years).
+    /// Throws `ArgumentOutOfRangeException` for a negative amount, since no
+    /// clock this kernel models runs backwards, and for one that would take the
+    /// uptime past `Int64.MaxValue` nanoseconds (about 292 years).
     let advanceClock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (nanoseconds : int64)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -1808,7 +1811,9 @@ module UnixSystem =
             |> Result.map SteppedCall.SigProcMask
             |> Result.mapError SyscallRefusal.SigProcMask
         | Syscall.RtSigProcMask (how, set, sigsetSize) ->
-            Ok (SteppedCall.RtSigProcMask (UnixSignal.rtSigprocmask caller how set sigsetSize system))
+            UnixSignal.tryRtSigprocmask caller how set sigsetSize system
+            |> Result.map SteppedCall.RtSigProcMask
+            |> Result.mapError SyscallRefusal.RtSigProcMask
         | Syscall.SigPending -> Ok (SteppedCall.SigPending (UnixSignal.sigpending caller system))
         | Syscall.SigSuspend mask ->
             UnixSignal.trySigsuspend caller mask system
@@ -1927,7 +1932,7 @@ module UnixSystem =
     /// model those calls yet.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`caller` is not a thread of one of the system's processes, or is asleep in another syscall, or owes a return to user mode. A `CopiedArgument.Readable` buffer ends before the bytes the call copies from it do, or is the default `ImmutableArray`.</exception>
-    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`, nor `getresuid` nor `getresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give. This kernel is not Linux-flavoured, and only Linux has epoll. This kernel is not Darwin-flavoured, and only Darwin has kqueue. The simulated kernel has no `getrandom` system call, or no `getentropy` system call. This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
+    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`, nor `getresuid` nor `getresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give. This kernel is not Linux-flavoured, and only Linux has epoll. This kernel is not Darwin-flavoured, and only Darwin has kqueue. The simulated kernel has no `getrandom` system call, or no `getentropy` system call. This kernel is not Linux-flavoured, and only Linux has `getcpu`. A Darwin process has neither `rt_sigprocmask` nor `rt_sigsuspend`.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (call : Syscall<'Thread, 'Handler>)
@@ -4215,12 +4220,12 @@ module UnixSystem =
     /// Not configuration, which is `UnixBootImage`'s, but the outside world
     /// acting on a running machine, as `UnixSystem.advanceClock` is.
     ///
-    /// Throws for a Darwin machine, which has no such setting, and for a value
-    /// outside 301 to 4194304 (`ThreadIdAllocator.linuxPidMaxFloor` to
+    /// Throws `PlatformNotSupportedException` for a Darwin machine, which has
+    /// no such setting, and `ArgumentOutOfRangeException` for a value outside
+    /// 301 to 4194304 (`ThreadIdAllocator.linuxPidMaxFloor` to
     /// `ThreadIdAllocator.linuxPidMaxCeiling`), which Linux's sysctl answers
     /// with EINVAL.
     let writePidMaxSysctl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (context : string)
         (pidMax : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
@@ -4231,7 +4236,9 @@ module UnixSystem =
         // 5002 and 400 each take; both keep their IDs, `kill` and `tgkill` still
         // find them, and the threads started after each write get 300, 301, and
         // on up.
-        let threadIds = ThreadIdAllocator.withPidMax context pidMax system.Machine.ThreadIds
+        let threadIds =
+            ThreadIdAllocator.tryWithPidMax pidMax system.Machine.ThreadIds
+            |> Refusal.orRaise "UnixSystem.writePidMaxSysctl" PidMaxRefusal.kind PidMaxRefusal.describe
 
         { system with
             Machine =

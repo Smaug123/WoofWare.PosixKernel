@@ -268,8 +268,12 @@ module TestSignal =
                 Signal.toRawSignoUnder numbering signal |> shouldEqual signo
                 Signal.ofRawSignoUnder numbering signo |> shouldEqual (ValueSome signal)
             | None ->
-                Assert.Throws<exn> (fun () -> Signal.toRawSignoUnder numbering signal |> ignore)
-                |> ignore
+                let exn =
+                    Assert.Throws<System.ArgumentException> (fun () ->
+                        Signal.toRawSignoUnder numbering signal |> ignore
+                    )
+
+                exn.ParamName |> shouldEqual "signal"
 
         let config = Config.QuickThrowOnFailure.WithMaxTest 2000
 

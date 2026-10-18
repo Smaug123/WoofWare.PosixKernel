@@ -172,7 +172,7 @@ module TestThreadIds =
             linuxImage
             |> Launched.processId (pid 9)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> UnixSystem.writePidMaxSysctl "test" 1000
+            |> UnixSystem.writePidMaxSysctl 1000
 
         // "skip first_wrap from=999 to=300"
         let rec runToWrap (child : int) (last : uint64) (system : UnixSystem<int, string>) =
@@ -205,7 +205,7 @@ module TestThreadIds =
         // "exhaust": pid_max lowered to 400 with the cursor at 307, and 301 and 303
         // still held; 98 threads start, 307..399 then 300, 302, 304, 305, 306, and
         // the next fails with EAGAIN.
-        let system = system |> UnixSystem.writePidMaxSysctl "test" 400
+        let system = system |> UnixSystem.writePidMaxSysctl 400
 
         let rec fill (child : int) (started : uint64 list) (system : UnixSystem<int, string>) =
             match UnixThreadLifecycle.trySpawn (Callers.leader system) child (CpuId 0) system with
@@ -259,7 +259,7 @@ module TestThreadIds =
 
         ((system, 4), rows)
         ||> List.fold (fun (system, child) (pidMax, expected) ->
-            let written = UnixSystem.writePidMaxSysctl "test" pidMax system
+            let written = UnixSystem.writePidMaxSysctl pidMax system
 
             // The write changes the counter's bound and nothing else.
             { written with
@@ -297,11 +297,11 @@ module TestThreadIds =
                 linuxImage
                 |> Launched.processId (pid 8)
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-                |> UnixSystem.writePidMaxSysctl "test" value
+                |> UnixSystem.writePidMaxSysctl value
                 |> ignore<UnixSystem<int, string>>
 
                 true
-            with _ ->
+            with :? System.ArgumentOutOfRangeException as e when e.ParamName = "pidMax" ->
                 false
 
         for value in
@@ -371,7 +371,11 @@ module TestThreadIds =
             )
             "the process ID"
 
-        refuses (fun () -> UnixSystem.writePidMaxSysctl "ctx" 1000 darwin) "no pid_max"
+        (Assert.Throws<System.PlatformNotSupportedException> (fun () ->
+            UnixSystem.writePidMaxSysctl 1000 darwin |> ignore<UnixSystem<int, string>>
+        ))
+            .Message
+        |> shouldContainText "no pid_max"
 
         refuses
             (fun () ->
@@ -403,8 +407,9 @@ module TestThreadIds =
         let system = linux |> spawnOrFail 1 |> snd
 
         let fails (f : unit -> unit) (text : string) : unit =
-            let exn = Assert.Throws<exn> (fun () -> f ())
+            let exn = Assert.Throws<System.ArgumentException> (fun () -> f ())
             exn.Message |> shouldContainText text
+            exn.ParamName |> shouldEqual "child"
 
         // A caller that is no thread, or is parked, is refused before the
         // call, as every call's is.
@@ -730,7 +735,7 @@ module TestThreadIds =
                 linuxImage
                 |> Launched.processId (pid pidValue)
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-                |> UnixSystem.writePidMaxSysctl "test" pidMax,
+                |> UnixSystem.writePidMaxSysctl pidMax,
                 Model.Linux (pidValue + 1, pidMax)
             | Setup.Darwin first ->
                 darwinImage
@@ -863,7 +868,7 @@ module TestThreadIds =
                 if liveIds system |> Set.exists (fun id -> id >= uint64 pidMax) then
                     cover ThreadIdLabel.LoweredBeneathLive
 
-                let after = UnixSystem.writePidMaxSysctl "test" pidMax system
+                let after = UnixSystem.writePidMaxSysctl pidMax system
 
                 // The write changes the counter's bound and nothing else: every
                 // live thread keeps its id.
