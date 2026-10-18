@@ -1,0 +1,21 @@
+RUN	uid=0 euid=0 gid=0 egid=0 NGROUPS_MAX=16
+SETGROUPS	0,0,0	size=0 buffer=NULL	OK	before=[16 groups: 0..100]	after=[0]	egid=0
+SETGROUPS	0,0,0	size=0 buffer=[]	OK	before=[16 groups: 0..100]	after=[0]	egid=0
+SETGROUPS	0,0,0	size=1 buffer=[1000]	OK	before=[16 groups: 0..100]	after=[1000]	egid=1000
+SETGROUPS	0,0,0	size=3 buffer=[30,10,20]	OK	before=[16 groups: 0..100]	after=[30,10,20]	egid=30
+SETGROUPS	0,0,0	size=4 buffer=[7,7,3,7]	OK	before=[16 groups: 0..100]	after=[7,7,3,7]	egid=7
+SETGROUPS	0,0,0	size=2 buffer=[1000,-1]	OK	before=[16 groups: 0..100]	after=[1000,4294967295]	egid=1000
+SETGROUPS	0,0,0	size=2 buffer=[-1,1000]	OK	before=[16 groups: 0..100]	after=[4294967295,1000]	egid=4294967295
+SETGROUPS	0,0,0	size=1 buffer=NULL	EFAULT	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=2 buffer=NULL	EFAULT	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=3 buffer=[1000,1001|fault]	EFAULT	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=3 buffer=[1000,-1|fault]	EFAULT	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=-1 buffer=NULL	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=-1 buffer=[1000]	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=INT_MIN buffer=NULL	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=INT_MAX buffer=NULL	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=limit buffer=distinct	OK	before=[16 groups: 0..100]	after=[16 groups: 3000..3015]	egid=3000
+SETGROUPS	0,0,0	size=limit buffer=NULL	EFAULT	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=limit+1 buffer=distinct	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+SETGROUPS	0,0,0	size=limit+1 buffer=NULL	EINVAL	before=[16 groups: 0..100]	after=[16 groups: 0..100]	egid=0
+DONE

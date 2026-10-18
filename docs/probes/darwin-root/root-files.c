@@ -5,7 +5,7 @@
 //
 // Darwin only. Run it as root, through run.sh beside this file, which makes
 // the base directory and removes it afterwards:
-//   sudo sh docs/probes/darwin-root/run.sh
+//   cd /tmp && sudo sh <checkout>/docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/root-files root-files.c && sudo /tmp/root-files "$(mktemp -d /private/tmp/rootfiles.XXXXXX)" [SECTION...]
 // (as root it gives the base directory to root, mode 0700). It exits 1 if any
 // of its child processes failed (a CHILD-FAILED row says which), so that its

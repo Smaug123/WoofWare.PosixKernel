@@ -4,7 +4,7 @@
 // hand out.
 //
 // Darwin only. Run it as root, through run.sh beside this file:
-//   sudo sh docs/probes/darwin-root/run.sh
+//   cd /tmp && sudo sh <checkout>/docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/port-range port-range.c && sudo /tmp/port-range
 // As an ordinary user every write is refused, and it says so row by row.
 //

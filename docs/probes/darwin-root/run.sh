@@ -2,7 +2,15 @@
 # Runs every Darwin probe that needs root, and records what each printed
 # beside the probe that printed it.
 #
-#   sudo sh docs/probes/darwin-root/run.sh
+#   cd /tmp && sudo sh /absolute/path/to/docs/probes/darwin-root/run.sh
+#
+# Run it from a directory outside the checkout (as above), and name the
+# script by its absolute path. The first run, started from this directory
+# under ~/Documents, stopped as "interrupted" during root-files' first sweep,
+# after the shell had reported a dozen times that it could not read the
+# working directory's parents; the cause was not found. The script now moves
+# to / once it has found the repository, so nothing it starts depends on the
+# directory it was started from.
 #
 # What it does, in order:
 #   1. Compiles the probes as the user who ran sudo (never as root), with the
@@ -41,6 +49,10 @@
 # needs root, and writes its outputs to a temporary directory (which it names)
 # instead of into the repository.
 #
+# Measured on Darwin 27.0 (macOS 27.0.1, arm64, APFS) as root on 2026-10-18,
+# all eight probes exiting 0 and the sysctls the same before and after; the
+# outputs are committed under the names below.
+#
 # Outputs, when run as root (DARWIN is the kernel's release, e.g. 27.0):
 #   docs/probes/darwin-root/{root-files,credentials,bind-uids,port-range}.darwin-DARWIN-root.txt
 #   docs/probes/darwin-root/run.darwin-DARWIN-root.log
@@ -60,6 +72,7 @@ fi
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
+cd / || exit 2
 RELEASE=$(uname -r)
 DARWIN=$(echo "$RELEASE" | cut -d. -f1-2)
 ARCH=$(uname -m)

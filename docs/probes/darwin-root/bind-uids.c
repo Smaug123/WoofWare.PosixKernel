@@ -5,7 +5,7 @@
 // idle or listening) and UDP, with root on either side.
 //
 // Darwin only. Run it as root, through run.sh beside this file:
-//   sudo sh docs/probes/darwin-root/run.sh
+//   cd /tmp && sudo sh <checkout>/docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/bind-uids bind-uids.c && sudo /tmp/bind-uids
 // As an ordinary user it measures the rows whose holder and binder are both
 // that user, and prints SKIP for the rest.

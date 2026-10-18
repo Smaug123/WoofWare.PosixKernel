@@ -4,7 +4,7 @@
 // process as a member of when it checks a file's group bits.
 //
 // Darwin only. Run it as root, through run.sh beside this file:
-//   sudo sh docs/probes/darwin-root/run.sh
+//   cd /tmp && sudo sh <checkout>/docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/credentials credentials.c && sudo /tmp/credentials "$(mktemp -d /private/tmp/creds.XXXXXX)"
 // (it gives the base directory to root, mode 0711). It exits 1 if a child
 // process failed, which a CHILD-FAILED row after the row it was making says.
