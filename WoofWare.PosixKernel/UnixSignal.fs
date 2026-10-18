@@ -341,7 +341,7 @@ module UnixSignal =
         (system : ProcessView<'Thread, 'Handler>)
         : Set<'Thread>
         =
-        system.Threads |> Map.keys |> Set.ofSeq
+        UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq
 
     /// `tryKill` once `Entry` has admitted its caller.
     let private tryKillIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -375,13 +375,15 @@ module UnixSignal =
             Error (KillRefusal.ProcessGroup pid)
         elif pid <> self then
             if
-                Map.containsKey pid system.Others
-                || (linux && system.Others |> Map.exists (fun _ slot -> isThreadOf slot.Threads))
+                Map.containsKey pid (ProcessTable.slots system.Others)
+                || (linux
+                    && ProcessTable.slots system.Others
+                       |> Map.exists (fun _ slot -> isThreadOf (UnixThreadTable.byName slot.Threads)))
             then
                 Error (KillRefusal.OtherProcess pid)
             elif pid = 1 then
                 Error KillRefusal.ProcessOne
-            elif linux && isThreadOf system.Threads then
+            elif linux && isThreadOf (UnixThreadTable.byName system.Threads) then
                 Error (KillRefusal.OwnThread pid)
             elif not linux && signo <> 0 && (Signal.ofRawSignoUnder numbering signo).IsNone then
                 Ok (Error UnixError.EINVAL)
@@ -600,7 +602,7 @@ module UnixSignal =
             let view = OwedReturns.markIfDue thread view
 
             if thread = view.Leader then
-                (view, Map.keys view.Threads)
+                (view, Map.keys (UnixThreadTable.byName view.Threads))
                 ||> Seq.fold (fun view other -> OwedReturns.markIfDue other view)
             else
                 view
@@ -792,7 +794,7 @@ module UnixSignal =
         =
         // The mark `Entry` refuses a call for (`UnixThreadTable.requireIssuer`),
         // which no parked thread carries.
-        match Map.tryFind thread system.Threads with
+        match UnixThreadTable.tryFind thread system.Threads with
         | Some state -> state.Owes.IsSome
         | None -> false
 
@@ -858,7 +860,7 @@ module UnixSignal =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, UnixError>, ThreadKillRefusal>
         =
-        if not (Map.containsKey target system.Threads) then
+        if not (UnixThreadTable.contains target system.Threads) then
             raise (
                 Refusal.exceptionOf
                     "UnixSignal.pthreadKill"
@@ -1094,7 +1096,7 @@ module UnixSignal =
             let targets =
                 match scope with
                 | MaskScope.Caller -> [ thread ]
-                | MaskScope.EveryThread -> system.Threads |> Map.keys |> List.ofSeq
+                | MaskScope.EveryThread -> UnixThreadTable.byName system.Threads |> Map.keys |> List.ofSeq
 
             let signals =
                 (signals, targets)
@@ -1183,7 +1185,7 @@ module UnixSignal =
         let was = before.Process.Signals
         let now = after.Process.Signals
 
-        before.Threads
+        UnixThreadTable.byName before.Threads
         |> Map.keys
         |> Seq.filter (fun other -> other <> caller)
         |> Seq.tryPick (fun other ->

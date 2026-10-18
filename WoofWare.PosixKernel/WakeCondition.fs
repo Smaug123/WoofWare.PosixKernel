@@ -97,7 +97,7 @@ module WakeCondition =
         : bool
         =
         match
-            Map.tryFind thread system.Threads
+            UnixThreadTable.tryFind thread system.Threads
             |> Option.bind UnixThreadState.park
             |> Option.map (fun park -> park.Syscall)
         with
@@ -262,7 +262,10 @@ module WakeCondition =
             failwith
                 $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but nothing parks a thread in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
         | WakePrimitive.FutexWakeTaken ->
-            match Map.tryFind thread system.Threads |> Option.bind UnixThreadState.parkedIn with
+            match
+                UnixThreadTable.tryFind thread system.Threads
+                |> Option.bind UnixThreadState.parkedIn
+            with
             | Some (ParkedSyscall.Futex wait) -> wait.TakenByWake
             | parked ->
                 failwith

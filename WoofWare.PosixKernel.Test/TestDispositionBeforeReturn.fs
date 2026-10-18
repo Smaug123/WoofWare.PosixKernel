@@ -701,7 +701,7 @@ module TestDispositionBeforeReturn =
         | Settled.Ends (InterruptedCall.Restarts, [], system) ->
             match UnixSignal.pause (Callers.thread sleeper system) system with
             | SigsuspendOutcome.WouldBlock _, system ->
-                UnixThreadState.parkedIn (Lone.threads system).[sleeper]
+                UnixThreadState.parkedIn (Lone.threadMap system).[sleeper]
                 |> shouldEqual (Some ParkedSyscall.SigSuspend)
             | other -> failwith $"the pause made again: %A{other}"
         | other -> failwith $"the return: %A{other}"

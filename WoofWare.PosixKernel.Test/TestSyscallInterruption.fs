@@ -976,7 +976,7 @@ module TestSyscallInterruption =
 
         let threads = (worldOn SimulatedUnixPlatform.linuxX64).System |> Lone.threads
 
-        let park (parked : ParkedSyscall) (threads : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
+        let park (parked : ParkedSyscall) (threads : ThreadTable<int>) : ThreadTable<int> =
             UnixThreadTable.withPark
                 1
                 {
@@ -992,7 +992,7 @@ module TestSyscallInterruption =
             for second in oneParkOfEach do
                 let accepted =
                     try
-                        park second parkedOnce |> ignore<Map<int, UnixThreadState>>
+                        park second parkedOnce |> ignore<ThreadTable<int>>
                         true
                     with e when e.Message.Contains "without clearing the first" ->
                         false

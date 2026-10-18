@@ -113,7 +113,7 @@ module TestCallHolds =
     /// The first of the process's threads parked in no call, to make a call
     /// that names no thread of its own; `None` while every thread is parked.
     let private awake (system : UnixSystem<int, string>) : Caller<int> option =
-        Lone.threads system
+        Lone.threadMap system
         |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
         |> Option.map (fun thread -> Callers.thread thread system)
 
@@ -377,7 +377,7 @@ module TestCallHolds =
         agree "initial" model initial
 
         let step ((system, model) : UnixSystem<int, string> * Model) (op : Op) =
-            let live = Lone.threads system |> Map.keys |> List.ofSeq
+            let live = Lone.threadMap system |> Map.keys |> List.ofSeq
             let liveThread (i : int) = live.[i % live.Length]
 
             let system, model =
@@ -496,7 +496,7 @@ module TestCallHolds =
                 | Op.Spawn c ->
                     let child = threadNames.[c % threadNames.Length]
 
-                    if Map.containsKey child (Lone.threads system) then
+                    if Map.containsKey child (Lone.threadMap system) then
                         system, model
                     else
 
@@ -679,7 +679,7 @@ module TestCallHolds =
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.empty, Set.singleton one) ]
 
             // Thread 1 gone without its ID: the allocator never hands it out again.
-            let leaked = system |> Lone.mapThreads (Map.remove 1)
+            let leaked = system |> Lone.mapThreadMap (Map.remove 1)
 
             UnixSystem.checkInvariants leaked
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.singleton one, Set.empty) ]

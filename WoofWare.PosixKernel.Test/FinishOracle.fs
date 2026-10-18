@@ -427,7 +427,7 @@ module internal FinishOracle =
             | Ok finished ->
                 systemOf finished
                 |> Option.bind (fun system ->
-                    match Map.tryFind (ProcessId.toInt32 (Caller.processId caller)) system.Processes with
+                    match ProcessTable.tryFind (ProcessId.toInt32 (Caller.processId caller)) system.Processes with
                     | Some slot -> UnixThreadTable.owedBy (Caller.thread caller) slot.Threads
                     | None -> None
                 )

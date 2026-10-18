@@ -130,7 +130,7 @@ module UnixThreadLifecycle =
                 { system.Process with
                     Signals = SignalState.forgetThread thread system.Process.Signals
                 }
-            Threads = Map.remove thread system.Threads
+            Threads = UnixThreadTable.remove thread system.Threads
         }
 
     /// `system` with every thread of its process gone, and with each everything
@@ -143,7 +143,7 @@ module UnixThreadLifecycle =
         : ProcessView<'Thread, 'Handler>
         =
         let gone =
-            (system, Map.keys system.Threads)
+            (system, Map.keys (UnixThreadTable.byName system.Threads))
             ||> Seq.fold (fun system thread -> system |> UnixParkState.unpark thread |> leave thread)
 
         let cwd = system.Process.CurrentDirectoryInode
@@ -329,9 +329,9 @@ module UnixThreadLifecycle =
         // `docs/plans/2026-08-23-posix-kernel-extraction/leader-exits-first.c`: the
         // process carries on without its leader, which Linux keeps as a zombie
         // thread. Nothing here models a process in that state.
-        if thread = system.Leader && system.Threads.Count > 1 then
+        if thread = system.Leader && (UnixThreadTable.byName system.Threads).Count > 1 then
             Error (ThreadExitRefusal.LeaderBeforeOthers thread)
-        elif system.Threads.Count = 1 then
+        elif (UnixThreadTable.byName system.Threads).Count = 1 then
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
                 // The last thread's own status is the process's, whatever an earlier
@@ -404,7 +404,7 @@ module UnixThreadLifecycle =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SpawnAnswer * ProcessView<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
-        if Map.containsKey child system.Threads then
+        if UnixThreadTable.contains child system.Threads then
             raise (
                 Refusal.exceptionOf
                     "UnixThreadLifecycle.spawn"
@@ -648,7 +648,7 @@ module internal ProcessSignal =
                 let user = system.Process.Credentials.RealUser
 
                 let elsewhere =
-                    system.Others
+                    ProcessTable.slots system.Others
                     |> Map.toSeq
                     |> Seq.sumBy (fun (_, slot) -> SignalState.chargedTo user slot.Process.Signals)
 
@@ -661,7 +661,7 @@ module internal ProcessSignal =
                 queue
                 system.Leader
                 leaderRunning
-                (system.Threads |> Map.keys |> Set.ofSeq)
+                (UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq)
                 entry
                 system.Process.Signals
 

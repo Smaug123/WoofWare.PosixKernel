@@ -21,7 +21,7 @@ module internal Proc =
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessSlot<'Thread, 'Handler>
         =
-        match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+        match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
         | Some slot -> slot
         | None ->
             failwith
@@ -37,7 +37,7 @@ module internal Proc =
         let slot = slot operation pid system
 
         { system with
-            Processes = Map.add (ProcessId.toInt32 pid) (f slot) system.Processes
+            Processes = ProcessTable.add (ProcessId.toInt32 pid) (f slot) system.Processes
         }
 
     /// The view of `system` from the process `pid`: what a function that works
@@ -105,18 +105,27 @@ module internal Proc =
             )
             system
 
-    /// The process `pid`'s threads, by the client's name for each.
+    /// The process `pid`'s threads, as the internal functions of
+    /// `UnixThreadTable` take them.
     let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ThreadTable<'Thread>
+        =
+        (slot "threads" pid system).Threads
+
+    /// The process `pid`'s threads, by the client's name for each.
+    let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        (slot "threads" pid system).Threads
+        UnixThreadTable.byName (threads pid system)
 
     /// `system` with the process `pid`'s threads rewritten by `f`.
     let mapThreads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+        (f : ThreadTable<'Thread> -> ThreadTable<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
@@ -129,6 +138,16 @@ module internal Proc =
                 }
             )
             system
+
+    /// `system` with the process `pid`'s threads, by the client's name for
+    /// each, rewritten by `f`, for a test that forges a state no call reaches.
+    let mapThreadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        mapThreads pid (UnixThreadTable.byName >> f >> UnixThreadTable.ofMap) system
 
     /// The process `pid`'s leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

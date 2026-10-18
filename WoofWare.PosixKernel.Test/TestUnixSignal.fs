@@ -605,7 +605,7 @@ module TestUnixSignal =
             | None -> ()
             | Some system ->
 
-            let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+            let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
             let decided =
                 SignalState.onReturnToUser

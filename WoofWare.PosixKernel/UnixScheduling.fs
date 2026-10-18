@@ -100,15 +100,9 @@ module UnixScheduling =
             if state.Cpu = cpu then
                 system.Processes
             else
-                let threads =
-                    Map.add
-                        thread
-                        { state with
-                            Cpu = cpu
-                        }
-                        slot.Threads
+                let threads = UnixThreadTable.withCpu thread cpu slot.Threads
 
-                Map.add
+                ProcessTable.add
                     (ProcessId.toInt32 pid)
                     { slot with
                         Threads = threads
@@ -157,7 +151,7 @@ module UnixScheduling =
         (system : ProcessView<'Thread, 'Handler>)
         : CpuId option
         =
-        match Map.tryFind thread system.Threads with
+        match UnixThreadTable.tryFind thread system.Threads with
         | Some state when UnixSchedulingState.runs state.Cpu state.OsThreadId system.Scheduling -> Some state.Cpu
         | Some _
         | None -> None

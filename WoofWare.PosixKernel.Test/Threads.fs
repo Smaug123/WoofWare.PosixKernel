@@ -28,7 +28,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if Map.containsKey name (Proc.threads pid system) then
+        if Map.containsKey name (Proc.threadMap pid system) then
             system
         else
             spawnIn pid name system

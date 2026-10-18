@@ -3850,7 +3850,7 @@ module TestUnixSystemStep =
     [<Test>]
     let ``step by a name that is no thread of the process throws, whatever the call`` () : unit =
         for system in [ linux ; darwin ] do
-            Map.containsKey 99 (Lone.threads system) |> shouldEqual false
+            Map.containsKey 99 (Lone.threadMap system) |> shouldEqual false
 
             for call in callsOfEveryShape do
                 let error =

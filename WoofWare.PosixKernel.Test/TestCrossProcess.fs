@@ -75,7 +75,7 @@ module TestCrossProcess =
                 let pid = pidAt proc
 
                 let awake =
-                    Proc.threads pid system
+                    Proc.threadMap pid system
                     |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
 
                 match awake with

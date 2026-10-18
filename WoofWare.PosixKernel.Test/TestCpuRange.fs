@@ -146,11 +146,11 @@ module TestCpuRange =
     /// public route can do.
     let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         system
-        |> Lone.mapThreads (fun threads ->
+        |> Lone.mapThreadMap (fun threads ->
             threads
             |> Map.add
                 thread
-                { UnixThreadTable.get thread threads with
+                { threads.[thread] with
                     Cpu = CpuId cpu
                 }
         )

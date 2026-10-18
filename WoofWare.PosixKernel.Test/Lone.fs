@@ -73,20 +73,37 @@ module internal Lone =
         =
         Proc.mapState (only "mapProc" system) f system
 
-    /// The only process's threads, by the client's name for each.
+    /// The only process's threads, as the internal functions of
+    /// `UnixThreadTable` take them.
     let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
-        : Map<'Thread, UnixThreadState>
+        : ThreadTable<'Thread>
         =
         Proc.threads (only "threads" system) system
 
+    /// The only process's threads, by the client's name for each.
+    let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Map<'Thread, UnixThreadState>
+        =
+        Proc.threadMap (only "threadMap" system) system
+
     /// `system` with the only process's threads rewritten by `f`.
     let mapThreads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+        (f : ThreadTable<'Thread> -> ThreadTable<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
         Proc.mapThreads (only "mapThreads" system) f system
+
+    /// `system` with the only process's threads, by the client's name for
+    /// each, rewritten by `f`, for a test that forges a state no call reaches.
+    let mapThreadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        Proc.mapThreadMap (only "mapThreadMap" system) f system
 
     /// The only process's leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -183,7 +200,7 @@ module internal Lone =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<'Thread>
         =
-        threads system
+        threadMap system
         |> Map.toSeq
         |> Seq.choose (fun (thread, state) ->
             match UnixThreadState.park state with
