@@ -1998,12 +1998,24 @@ module UnixDescriptor =
             (terminalAttributesIn fd)
             system
 
+    /// Which of the closing process's parked calls a close looks at.
+    [<RequireQualifiedAccess>]
+    type internal ParksExamined =
+        /// Those holding the description the closed descriptor names
+        /// (`ParkedSyscall.descriptions`), which are the only ones a close can
+        /// act on, found without visiting the threads when no call holds it.
+        | Holding
+        /// Every one: what `Holding` must answer the same as.
+        | Every
+
     // `FileDescriptorRegistry.dropDescriptor` cannot do this itself: the
     // socket table is the machine's rather than the process's, whether an
     // inode is still named is a question about the filesystem, and what a
     // sleeping call holds is the thread table's.
-    /// `tryClose` once `Entry` has admitted its caller.
-    let private tryCloseIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryClose` once `Entry` has admitted its caller, looking at the parked
+    /// calls `examined` names.
+    let internal tryCloseExamining<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (examined : ParksExamined)
         (fd : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CloseRefusal<'Thread>>
@@ -2012,10 +2024,35 @@ module UnixDescriptor =
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
         | Some (closingId, closing) ->
 
-        let parks =
+        let parked () : ('Thread * ParkedSyscall) list =
             system.Threads
             |> Map.toList
             |> List.choose (fun (thread, state) -> state.Parked |> Option.map (fun park -> thread, park.Syscall))
+
+        // Every park this close acts on holds the closing description. A
+        // sleep entered through `fd` holds the description it names
+        // (`SleepTarget.Waiting`), as does an flock, `epoll_wait`, `kevent` or
+        // inotify read of it. A Linux poll watching `fd` holds the description
+        // it found there, which is the one `fd` names, since a park whose
+        // watched descriptor names another is a defect
+        // (`UnixSystemDefect.ParkedPollDescriptorRebound`). A Darwin poll
+        // holds nothing, and what a close does to it goes through its kqueue
+        // (`KqueuePoll.dropRegistrationsThrough`), not through `parks`. The
+        // open file table counts the holds (`OpenFileTable.holdCount`, which
+        // `UnixSystem.checkInvariants` keeps equal to the parks'), so with
+        // none there is no park to look at, and no thread to visit.
+        let parks : ('Thread * ParkedSyscall) list =
+            match examined with
+            | ParksExamined.Every -> parked ()
+            | ParksExamined.Holding ->
+                match OpenFileTable.holdCount closingId system.Machine.OpenFiles with
+                | Some 0 -> []
+                | Some _ ->
+                    parked ()
+                    |> List.filter (fun (_, parked) -> List.contains closingId (ParkedSyscall.descriptions parked))
+                | None ->
+                    failwith
+                        $"UnixDescriptor.close: fd %d{fd} names open file description %O{closingId}, which the open file table does not hold (this is a bug in this library)."
 
         let darwin =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -2287,7 +2324,10 @@ module UnixDescriptor =
             | ParkedSyscall.InotifyRead _
             // Reserved: nothing parks a thread in it yet. Darwin's close of a
             // selected descriptor will end it, with EBADF (measured,
-            // `docs/probes/select-park` row E1); Linux's leaves it asleep.
+            // `docs/probes/select-park` row E1); Linux's leaves it asleep. A
+            // Darwin select holds nothing (`ParkedSyscall.descriptions`), so
+            // `parks` never shows it here: ending it needs another way to find
+            // the selects watching `fd`.
             | ParkedSyscall.Select _
             // Reserved too. Darwin's close will end a receive, with EBADF
             // (measured, `docs/probes/datagram-park` row R3); Linux's leaves it
@@ -2608,7 +2648,7 @@ module UnixDescriptor =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryCloseIn fd)
+            (tryCloseExamining ParksExamined.Holding fd)
             system
 
     /// `close(2)`: drop `fd` from the process's table, together with the
@@ -2965,7 +3005,7 @@ module UnixDescriptor =
             match FileDescriptorRegistry.tryFindId newFd registry with
             | None -> Ok system
             | Some _ ->
-                match tryCloseIn newFd system with
+                match tryCloseExamining ParksExamined.Holding newFd system with
                 | Error refusal -> Error (Dup2Refusal.ClosingTarget refusal)
                 | Ok (SyscallAnswer.Completed _, system) -> Ok system
                 | Ok (SyscallAnswer.Failed error, _) ->

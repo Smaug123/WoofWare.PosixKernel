@@ -2680,6 +2680,128 @@ module TestMultiProcessFuzz =
         |> List.sumBy (fun (label, count) -> if label.EndsWith " refused" then count else 0)
         |> shouldBeGreaterThan 80
 
+    /// A close looks only at the parked calls holding the description the
+    /// closed descriptor names, and at none when no call holds it; it answers
+    /// what a close looking at every parked call of the process answers. At
+    /// every step of the first property's interleavings, for every descriptor
+    /// of every process with a parked call.
+    [<Test>]
+    let ``close answers what a close examining every parked call answers, at every step of random interleavings``
+        ()
+        : unit
+        =
+        let caseName (value : 'a) : string =
+            (fst (
+                Reflection.FSharpValue.GetUnionFields (
+                    value,
+                    typeof<'a>,
+                    System.Reflection.BindingFlags.Public
+                    ||| System.Reflection.BindingFlags.NonPublic
+                )
+            ))
+                .Name
+
+        let property (cover : string -> unit) (case : Case) : unit =
+            let observe (_ : Step) (world : World) : unit =
+                for pid in UnixSystem.processIds world.Machine do
+                    let view = Proc.view pid world.Machine
+
+                    let parked =
+                        view.Threads
+                        |> Map.toList
+                        |> List.choose (fun (thread, state) ->
+                            state.Parked |> Option.map (fun park -> thread, park.Syscall)
+                        )
+
+                    if not parked.IsEmpty then
+                        for KeyValue (fd, _) in fdsOf pid world.Machine do
+                            let closingId =
+                                FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors view)
+                                |> Option.get
+
+                            let holders =
+                                parked
+                                |> List.filter (fun (_, parked) ->
+                                    List.contains closingId (ParkedSyscall.descriptions parked)
+                                )
+
+                            if holders.IsEmpty then
+                                cover "unheld"
+
+                            for _, holder in holders do
+                                cover $"held %s{caseName holder}"
+
+                            let watchedByNumber =
+                                parked
+                                |> List.exists (fun (_, parked) ->
+                                    match parked with
+                                    | ParkedSyscall.Poll poll ->
+                                        poll.Entries
+                                        |> List.exists (fun entry ->
+                                            match entry with
+                                            | ParkedPollEntry.Watched (watched, _, _) -> watched = fd
+                                            | ParkedPollEntry.Ignored _ -> false
+                                        )
+                                    | ParkedSyscall.KqueuePoll poll ->
+                                        poll.Entries |> List.exists (fun entry -> entry.Fd = fd)
+                                    | ParkedSyscall.Kevent wait -> wait.Fd = fd
+                                    | _ -> false
+                                )
+
+                            if watchedByNumber then
+                                cover "watched by number"
+
+                            let reference =
+                                UnixDescriptor.tryCloseExamining UnixDescriptor.ParksExamined.Every fd view
+
+                            UnixDescriptor.tryCloseExamining UnixDescriptor.ParksExamined.Holding fd view
+                            |> shouldEqual reference
+
+                            match reference with
+                            | Error refusal -> cover $"refused %s{caseName refusal}"
+                            | Ok (_, after) ->
+                                let ended =
+                                    parked
+                                    |> List.exists (fun (thread, parked) ->
+                                        UnixThreadTable.parkOf thread after.Threads
+                                        |> Option.map (fun park -> park.Syscall)
+                                        <> Some parked
+                                    )
+
+                                if ended then
+                                    cover "ended a call"
+
+            runObserving smallBuffers observe ignore ignore case
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 100) (Arb.fromGen caseGen) property
+
+        // A third of what the fixed sample reached when this was added: closes
+        // of a description each kind of parked call holds, of one a poll,
+        // a Darwin poll or a `kevent` refers to by number, and of one no call
+        // holds, closes that end a call, and each refusal the interleavings
+        // reach. A pipe's `read` and `write` they park in seldom.
+        coverage.Count "unheld" |> shouldBeGreaterThan 22000
+        coverage.Count "watched by number" |> shouldBeGreaterThan 410
+        coverage.Count "ended a call" |> shouldBeGreaterThan 700
+        coverage.Count "held Accept" |> shouldBeGreaterThan 1650
+        coverage.Count "held ConnectionRead" |> shouldBeGreaterThan 660
+        coverage.Count "held ConnectionWrite" |> shouldBeGreaterThan 480
+        coverage.Count "held EpollWait" |> shouldBeGreaterThan 470
+        coverage.Count "held Flock" |> shouldBeGreaterThan 250
+        coverage.Count "held InotifyRead" |> shouldBeGreaterThan 115
+        coverage.Count "held Kevent" |> shouldBeGreaterThan 195
+        coverage.Count "held Poll" |> shouldBeGreaterThan 34
+        coverage.Count "held PipeRead" |> shouldBeGreaterThan 29
+        coverage.Count "held PipeWrite" |> shouldBeGreaterThan 19
+        coverage.Count "refused PolledDescriptor" |> shouldBeGreaterThan 34
+
+        coverage.Count "refused DarwinFlockedDescriptorWithWaiter"
+        |> shouldBeGreaterThan 158
+
+        coverage.Count "refused DarwinWokenTransfer" |> shouldBeGreaterThan 47
+        coverage.Count "refused DarwinEndedWriteSignal" |> shouldBeGreaterThan 19
+
     /// How many cases of `caseGen`'s fixed sample the oracle replays: every one
     /// the first property counts its coverage over.
     let private oracleCases : int = 1500

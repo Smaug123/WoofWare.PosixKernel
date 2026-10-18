@@ -308,6 +308,7 @@
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeMemo.fs" />
     <Compile Include="TestWakeSweepCost.fs" />
+    <Compile Include="TestCloseCost.fs" />
     <Compile Include="TestOpenFileIndex.fs" />
     <Compile Include="TestUnixWaitFinish.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
