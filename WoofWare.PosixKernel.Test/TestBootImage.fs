@@ -203,8 +203,10 @@ module TestBootImage =
         let records : Type list =
             [
                 typeof<UnixSystem<int, string>>
-                typeof<UnixSystem<int, string>>
+                typeof<UnixSchedulingState>
+                typeof<ProcessTable<int, string>>
                 typeof<ProcessSlot<int, string>>
+                typeof<ThreadTable<int>>
                 typeof<ProcessLaunch<int>>
                 typeof<UnixMachineState>
                 typeof<UnixProcessState<int, string>>
