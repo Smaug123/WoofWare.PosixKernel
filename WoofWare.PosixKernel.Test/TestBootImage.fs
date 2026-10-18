@@ -111,6 +111,7 @@ module TestBootImage =
                     "withTcpReceiveSpace"
                     "withTcpSendSpace"
                     "withTcpSendSpaceMax"
+                    "withUnprivilegedPortStart"
                     "withUserAddressLimit"
                 ]
         )

@@ -246,6 +246,7 @@
     <Compile Include="TestConnectSearchHoldersMeasured.fs" />
     <Compile Include="TestPortSharingMeasured.fs" />
     <Compile Include="TestLocalPortRangeMeasured.fs" />
+    <Compile Include="TestUnprivilegedPortStartMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -438,6 +439,12 @@
          docs/probes/local-port-range. `TestLocalPortRangeMeasured` replays the
          ranges. -->
     <EmbeddedResource Include="..\docs\probes\local-port-range\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.local-port-range.linux.txt" />
+    <!-- Which ports an unprivileged process bound under each value of Linux's
+         ip_unprivileged_port_start, and which values it took against the
+         range, measured by docs/probes/unprivileged-port-start.
+         `TestUnprivilegedPortStartMeasured` and `TestLocalPortRangeMeasured`
+         replay it. -->
+    <EmbeddedResource Include="..\docs\probes\unprivileged-port-start\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.unprivileged-port-start.linux.txt" />
     <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
          connect took its four-tuple over, measured per flavour by
          docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
