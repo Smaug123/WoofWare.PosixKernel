@@ -58,12 +58,11 @@ type internal TimeWaitRefusal =
     /// what such a connect does is unmeasured.
     | EnteredInFirstSecond of local : Ipv4Endpoint * remote : Ipv4Endpoint
     /// Under Darwin, a `bind(2)` by a socket carrying `binder`, not root,
-    /// meets the end at `local` whose socket has closed carrying another uid,
-    /// `holder`, at addresses that are not both the wildcard. Darwin refuses
-    /// such a bind beside an open socket of another uid; beside an end whose
-    /// socket has closed it was measured to refuse it for an end of uid 502
-    /// and to admit it for one of root's, and which holds is unexplained.
-    | OtherUidClosedEnd of local : Ipv4Endpoint * holder : UserId * binder : UserId
+    /// meets the end at `local` whose socket has closed carrying root's uid,
+    /// at addresses that are not both the wildcard. Beside an open socket of
+    /// root's, or a closed end of another uid that is not root's, such a bind
+    /// is refused; beside a closed end of root's it is unmeasured.
+    | RootClosedEnd of local : Ipv4Endpoint * binder : UserId
 
 [<RequireQualifiedAccess>]
 module internal TimeWaitRefusal =
@@ -78,8 +77,8 @@ module internal TimeWaitRefusal =
             $"a connect would take over the four-tuple of the connection end in TIME_WAIT at %s{Ipv4Endpoint.toString local}, towards %s{Ipv4Endpoint.toString remote}, which is not on loopback, and whether Linux's tcp_tw_reuse lets it off loopback is unmeasured."
         | TimeWaitRefusal.EnteredInFirstSecond (local, remote) ->
             $"a connect from a socket bound at %s{Ipv4Endpoint.toString local} would take over the four-tuple of a connection end that entered TIME_WAIT towards %s{Ipv4Endpoint.toString remote} in the machine's first second of uptime. Linux's search never takes such a four-tuple over (measured), and what a connect from a bound socket does is unmeasured."
-        | TimeWaitRefusal.OtherUidClosedEnd (local, holder, binder) ->
-            $"a bind by a socket of uid %O{binder} meets the connection end at %s{Ipv4Endpoint.toString local}, whose socket has closed carrying uid %O{holder}. Darwin refuses a bind beside an open socket of another uid at addresses that are not both the wildcard; beside an end whose socket has closed it was measured to refuse one for an end of uid 502 and to admit one for an end of root's, and which rule holds for this end is unexplained."
+        | TimeWaitRefusal.RootClosedEnd (local, binder) ->
+            $"a bind by a socket of uid %O{binder} meets the connection end at %s{Ipv4Endpoint.toString local}, whose socket has closed carrying root's uid. Darwin refuses a bind beside an open socket of another uid, root's included, and beside a closed end of uid 502, at addresses that are not both the wildcard; beside a closed end of root's it is unmeasured: the one probe row that might have shown it is undecided, since which end of its connection was left holding the port is a race."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : TimeWaitRefusal) : RefusalKind =
@@ -88,7 +87,7 @@ module internal TimeWaitRefusal =
         | TimeWaitRefusal.NearReuseDelay _
         | TimeWaitRefusal.OffLoopback _
         | TimeWaitRefusal.EnteredInFirstSecond _
-        | TimeWaitRefusal.OtherUidClosedEnd _ -> RefusalKind.Unmodelled
+        | TimeWaitRefusal.RootClosedEnd _ -> RefusalKind.Unmodelled
 
 /// Whether a holder stands in a port's or a four-tuple's way, once the time an
 /// end in TIME_WAIT has spent there is counted.
@@ -449,10 +448,11 @@ module internal PortHolderRules =
     /// `candidateUid`, once time is counted.
     ///
     /// `bindMeetsAtOneUid`'s rule, and on Darwin one more: a candidate that is
-    /// not root's meeting a holder of another uid, at overlapping addresses
-    /// that are not both the wildcard, is in the way whatever either's
-    /// `SO_REUSEADDR`. Where that holder is an end whose socket has closed,
-    /// the answer is undetermined (`TimeWaitRefusal.OtherUidClosedEnd`).
+    /// not root's meeting a holder of another uid, an open socket or an end
+    /// whose socket has closed, at overlapping addresses that are not both the
+    /// wildcard, is in the way whatever either's `SO_REUSEADDR`. Where that
+    /// holder is a closed end of root's, the answer is undetermined
+    /// (`TimeWaitRefusal.RootClosedEnd`).
     /// Linux asks no owner here: it compares uids only for `SO_REUSEPORT`,
     /// which this kernel does not model.
     let bindVerdict
@@ -470,10 +470,12 @@ module internal PortHolderRules =
         // SO_REUSEADDR on either side unless both addresses are the wildcard;
         // the uids compared are each socket's own, fixed when it was made
         // (CRED rows). `docs/probes/socket-creator-uid` (ACCEPT rows): the
-        // same beside an accepted socket. Its control rows met the accepted
-        // end in TIME_WAIT once every socket had closed (`close-order.c`
-        // there: that end, every time): EADDRINUSE beside an end of uid 502,
-        // and admitted beside an end of root's, which no rule here explains.
+        // same beside an accepted socket, and (control rows) beside that
+        // socket's end of uid 502 once it had closed, which alone could hold
+        // the port then. The control row beside an end of root's admitted the
+        // binder, but its two sockets closed at once, and `close-order.c`
+        // there finds the client's end alone left holding its address in about
+        // one close in six, freeing the port; so that row decides nothing.
         let otherUid (uid : UserId) : bool =
             match flavour with
             | SimulatedUnixFlavour.Linux -> false
@@ -484,9 +486,10 @@ module internal PortHolderRules =
                 && not (holder.Endpoint.Address = Ipv4Address.any && candidate.Address = Ipv4Address.any)
 
         match holder.Owner with
-        | PortHolderOwner.ClosedSocket uid when otherUid uid ->
-            PortVerdict.Undetermined (TimeWaitRefusal.OtherUidClosedEnd (holder.Endpoint, uid, candidateUid))
-        | PortHolderOwner.Socket uid when otherUid uid -> judged clock holder true
+        | PortHolderOwner.ClosedSocket uid when otherUid uid && uid = UserId.root ->
+            PortVerdict.Undetermined (TimeWaitRefusal.RootClosedEnd (holder.Endpoint, candidateUid))
+        | PortHolderOwner.Socket uid
+        | PortHolderOwner.ClosedSocket uid when otherUid uid -> judged clock holder true
         | PortHolderOwner.ClosedSocket _
         | PortHolderOwner.Socket _
         | PortHolderOwner.NoSocket -> judged clock holder (bindMeetsAtOneUid flavour holder candidate candidateReuse)

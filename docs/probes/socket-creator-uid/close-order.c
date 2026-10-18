@@ -3,10 +3,9 @@
 // end them: the parent tells the listener process to exit (closing the
 // accepted end) and at once closes the pipe that keeps the client process
 // alive (closing the client's end). Neither waits for the other, so which FIN
-// leaves first could be a race; this counts how often each end is the one in
-// TIME_WAIT over many trials: once both processes have exited, an end still
-// holding its local address (a plain bind of exactly it is refused) is the
-// one in TIME_WAIT.
+// leaves first could be a race; this counts, over many trials, which ends are
+// left holding their local address (a plain bind of exactly it is refused)
+// once both processes have exited: the end or ends in TIME_WAIT.
 //
 // No privilege is needed: every process here is the caller's.
 //   cc -Wall -Werror -O1 -o /tmp/close-order close-order.c && /tmp/close-order
@@ -47,8 +46,12 @@ static struct sockaddr_in at(int port) {
 
 // One trial: the server port, and the client's local port.
 static void trial(int *server_port, int *client_port) {
+    // The pipes are made where socket-creator-uid.c makes them: the one that
+    // keeps the client alive only after the listener has forked, so that the
+    // listener holds no end of it and the client sees it close the moment the
+    // parent closes it.
     int to_parent[2], from_parent[2], go[2], cport[2];
-    if (pipe(to_parent) != 0 || pipe(from_parent) != 0 || pipe(go) != 0 || pipe(cport) != 0) die("pipe");
+    if (pipe(to_parent) != 0 || pipe(from_parent) != 0) die("pipe");
     fflush(stdout);
     pid_t lpid = fork();
     if (lpid < 0) die("fork");
@@ -73,6 +76,7 @@ static void trial(int *server_port, int *client_port) {
     }
     int port = -1, ack = 0;
     if (read_int(to_parent[0], &port) != 0) die("port");
+    if (pipe(go) != 0 || pipe(cport) != 0) die("pipe");
     fflush(stdout);
     pid_t cpid = fork();
     if (cpid < 0) die("fork");

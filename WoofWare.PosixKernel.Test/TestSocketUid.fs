@@ -297,12 +297,17 @@ module TestSocketUid =
                 |> shouldEqual (String.Join ("\t", row), row |> Array.find (fun f -> f.StartsWith "-> "))
 
     [<Test>]
-    let ``Darwin: a bind of another uid beside an end whose socket has closed is refused`` () : unit =
-        // The probe's control rows met the accepted end in TIME_WAIT
-        // (`close-order.c`: the accepted end every time): EADDRINUSE beside an
-        // end of uid 502, and admitted beside an end of root's, which no rule
-        // explains. So a binder that is not root, of another uid, is refused
-        // there; one of the end's uid, or root, is answered.
+    let ``Darwin: a closed end carries its socket's uid against a bind, and root's closed end is unmeasured``
+        ()
+        : unit
+        =
+        // The probe's control rows bind once both ends of the connection have
+        // closed, at once. Beside a listener of uid 502 they met EADDRINUSE,
+        // which only the accepted end could give, closed and still holding
+        // its address. Beside a listener of root's the binder was admitted,
+        // but `close-order.c` finds the client's end alone left holding its
+        // address in about one close in six, which frees the port, so that row
+        // decides nothing; a closed end of root's is refused.
         let controls =
             darwinAccepts
             |> List.map (fun ((listener, _), (_, controls)) -> listener, (List.exactlyOne controls))
@@ -326,10 +331,12 @@ module TestSocketUid =
                 let binderPid, system = withProcess (credentialsOf binderName) system
                 let fd, system = tcpSocket binderPid true system
 
-                match bind binderPid fd (Ipv4Endpoint.ofParts Ipv4Address.any port) system, binderName with
-                | Error (SyscallRefusal.Bind (BindRefusal.TimeWait (TimeWaitRefusal.OtherUidClosedEnd (_, holder, binder)))),
-                  "u501" ->
-                    holder |> shouldEqual (credentialsOf listenerName).EffectiveUser
-                    binder |> shouldEqual (uid 501u)
-                | Ok (BindAnswer.Bound _, _), name when name <> "u501" -> ()
-                | other, name -> failwith $"%s{listenerName}'s end, binder %s{name}: %A{other}"
+                match
+                    bind binderPid fd (Ipv4Endpoint.ofParts Ipv4Address.any port) system, listenerName, binderName
+                with
+                | Ok (BindAnswer.Failed UnixError.EADDRINUSE, _), "u502", "u501" -> ()
+                | Error (SyscallRefusal.Bind (BindRefusal.TimeWait (TimeWaitRefusal.RootClosedEnd (_, binder)))),
+                  "root",
+                  "u501" -> binder |> shouldEqual (uid 501u)
+                | Ok (BindAnswer.Bound _, _), _, name when name <> "u501" -> ()
+                | other, _, name -> failwith $"%s{listenerName}'s end, binder %s{name}: %A{other}"
