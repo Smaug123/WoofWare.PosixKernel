@@ -378,9 +378,6 @@ type internal SeekWhence =
 
 /// Why a write to a regular file has no answer this library can give.
 ///
-/// `UnmeasuredSetIdChange` is a row no one has measured rather than a limit of
-/// the model; the rest of what follows is about `WouldExceedMaxLength`.
-///
 /// Not a `UnixError`, and deliberately: this is a limit of the model rather than
 /// anything a kernel does, so a caller must fail loudly rather than translate it
 /// into an errno a process could catch and interpret. Measured on ext4 and APFS
@@ -392,40 +389,29 @@ type internal FileWriteRefusal =
     /// Carries the write rather than the resulting length, which need not be a
     /// number: `offset + count` can leave `int64` entirely.
     | WouldExceedMaxLength of offset : int64 * count : int
-    /// What the write would do to the file's set-ID bits has not been measured
-    /// for this writer; see `SetIdChangeRefusal`.
-    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
 
 /// What a write to a regular file whose copy from the caller's buffer faults
-/// at its first byte has already done to the file's timestamps, and for which
-/// writers that is measured. Either way, the write has stripped the set-ID
-/// bits a successful write strips, and made the file at least as long as the
-/// write's offset, before it answers EFAULT.
+/// at its first byte has already done to the file's timestamps. Either way,
+/// the write has stripped the set-ID bits a successful write strips, and made
+/// the file at least as long as the write's offset, before it answers EFAULT.
 [<RequireQualifiedAccess>]
 type internal FaultedWriteRule =
     /// `mtime` and `ctime` move wherever the write was aimed, for every
     /// writer.
     | TimesAlwaysMove
     /// `mtime` and `ctime` move only when the write reaches past the end of
-    /// the file. Measured only for an unprivileged writer who owns the file.
+    /// the file, for every writer.
     | TimesMoveWhenReachingPastEnd
 
 /// Why a write whose copy from the caller's buffer faults has no answer.
 ///
 /// Separate from `FileWriteRefusal` for the reason `FileTruncationRefusal`
-/// is: such a write names a length to reach but copies nothing, and only it can
-/// meet an unmeasured writer.
+/// is: such a write names a length to reach but copies nothing.
 [<RequireQualifiedAccess>]
 type internal FaultedWriteRefusal =
     /// The write's offset is past `VirtualFileSystem.maxFileLength`, which the
     /// file would have to reach.
     | WouldExceedMaxLength of offset : int64
-    /// What the write would do to the file's set-ID bits has not been measured
-    /// for this writer; see `SetIdChangeRefusal`.
-    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
-    /// The rule (`FaultedWriteRule.TimesMoveWhenReachingPastEnd`) has not been
-    /// measured for a writer standing as `standing` towards the file.
-    | UnmeasuredWriter of standing : Standing
 
 /// Why a truncation has no answer.
 ///
@@ -443,9 +429,6 @@ type internal FileTruncationRefusal =
     /// The requested length is more than `VirtualFileSystem.maxFileLength`.
     /// Carries the length as asked for, which need not fit in an `int`.
     | WouldExceedMaxLength of length : int64
-    /// What the truncation would do to the file's set-ID bits has not been
-    /// measured for this process; see `SetIdChangeRefusal`.
-    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
 
 /// Why a seek computation has no answer.
 ///
@@ -2220,9 +2203,8 @@ module VirtualFileSystem =
         // set-group-ID bit on whichever files `rule` says, unless the writer is
         // privileged — so this is a mode change as well as a content change, and
         // the `ctime` above covers both.
-        match PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions with
-        | Error refusal -> Error (FileWriteRefusal.UnmeasuredSetIdChange refusal)
-        | Ok stripped ->
+        let stripped =
+            PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions
 
         let after =
             { vfs with
@@ -2250,8 +2232,8 @@ module VirtualFileSystem =
     /// strips whichever set-ID bits a successful write would (`rule`), makes
     /// the file `offset` bytes long if it was shorter, filling the gap with
     /// zeroes, and moves `mtime` and `ctime` where `faulted` says they move.
-    /// Refused, changing nothing, for a writer `faulted` is not measured for,
-    /// and where `PermissionBits.afterContentChangingWrite` refuses.
+    /// Refused, changing nothing, where the file would outgrow
+    /// `VirtualFileSystem.maxFileLength`.
     ///
     /// Partial in the inode as `writeFile` is, and `count` must be positive:
     /// a write of no bytes reads no buffer, so cannot fault.
@@ -2285,21 +2267,8 @@ module VirtualFileSystem =
                 failwith
                     $"VirtualFileSystem.writeFaulted: inode %O{inode} is not in this filesystem. A descriptor outliving its inode means an unlink removed a still-open file; the open file description must keep it alive."
 
-        let standing = Standing.toward credentials entry.Owner
-
-        let measured =
-            match faulted with
-            | FaultedWriteRule.TimesAlwaysMove -> true
-            | FaultedWriteRule.TimesMoveWhenReachingPastEnd ->
-                standing.Owns && standing.Privilege = CallerPrivilege.Unprivileged
-
-        if not measured then
-            Error (FaultedWriteRefusal.UnmeasuredWriter standing)
-        else
-
-        match PermissionBits.afterContentChangingWrite rule standing permissions with
-        | Error refusal -> Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal)
-        | Ok stripped ->
+        let stripped =
+            PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions
 
         let extended =
             if offset <= int64 contents.Length then
@@ -2431,9 +2400,8 @@ module VirtualFileSystem =
 
         // A truncation is a mode change as well as a content change on one of the
         // two platforms, and the `ctime` below covers both either way.
-        match PermissionBits.afterTruncation rule (Standing.toward credentials entry.Owner) permissions with
-        | Error refusal -> Error (FileTruncationRefusal.UnmeasuredSetIdChange refusal)
-        | Ok stripped ->
+        let stripped =
+            PermissionBits.afterTruncation rule (Standing.toward credentials entry.Owner) permissions
 
         let after =
             { vfs with
