@@ -589,20 +589,22 @@ module UnixMachineState =
     let internal heldInodes (machine : UnixMachineState) : Set<InodeNumber> =
         // An inotify instance's watch does not keep the inode it watches: the
         // watch goes when the inode does.
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (_, description) -> OpenFileTable.inodeOf description.Target)
+        OpenFileTable.heldInodes machine.OpenFiles
         |> Set.ofSeq
-        |> Set.union (
-            OpenFileTable.toSeqOpenedThrough machine.OpenFiles
-            |> Seq.choose (fun (_, _, through) ->
-                match through with
-                | ReachedThrough.Name (dentry, _) -> Some dentry.Parent
-                | ReachedThrough.Unnamed
-                | ReachedThrough.RemovedDirectory _ -> None
-            )
-            |> Set.ofSeq
-        )
         |> Set.union (machine.CurrentDirectories |> Map.keys |> Set.ofSeq)
+
+    /// Whether `inode` is in `heldInodes`, in time logarithmic in what the
+    /// machine holds.
+    let internal holdsDirectly (inode : InodeNumber) (machine : UnixMachineState) : bool =
+        OpenFileTable.holdsInode inode machine.OpenFiles
+        || Map.containsKey inode machine.CurrentDirectories
+
+    /// The directories of `heldInodes`: each one an open file description is
+    /// onto, each holding a name a description was opened through, and each
+    /// some process stands in. In time linear in their number.
+    let internal heldDirectories (machine : UnixMachineState) : InodeNumber list =
+        List.ofSeq (OpenFileTable.heldDirectories machine.OpenFiles)
+        @ List.ofSeq (Map.keys machine.CurrentDirectories)
 
     /// `machine` with one more process standing in `inode`.
     let internal holdCurrentDirectory (inode : InodeNumber) (machine : UnixMachineState) : UnixMachineState =

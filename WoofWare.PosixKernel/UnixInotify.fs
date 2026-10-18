@@ -119,39 +119,12 @@ module UnixInotify =
     /// How many inotify instances `user` holds on the machine, in every
     /// process.
     let private instancesOf (user : UserId) (machine : UnixMachineState) : int =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.filter (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state -> state.Owner = user
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> false
-        )
-        |> Seq.length
+        OpenFileTable.inotifyInstancesOwnedBy user machine.OpenFiles
 
     /// How many watches the inotify instances `user` holds have, on the
     /// machine, in every process.
     let private watchesOf (user : UserId) (machine : UnixMachineState) : int =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.map (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state when state.Owner = user -> Map.count state.Watches
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> 0
-        )
-        |> Seq.fold (+) 0
+        OpenFileTable.inotifyWatchesOwnedBy user machine.OpenFiles
 
     /// The inotify instance `fd` names and its state: `EBADF` for a descriptor
     /// that is not open, and `EINVAL` for one that names anything else
@@ -450,9 +423,9 @@ module UnixInotify =
                 system
 
         let existing =
-            state.Watches
-            |> Map.toSeq
-            |> Seq.tryFind (fun (_, watch) -> watch.Inode = inode)
+            match OpenFileTable.inotifyWatchesOfInstanceOn instance inode system.Machine.OpenFiles with
+            | watch :: _ -> Some (watch, Map.find watch state.Watches)
+            | [] -> None
 
         match existing with
         | Some _ when word.MaskCreate -> failed UnixError.EEXIST
@@ -473,18 +446,17 @@ module UnixInotify =
                         ExcludeUnlinked = word.ExcludeUnlinked
                     }
 
-            let state =
-                { state with
-                    Watches =
-                        Map.add
-                            watch
-                            { held with
-                                Mask = mask
-                            }
-                            state.Watches
-                }
+            let changed =
+                UnixSystemState.mapOpenFiles
+                    (OpenFileTable.setInotifyWatch
+                        instance
+                        watch
+                        { held with
+                            Mask = mask
+                        })
+                    system
 
-            Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), commit state)
+            Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), changed)
         | None ->
 
         if state.NextWatchDescriptor = System.Int32.MaxValue then
@@ -512,23 +484,22 @@ module UnixInotify =
         | Some refusal -> Error refusal
         | None ->
 
-        let state =
-            { state with
-                Watches =
-                    Map.add
-                        watch
-                        {
-                            Inode = inode
-                            Mask =
-                                {
-                                    Events = modelledEvents
-                                    ExcludeUnlinked = word.ExcludeUnlinked
-                                }
-                        }
-                        state.Watches
-            }
+        let added =
+            UnixSystemState.mapOpenFiles
+                (OpenFileTable.setInotifyWatch
+                    instance
+                    watch
+                    {
+                        Inode = inode
+                        Mask =
+                            {
+                                Events = modelledEvents
+                                ExcludeUnlinked = word.ExcludeUnlinked
+                            }
+                    })
+                (commit state)
 
-        Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), commit state)
+        Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), added)
 
     /// `inotifyAddWatchWithPath`, with a refusal answered as the `Error` rather than raised.
     let internal tryInotifyAddWatchWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -579,12 +550,7 @@ module UnixInotify =
 
         let removed =
             UnixSystemState.mapOpenFiles
-                (OpenFileTable.setInotifyState
-                    "UnixInotify.inotifyRmWatch"
-                    instance
-                    { state with
-                        Watches = Map.remove watch state.Watches
-                    }
+                (OpenFileTable.removeInotifyWatch instance watch
                  >> OpenFileTable.enqueueInotify
                      system.Machine.InotifyLimits.MaxQueuedEvents
                      instance
