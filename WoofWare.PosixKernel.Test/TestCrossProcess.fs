@@ -725,6 +725,7 @@ module TestCrossProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/locked")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -736,7 +737,6 @@ module TestCrossProcess =
                             DataSynchronous = false
                             Directory = false
                         }
-                        (PathArg.ofText "/locked")
                         0o644
                         view
                 with
@@ -1200,6 +1200,7 @@ module TestCrossProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/locked")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -1211,7 +1212,6 @@ module TestCrossProcess =
                             DataSynchronous = false
                             Directory = false
                         }
-                        (PathArg.ofText "/locked")
                         0o644
                         view
                 with
@@ -1779,6 +1779,7 @@ module TestCrossProcess =
                         match
                             OpenFlagWords.openPathIn
                                 b
+                                (PathArg.ofText "/shared")
                                 {
                                     Access = FileAccessMode.ReadWrite
                                     Create = true
@@ -1790,7 +1791,6 @@ module TestCrossProcess =
                                     DataSynchronous = false
                                     Directory = false
                                 }
-                                (PathArg.ofText "/shared")
                                 0o644
                                 view
                         with
@@ -1942,6 +1942,7 @@ module TestCrossProcess =
         match
             OpenFlagWords.openPathIn
                 pid
+                (PathArg.ofText path)
                 {
                     Access = FileAccessMode.WriteOnly
                     Create = true
@@ -1953,7 +1954,6 @@ module TestCrossProcess =
                     DataSynchronous = false
                     Directory = false
                 }
-                (PathArg.ofText path)
                 0o644
                 view
         with

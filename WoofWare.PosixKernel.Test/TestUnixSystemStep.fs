@@ -2133,6 +2133,7 @@ module TestUnixSystemStep =
                 Answered.rmdir (Callers.leader system) path system |> answer
                 Answered.chdir (Callers.leader system) (PathArg.ofPath path) system |> answer
                 Answered.openPath
+                    path
                     {
                         Access = FileAccessMode.ReadOnly
                         Create = false
@@ -2144,7 +2145,6 @@ module TestUnixSystemStep =
                         DataSynchronous = false
                         Directory = false
                     }
-                    path
                     0
                     system
                 |> answer
@@ -2422,7 +2422,7 @@ module TestUnixSystemStep =
         let _, _, _, system = withTree linux
 
         let fd, system =
-            match OpenOutcomes.openPath 0 (PathArg.ofText "/d/inner") 0 system with
+            match OpenOutcomes.openPath (PathArg.ofText "/d/inner") 0 0 system with
             | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
             | other -> failwith $"open(/d/inner) did not open: %A{other}"
 
@@ -2463,7 +2463,7 @@ module TestUnixSystemStep =
         let _, _, _, system = withTree linux
 
         let opened (path : string) (system : UnixSystem<int, string>) =
-            match OpenOutcomes.openPath 0 (PathArg.ofText path) 0 system with
+            match OpenOutcomes.openPath (PathArg.ofText path) 0 0 system with
             | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
             | other -> failwith $"open(%s{path}) did not open: %A{other}"
 
@@ -3622,7 +3622,7 @@ module TestUnixSystemStep =
             [
                 "openPath",
                 (fun thread system ->
-                    UnixNamespace.tryOpenPath (Callers.thread thread system) 0 root 0 system
+                    UnixNamespace.tryOpenPath (Callers.thread thread system) root 0 0 system
                     |> ignore
                 )
                 "openat",
@@ -3652,7 +3652,7 @@ module TestUnixSystemStep =
 
         // The holder is neither, and its open is answered.
         match
-            OpenOutcomes.answered (UnixNamespace.tryOpenPath (Callers.thread holderThread parkedIn) 0 root 0 parkedIn)
+            OpenOutcomes.answered (UnixNamespace.tryOpenPath (Callers.thread holderThread parkedIn) root 0 0 parkedIn)
         with
         | Ok (SyscallAnswer.Completed _, _) -> ()
         | other -> failwith $"the holder's open answered %A{other}"
@@ -4723,11 +4723,11 @@ module TestUnixSystemStep =
                     Exclusive = true
                 }
 
-            Answered.openPath exclusiveOnly (statPath "/d/inner/t") 0o666 system
+            Answered.openPath (statPath "/d/inner/t") exclusiveOnly 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
-            Answered.openPath exclusiveOnly (statPath "/d/inner/nope") 0o666 system
+            Answered.openPath (statPath "/d/inner/nope") exclusiveOnly 0o666 system
             |> openFailed
             |> shouldEqual UnixError.ENOENT
 
@@ -4737,17 +4737,17 @@ module TestUnixSystemStep =
             // that read `Exclusive` without `Create` would answer ELOOP here.
             // Measured on both: `open(link, O_RDONLY|O_EXCL)` follows to the
             // file and succeeds, exactly as without the flag.
-            Answered.openPath exclusiveOnly (statPath "/l") 0o666 system
+            Answered.openPath (statPath "/l") exclusiveOnly 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             // And with `Create` it bites, which is what says the field is read
             // at all.
             Answered.openPath
+                (statPath "/d/inner/t")
                 { exclusiveOnly with
                     Create = true
                 }
-                (statPath "/d/inner/t")
                 0o666
                 system
             |> openFailed
@@ -4769,7 +4769,7 @@ module TestUnixSystemStep =
                 }
 
             let answer, after =
-                Answered.openPath creatingExclusive (statPath "/dangling") 0o666 system
+                Answered.openPath (statPath "/dangling") creatingExclusive 0o666 system
 
             answer |> shouldEqual (SyscallAnswer.Failed UnixError.EEXIST)
 
@@ -4789,15 +4789,15 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/d/inner") 0o666 system
+            Answered.openPath (statPath "/d/inner") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/d/inner")
                 { plainOpen with
                     Access = FileAccessMode.WriteOnly
                 }
-                (statPath "/d/inner")
                 0o666
                 system
             |> openFailed
@@ -4811,10 +4811,10 @@ module TestUnixSystemStep =
             let _, _, _, system = withTree flavour
 
             Answered.openPath
+                (statPath "/d/inner")
                 { plainOpen with
                     Truncate = true
                 }
-                (statPath "/d/inner")
                 0o666
                 system
             |> openFailed
@@ -4831,10 +4831,10 @@ module TestUnixSystemStep =
 
             let _, after =
                 Answered.openPath
+                    (statPath "/d/inner/t")
                     { plainOpen with
                         Truncate = true
                     }
-                    (statPath "/d/inner/t")
                     0o666
                     system
 
@@ -4874,15 +4874,15 @@ module TestUnixSystemStep =
                         }
                 }
 
-            Answered.openPath plainOpen (statPath "/readable") 0o666 system
+            Answered.openPath (statPath "/readable") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/readable")
                 { plainOpen with
                     Truncate = true
                 }
-                (statPath "/readable")
                 0o666
                 system
             |> openFailed
@@ -4926,10 +4926,10 @@ module TestUnixSystemStep =
 
             let openAs (access : FileAccessMode) (path : string) =
                 Answered.openPath
+                    (statPath path)
                     { plainOpen with
                         Access = access
                     }
-                    (statPath path)
                     0o666
                     system
 
@@ -4953,15 +4953,15 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/l") 0o666 system
+            Answered.openPath (statPath "/l") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/l")
                 { plainOpen with
                     NoFollow = true
                 }
-                (statPath "/l")
                 0o666
                 system
             |> openFailed
@@ -4977,17 +4977,17 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            let plain = Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system
+            let plain = Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system
 
             let withBoth =
                 Answered.openPath
+                    (statPath "/d/inner/t")
                     { plainOpen with
                         CloseOnExec = true
                         Synchronous = true
                         DataSynchronous = true
                         Directory = false
                     }
-                    (statPath "/d/inner/t")
                     0o666
                     system
 
@@ -5057,11 +5057,11 @@ module TestUnixSystemStep =
 
             let _, after =
                 Answered.openPath
+                    (statPath "/made")
                     { plainOpen with
                         Create = true
                         Access = FileAccessMode.WriteOnly
                     }
-                    (statPath "/made")
                     0o777
                     system
 
@@ -5086,7 +5086,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system
+            Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
@@ -5108,7 +5108,7 @@ module TestUnixSystemStep =
         for flavour, expected in [ linux, UnixError.EISDIR ; darwin, UnixError.ENOENT ] do
             let _, _, _, system = withTree flavour
 
-            let answer, after = Answered.openPath creating (statPath "/new/") 0o666 system
+            let answer, after = Answered.openPath (statPath "/new/") creating 0o666 system
 
             answer |> shouldEqual (SyscallAnswer.Failed expected)
 
@@ -5123,7 +5123,7 @@ module TestUnixSystemStep =
 
             // The same name *without* the separator creates, so the row above is
             // about the separator rather than about the name being unreachable.
-            Answered.openPath creating (statPath "/new") 0o666 system
+            Answered.openPath (statPath "/new") creating 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
@@ -5140,10 +5140,10 @@ module TestUnixSystemStep =
             let writeOnlyFd, afterWriteOnly =
                 match
                     Answered.openPath
+                        (statPath "/d/inner/t")
                         { plainOpen with
                             Access = FileAccessMode.WriteOnly
                         }
-                        (statPath "/d/inner/t")
                         0o666
                         system
                 with
@@ -5155,7 +5155,7 @@ module TestUnixSystemStep =
             | other -> failwith $"a write-only descriptor should refuse read: %O{other}"
 
             let readOnlyFd, afterReadOnly =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system with
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
                 | SyscallAnswer.Completed fd, after -> int fd, after
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
@@ -5311,14 +5311,14 @@ module TestUnixSystemStep =
             let _, _, _, system = withTree flavour
 
             let withoutStream =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system with
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
                 | SyscallAnswer.Completed fd, _ -> int fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             let _, afterStream = openedStream system "/d/inner"
 
             let withStream =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 afterStream with
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 afterStream with
                 | SyscallAnswer.Completed fd, _ -> int fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 

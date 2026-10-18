@@ -291,6 +291,7 @@ module TestMultiProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/shared")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -302,7 +303,6 @@ module TestMultiProcess =
                             DataSynchronous = false
                             Directory = false
                         }
-                        (PathArg.ofText "/shared")
                         0o644
                         view
                 with

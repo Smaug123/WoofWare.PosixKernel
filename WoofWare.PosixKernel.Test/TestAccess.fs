@@ -1036,7 +1036,7 @@ module TestAccess =
         }
 
     let private openOrFail (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath plainOpen (path p) 0 system with
+        match Answered.openPath (path p) plainOpen 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"open(%s{p}) did not open: %O{other}"
 

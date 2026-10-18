@@ -210,7 +210,7 @@ module TestMkNod =
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
@@ -231,7 +231,7 @@ module TestMkNod =
             | SimulatedUnixFlavour.Linux -> 0x1 ||| 0x40 ||| 0x80
             | SimulatedUnixFlavour.Darwin -> 0x1 ||| 0x200 ||| 0x800
 
-        OpenOutcomes.openPath flags path mode system
+        OpenOutcomes.openPath path flags mode system
 
     // ------------------------------------------------------------ rendering
 

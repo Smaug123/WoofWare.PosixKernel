@@ -107,7 +107,7 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match Answered.openPath (openFlags directory) (UnixPath.parseOrFail "TestDarwinPoll" path) 0o644 system with
+        match Answered.openPath (UnixPath.parseOrFail "TestDarwinPoll" path) (openFlags directory) 0o644 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other, _ -> failwith $"opening %s{path}: %A{other}"
 

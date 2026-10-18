@@ -425,7 +425,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
             running
                 "UnixNamespace.openPath"
-                (fun caller system -> UnixNamespace.openPath caller 0 root 0 system |> ignore)
+                (fun caller system -> UnixNamespace.openPath caller root 0 0 system |> ignore)
             running
                 "UnixNamespace.openat"
                 (fun caller system -> UnixNamespace.openat caller 0 root 0 0 system |> ignore)

@@ -190,7 +190,7 @@ module TestStepOracle =
             |> Result.map SteppedCall.FAccessAt
             |> Result.mapError SyscallRefusal.FAccessAt
         | Syscall.Open (path, flags, mode) ->
-            UnixNamespace.tryOpenPath caller flags path mode system
+            UnixNamespace.tryOpenPath caller path flags mode system
             |> Result.map SteppedCall.Open
             |> Result.mapError SyscallRefusal.Open
         | Syscall.OpenAt (dirfd, path, flags, mode) ->
@@ -780,7 +780,7 @@ module TestStepOracle =
                 ordinary
 
         let opened (path : string) (flags : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixNamespace.openPath (Callers.leader system) flags (PathArg.ofText path) 0 system with
+            match UnixNamespace.openPath (Callers.leader system) (PathArg.ofText path) flags 0 system with
             | SyscallOutcome.Answered (SyscallAnswer.Completed _), system -> system
             | other -> failwith $"setting up, open(%s{path}): %A{other}"
 
