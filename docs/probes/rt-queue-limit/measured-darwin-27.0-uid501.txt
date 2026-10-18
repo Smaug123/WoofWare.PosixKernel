@@ -1,0 +1,3 @@
+# Darwin 27.0.0 arm64, uid 501
+# NSIG=32 sigqueue=absent SIGRTMIN=undefined RLIMIT_SIGPENDING=undefined
+section=send method=kill sig=USR1 answers: 0 0 0 0 0 0 0 0 delivered=1

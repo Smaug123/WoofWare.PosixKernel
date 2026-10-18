@@ -1,0 +1,5 @@
+memory=512M MemTotal: 625288 kB SigQ: 0/2499 threads-max=4998 6.18.5
+memory=1G MemTotal: 1138820 kB SigQ: 0/4505 threads-max=9010 6.18.5
+memory=2G MemTotal: 2163820 kB SigQ: 0/8508 threads-max=17017 6.18.5
+memory=4G MemTotal: 4155792 kB SigQ: 0/16290 threads-max=32580 6.18.5
+memory=8G MemTotal: 8276352 kB SigQ: 0/32386 threads-max=64772 6.18.5

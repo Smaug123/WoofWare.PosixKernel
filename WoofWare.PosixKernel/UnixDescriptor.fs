@@ -2407,6 +2407,7 @@ module UnixDescriptor =
 
                     match
                         ProcessSignal.effect
+                            SignalSender.Kernel
                             {
                                 Signal = Signal.SIGPIPE
                                 Target = ValueNone
@@ -2416,6 +2417,9 @@ module UnixDescriptor =
                     | Ok (SignalEffect.Applied (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
                     | Ok (SignalEffect.Kills _) ->
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess))
+                    | Ok SignalEffect.QueueFull ->
+                        failwith
+                            "UnixDescriptor.close: SIGPIPE found the queue full, which only a real-time signal sent by tgkill can (this is a bug in this library)."
                     | Ok (SignalEffect.Applied (KillOutcome.ProcessStopped signal, _)) ->
                         failwith
                             $"UnixDescriptor.close: generating %O{signal} for a pipe write the close ended stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
