@@ -156,17 +156,19 @@ module TestSignalMask =
 
     [<Test>]
     let ``ofSignals refuses a signal its numbering does not have`` () : unit =
-        Assert.Throws<exn> (fun () ->
+        (Assert.Throws<System.ArgumentException> (fun () ->
             SignalMask.ofSignals SignalNumbering.Darwin (Set.singleton Signal.SIGPWR)
             |> ignore<SignalMask>
-        )
-        |> ignore
+        ))
+            .ParamName
+        |> shouldEqual "signals"
 
-        Assert.Throws<exn> (fun () ->
+        (Assert.Throws<System.ArgumentException> (fun () ->
             SignalMask.ofSignals SignalNumbering.Linux (Set.singleton Signal.SIGINFO)
             |> ignore<SignalMask>
-        )
-        |> ignore
+        ))
+            .ParamName
+        |> shouldEqual "signals"
 
     [<Test>]
     let ``union, difference and without are the word's or, and-not and cleared bits`` () : unit =

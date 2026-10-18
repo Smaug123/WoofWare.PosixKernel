@@ -421,7 +421,9 @@ module TestStepOracle =
             |> Result.map SteppedCall.SigProcMask
             |> Result.mapError SyscallRefusal.SigProcMask
         | Syscall.RtSigProcMask (how, set, sigsetSize) ->
-            Ok (SteppedCall.RtSigProcMask (UnixSignal.rtSigprocmask caller how set sigsetSize system))
+            UnixSignal.tryRtSigprocmask caller how set sigsetSize system
+            |> Result.map SteppedCall.RtSigProcMask
+            |> Result.mapError SyscallRefusal.RtSigProcMask
         | Syscall.SigPending -> Ok (SteppedCall.SigPending (UnixSignal.sigpending caller system))
         | Syscall.SigSuspend mask ->
             UnixSignal.trySigsuspend caller mask system

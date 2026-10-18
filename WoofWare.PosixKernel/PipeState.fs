@@ -443,12 +443,17 @@ module DeliveryLog =
 
     /// The deliveries appended to `log` after its first `count`, oldest first.
     ///
-    /// Takes time linear in how many it returns. Fails if `count` is negative
-    /// or more than `log` holds.
+    /// Takes time linear in how many it returns. Throws
+    /// `ArgumentOutOfRangeException` if `count` is negative or more than `log`
+    /// holds.
     let since (count : int) (log : DeliveryLog) : Delivery list =
         if count < 0 || count > log.Count then
-            failwith
-                $"DeliveryLog.since: asked for the deliveries after the first %d{count} of a log holding %d{log.Count}"
+            raise (
+                Refusal.exceptionOf
+                    "DeliveryLog.since"
+                    (RefusalKind.OutOfRange "count")
+                    $"asked for the deliveries after the first %d{count} of a log holding %d{log.Count}"
+            )
 
         List.truncate (log.Count - count) log.NewestFirst |> List.rev
 

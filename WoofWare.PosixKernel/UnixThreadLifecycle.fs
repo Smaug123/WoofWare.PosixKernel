@@ -405,12 +405,20 @@ module UnixThreadLifecycle =
         : Result<SpawnAnswer * ProcessView<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
         if Map.containsKey child system.Threads then
-            failwith
-                $"UnixThreadLifecycle.spawn: %O{child} already names a thread. A thread is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixThreadLifecycle.spawn"
+                    (RefusalKind.Contradictory "child")
+                    $"%O{child} already names a thread. A thread is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
+            )
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
-            failwith
-                $"UnixThreadLifecycle.spawn: %O{child} would be created on %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixThreadLifecycle.spawn"
+                    (RefusalKind.OutOfRange "cpu")
+                    $"%O{child} would be created on %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            )
 
         match ThreadIdAllocator.allocate system.Machine.ThreadIds with
         | ThreadIdAllocation.Failed error -> Ok (SpawnAnswer.Failed error, system)
@@ -466,9 +474,11 @@ module UnixThreadLifecycle =
     /// Refuses a spawn on Darwin once the machine's thread ID counter has
     /// reached the top of its range, which has not been measured.
     ///
-    /// Fails loudly if `caller` names no thread or is parked in a syscall, if
-    /// `child` already names a thread, or if `cpu` is not one of the machine's
-    /// processors (`UnixSystem.processorCount`): each is a bug in the client.
+    /// Throws `InvalidOperationException` if `caller` names no thread or is
+    /// parked in a syscall, `ArgumentException` if `child` already names a
+    /// thread, and `ArgumentOutOfRangeException` if `cpu` is not one of the
+    /// machine's processors (`UnixSystem.processorCount`): each is a bug in the
+    /// client.
     let spawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (child : 'Thread)
