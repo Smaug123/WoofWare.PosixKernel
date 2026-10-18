@@ -386,7 +386,7 @@ Each row is a fresh, unbound sender, sending to a receiver bound to 0.0.0.0.
 | 127.0.0.1, port 0 | `EINVAL`, binds | `EADDRNOTAVAIL` |
 | 0.0.0.0 | **sent, and delivered** (as to 127.0.0.1) | **`EHOSTUNREACH`, binds** |
 | 255.255.255.255 | `EACCES`, binds | `EHOSTUNREACH`, binds |
-| 127.0.0.2 | sent, and delivered to a 0.0.0.0 receiver but not a 127.0.0.1 one; the source is 127.0.0.1 | sent, and **delivered to no one** |
+| 127.0.0.2 | sent, and delivered to a 0.0.0.0 receiver but not a 127.0.0.1 one; the source is 127.0.0.1 | sent, and **delivered to no one**; a connected sender gets no error either (L15) |
 | `sin_zero` non-zero; Darwin `sin_len` 0, 8 or 255 | sent | sent |
 | a pipe; a closed descriptor | `ENOTSOCK`; `EBADF` (also with an unmapped buffer or address) | same |
 
@@ -531,12 +531,22 @@ setters only once a client needs to change one. A setter is additive.
 
 ### 3.3 Which socket receives
 
-Delivery picks, among the UDP sockets bound to the destination's port:
+First, **whether the machine takes the destination address as its own**, by
+flavour (2.10, N and L15):
+
+- **Linux** takes every address on a local route, so a datagram to 127.0.0.2
+  is delivered to a socket bound to the wildcard, though not to one bound to
+  127.0.0.1. With no socket to take it, it is answered with the ICMP error.
+- **Darwin** takes only the addresses it holds (`LocalIpv4Addresses`). A
+  datagram to 127.0.0.2, which `connect` and `sendto` accept, reaches no one
+  and raises no error, whether or not a wildcard socket holds its port.
+
+Then delivery picks, among the UDP sockets bound to the destination's port:
 
 - those whose address is the destination or the wildcard;
 - those either unconnected, or connected to exactly the datagram's source.
 
-It then ranks them: a connected socket over an unconnected one, and a specific
+It ranks them: a connected socket over an unconnected one, and a specific
 address over the wildcard. These are measured rules: 2.7, Q3 and Q5.
 
 - **Ties.** Two candidates can still tie: Linux's two `SO_REUSEADDR` sockets,

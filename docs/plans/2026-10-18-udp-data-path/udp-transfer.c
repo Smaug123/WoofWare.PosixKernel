@@ -1043,6 +1043,23 @@ static void section_l(void)
         printf("L14 an error pending, %s: %s; then SO_ERROR=%d\n", names[call], res(a, ea), after);
         close(c);
     }
+    // L15: connected to 127.0.0.2, which only Linux holds (as part of
+    // loopback's 127.0.0.0/8): at a port a socket bound to 0.0.0.0 holds,
+    // and at a port nobody holds.
+    for (int held = 1; held >= 0; held--) {
+        int r = held ? bound_any() : -1;
+        uint16_t p = held ? portof(r) : unheld_port();
+        int c = bound_any();
+        struct sockaddr_in to = at(0x7f000002, p);
+        int cr = connect(c, (struct sockaddr *)&to, sizeof to); int ec = errno;
+        ssize_t a = send(c, "x", 1, 0); int ea = errno;
+        SETTLE();
+        int after = sock_error(c);
+        printf("L15 connected to 127.0.0.2 at a port %s (connect %s, from %s): send %s; SO_ERROR %d; the receiver holds %s\n",
+               held ? "a 0.0.0.0-bound socket holds" : "nobody holds", res(cr, ec), nameof(c), res(a, ea), after, held ? drain(r) : "-");
+        close(c);
+        if (held) close(r);
+    }
     // L11: a port held by a TCP listener only.
     {
         int t = socket(AF_INET, SOCK_STREAM, 0);
