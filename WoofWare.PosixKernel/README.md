@@ -918,7 +918,8 @@ printfn "processes left: %d" (UnixSystem.processIds remaining).Count
 ## Signals
 
 `UnixSignal.kill` and `UnixSignal.pthreadKill` generate a signal, and answer a `ProcessFate<KillOutcome>`: the process runs on (`KillOutcome.ProcessRuns`), with the signal pending or discarded; the signal stopped it (`KillOutcome.ProcessStopped`); or the signal killed it at once (`ProcessFate.ProcessEnded`).
-`kill` of another process, or of a process group, is refused.
+`kill` of a pid that names no process on the machine, and under Linux no thread either, is `ESRCH` (under Darwin, a number that is no signal is `EINVAL` first); a process that has ended is gone, as if its parent had reaped it.
+`kill` of another process, of a process group, of process 1 (which every real machine has, and a `UnixSystem` never holds), or under Linux of a thread's ID, is refused.
 A signal the process ignores, and a `SIGCONT` at its default, which has nothing to resume, are discarded as they are sent, unless the thread they are aimed at blocks them: for a signal sent to the process, that is the leader under Linux and every thread under Darwin. So such a signal never wakes a sleeping call.
 One sent while blocked stays pending, and is discarded as a thread takes it.
 Under Linux, `kill` of such a signal that the leader blocks while another thread does not is refused, as a caught one is: Linux would queue it for that other thread, and this library delivers a process's signals to its leader only.
