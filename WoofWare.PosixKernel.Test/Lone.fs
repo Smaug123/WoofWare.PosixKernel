@@ -681,19 +681,21 @@ module internal Lone =
             |> unviewedStep
 
         /// `tryApplyWrite` of a `write` through `fd`, marked as a `write`
-        /// is (`UnixReadWrite.markedThrough`).
+        /// is (`UnixReadWrite.markedThrough`), and beside it the delivery it
+        /// made.
         let tryApplyWriteThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (fd : int)
             (into : WriteInto)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
             =
             let before = view system
 
             WoofWare.PosixKernel.UnixReadWrite.tryApplyWrite into bytes before
-            |> Result.map (WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before)
-            |> unviewedStep
+            |> Result.map (fun (step, delivery) ->
+                WriteStep.map unfocus (WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before step), delivery
+            )
 
         /// `applyWriteThenSleep` of a `write` through `fd`, marked as a
         /// `write` is (`UnixReadWrite.markedThrough`).

@@ -289,8 +289,7 @@ module TestUnixSystemInitial =
         FileDescriptorRegistry.tryFind 3 (Lone.fileDescriptors system)
         |> shouldEqual None
 
-        UnixSystem.pipes system |> Map.count |> shouldEqual 3
-        DeliveryLog.count (Kernel.machine system).Delivered |> shouldEqual 0
+        (Kernel.machine system).Pipes |> Map.count |> shouldEqual 3
         UnixSystem.checkInvariants system |> shouldEqual []
 
     /// A launch table of any shape: the descriptors it names and no others,

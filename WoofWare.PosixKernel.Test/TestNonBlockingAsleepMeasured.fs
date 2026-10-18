@@ -194,7 +194,9 @@ module TestNonBlockingAsleepMeasured =
             match progress with
             | CallProgress.Answered fate -> fate
             | CallProgress.NeedsCopyIn paused ->
-                UnixReadWrite.writeWithBytes (bytesOf (PausedWrite.copyRange paused).ByteCount) paused
+                match UnixReadWrite.writeWithBytes (bytesOf (PausedWrite.copyRange paused).ByteCount) paused with
+                | fate, None -> fate
+                | _, Some delivery -> failwith $"%s{where}: a write into a pipe the process made delivered %A{delivery}"
 
         match fate with
         | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed n), system) -> Step.Answered (Ok n), system

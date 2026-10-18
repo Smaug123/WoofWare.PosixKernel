@@ -92,46 +92,6 @@ module TestStateQueries =
             Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf advance))) property
         )
 
-    [<Test>]
-    let ``delivered is every write to a drained stream, oldest first`` () : unit =
-        let property (platform : SimulatedUnixPlatform, writes : (int * int) list) : unit =
-            let initial = initialOn platform
-
-            DeliveryLog.count (UnixMachineState.delivered (Kernel.machine initial))
-            |> shouldEqual 0
-
-            let final, expected =
-                ((initial, []), List.indexed writes)
-                ||> List.fold (fun (system, expected) (index, (fd, count)) ->
-                    let bytes =
-                        ImmutableArray.Create<byte> (Array.init count (fun i -> byte (index + i)))
-
-                    match WriteOutcomes.write fd bytes system with
-                    | Ok (WriteAnswer.Completed _, after) ->
-                        let expected =
-                            if count = 0 then
-                                expected
-                            else
-                                {
-                                    Endpoint = ExternalEndpoint (Lone.pid after, fd)
-                                    Bytes = bytes
-                                }
-                                :: expected
-
-                        after, expected
-                    | other -> failwith $"write(%d{fd}, %d{count} bytes) answered %A{Result.map fst other}"
-                )
-
-            DeliveryLog.toList (UnixMachineState.delivered (Kernel.machine final))
-            |> shouldEqual (List.rev expected)
-
-        let write = Gen.zip (Gen.elements [ 1 ; 2 ]) (Gen.choose (0, 4))
-
-        Check.One (
-            propertyConfig,
-            Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf write |> Gen.resize 10))) property
-        )
-
     /// Arbitrary non-NUL bytes, short and drawn from a small alphabet.
     let private entryGen : Gen<UnixByteString> =
         Gen.elements [ 0x3Duy ; 0x41uy ; 0xFFuy ]
@@ -235,21 +195,9 @@ module TestStateQueries =
             UnixSystem.signals (Lone.pid system) system
             |> shouldEqual (UnixProcessState.signals (Lone.proc system))
 
-            UnixSystem.delivered system
-            |> shouldEqual (UnixMachineState.delivered (Kernel.machine system))
-
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do
                 UnixSystem.descriptorTarget (Lone.pid system) fd system
                 |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system))
 
             UnixSystem.descriptorTarget (Lone.pid system) 3 system |> shouldEqual None
-
-            // And a write that reaches the client is what `delivered` reports.
-            match WriteOutcomes.writeBytes 0 1 (ImmutableArray.Create<byte> [| 7uy |]) system with
-            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, written)) ->
-                UnixSystem.delivered written
-                |> DeliveryLog.toList
-                |> List.map (fun delivery -> List.ofSeq delivery.Bytes)
-                |> shouldEqual [ [ 7uy ] ]
-            | other -> failwith $"writing to standard output: %A{other}"

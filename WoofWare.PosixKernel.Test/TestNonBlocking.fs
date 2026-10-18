@@ -402,35 +402,36 @@ module TestNonBlocking =
                 | SetNonBlockingAnswer.Set, system -> system
                 | SetNonBlockingAnswer.Failed error, _ -> failwith $"could not clear the flag: %O{error}"
 
-            let deliveries (system : UnixSystem<int, string>) =
-                DeliveryLog.toList (Kernel.machine system).Delivered
-                |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
+            let received (delivery : Delivery option) =
+                delivery
+                |> Option.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
 
-            match WriteOutcomes.write fd bytes flagged, WriteOutcomes.write fd bytes clear with
-            | Ok (answer, after), Ok (blockingAnswer, blockingAfter) when count <= emptyPipeTakes ->
+            match WriteOutcomes.writeDelivering fd bytes flagged, WriteOutcomes.writeDelivering fd bytes clear with
+            | Ok ((answer, after), delivery), Ok ((blockingAnswer, blockingAfter), blockingDelivery) when
+                count <= emptyPipeTakes
+                ->
                 answer |> shouldEqual (WriteAnswer.Completed (int64 count))
                 answer |> shouldEqual blockingAnswer
 
-                // The same bytes reach the same client, delivery for delivery,
-                // and the flag is the only other difference.
-                deliveries after |> shouldEqual (deliveries blockingAfter)
+                // The same bytes reach the same client, and the flag is the
+                // only other difference.
+                received delivery |> shouldEqual (received blockingDelivery)
                 unflag after |> shouldEqual blockingAfter
-            | Ok (answer, after), Ok (WriteAnswer.Completed written, blockingAfter) ->
+            | Ok ((answer, after), delivery), Ok ((WriteAnswer.Completed written, blockingAfter), blockingDelivery) ->
                 written |> shouldEqual (int64 count)
 
-                deliveries blockingAfter
-                |> shouldEqual [ ExternalEndpoint (Lone.pid blockingAfter, fd), List.ofSeq bytes ]
+                received blockingDelivery
+                |> shouldEqual (Some (ExternalEndpoint (Lone.pid blockingAfter, fd), List.ofSeq bytes))
 
                 answer |> shouldEqual (WriteAnswer.Completed (int64 emptyPipeTakes))
 
-                deliveries after
-                |> shouldEqual
-                    [
-                        ExternalEndpoint (Lone.pid after, fd), List.ofSeq bytes |> List.take emptyPipeTakes
-                    ]
+                received delivery
+                |> shouldEqual (
+                    Some (ExternalEndpoint (Lone.pid after, fd), List.ofSeq bytes |> List.take emptyPipeTakes)
+                )
             | flaggedResult, clearResult ->
                 failwith
-                    $"%O{platform}: write(%d{fd}, %d{count} bytes) answered %A{Result.map fst flaggedResult} with the flag set and %A{Result.map fst clearResult} without it"
+                    $"%O{platform}: write(%d{fd}, %d{count} bytes) answered %A{Result.map (fst >> fst) flaggedResult} with the flag set and %A{Result.map (fst >> fst) clearResult} without it"
 
         Check.One (
             Config.QuickThrowOnFailure.WithMaxTest 300,
@@ -451,12 +452,12 @@ module TestNonBlocking =
             | Ok (WriteAnswer.Completed 65536L, _) -> ()
             | other -> failwith $"%O{platform}: a 65536-byte write answered %A{Result.map fst other}"
 
-            match WriteOutcomes.write 1 (ImmutableArray.Create<byte> (Array.zeroCreate 65537)) flagged with
-            | Ok (WriteAnswer.Completed 65536L, after) ->
-                DeliveryLog.toList (Kernel.machine after).Delivered
-                |> List.map (fun delivery -> delivery.Bytes.Length)
-                |> shouldEqual [ 65536 ]
-            | other -> failwith $"%O{platform}: a 65537-byte write answered %A{Result.map fst other}"
+            match WriteOutcomes.writeDelivering 1 (ImmutableArray.Create<byte> (Array.zeroCreate 65537)) flagged with
+            | Ok ((WriteAnswer.Completed 65536L, _), delivery) ->
+                delivery
+                |> Option.map (fun delivery -> delivery.Bytes.Length)
+                |> shouldEqual (Some 65536)
+            | other -> failwith $"%O{platform}: a 65537-byte write answered %A{Result.map (fst >> fst) other}"
 
     // ------------------------------------------------------------------
     // The event queue, where store and answer come apart

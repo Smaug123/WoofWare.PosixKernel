@@ -759,6 +759,16 @@ module internal Shape =
             | Error error -> Error error
         )
 
+    /// A pair whose first part is shaped as `first` says. Its second part
+    /// holds no system.
+    let beside<'View, 'Kernel, 'InView, 'InKernel, 'Answer>
+        (first : Shape<'View, 'Kernel, 'InView, 'InKernel>)
+        : Shape<'View, 'Kernel, 'InView * 'Answer, 'InKernel * 'Answer>
+        =
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) ((part : 'InView), (answer : 'Answer)) ->
+            map unfocus first part, answer
+        )
+
     /// A `CallProgress` whose `Answered` is shaped as `answered` says. Its
     /// paused value is left as it is, holding the view the call paused in, and
     /// with it the rest of the kernel: the call's resumption answers from that

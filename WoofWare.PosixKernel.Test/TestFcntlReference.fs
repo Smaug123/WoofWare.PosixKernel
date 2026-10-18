@@ -574,8 +574,8 @@ module TestFcntlReference =
         | Ok (SteppedCall.Close (answer, after)) -> Outcome.Answered answer, after
         | Ok (SteppedCall.Pipe2 (Pipe2Answer.Created (readFd, _), after)) ->
             Outcome.Answered (SyscallAnswer.Completed (int64 readFd)), after
-        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after)))
-        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after)))
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after), _))
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after), _))
         | Ok (SteppedCall.PWrite (answer, after)) -> Outcome.Answered (ofWrite answer), after
         | Ok stepped -> failwith $"%A{call} answered %A{stepped}"
         | Error (SyscallRefusal.Open (OpenRefusal.DescriptorLimit refusal))

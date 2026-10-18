@@ -613,18 +613,18 @@ module TestUnixSystemStep =
     let ``a write to a drained standard stream is delivered rather than stored`` () : unit =
         let bytes = ImmutableArray.CreateRange [ 0x68uy ; 0x69uy ]
 
-        match WriteOutcomes.write 1 bytes linux with
-        | Ok (WriteAnswer.Completed written, after) ->
+        match WriteOutcomes.writeDelivering 1 bytes linux with
+        | Ok ((WriteAnswer.Completed written, after), delivery) ->
             written |> shouldEqual 2L
 
-            DeliveryLog.toList (Kernel.machine after).Delivered
-            |> shouldEqual
-                [
+            delivery
+            |> shouldEqual (
+                Some
                     {
                         Endpoint = ExternalEndpoint (Lone.pid after, 1)
                         Bytes = bytes
                     }
-                ]
+            )
 
             UnixSystem.pipes after
             |> Map.forall (fun _ pipe -> PipeBuffer.held pipe.Buffer = 0)
@@ -840,7 +840,7 @@ module TestUnixSystemStep =
             let exn =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
                     UnixReadWrite.writeWithBytes Unchecked.defaultof<ImmutableArray<byte>> paused
-                    |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+                    |> ignore<ProcessFate<WriteOutcome<int>, int, string> * Delivery option>
                 )
 
             exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"

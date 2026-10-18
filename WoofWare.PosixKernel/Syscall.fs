@@ -823,9 +823,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | RecvMsg of stepped : SteppedRecvMsg<'Thread, 'Handler>
     /// What `UnixReadWrite.pread` answers.
     | PRead of answer : ReadAnswer * system : UnixSystem<'Thread, 'Handler>
-    /// What `UnixReadWrite.write` answers, or
-    /// `UnixReadWrite.writeWithBytes` after it.
-    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+    /// What `UnixReadWrite.writeWithBytes` answers after `UnixReadWrite.write`,
+    /// or what `write` answers, beside no delivery, if it ended before its copy.
+    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * delivered : Delivery option
     /// What `UnixReadWrite.send` answers, or `UnixReadWrite.sendWithBytes`
     /// after it.
     | Send of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>

@@ -799,7 +799,7 @@ module TestCallerChecks =
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
                 with
-                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view) -> view
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view), None -> view
                 | other -> failwith $"the write: expected it to sleep, got %A{other}"
             | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
 

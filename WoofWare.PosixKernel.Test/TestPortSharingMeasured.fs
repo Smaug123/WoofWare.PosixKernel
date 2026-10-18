@@ -284,8 +284,8 @@ module TestPortSharingMeasured =
                     CopiedArgument.Readable (System.Collections.Immutable.ImmutableArray.Create<byte> [| 0x78uy |])
 
                 match step pid (Syscall.Write (fd, buffer, 1UL)) system with
-                | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system))) ->
-                    answered error, system
+                | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system),
+                                         None)) -> answered error, system
                 | Ok other -> failwith $"%s{row.Line}: write stepped to %A{other}"
                 | Error refusal -> describeRefusal refusal, system
             | other -> failwith $"%s{row.Line}: unknown operation %s{other}"

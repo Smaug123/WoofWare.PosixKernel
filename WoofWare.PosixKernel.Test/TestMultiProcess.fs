@@ -322,22 +322,22 @@ module TestMultiProcess =
 
             let write (pid : ProcessId) (text : string) (view : UnixSystem<int, string>) =
                 match
-                    WriteOutcomes.writeBytesAs
+                    WriteOutcomes.admitThenWriteDeliveringAs
                         (Caller.make pid 0)
                         1
+                        UserBuffer.Mapped
                         (ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text))
                         view
                 with
-                | Ok (WriteStep.Returns (_, view)) -> (), view
+                | Ok (WriteStep.Returns (_, view), Some delivery) -> delivery, view
                 | other -> failwith $"write: %A{other}"
 
-            let (), machine = inProcess pids.[0] (write pids.[0] "first") machine
-            let (), machine = inProcess pids.[1] (write pids.[1] "second") machine
-            let (), machine = inProcess pids.[0] (write pids.[0] "again") machine
+            let first, machine = inProcess pids.[0] (write pids.[0] "first") machine
+            let second, machine = inProcess pids.[1] (write pids.[1] "second") machine
+            let again, machine = inProcess pids.[0] (write pids.[0] "again") machine
 
-            UnixSystem.delivered (viewOf pids.[0] machine)
-            |> DeliveryLog.toList
-            |> List.map (fun delivery ->
+            [ first ; second ; again ]
+            |> List.map (fun (delivery : Delivery) ->
                 delivery.Endpoint, System.Text.Encoding.ASCII.GetString (delivery.Bytes.AsSpan ())
             )
             |> shouldEqual

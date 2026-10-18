@@ -827,6 +827,9 @@ module TestMultiProcessFuzz =
     type private Made =
         /// It answered, or changed nothing, and the process carries on as this.
         | Answered of UnixSystem<int, string>
+        /// It answered, delivering bytes to the client draining a launched
+        /// pipe, and the process carries on as this.
+        | Delivered of Delivery * UnixSystem<int, string>
         /// The calling thread sleeps, in this.
         | Sleeps of UnixSystem<int, string>
         /// The call ended the process, and left the system without it.
@@ -842,6 +845,18 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.Interrupted view) -> Made.Answered view
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
         | Ok (WriteStep.ProcessEnded (ended, after)) -> Made.Ended (ended, after)
+
+    /// `ofWrite`, for a write that may have delivered bytes to the client
+    /// draining a launched pipe.
+    let private ofDeliveringWrite
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int> * Delivery option, WriteRefusal>)
+        : Made
+        =
+        match outcome with
+        | Ok (WriteStep.Returns (_, view), Some delivery) -> Made.Delivered (delivery, view)
+        | Ok (step, Some delivery) -> failwith $"a write delivered %A{delivery} and answered %A{step}"
+        | Ok (step, None) -> ofWrite (Ok step)
+        | Error refusal -> ofWrite (Error refusal)
 
     /// `bytes`, for a transcript: how many, and a checksum of them.
     let private bytesText (bytes : ImmutableArray<byte>) : string =
@@ -1254,14 +1269,20 @@ module TestMultiProcessFuzz =
             match pick fd (ofKind pid (isPipeEnd PipeEnd.Write) view) with
             | None -> Made.Answered view
             | Some fd ->
-                WriteOutcomes.admitThenWriteAs
-                    (Caller.make pid thread)
-                    fd
-                    UserBuffer.Mapped
-                    (ImmutableArray.Create<byte> (Array.zeroCreate<byte> size))
-                    view
+                let outcome =
+                    WriteOutcomes.admitThenWriteDeliveringAs
+                        (Caller.make pid thread)
+                        fd
+                        UserBuffer.Mapped
+                        (ImmutableArray.Create<byte> (Array.zeroCreate<byte> size))
+                        view
+
+                outcome
+                |> Result.map fst
                 |> loggedWrite log
-                |> ofWrite
+                |> ignore<Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>>
+
+                ofDeliveringWrite outcome
         | Op.Open path ->
             // `OpenOutcomes.answered` fails the run if the open sleeps: nothing
             // makes a FIFO, so none can.
@@ -1679,6 +1700,8 @@ module TestMultiProcessFuzz =
             /// The threads a wake pass has woken whose calls have not finished, in
             /// the order they woke.
             Woken : (ProcessId * int) list
+            /// Every delivery the launched pipes have made, newest first.
+            Delivered : Delivery list
         }
 
     let private wakeable (world : World) : Map<ProcessId * int, Set<WakePrimitive>> =
@@ -1742,6 +1765,11 @@ module TestMultiProcessFuzz =
             { world with
                 System = Machines.unfocus view world.System
             }
+        | Made.Delivered (delivery, view) ->
+            { world with
+                Machine = Machines.unfocus view world.Machine
+                Delivered = delivery :: world.Delivered
+            }
         | Made.Sleeps view ->
             cover FuzzLabel.Park
 
@@ -1760,6 +1788,7 @@ module TestMultiProcessFuzz =
                 Live = world.Live |> List.filter ((<>) pid)
                 Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
                 Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
+                Delivered = world.Delivered
             }
 
     let private step (cover : FuzzLabel -> unit) (log : string -> unit) (world : World) (next : Step) : World =
@@ -2212,6 +2241,7 @@ module TestMultiProcessFuzz =
                 Live = pids
                 Asleep = Set.empty
                 Woken = []
+                Delivered = []
             }
 
         (world, case.Steps)
@@ -3154,7 +3184,8 @@ module TestMultiProcessFuzz =
                     | Error (WriteRefusal.ProcessEnd (_, refusal)) ->
                         Ended.EndRefused (ProcessEndRefusal.describe refusal)
                     | Error refusal -> Ended.Refused $"write: %A{refusal}"
-                    | Ok fate -> fateOnly "write" fate
+                    | Ok (fate, None) -> fateOnly "write" fate
+                    | Ok (_, Some delivery) -> failwith $"a write into a pipe with no reader delivered %A{delivery}"
             | other -> Ended.Refused $"close: %A{other}"
 
     /// What `kernel` shows of itself, without saying how the library holds it:
@@ -3163,8 +3194,9 @@ module TestMultiProcessFuzz =
     /// is parked in and whether that call could go on, and what a `poll` of
     /// each descriptor by a thread parked in nothing answers at once; every
     /// open file description with how many descriptors name it and how many
-    /// calls hold it; and what the launched pipes have delivered.
-    let private observed (log : string -> unit) (kernel : UnixSystem<int, string>) : unit =
+    /// calls hold it; and what the launched pipes have delivered, `delivered`,
+    /// oldest first.
+    let private observed (log : string -> unit) (delivered : Delivery list) (kernel : UnixSystem<int, string>) : unit =
         Machines.checkInvariants kernel |> Expect.empty (fun () -> "the system")
         let pids = UnixSystem.processIds kernel |> List.ofSeq
         log $"    processes %A{pids |> List.map ProcessId.toInt32}"
@@ -3219,8 +3251,6 @@ module TestMultiProcessFuzz =
             log
                 $"    %O{id} %s{UnionCaseName.ofValue description.Target}: %A{OpenFileTable.descriptorCount id openFiles} descriptors, %A{OpenFileTable.holdCount id openFiles} holds"
 
-        let delivered = DeliveryLog.toList (UnixSystem.delivered kernel)
-
         let sum =
             (17, delivered)
             ||> List.fold (fun sum delivery ->
@@ -3257,7 +3287,7 @@ module TestMultiProcessFuzz =
                     match endBy ending pid world.System with
                     | Ended.Ended (termination, kernel) ->
                         log $"    ends %A{termination}"
-                        observed log kernel
+                        observed log (List.rev world.Delivered) kernel
 
                         // An ending that changes nothing outside the process before it
                         // ends it leaves the very system `exit_group` leaves.
@@ -3271,7 +3301,7 @@ module TestMultiProcessFuzz =
                     | Ended.EndRefused reason -> log $"    end refused: %s{reason}"
                     | Ended.Carried (answer, kernel) ->
                         log $"    carries on: %s{answer}"
-                        observed log kernel
+                        observed log (List.rev world.Delivered) kernel
                     | Ended.Refused reason -> log $"    refused: %s{reason}"
                     | Ended.Inapplicable reason -> log $"    inapplicable: %s{reason}"
 

@@ -477,7 +477,7 @@ module TestPipe =
                         stepAs
                             (fun stepped ->
                                 match stepped with
-                                | SteppedCall.Write fate -> Some fate
+                                | SteppedCall.Write (fate, None) -> Some fate
                                 | _ -> None
                             )
                             (Syscall.Write (fd, holdingOnly copies buffer, uint64 count))
