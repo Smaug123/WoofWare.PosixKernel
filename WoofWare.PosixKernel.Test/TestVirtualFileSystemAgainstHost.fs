@@ -2995,8 +2995,9 @@ module TestVirtualFileSystemAgainstHost =
     /// this comparison needs — a shell's `cd` reports a message instead. One
     /// invocation for the whole corpus rather than one per path, and the paths
     /// arrive on stdin NUL-separated so that none of them can be mistaken for an
-    /// argument. `python3` is in the flake devshell, which is how CI runs this
-    /// rather than skipping it.
+    /// argument. `python3` is in the flake devshell, which is how CI runs this,
+    /// and the devshell sets `POSIXKERNEL_REQUIRE_PYTHON3`, under which a
+    /// missing `python3` fails the test rather than skipping it.
     let private hostChDirOutcomes (root : string) (paths : string list) : ChDirOutcome list option =
         // The child refuses to leave the tree, in both directions: an operand
         // that is not under `root`, and a directory it somehow lands in that is
@@ -3042,7 +3043,12 @@ module TestVirtualFileSystemAgainstHost =
         let child =
             try
                 Some (Process.Start startInfo)
-            with _ ->
+            with :? ComponentModel.Win32Exception ->
+                // The devshell promises python3 by setting this, and there a
+                // run without it would silently compare nothing.
+                if Environment.GetEnvironmentVariable "POSIXKERNEL_REQUIRE_PYTHON3" = "1" then
+                    reraise ()
+
                 None
 
         match child with
