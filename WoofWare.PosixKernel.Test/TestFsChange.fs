@@ -64,7 +64,7 @@ module TestFsChange =
 
         let private bytesOf (inode : Inode) : byte[] option =
             match inode.Content with
-            | InodeContent.RegularFile (contents, _) -> Some (Seq.toArray contents)
+            | InodeContent.RegularFile (contents, _) -> Some (Seq.toArray (FileContents.toImmutableArray contents))
             | InodeContent.Directory _
             | InodeContent.CharacterDevice _
             | InodeContent.Socket _
@@ -101,7 +101,7 @@ module TestFsChange =
             let content =
                 match entry.Content with
                 | InodeContent.RegularFile (contents, permissions) ->
-                    ProjectedContent.File (contents.AsSpan().ToArray (), permissions)
+                    ProjectedContent.File (Seq.toArray (FileContents.toImmutableArray contents), permissions)
                 | other -> ProjectedContent.Other other
 
             content, entry.Owner, entry.Times, VirtualFileSystem.bindingCount inode vfs
@@ -444,7 +444,14 @@ module TestFsChange =
         | Op.MakeFile (p, n, length) ->
             pick (directories vfs) p
             |> Option.bind (fun parent ->
-                VirtualFileSystem.createFile parent (name n) (bits 0o644) Owners.linuxDefault now (bytes length) vfs
+                VirtualFileSystem.createFile
+                    parent
+                    (name n)
+                    (bits 0o644)
+                    Owners.linuxDefault
+                    now
+                    (FileContents.ofImmutableArray (bytes length))
+                    vfs
                 |> Result.toOption
                 |> Option.map (fun (_, mutation) -> mutation, Reached.Created)
             )
@@ -692,7 +699,14 @@ module TestFsChange =
         let vfs, d, _, f, _ = fixture
 
         let made, mutation =
-            VirtualFileSystem.createFile d (name "n") (bits 0o644) Owners.linuxDefault later (bytes 0) vfs
+            VirtualFileSystem.createFile
+                d
+                (name "n")
+                (bits 0o644)
+                Owners.linuxDefault
+                later
+                (FileContents.ofImmutableArray (bytes 0))
+                vfs
             |> ok
 
         VfsMutation.changes mutation
@@ -846,7 +860,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 
@@ -868,7 +882,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 
@@ -881,7 +895,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 

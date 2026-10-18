@@ -51,7 +51,7 @@ module internal LSeekRefusal =
                 | SeekExtension.SeekData -> "SEEK_DATA"
                 | SeekExtension.SeekHole -> "SEEK_HOLE"
 
-            $"whence %d{whence} is %s{named} on the simulated platform. This kernel models file contents as a byte array with no notion of sparseness, so it cannot say where the data and holes are; and the two platforms transpose the numbers (3 is SEEK_DATA on Linux and SEEK_HOLE on Darwin), so the raw value does not name one operation."
+            $"whence %d{whence} is %s{named} on the simulated platform. This kernel keeps a file's sparseness as the pages a write has filled, but has not measured how coarsely each filesystem reports its holes, so it cannot say where a real one would put the data and holes; and the two platforms transpose the numbers (3 is SEEK_DATA on Linux and SEEK_HOLE on Darwin), so the raw value does not name one operation."
         | LSeekRefusal.DirectoryEnd inode ->
             $"inode %O{inode} is a directory on an NFS mount, and was asked to seek relative to its end. An NFS directory's size is whatever the server's own filesystem reports, which nothing in this machine determines, so this kernel cannot say where the end is. SEEK_SET and SEEK_CUR on a directory are portable and are supported, as is SEEK_END on a tmpfs or APFS directory."
         | LSeekRefusal.DirectoryPosition inode ->
@@ -956,7 +956,7 @@ module UnixDescriptor =
             | SeekWhence.Current -> Ok SeekEndBasis.NotConsulted
             | SeekWhence.End ->
                 match entry.Content with
-                | InodeContent.RegularFile (contents, _) -> Ok (SeekEndBasis.Size (int64 contents.Length))
+                | InodeContent.RegularFile (contents, _) -> Ok (SeekEndBasis.Size (FileContents.length contents))
                 | InodeContent.CharacterDevice _ ->
                     failwith
                         $"UnixDescriptor.lseek: fd %d{fd} names inode %O{inode}, which is a character device, through a description of a regular file. A description of a device is OpenFileTarget.CharacterDevice, and UnixSystem.checkInvariants reports this one as DescriptionKindMismatch (this is a bug in this library)."

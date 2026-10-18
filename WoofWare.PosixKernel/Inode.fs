@@ -186,7 +186,7 @@ type CharacterDevice =
 /// </remarks>
 [<RequireQualifiedAccess>]
 type InodeContent =
-    | RegularFile of contents : ImmutableArray<byte> * permissions : PermissionBits
+    | RegularFile of contents : FileContents * permissions : PermissionBits
     | Directory of directory : DirectoryContent
     /// <summary>
     /// The link's target, unresolved, and the link's own permission bits.

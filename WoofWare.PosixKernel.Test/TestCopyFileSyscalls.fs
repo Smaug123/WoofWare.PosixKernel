@@ -128,7 +128,7 @@ module TestCopyFileSyscalls =
 
     let private contentsOf (system : UnixSystem<int, string>) (fileName : string) : byte[] =
         match (entryOf system fileName).Content with
-        | InodeContent.RegularFile (contents, _) -> contents |> Seq.toArray
+        | InodeContent.RegularFile (contents, _) -> contents |> FileContents.toImmutableArray |> Seq.toArray
         | other -> failwith $"/%s{fileName} is %A{other}"
 
     let private modeOf (system : UnixSystem<int, string>) (fileName : string) : int =

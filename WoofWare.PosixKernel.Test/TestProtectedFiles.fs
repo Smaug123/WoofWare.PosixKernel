@@ -522,9 +522,9 @@ module TestProtectedFiles =
         | Error (PathFailure.Errno UnixError.ENOENT) -> false
         | Error error -> failwith $"%s{p}: %O{error}"
 
-    let private contentsOf (p : string) (system : UnixSystem<int, string>) : int =
+    let private contentsOf (p : string) (system : UnixSystem<int, string>) : int64 =
         match VirtualFileSystem.tryGetContent (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
-        | Some (InodeContent.RegularFile (contents, _)) -> contents.Length
+        | Some (InodeContent.RegularFile (contents, _)) -> FileContents.length contents
         | other -> failwith $"%s{p} is not a regular file: %A{other}"
 
     /// The probe's directories outside the sticky one: `/t` holding a file and
@@ -1057,7 +1057,7 @@ module TestProtectedFiles =
                     system
             )
             "creat-trunc", creatTrunc
-            "truncated", (if contentsOf "/s/o" afterTrunc = 0 then "EEXIST" else "ok")
+            "truncated", (if contentsOf "/s/o" afterTrunc = 0L then "EEXIST" else "ok")
             "excl",
             fst (
                 openText

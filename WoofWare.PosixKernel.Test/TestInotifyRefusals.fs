@@ -32,7 +32,8 @@ module TestInotifyRefusals =
 
     let private contentsOf (path : string) (system : UnixSystem<int, string>) : string =
         match (inodeOf path system).Content with
-        | InodeContent.RegularFile (contents, _) -> System.Text.Encoding.ASCII.GetString (contents.AsSpan().ToArray ())
+        | InodeContent.RegularFile (contents, _) ->
+            System.Text.Encoding.ASCII.GetString (Seq.toArray (FileContents.toImmutableArray contents))
         | other -> failwith $"%s{path} is %A{other}"
 
     [<Test>]
