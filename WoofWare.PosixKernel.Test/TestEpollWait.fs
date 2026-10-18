@@ -106,6 +106,7 @@ module TestEpollWait =
                 (fun machine ->
                     { machine with
                         Sockets = Map.add socketId socket machine.Sockets
+                        DatagramReceivers = ForgedSocket.receivers socketId socket machine
                         NextSocketId = SocketId (raw + 1L)
                     }
                 )

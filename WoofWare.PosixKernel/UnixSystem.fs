@@ -4261,6 +4261,7 @@ module UnixSystem =
                     TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace flavour
                     TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax flavour
                     UdpReceiveSpace = UnixMachineState.defaultUdpReceiveSpace flavour
+                    UdpSendSpace = UnixMachineState.defaultUdpSendSpace flavour
                     LocalIpv4Addresses = defaultLocalIpv4Addresses
                     LocalRoutes = defaultLocalRoutes
                     BootTime = UnixTimestamp.epoch
