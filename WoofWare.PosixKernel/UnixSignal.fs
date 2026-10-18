@@ -354,10 +354,13 @@ module UnixSignal =
                     Target = ValueNone
                 }
 
-            match ProcessSignal.generate entry system with
+            match ProcessSignal.generate SignalSender.Kill entry system with
             | Error refusal -> Error (KillRefusal.Receiver refusal)
-            | Ok (Error refusal) -> Error (KillRefusal.ProcessEnd refusal)
-            | Ok (Ok fate) -> Ok (Ok fate)
+            | Ok (SignalSent.EndRefused refusal) -> Error (KillRefusal.ProcessEnd refusal)
+            | Ok SignalSent.QueueFull ->
+                failwith
+                    $"UnixSignal.kill: %O{signal} found the queue full, which only a signal sent by tgkill can (this is a bug in this library)."
+            | Ok (SignalSent.Fate fate) -> Ok (Ok fate)
 
     /// `kill`, with a refusal answered as the `Error` rather than raised.
     let internal tryKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -401,6 +404,15 @@ module UnixSignal =
     ///     the same pending set is not added again; a real-time one is. The
     ///     thread it is deliverable to, if any, owes that return at once, and
     ///     makes no other call before it.
+    ///
+    /// Under Linux a pending signal counts against the receiving process's
+    /// `RLIMIT_SIGPENDING` (`ProcessLaunch.withPendingSignalLimit`), which
+    /// bounds the signals queued for its real user in all that user's
+    /// processes. A signal sent by `kill` past the limit is pending all the
+    /// same if it is a standard one; a real-time one is lost if an instance of
+    /// it is pending in its set already, and is otherwise pending without the
+    /// information it was sent with, counting against nothing, until an
+    /// instance sent within the limit replaces it.
     ///
     /// Before any of that, under Darwin's numbering an ignored signal other
     /// than SIGCONT is discarded, whatever any mask says; under Linux's, an
@@ -826,10 +838,11 @@ module UnixSignal =
                     Target = ValueSome target
                 }
 
-            match ProcessSignal.generate entry system with
+            match ProcessSignal.generate SignalSender.ThreadKill entry system with
             | Error refusal -> Error (ThreadKillRefusal.Receiver refusal)
-            | Ok (Error refusal) -> Error (ThreadKillRefusal.ProcessEnd refusal)
-            | Ok (Ok fate) -> Ok (Ok fate)
+            | Ok (SignalSent.EndRefused refusal) -> Error (ThreadKillRefusal.ProcessEnd refusal)
+            | Ok SignalSent.QueueFull -> Ok (Error UnixError.EAGAIN)
+            | Ok (SignalSent.Fate fate) -> Ok (Ok fate)
 
     /// `pthreadKill`, with a refusal answered as the `Error` rather than raised.
     let internal tryPthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -862,6 +875,11 @@ module UnixSignal =
     /// signal is `EINVAL`. So, under Linux's numbering, are 32 and 33, which
     /// the C library keeps for its own threads and will not send this way,
     /// though `kill(2)` sends them.
+    ///
+    /// Under Linux, past the receiving user's `RLIMIT_SIGPENDING` (see `kill`),
+    /// a real-time signal is `EAGAIN`, and nothing is sent; a standard one is
+    /// pending without the information it was sent with, counting against
+    /// nothing.
     ///
     /// Fails loudly if `target` is not one of the process's threads, which is a
     /// bug in the client.

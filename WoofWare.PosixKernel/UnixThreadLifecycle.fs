@@ -557,6 +557,20 @@ type internal SignalEffect<'Thread, 'Handler when 'Thread : comparison and 'Hand
     /// The signal kills the process, which ends as `termination` says, as it
     /// stood before the signal.
     | Kills of termination : ProcessTermination
+    /// Nothing happened: a real-time signal sent by `tgkill(2)` past the
+    /// receiving user's `RLIMIT_SIGPENDING`, which fails with `EAGAIN`.
+    | QueueFull
+
+/// What generating a signal for a process came to, as
+/// `ProcessSignal.generate` answers it.
+[<RequireQualifiedAccess>]
+type internal SignalSent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// The process runs on or stops, or the signal ended it.
+    | Fate of ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>
+    /// The signal kills the process, and its end is refused.
+    | EndRefused of ProcessEndRefusal
+    /// `SignalEffect.QueueFull`.
+    | QueueFull
 
 /// A signal the kernel generates for a process, as `kill(2)`, `pthread_kill(3)`
 /// and a write that raises `SIGPIPE` do, and what it does to the process at once.
@@ -576,7 +590,12 @@ module internal ProcessSignal =
     /// What generating `entry` for `system`'s process does to it at once, as
     /// `SignalState.generate` decides: the process runs on, with the signal
     /// pending, coalesced or discarded; it stops (`KillOutcome.ProcessStopped`),
-    /// with the signals the generation left; or the signal kills it.
+    /// with the signals the generation left; the signal kills it; or, a
+    /// real-time signal sent by `tgkill(2)` past the limit, nothing happens.
+    ///
+    /// Under Linux the signal is counted against the process's
+    /// `RLIMIT_SIGPENDING` as `sender` sent it: the instances queued for the
+    /// process's real user, in it and in every other process on the machine.
     ///
     /// A signal left pending where its receiver does not block it is
     /// deliverable to that receiver, which then owes a return to user mode
@@ -586,6 +605,7 @@ module internal ProcessSignal =
     /// Fails loudly for an init process (`isInit`), which the caller refuses
     /// first.
     let effect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (sender : SignalSender)
         (entry : PendingSignal<'Thread>)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SignalEffect<'Thread, 'Handler>, SignalReceiverRefusal>
@@ -611,10 +631,24 @@ module internal ProcessSignal =
                     | ParkState.Asleep -> false
             )
 
+        let queue =
+            match system.Process.PendingSignalLimit with
+            | ValueNone -> QueueAccount.Unbounded
+            | ValueSome limit ->
+                let user = system.Process.Credentials.RealUser
+
+                let elsewhere =
+                    system.Others
+                    |> Map.toSeq
+                    |> Seq.sumBy (fun (_, slot) -> SignalState.chargedTo user slot.Process.Signals)
+
+                QueueAccount.Limited (user, elsewhere, limit, sender)
+
         let generation =
             SignalState.generate
                 (UnixSystemState.signalNumbering system)
                 system.Process.CoreDumps
+                queue
                 system.Leader
                 leaderRunning
                 (system.Threads |> Map.keys |> Set.ofSeq)
@@ -642,24 +676,27 @@ module internal ProcessSignal =
             Ok (SignalEffect.Applied (KillOutcome.ProcessStopped signal, UnixSystemState.withSignals signals system))
         | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
             Ok (SignalEffect.Kills (ProcessTermination.Signaled (signal, coreDumped)))
+        | Ok SignalGeneration.QueueFull -> Ok SignalEffect.QueueFull
 
-    /// Generate `entry` for `system`'s process, and apply what it does at once
-    /// (`effect`): the process runs on or stops, or the signal kills it and
-    /// the process ends as it stood before the signal
-    /// (`UnixThreadLifecycle.tryEndProcess`), or that end is refused (the inner
-    /// `Error`).
+    /// Generate `entry`, sent as `sender` sent it, for `system`'s process, and
+    /// apply what it does at once (`effect`): the process runs on or stops, or
+    /// the signal kills it and the process ends as it stood before the signal
+    /// (`UnixThreadLifecycle.tryEndProcess`), or that end is refused, or the
+    /// receiving user's queue is full.
     ///
     /// Fails loudly for an init process (`isInit`), which the caller refuses
     /// first.
     let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (sender : SignalSender)
         (entry : PendingSignal<'Thread>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, ProcessEndRefusal>, SignalReceiverRefusal>
+        : Result<SignalSent<'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        match effect entry system with
+        match effect sender entry system with
         | Error refusal -> Error refusal
-        | Ok (SignalEffect.Applied (outcome, view)) -> Ok (Ok (ViewFate.Continues (outcome, view)))
+        | Ok (SignalEffect.Applied (outcome, view)) -> Ok (SignalSent.Fate (ViewFate.Continues (outcome, view)))
+        | Ok SignalEffect.QueueFull -> Ok SignalSent.QueueFull
         | Ok (SignalEffect.Kills termination) ->
             match UnixThreadLifecycle.tryEndProcess termination system with
-            | Ok (ended, dead) -> Ok (Ok (ViewFate.ProcessEnded (ended, dead)))
-            | Error refusal -> Ok (Error refusal)
+            | Ok (ended, dead) -> Ok (SignalSent.Fate (ViewFate.ProcessEnded (ended, dead)))
+            | Error refusal -> Ok (SignalSent.EndRefused refusal)

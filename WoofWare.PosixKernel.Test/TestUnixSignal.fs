@@ -202,6 +202,7 @@ module TestUnixSignal =
                             SignalState.generate
                                 (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
+                                (QueueAccounts.ofLone SignalSender.Kill system)
                                 0
                                 false
                                 (Set.singleton 0)

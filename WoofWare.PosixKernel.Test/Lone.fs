@@ -809,13 +809,18 @@ module internal Lone =
     /// process.
     [<RequireQualifiedAccess>]
     module ProcessSignal =
+        /// Fails the test on a full queue, which no caller expects.
         let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (sender : SignalSender)
             (entry : PendingSignal<'Thread>)
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, ProcessEndRefusal>, SignalReceiverRefusal>
             =
-            WoofWare.PosixKernel.ProcessSignal.generate entry (view system)
-            |> Result.map (Result.map (Shape.map unfocus Shape.fate))
+            match WoofWare.PosixKernel.ProcessSignal.generate sender entry (view system) with
+            | Error refusal -> Error refusal
+            | Ok (SignalSent.Fate fate) -> Ok (Ok (Shape.map unfocus Shape.fate fate))
+            | Ok (SignalSent.EndRefused refusal) -> Ok (Error refusal)
+            | Ok SignalSent.QueueFull -> failwith $"generating %O{entry} found the queue full"
 
     /// `WoofWare.PosixKernel.UnixThreadLifecycle`, made in the view of the
     /// only process.

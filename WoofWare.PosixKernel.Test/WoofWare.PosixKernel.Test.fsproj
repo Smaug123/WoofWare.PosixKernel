@@ -23,6 +23,7 @@
     <Compile Include="Configured.fs" />
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
+    <Compile Include="QueueAccounts.fs" />
     <Compile Include="Callers.fs" />
     <Compile Include="Stepped.fs" />
     <Compile Include="IlCalls.fs" />
@@ -191,6 +192,7 @@
     <Compile Include="TestSignalReceiver.fs" />
     <Compile Include="TestKillTargetsMeasured.fs" />
     <Compile Include="TestProcessSignalPair.fs" />
+    <Compile Include="TestPendingSignalLimit.fs" />
     <Compile Include="SignalFuzz.fs" />
     <Compile Include="TestSignalFuzz.fs" />
     <Compile Include="TestDirectoryEnumeration.fs" />
@@ -356,6 +358,9 @@
     <!-- docs/probes/process-signal-pair. `TestProcessSignalPair` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\process-signal-pair\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.process-signal-pair.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\process-signal-pair\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.process-signal-pair.darwin.txt" />
+    <!-- docs/probes/rt-queue-limit. `TestPendingSignalLimit` replays its Linux rows. -->
+    <EmbeddedResource Include="..\docs\probes\rt-queue-limit\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.rt-queue-limit.linux-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rt-queue-limit\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.rt-queue-limit.linux-uid1000.txt" />
     <!-- docs/probes/disposition-before-return. `TestDispositionBeforeReturn` replays every held row. -->
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.darwin.txt" />

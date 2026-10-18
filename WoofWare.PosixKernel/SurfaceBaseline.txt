@@ -3607,6 +3607,7 @@ WoofWare.PosixKernel.ProcessLaunch.withCoreDumps [static method]: WoofWare.Posix
 WoofWare.PosixKernel.ProcessLaunch.withCredentials [static method]: WoofWare.PosixKernel.Credentials -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withCurrentDirectory [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withEnvironment [static method]: string -> WoofWare.PosixKernel.UnixByteString list -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
+WoofWare.PosixKernel.ProcessLaunch.withPendingSignalLimit [static method]: System.UInt64 -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withProcessPath [static method]: string -> WoofWare.PosixKernel.AbsoluteUnixPath option -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withUmask [static method]: WoofWare.PosixKernel.PermissionBits -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch`1 inherit obj, implements 'Thread WoofWare.PosixKernel.ProcessLaunch System.IEquatable, System.Collections.IStructuralEquatable
@@ -8383,6 +8384,7 @@ WoofWare.PosixKernel.UnixSystem.defaultGroupId [static method]: WoofWare.PosixKe
 WoofWare.PosixKernel.UnixSystem.defaultInotifyLimits [static property]: [read-only] WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.defaultLocalIpv4Addresses [static property]: [read-only] WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.defaultLocalRoutes [static property]: [read-only] WoofWare.PosixKernel.Ipv4Prefix list
+WoofWare.PosixKernel.UnixSystem.defaultPendingSignalLimit [static property]: [read-only] System.UInt64
 WoofWare.PosixKernel.UnixSystem.defaultPidMax [static property]: [read-only] int
 WoofWare.PosixKernel.UnixSystem.defaultProcessId [static property]: [read-only] WoofWare.PosixKernel.ProcessId
 WoofWare.PosixKernel.UnixSystem.defaultProcessorCount [static field]: int = 1
@@ -8406,6 +8408,7 @@ WoofWare.PosixKernel.UnixSystem.get_defaultEntropySeed [static method]: unit -> 
 WoofWare.PosixKernel.UnixSystem.get_defaultInotifyLimits [static method]: unit -> WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalIpv4Addresses [static method]: unit -> WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalRoutes [static method]: unit -> WoofWare.PosixKernel.Ipv4Prefix list
+WoofWare.PosixKernel.UnixSystem.get_defaultPendingSignalLimit [static method]: unit -> System.UInt64
 WoofWare.PosixKernel.UnixSystem.get_defaultPidMax [static method]: unit -> int
 WoofWare.PosixKernel.UnixSystem.get_defaultProcessId [static method]: unit -> WoofWare.PosixKernel.ProcessId
 WoofWare.PosixKernel.UnixSystem.get_defaultProcessPath [static method]: unit -> WoofWare.PosixKernel.AbsoluteUnixPath option
