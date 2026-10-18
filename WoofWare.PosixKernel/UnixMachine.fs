@@ -852,8 +852,8 @@ module UnixMachineState =
         match phase with
         | SocketPhase.Listening _ -> PortHolderKind.Listener
         | SocketPhase.Refused _ -> PortHolderKind.Refused
-        | SocketPhase.Idle
-        | SocketPhase.DatagramPeer _ -> PortHolderKind.Idle
+        | SocketPhase.Idle -> PortHolderKind.Idle
+        | SocketPhase.DatagramPeer _ -> PortHolderKind.DatagramPeer
         | SocketPhase.Established _
         | SocketPhase.EstablishedPendingReport _ -> PortHolderKind.ConnectionEnd
         // Linux hashes a connect in flight by its four-tuple, as it does an
