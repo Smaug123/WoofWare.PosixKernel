@@ -11,22 +11,24 @@ This plan assumes that change has landed, and does not repeat it.
 Today `UnixSignal.kill` answers only a signal to the caller's own process, and refuses every other positive pid (`KillRefusal.OtherProcess`).
 This plan makes it answer a signal to another process the system holds, wherever the answer is measured.
 
-Five things have to change, and each has a decision for Patrick in §3:
+Six things have to change, and each has a decision for Patrick in §3:
 
-1. **The answer.** A kill can now end a process other than the caller's. `ProcessFate.ProcessEnded` means the caller ended, and `KillOutcome` has no case for another process. (Decision A.)
-2. **The rule that a call changes only its own process.** A kill must write the target's signal state, mark the target's threads as owing a return, and may remove the target. (Decision B.)
-3. **Sessions.** On Linux, `SIGCONT` is allowed within a session even where the uid rule refuses everything else, and the model has no sessions. (Decision C.)
-4. **Where the signal lands, and who takes it.** (Decision D.)
-5. **Stops.** A stop of another process leaves a stopped process that the caller can go on talking to, and the model holds no stopped state. (Decision E.)
+1. **When a fatal signal ends its target.** A self-kill ends the process inside the `kill` call. A kill from outside does not: the target's threads exit as each next runs, and `kill` can return first. (Decision T.)
+2. **The answer.** If the target can end inside the call, `kill` must say so, and `ProcessFate.ProcessEnded` means the caller ended. (Decision A, which T decides.)
+3. **The rule that a call changes only its own process.** A kill must write the target's signal state and mark the target's threads as owing a return. (Decision B.)
+4. **Sessions.** On Linux, `SIGCONT` is allowed within a session even where the uid rule refuses everything else, and the model has no sessions. (Decision C.)
+5. **Where the signal lands, and who takes it.** (Decision D.)
+6. **Stops.** A stop of another process leaves a stopped process that the caller can go on talking to, and the model holds no stopped state. (Decision E.)
 
 Recommended, in short:
-- a kill-specific answer type that says which process was signalled and what became of it (A2);
+- a fatal signal from outside marks its target as exiting; every thread of the target then owes a return to user mode, and the target ends at the first of those returns the client makes (T2a);
+- so `kill`'s answer type does not change, since the target's end is reported where a process's end already is: by the return to user mode that ends it (A0);
 - kill's body running over the whole kernel through one new entry point, with every other call machine-checked to leave other processes alone (B2);
 - `SIGCONT` refused where only a session could permit it (C1);
 - the signal generated into the target exactly as a self-kill generates it, with the target's sleeping threads woken by the existing pull sweep (D1);
 - a stop of another process refused (E1).
 
-The work is six stages after a probe stage (§5).
+The work is four stages after a probe stage (§5), or five under T1.
 Signal 0 comes first, because it needs permission and existence checks but changes nothing.
 Then come signals that leave the target running, then signals that end it.
 
@@ -48,7 +50,7 @@ Patrick asked for kernel semantics to be explained concretely, so this section s
    Signal 0 is checked too, which is how `kill(pid, 0)` tests for permission.
 4. If `sig` is 0, it stops there and answers 0.
 5. It *generates* the signal: it puts it in the target process's shared pending set, or discards it at once if it is ignored. It then picks a thread to wake (`complete_signal`). It prefers the thread the pid named, which for a pid is the leader, if that thread "wants" the signal: the thread does not block it, and is either running or has no signal pending yet. Otherwise it walks the other threads from a cursor (`signal->curr_target`).
-6. A fatal default (`SIGKILL`, or `SIGTERM` with no handler) takes effect at generation, if some thread could take it: every thread of the target is told to exit. A stop default (`SIGSTOP`, or `SIGTSTP` with no handler) takes effect when a thread next returns to user mode. `SIGTSTP`, `SIGTTIN` and `SIGTTOU` do nothing in an orphaned process group; `SIGSTOP` always stops.
+6. A fatal default (`SIGKILL`, or `SIGTERM` with no handler) is decided at generation, if some thread could take it: the process is marked as exiting (`SIGNAL_GROUP_EXIT`), and every thread of it is sent `SIGKILL` and woken, whatever it blocks. But each thread exits in its own context, as it next runs (`do_exit`), and the descriptors are closed only as the last thread drops the shared table (`exit_files`). So `kill` can return while the target still holds every descriptor. A stop default (`SIGSTOP`, or `SIGTSTP` with no handler) takes effect when a thread next returns to user mode. `SIGTSTP`, `SIGTTIN` and `SIGTTOU` do nothing in an orphaned process group; `SIGSTOP` always stops.
 
 The sender carries on. Nothing about the target flows back to it, except the errno.
 
@@ -58,6 +60,7 @@ XNU's `kill` (`bsd/kern/kern_sig.c`) checks the number first, so a bad number is
 It then finds the process (`ESRCH`) and checks permission (`cansignal`).
 `cansignal` has the same shape as Linux's rule, with root (`kauth_cred_issuser`) for `CAP_KILL`, and the same session exception for `SIGCONT`.
 Then it generates the signal, picking the receiving thread at once: the first-created thread that does not block it.
+A fatal signal is acted on by the target's own threads, as on Linux. Codex, reviewing this plan, observed on Darwin 27 that a non-blocking read of a pipe whose only writer was the target answered `EAGAIN` straight after `kill(target, SIGKILL)` in 100 runs of 100, and end of file only after `waitpid`. That observation is not committed; P1 measures it on both flavours.
 
 That is the shape from source. The policy is to answer only what has been measured; §2 says which parts are.
 
@@ -74,8 +77,10 @@ B has a handler for `SIGUSR1` installed with `SA_RESTART`, and its leader is asl
 In the model, steps 2 and 4 already exist for a `kill(getpid(), SIGUSR1)` made by one of B's own threads.
 The only new parts are step 1, and doing step 2 to a process other than the caller's.
 
-If the signal were `SIGTERM` and B had no handler, step 2 would end B: its threads go and its descriptors are closed.
-A's `kill` still returns 0, and A must be told that B has gone. That is Decision A.
+If the signal were `SIGTERM` and B had no handler, step 2 would mark B as exiting and wake every thread of it, and A's `kill` would return 0.
+B would end only as its threads ran: its descriptors would close when the last of them exited.
+Between the two, A can still see B holding everything it held.
+When the model says B ends, and how a client learns of it, are Decisions T and A.
 
 ## 2. The facts, and which are measured
 
@@ -101,6 +106,7 @@ A's `kill` still returns 0, and A must be told that B has gone. That is Decision
 | F15 | `kill(0)`, `kill(-pgid)`, `kill(-1)` | measured (the `group` and `all` rows), and needs process groups | measured (the `group` rows) |
 | F16 | `RLIMIT_SIGPENDING` counts real-time signals per real user of the receiver, across processes | measured (#107) | not applicable: Darwin has no real-time signals |
 | F17 | Job-control stops do nothing in an orphaned process group | unmeasured. `non-leader-unblock.c` calls `setpgid` to avoid exactly this, and says so in a comment | unmeasured |
+| F18 | Whether a fatal signal from outside has ended its target, and closed its descriptors, by the time `kill` returns; and what the target answers in between (`kill(target, 0)`, a second signal) | **unmeasured** | **unmeasured**, but observed once by the reviewer (not committed): still open after `SIGKILL`, 100 of 100 |
 
 ### Why a sender outside the target must be measured again
 
@@ -119,6 +125,7 @@ Each row runs in a fresh forked child that is in a process group of its own, und
 - *Interruption* (F10): the target's leader asleep in `accept`, `read` of a pipe, `poll` with and without a timeout, `sigsuspend`, `pause`, and on Linux a futex wait. Each is ended by a caught `SIGUSR1` from outside, with and without `SA_RESTART`. Does the call fail with EINTR or restart? A subset of the existing in-process rows is enough to confirm that they agree.
 - *Ignored and continue* (F13): `SIGUSR1` under `SIG_IGN`, `SIGWINCH` at its default, and `SIGCONT` at its default and caught, each to a target whose leader blocks it or does not. Is it pending afterwards (`sigpending`), and does a handler installed later run?
 - *Defaults that end* (F11): `SIGTERM`, `SIGKILL`, and `SIGQUIT` with `RLIMIT_CORE` 0 and infinite, to a target whose threads are asleep, spinning, or blocking the signal. The `waitpid` status. Whether a target that blocks `SIGTERM` in every thread survives with it pending. The order in which the target's descriptors are closed, as seen from the sender's end of a socket pair.
+- *The time between* (F18), observed before any `waitpid`, straight after `kill` returns and again after `sched_yield` and after a short sleep: a non-blocking read of a pipe whose only writer is the target (`EAGAIN` or end of file); a non-blocking read of the sender's end of a socket pair whose other end the target holds; `kill(target, 0)`; and a second `kill(target, SIGUSR1)`. On Linux, also with the sender and the target pinned to one CPU, and to two, so that the target cannot run in between, and then can (Darwin has no affinity call). This decides Decision T. A probe cannot see the target's threads exit one by one, so it can only bound the window, not say which thread's exit closed the descriptors.
 - *Stops* (F12), measured though not modelled under E1: `SIGSTOP` and `SIGTSTP` to a target, then `SIGCONT`. `waitpid` with `WUNTRACED | WCONTINUED`. What became of a target thread asleep in `read`.
 
 **P2: Linux senders holding uid 0 partly** (F3, F4). Senders (0, 1000, 1000), (1000, 0, 1000), (1000, 1000, 0), (0, 0, 1000), (0, 1000, 0) and (1000, 0, 0); targets (1001, 1001, 1001), (0, 0, 0), (1001, 0, 1001) and (0, 1001, 1001); signals 0 and `SIGUSR1`. This can be a section of P1. It decides whether "the sender's effective uid is 0" is the privilege test (`CAP_KILL` follows the effective uid), as it already is for `setresuid`.
@@ -136,10 +143,42 @@ Each row runs in a fresh forked child that is in a process group of its own, und
 
 Each decision has at least two options, with their blast radius, how reversible each is, what information each keeps for a client, and how each composes with `ProcessFate`, `Entry`/`Shape`, the wake memo, `checkInvariants`, the step oracle (`TestStepOracle`) and the multi-process fuzzer (`TestMultiProcessFuzz`).
 
+### Decision T: when a fatal signal from outside ends its target
+
+Today a signal whose default terminates the process ends it inside the call that generates it, wherever some thread could take it (chosen 2026-09-22, after Linux's `complete_signal`). For a self-kill, nothing outside the process can run in between, so the shortcut is invisible to the caller.
+From outside it is visible. The sender carries on after `kill` returns, and it can read a pipe the target still holds before the target's threads have run (§1, F18).
+
+**T1. End the target inside the `kill`**, as a self-kill does: its threads go and its descriptors are closed before `kill` answers.
+- Blast radius: the smallest in the library. But it needs Decision A to report another process's end in kill's answer.
+- Against: it answers what the reviewer's Darwin observation contradicts. A sender's non-blocking read of a pipe the target was the only writer of answers end of file at once, where Darwin answered `EAGAIN` until the target had been reaped. Unless P1 shows that one flavour does close everything before `kill` returns, T1 invents an answer.
+
+**T2. The target ends through its own threads.**
+The generation marks the target as exiting, with how it will end (`Signaled (signal, coreDumped)`), as Linux's `SIGNAL_GROUP_EXIT` does.
+Every thread of the target then owes a return to user mode, whatever it blocks. A sleeping one wakes on the next `UnixWait.wake`, and its call answers `Interrupted`.
+`kill` answers that the caller runs on. Until the client returns one of the target's threads to user mode, the target holds every descriptor it held, and `kill(target, 0)` finds it.
+- **T2a.** The first return to user mode the client makes for a thread of the exiting target ends the whole process there, through the existing path: `onReturnToUser` answers `ProcessFate.ProcessEnded`, closing the descriptors as `exitGroup` closes them. One step ends the process, as every end in the model does today.
+- **T2b.** Each thread's return is that thread's exit, and the last one ends the process and closes its descriptors, as Linux's `exit_files` does. This is closer to the kernel, but it brings a state the model refuses today: a leader that has gone while other threads live. And no probe can tell T2b from T2a (P1 can bound the window, not see the order in which threads exit).
+- What T2 needs that does not exist: an internal "exiting" mark on the process. `checkInvariants` checks that every thread of an exiting process owes a return or sleeps woken. `WakePrimitive.SignalDeliverable` holds for a thread of an exiting process. At the return, the exit comes first, ahead of the refusals that an interrupted call's return makes today (`DefaultAction`, `MixedRestartFlags`). Also a reader, such as `UnixSystem.exiting pid`, if a client needs to know before it returns a thread. P1's "time between" rows decide whether a second signal to an exiting target is discarded, and what `kill(target, 0)` answers.
+- Composes with the client's existing loop: a client already returns every thread that owes a return before running it, so the target's end arrives where a process's end from a signal already does.
+- The scheduling decision stands: the kernel does not choose when the target's threads run; the client does.
+
+**T3. Refuse a fatal signal to another process**, and answer only signals that leave the target running.
+- Blast radius: none. It is reversible, and it leaves `SIGKILL` and `SIGTERM` between processes unanswered, which are among the commonest kills there are.
+
+**Recommendation: T2a**, if P1 shows `kill` returning before the target has gone on Linux too. If P1 shows Linux closing everything before `kill` returns, the flavours diverge, and Linux takes T1 while Darwin takes T2a. That would bring back Decision A, which is why A1 and A2 are kept below.
+Self-kill keeps ending at generation. Whether it should follow T2 too, for a multithreaded process whose other threads an outside process could watch, is a follow-up question, not part of this plan.
+
 ### Decision A: how a kill says it ended or stopped another process
 
 The caller of a `kill` to another positive pid never ends or stops itself.
-So the caller's `ProcessFate` is always `Continues`, and the news is about the target.
+So the caller's `ProcessFate` is always `Continues`, and the news, if any, is about the target.
+
+**A0. No news in the answer.** Under T2 (or T3) and E1, no kill to another process ends or stops its target inside the call. A stop modelled later (E3) takes effect at the target's return to user mode too, as `ReturnToUserOutcome.ProcessStopped` already reports for a process's own threads. So `kill`'s type is unchanged, and a kill to another process answers `Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))`, where `ProcessRuns` is documented as "the calling process runs on".
+- Blast radius: none in the public API. Only the docstrings and the README change.
+- What a client gets: the target's end is reported once, by the return that ends it, through the channel every other signal death already uses.
+- Against: a client sees nothing in the answer that tells it the target is exiting. It finds out from `owesReturn` of the target's threads, or from the T2 reader.
+
+The options below are for T1, where the target can end inside the call.
 
 **A1. New cases on `KillOutcome`.**
 
@@ -203,7 +242,7 @@ How each composes:
 - The step oracle: `Syscall.Kill` is unchanged, and `SteppedCall.Kill` holds whatever `kill` answers.
 - A future `wait`: under A1 and A2, the `EndedProcess` in the answer is a notification, as `exitGroup`'s already is. When `wait` keeps zombies, an end also leaves one, and the answer's shape does not change.
 
-**Recommendation: A2.** It is the only option in which every answer means exactly one thing, and "hard to misuse" outranks a smaller diff. Reserve `Stopped` under E1, since stops will come with job control, and from 1.0 a new case is a major version.
+**Recommendation: A0, which follows from T2a.** If T1 is taken for either flavour, then A2: it is the only option in which every answer means exactly one thing, and "hard to misuse" outranks a smaller diff.
 
 ### Decision B: the rule that a call changes only its own process, and where kill's write happens
 
@@ -218,8 +257,13 @@ Inside `tryKillIn`, a helper `ProcessView.across target f view` does four things
 - Against: any body can call the helper, so a reader of an `Entry.call` site can no longer tell whether the call may touch another process.
 
 **B2. Kill's body runs over the whole kernel, and every other call is checked to leave other processes alone.**
-- A new `Entry.callKernel operation requirement caller body system` admits the caller as `Entry.call` does, then hands `body` the whole `UnixSystem`, with no view. The body focuses the caller to read its credentials and numbering, and the target to generate into it. It puts each back, using `ProcessView.unfocusWithout` for a target that ended.
-- `Entry.call`'s `Unfocus.Back` gains a check: every view in a per-process body's answer has `Others` as the very map the body was handed (`obj.ReferenceEquals`). Otherwise it fails loudly as a library bug. The check is always on. It costs one reference comparison per call, and allocates nothing, so it does not disturb `UnixScheduling.dispatch`, which bypasses `Entry.call` anyway.
+- A new `Entry.callKernel operation requirement caller body system` admits the caller as `Entry.call` does, then hands `body` the whole `UnixSystem`, with no view. The body focuses the caller to read its credentials and numbering, and the target to generate into it. It puts each back, using `ProcessView.unfocusWithout` for a target that ended (under T1 only).
+- Every way a per-process body's answer goes back into the kernel gains a check that the body left the other processes as it was handed them: each view in the answer has `Others` as the very map the body was handed (`obj.ReferenceEquals`). Otherwise it fails loudly, as a library bug. There are three such ways:
+  - `Unfocus.Back` in `Entry.call`, for a process that carries on;
+  - `Unfocus.Without` in `Entry.call`, for a process that ended (`exitGroup`, a fatal self-kill or `pthreadKill`, a write's `SIGPIPE`, a return to user mode);
+  - `Entry.resume`, for a call resumed after a copy-in pause (`writeWithBytes` and the rest). A paused value holds the view it paused in, so `Entry.resume` is handed that view's `Others` (or the paused view itself) to compare each answer view against.
+
+  The check is always on. It costs one reference comparison per view, and allocates nothing, so it does not disturb `UnixScheduling.dispatch`, which bypasses `Entry.call` anyway.
 - A future cross-process signal that does not come from `kill` goes through `callKernel` too, such as a parent's `SIGCHLD`, or `SIGIO` to an `F_SETOWN` owner. The exception stays visible at the entry point.
 - Blast radius: one new entry point and one assertion. `tryKill` moves from `Entry.call` to `Entry.callKernel`, and no other call changes.
 - The wake memo: `callKernel` must hand back the very kernel it was given when nothing changed, as `unfocusFrom` does. Otherwise a kill of signal 0, or of a discarded signal, would invalidate the memo for nothing. A kill that does change the target changes `Processes`, which the memo compares by reference, so the next `wake` sweeps, as it must.
@@ -227,23 +271,25 @@ Inside `tryKillIn`, a helper `ProcessView.across target f view` does four things
 **B3. The body returns a description, and `Entry` carries it out.**
 Kill's body reads `Others` to check existence and permission, and answers a description such as `SignalAnother (target, entry)`. After putting the caller's view back, `Entry` interprets it by generating `entry` in `target`.
 This follows the gospel's "compute a description, then do it".
-- Against: the generation can refuse (`SignalReceiverRefusal`, or `ProcessEndRefusal` for a target whose end is refused), and whether the target ended decides the answer. So the interpreter has to be able to turn an `Ok` into an `Error`, and to choose the answer's case. `Shape` maps views to kernels without changing the answer's structure, so it would need an effectful, fallible primitive, which is more machinery than kill alone justifies.
+- Against: the generation can refuse (`SignalReceiverRefusal`, or, under T1, `ProcessEndRefusal` for a target whose end is refused), and under T1 whether the target ended decides the answer. So the interpreter has to be able to turn an `Ok` into an `Error`, and to choose the answer's case. `Shape` maps views to kernels without changing the answer's structure, so it would need an effectful, fallible primitive, which is more machinery than kill alone justifies.
 
 **Recommendation: B2.** It turns the README's rule into one the machine checks for every call but one, and that one says so at its entry point.
 
 **The rule, restated** (README, "Several processes"):
 
 > Every call names its caller's process, and is made in that process: it can read and change that process's own state and the machine, and no other process's own state, except through a signal it sends.
-> A `kill` to another process can change that process's signal state, mark its threads as owing a return to user mode, and end it, removing it from the system.
+> A `kill` to another process can change that process's signal state, mark its threads as owing a return to user mode, and mark it as exiting, so that it ends at the first of those returns.
 > The system it answers holds every process but those two as it was.
 
+(Under T1, the second sentence ends "and end it, removing it from the system" instead.)
+
 **Tests that change:**
-- `TestMultiProcessFuzz`: `othersUnmoved` lets a kill step also change its target. The target's slot may differ only in `Process.Signals` and its threads' `Owes`, or the target may be gone with `Signaled` termination. A new `Op.KillOther` (stage 3 onwards) sends signal 0, `SIGUSR1` with or without a handler installed in the target, a fatal default, `SIGKILL`, and a signal the target blocks. On an end, the fuzzer drops the target's asleep and woken threads, as it does for `exitGroup`.
-- `TestProcessView`: a test that `Entry.call` fails loudly for a body that writes `Others`, mutation-checked.
+- `TestMultiProcessFuzz`: `othersUnmoved` lets a kill step also change its target. The target's slot may differ only in `Process.Signals`, its threads' `Owes`, and (T2) its exiting mark. A new `Op.KillOther` (stage 3 onwards) sends signal 0, `SIGUSR1` with or without a handler installed in the target, a fatal default, `SIGKILL`, and a signal the target blocks. Under T2, the fuzzer's next return of any of the target's threads ends the target, and the fuzzer drops the target's asleep and woken threads, as it does for `exitGroup`.
+- `TestProcessView`: a test for each of the three ways back into the kernel (`Back`, `Without`, `Entry.resume`), each failing loudly for a body that writes `Others`, and each mutation-checked.
 - `TestKillTargetsMeasured`: the `cred` rows, which today must be refused, become answers: `answer` and `handled` must match.
 - `TestStepOracle` and `Stepped.fs`: kill to another pid joins the generator.
-- `TestUnixSystemInvariants`: `checkInvariants` after cross-process kills. No new defect is needed: owed returns and pending signals are per process, and are checked already.
-- `TestReadme`, for "Signals", "Several processes" and the examples; `TestSurface`, for A2's types.
+- `TestUnixSystemInvariants`: `checkInvariants` after cross-process kills. Owed returns and pending signals are per process, and are checked already. T2 adds one defect: a thread of an exiting process that neither owes a return nor sleeps woken.
+- `TestReadme`, for "Signals", "Several processes" and the examples; `TestSurface`, for any new reader (T2) or for A2's types (T1).
 
 ### Decision C: sessions
 
@@ -286,7 +332,7 @@ This would keep "a call changes only its own process" literally true.
 
 ### Decision E: stops
 
-**E1. Refuse a stop of another process.** A signal whose effect on the target is to stop it is refused (`KillRefusal.OtherProcessStops`): `SIGSTOP`, or a job-control stop at its default. A2's `Stopped` stays reserved.
+**E1. Refuse a stop of another process.** A signal whose effect on the target is to stop it is refused (`KillRefusal.OtherProcessStops`): `SIGSTOP`, or a job-control stop at its default. (Under A2, its `Stopped` case stays reserved.)
 - Reversible. Information: none lost that the model could truthfully give.
 
 **E2. Report the stop and hold no state**, as the model already does for a self-stop (`KillOutcome.ProcessStopped`, "a client should refuse a stop rather than carry on").
@@ -321,7 +367,8 @@ P2 is cheap, so: **G1 in the stage that lands before P2, and replaced by whateve
 - **A stop of another process** (E1).
 - **`SIGCONT` that only a session could permit** (C1).
 - **Credentials outside the measured shapes**: a Linux sender with uid 0 in some but not all of its uids (G1); and on Darwin, any pair but the measured ones (F1).
-- **The target's own receiver refusals** (D1), and **`ProcessEndRefusal`** for a target whose end closes a descriptor whose close is refused, such as a lingering socket. These carry the target's pid in their message.
+- **The target's own receiver refusals** (D1), which carry the target's pid in their message.
+- **`ProcessEndRefusal`** for a target whose end closes a descriptor whose close is refused, such as a lingering socket. Under T2a this is refused where the end happens, at the return to user mode of the target's thread, as it already is for a process's own signal death. Under T1 it would be the `kill`'s refusal.
 - **Real-time signals past `RLIMIT_SIGPENDING`**, if #107's decision is a refusal. Whatever it decides, its count is per real user of the receiver, across processes, and a kill from outside must go through it.
 
 ### Not affected
@@ -331,7 +378,20 @@ P2 is cheap, so: **G1 in the stage that lands before P2, and replaced by whateve
 - No `SIGCHLD` is sent when a process ends, because a launched process has no parent on the machine. When `ProcessLaunch` can name one, an end generates `SIGCHLD` there, through B2's `callKernel`.
 - The model keeps process-wide credentials (#100 and #103 are deciding whether to). If credentials become per thread, Linux checks the sending thread's against the target leader's (`kill_ok_by_cred` takes the task the pid names). The permission check then reads those two, which is a one-line change here.
 
-## 4. API sketch, under the recommendations
+## 4. API sketch
+
+Under the recommendations (T2a, A0), no public type changes.
+`UnixSignal.kill` keeps its type, `Result<ProcessFate<KillOutcome>, UnixError>`. `KillOutcome.ProcessRuns` is documented as "the calling process runs on", and its docstring and the README say what a kill to another process does to the target.
+The one public addition, if a client needs it before it returns a thread, is a reader:
+
+```fsharp
+module UnixSystem =
+    /// How the process `pid` will end, if a fatal signal from another process has marked it as exiting:
+    /// it ends at the next return to user mode of any of its threads.
+    val exiting : pid : ProcessId -> UnixSystem<'Thread, 'Handler> -> ProcessTermination option
+```
+
+Under T1, the public answer would instead be A2's:
 
 ```fsharp
 type OtherProcessSignalled =
@@ -350,7 +410,7 @@ module UnixSignal =
 // SteppedCall.Kill of Result<KillAnswer<'Thread, 'Handler>, UnixError>
 ```
 
-Internal: `Entry.callKernel`; the assertion in `Entry.call`; `KillPermission.allowedUnder : SimulatedUnixFlavour -> sender : Credentials -> target : Credentials -> signal : Signal option -> Result<bool, KillPermissionRefusal>`, a pure rule beside the other `*Rules.fs` files, with the measured rows as its tests; and `KillRefusal` gains `OtherProcessStops`, `SessionUnknown` and `Permission of KillPermissionRefusal`, while `OtherProcess` goes.
+Internal, whichever is chosen: `Entry.callKernel`; the assertion on the three ways back into the kernel; under T2, the exiting mark on `UnixProcessState`; `KillPermission.allowedUnder : SimulatedUnixFlavour -> sender : Credentials -> target : Credentials -> signal : Signal option -> Result<bool, KillPermissionRefusal>`, a pure rule beside the other `*Rules.fs` files, with the measured rows as its tests; and `KillRefusal` gains `OtherProcessStops`, `SessionUnknown` and `Permission of KillPermissionRefusal`, while `OtherProcess` goes.
 
 ## 5. Stages
 
@@ -368,21 +428,22 @@ Implement this plan with each stage on its own branch, stacked as necessary on p
 - a row in the skill's `reference/flavour-divergence.md`.
 
 If P1 contradicts F8 to F10 from outside, stop and bring Decision D back before stage 4.
+If P1's "time between" rows show either flavour closing the target's descriptors before `kill` returns, stop and bring Decisions T and A back before stage 2.
 
 ### Stage 1: other processes, machine-checked
 
 **Dependencies:** none.
 
-**Implements:** B2's assertion in `Entry.call`, with no behaviour change.
+**Implements:** B2's assertion on all three ways back into the kernel (`Unfocus.Back`, `Unfocus.Without`, `Entry.resume`), with no behaviour change.
 
 **Correctness oracle:**
 - the whole suite is green, which shows no body writes `Others` today;
-- a new test hands `Entry.call` a body that rebuilds `Others`, and expects the loud failure. Mutation check: remove the assertion and watch the test go red;
+- three new tests, one for each way back, each hand `Entry` a body (or a resumption) that rebuilds `Others`, and expect the loud failure. Mutation check: remove each assertion in turn and watch its test go red;
 - `TestMultiProcessFuzz` and `TestProcessView` stay green unchanged.
 
-### Stage 2: kill's answer names its target
+### Stage 2 (under T1 only): kill's answer names its target
 
-**Dependencies:** none.
+**Dependencies:** none. Under T2a this stage does not exist.
 
 **Implements:** A2's public types. `kill` answers `KillAnswer.Own` for the caller's pid, and refuses or answers `ESRCH` for every other pid exactly as before, so nothing produces `Other` yet.
 
@@ -394,9 +455,9 @@ If P1 contradicts F8 to F10 from outside, stop and bring Decision D back before 
 
 ### Stage 3: signal 0 to another process
 
-**Dependencies:** stages 1 and 2; stage 0's P3 rows for Darwin; P2 for Linux, or G1 in its place.
+**Dependencies:** stage 1 (and stage 2 under T1); stage 0's P3 rows for Darwin; P2 for Linux, or G1 in its place.
 
-**Implements:** `Entry.callKernel`; `KillPermission`; checks in each flavour's order (Linux ESRCH, EINVAL, EPERM; Darwin EINVAL, ESRCH, EPERM); `KillAnswer.Other (Runs target, system)`, where `system` is the very kernel given; the refusals for credentials outside the measured shapes. Every nonzero signal to another process is still refused.
+**Implements:** `Entry.callKernel`; `KillPermission`; checks in each flavour's order (Linux ESRCH, EINVAL, EPERM; Darwin EINVAL, ESRCH, EPERM); the answer `Continues (ProcessRuns, system)` (under T1, `KillAnswer.Other (Runs target, system)`), where `system` is the very kernel given; the refusals for credentials outside the measured shapes. Every nonzero signal to another process is still refused.
 
 **Correctness oracle:**
 - every `sig=0` row of #105's `cred` section and of P2 and P3 is replayed as an answer;
@@ -422,17 +483,21 @@ Mutation checks: swap EINVAL and EPERM in Linux's order; drop the saved uid from
 
 ### Stage 5: signals that end the target
 
-**Dependencies:** stage 4.
+**Dependencies:** stage 4; Decision T settled by P1's "time between" rows.
 
-**Implements:** a fatal default (`SIGTERM`, `SIGKILL`, a core-dumping default under the target's `CoreDumps`) ends the target, whose descriptors are closed as `exitGroup` closes them, and answers `KillAnswer.Other (Ended ended, system)`. The target's `ProcessEndRefusal` surfaces as a refusal.
+**Implements, under T2a:** a fatal default from outside (`SIGTERM`, `SIGKILL`, a core-dumping default under the target's `CoreDumps`), where some thread of the target could take it, marks the target as exiting with its `Signaled` termination. Every thread of the target owes a return to user mode, whatever it blocks, and a sleeping one wakes and is interrupted. The first return the client makes for any of them ends the process there (`ProcessFate.ProcessEnded`), its descriptors closed as `exitGroup` closes them, and refused where that would be. The rest of what an exiting target answers until then (a second signal, `kill(target, 0)`) is as P1 measured. Plus `UnixSystem.exiting`, if Patrick wants the reader.
 
 **Correctness oracle:**
 - P1's ending rows are replayed: the status, the core flag, and that a target blocking `SIGTERM` in every thread survives with it pending;
-- a property: the system after a fatal kill of B equals the system after B's own `exitGroup`-shaped end with `Signaled` termination (`UnixThreadLifecycle.tryEndProcess`), so the close order and the peers' resets are the measured ones already held by the end tests;
-- the cross-process wake tests in `TestCrossProcess` gain a case: a client in A asleep on a socket whose peer B is killed wakes with a reset or end of file, as for B's `exitGroup`;
-- `TestMultiProcessFuzz`: fatal `KillOther` and `SIGKILL`, the target removed, and the fuzzer's asleep and woken sets pruned.
+- P1's "time between" rows are replayed: straight after the `kill`, the sender's non-blocking read of the target's pipe answers as P1 measured (`EAGAIN` while the target holds it), and end of file once the client has returned one of the target's threads;
+- a property: the system after a fatal kill of B, then the return of any thread of B, equals the system after B's own `exitGroup`-shaped end with that `Signaled` termination (`UnixThreadLifecycle.tryEndProcess`). So the close order and the peers' resets are the measured ones the end tests already hold;
+- a property: between the kill and that return, every thread of B owes a return or sleeps woken (the new `checkInvariants` rule), and no call by a thread of B can be made;
+- the cross-process wake tests in `TestCrossProcess` gain a case: a client in A asleep on a socket whose peer B is killed wakes with a reset or end of file once B's end has happened;
+- `TestMultiProcessFuzz`: fatal `KillOther` and `SIGKILL`; the target ends at the fuzzer's next return of one of its threads; its asleep and woken sets are pruned.
 
-Mutation checks: answer `Runs` for a fatal kill; skip closing the target's descriptors (caught by `checkInvariants`); end the caller instead of the target.
+Mutation checks: end the target inside the `kill` (the "time between" replay goes red); leave a thread that blocks `SIGTERM` owing nothing (the invariant goes red); end the caller instead of the target.
+
+**Under T1 instead:** the target ends inside the `kill`, which answers `KillAnswer.Other (Ended ended, system)`, and the target's `ProcessEndRefusal` is the kill's refusal. The first property becomes "the system after a fatal kill of B equals B's `exitGroup`-shaped end".
 
 ### Later, each its own plan
 
