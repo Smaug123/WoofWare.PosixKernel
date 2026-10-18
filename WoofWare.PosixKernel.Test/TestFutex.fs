@@ -411,25 +411,145 @@ module TestFutex =
         woken |> shouldEqual [ 1 ]
         finish pid 1 system |> fst |> shouldEqual (failed UnixError.ETIMEDOUT)
 
+    /// `KTIME_SEC_MAX`: from this many seconds, Linux saturates a timeout.
+    let private ktimeSecondsMax : int64 = 9223372036L
+
+    /// The reference: when a wait made at `now` with a relative timeout of
+    /// `s` seconds and `ns` nanoseconds times out. Linux saturates the timeout
+    /// from `KTIME_SEC_MAX` seconds, and its sum with the time now where that
+    /// overflows; a saturated wait never times out. Any other keeps its
+    /// instant, computed here without overflow.
+    let private referenceTimeout (now : int64) (s : int64) (ns : int64) : FutexTimeout =
+        if s >= ktimeSecondsMax then
+            FutexTimeout.Unbounded
+        else
+            let sum = bigint now + bigint s * bigint 1_000_000_000L + bigint ns
+
+            if sum > bigint Int64.MaxValue then
+                FutexTimeout.Unbounded
+            else
+                FutexTimeout.Until (int64 sum)
+
+    /// The timeout of the futex wait `thread` of `pid` is parked in.
+    let private parkedTimeout (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : FutexTimeout =
+        match UnixThreadTable.parkedFor thread (UnixSystem.threads pid system) with
+        | Some (ParkedSyscall.Futex wait) -> wait.FutexTimeout
+        | other -> failwith $"thread %d{thread} is parked in %A{other}, not a futex wait"
+
     [<Test>]
-    let ``a timeout too large for the clock saturates`` () : unit =
-        // The "huge" rows: each slept until a wake ended it. From
-        // `KTIME_SEC_MAX` (9223372036) seconds Linux saturates the timeout
-        // itself, and below it the sum.
-        for s, deadline in
+    let ``a timeout Linux saturates never times out, and every other keeps its instant`` () : unit =
+        // The "huge" rows and `docs/probes/huge-timeout`: every valid timeout
+        // too large for the clock slept until a wake ended it.
+        let sumBoundary = Int64.MaxValue - 9223372035_000_000_000L
+
+        for uptime, s, ns, expected in
             [
-                9223372035L, 9223372035_000_005_000L
-                9223372036L, Int64.MaxValue
-                Int64.MaxValue, Int64.MaxValue
+                5_000L, 9223372035L, 0L, FutexTimeout.Until 9223372035_000_005_000L
+                5_000L, 9223372035L, 999_999_999L, FutexTimeout.Until (9223372035_999_999_999L + 5_000L)
+                5_000L, 9223372036L, 0L, FutexTimeout.Unbounded
+                5_000L, Int64.MaxValue, 999_999_999L, FutexTimeout.Unbounded
+                sumBoundary, 9223372035L, 0L, FutexTimeout.Until Int64.MaxValue
+                sumBoundary + 1L, 9223372035L, 0L, FutexTimeout.Unbounded
+                Int64.MaxValue, 0L, 1L, FutexTimeout.Unbounded
             ] do
             let pid, system = boot 2
-            let system = UnixSystem.advanceClock 5_000L system
-            let system = parks pid 1 (seconds s 0L) system
-            UnixWait.deadlines system |> shouldEqual [ deadline ]
-            let count, system = wakeAt pid 0 address 1 system
-            count |> shouldEqual 1L
-            let _, system = sweep pid system
-            finish pid 1 system |> fst |> shouldEqual (completed 0L)
+            let system = UnixSystem.advanceClock uptime system
+            let system = parks pid 1 (seconds s ns) system
+            let row = $"%d{uptime} ns up, %d{s} s %d{ns} ns"
+            (row, parkedTimeout pid 1 system) |> shouldEqual (row, expected)
+
+            match expected with
+            | FutexTimeout.Until deadline -> (row, UnixWait.deadlines system) |> shouldEqual (row, [ deadline ])
+            | FutexTimeout.Untimed -> failwith "no row here is untimed"
+            | FutexTimeout.Unbounded ->
+                (row, UnixWait.deadlines system) |> shouldEqual (row, [])
+
+                // The clock's last instant does not end it; a wake does.
+                let system =
+                    UnixSystem.advanceClock (Int64.MaxValue - UnixSystem.nanosecondsSinceBoot system) system
+
+                (row, fst (sweep pid system)) |> shouldEqual (row, [])
+                let count, system = wakeAt pid 0 address 1 system
+                count |> shouldEqual 1L
+                let _, system = sweep pid system
+                (row, fst (finish pid 1 system)) |> shouldEqual (row, completed 0L)
+
+    /// Which of Linux's three cases a timeout falls in.
+    [<RequireQualifiedAccess>]
+    type private SaturationLabel =
+        | Kept
+        | TimeoutSaturates
+        | SumSaturates
+
+    [<Test>]
+    let ``a wait's timeout is the reference's, at any uptime`` () : unit =
+        let uptimeGen : Gen<int64> =
+            Gen.oneof
+                [
+                    Gen.choose64 (0L, 10_000_000_000L)
+                    Gen.choose64 (0L, Int64.MaxValue)
+                    Gen.choose64 (0L, 2_000_000_000L) |> Gen.map (fun d -> Int64.MaxValue - d)
+                ]
+
+        let caseGen : Gen<int64 * int64 * int64> =
+            gen {
+                let! uptime = uptimeGen
+                // Seconds where the sum with the uptime just fits or just
+                // overflows, as well as around `KTIME_SEC_MAX` and anywhere.
+                let edge = (Int64.MaxValue - uptime) / 1_000_000_000L
+
+                let! s =
+                    Gen.oneof
+                        [
+                            Gen.choose64 (0L, 100L)
+                            Gen.choose64 (max 0L (edge - 2L), edge + 2L)
+                            Gen.choose64 (ktimeSecondsMax - 3L, ktimeSecondsMax + 3L)
+                            Gen.choose64 (0L, Int64.MaxValue)
+                        ]
+
+                let! ns =
+                    Gen.oneof
+                        [
+                            Gen.constant 0L
+                            Gen.constant 999_999_999L
+                            Gen.choose64 (0L, 999_999_999L)
+                        ]
+
+                return uptime, s, ns
+            }
+
+        let property (cover : SaturationLabel -> unit) ((uptime, s, ns) : int64 * int64 * int64) : unit =
+            let expected = referenceTimeout uptime s ns
+
+            match expected with
+            | FutexTimeout.Until _ -> cover SaturationLabel.Kept
+            | FutexTimeout.Unbounded when s >= ktimeSecondsMax -> cover SaturationLabel.TimeoutSaturates
+            | FutexTimeout.Unbounded -> cover SaturationLabel.SumSaturates
+            | FutexTimeout.Untimed -> failwith "the reference made a timespec untimed"
+
+            let pid, system = boot 2
+            let system = UnixSystem.advanceClock uptime system
+            let system = parks pid 1 (seconds s ns) system
+            parkedTimeout pid 1 system |> shouldEqual expected
+
+            UnixWait.deadlines system
+            |> shouldEqual (
+                match expected with
+                | FutexTimeout.Until deadline -> [ deadline ]
+                | FutexTimeout.Untimed
+                | FutexTimeout.Unbounded -> []
+            )
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen caseGen) property
+
+        for label in
+            [
+                SaturationLabel.Kept
+                SaturationLabel.TimeoutSaturates
+                SaturationLabel.SumSaturates
+            ] do
+            coverage.Count label |> shouldBeGreaterThan 20
 
     [<Test>]
     let ``waiters wake first in, first out`` () : unit =
@@ -588,11 +708,16 @@ module TestFutex =
             finish pid 1 system |> fst |> shouldEqual (completed 0L)
 
     [<Test>]
-    let ``a wait whose waking signal has gone restarts through its caller, or is refused if timed`` () : unit =
+    let ``a wait whose waking signal has gone restarts through its caller, or is refused if it has a deadline``
+        ()
+        : unit
+        =
         // The "stop" rows: with no handler run, Linux restarts the wait,
         // reading its word again, and a timed one keeps its first deadline.
         // Here a handler's signal wakes the waiter, and the leader ignores the
-        // signal before the wait is finished, discarding it.
+        // signal before the wait is finished, discarding it. A wait Linux
+        // saturated keeps a deadline that never comes, which the call made
+        // again from the start has too.
         let woken (timeout : TimespecArgument) =
             let pid, system = boot 2
             let system = install pid (usr1 system) (handler true) system
@@ -602,17 +727,18 @@ module TestFutex =
             woken |> shouldEqual [ 1 ]
             pid, install pid (usr1 system) SignalDisposition.Ignore system
 
-        let pid, system = woken TimespecArgument.Null
-        let outcome, system = finish pid 1 system
-        outcome |> shouldEqual SyscallOutcome.Interrupted
+        for timeout in [ TimespecArgument.Null ; seconds Int64.MaxValue 0L ] do
+            let pid, system = woken timeout
+            let outcome, system = finish pid 1 system
+            outcome |> shouldEqual SyscallOutcome.Interrupted
 
-        match Interruptions.handled (Caller.make pid 1) system with
-        | Ok (InterruptedCall.Restarts, system) ->
-            // The word changed while the wait slept: the restart reads it.
-            waitOn pid 1 address 1u TimespecArgument.Null system
-            |> fst
-            |> shouldEqual (failed UnixError.EAGAIN)
-        | other -> failwith $"%A{other}"
+            match Interruptions.handled (Caller.make pid 1) system with
+            | Ok (InterruptedCall.Restarts, system) ->
+                // The word changed while the wait slept: the restart reads it.
+                waitOn pid 1 address 1u timeout system
+                |> fst
+                |> shouldEqual (failed UnixError.EAGAIN)
+            | other -> failwith $"%A{timeout}: %A{other}"
 
         let pid, system = woken (seconds 2L 0L)
 
@@ -812,7 +938,7 @@ module TestFutex =
     and private RefPark =
         {
             Address : int
-            Deadline : int64 option
+            Timeout : FutexTimeout
             Ordinal : int64
             Taken : bool
             Woken : bool
@@ -853,7 +979,10 @@ module TestFutex =
                     let! p = proc
                     let! t = thread
                     let! a = addr
-                    let! timeout = Gen.elements [ None ; None ; Some 0L ; Some 1_000L ; Some 10_000_000L ]
+
+                    let! timeout =
+                        Gen.elements [ None ; None ; Some 0L ; Some 1_000L ; Some 10_000_000L ; Some Int64.MaxValue ]
+
                     let! matches = Gen.frequency [ 5, Gen.constant true ; 1, Gen.constant false ]
                     return Op.Wait (p, t, a, timeout, matches)
                 }
@@ -916,7 +1045,10 @@ module TestFutex =
                 let park =
                     {
                         Address = a
-                        Deadline = timeout |> Option.map (fun t -> state.Clock + t)
+                        Timeout =
+                            match timeout with
+                            | None -> FutexTimeout.Untimed
+                            | Some ns -> referenceTimeout state.Clock (ns / 1_000_000_000L) (ns % 1_000_000_000L)
                         Ordinal = state.NextOrdinal
                         Taken = false
                         Woken = false
@@ -987,9 +1119,10 @@ module TestFutex =
             )
         | Op.Sweep ->
             let deadlinePassed (park : RefPark) : bool =
-                match park.Deadline with
-                | Some deadline -> state.Clock >= deadline
-                | None -> false
+                match park.Timeout with
+                | FutexTimeout.Until deadline -> state.Clock >= deadline
+                | FutexTimeout.Untimed
+                | FutexTimeout.Unbounded -> false
 
             let woken =
                 state.Threads
@@ -1026,9 +1159,10 @@ module TestFutex =
             match refThread state (p, t) with
             | RefThread.Parked park when park.Woken ->
                 let timedOut =
-                    match park.Deadline with
-                    | Some deadline -> state.Clock >= deadline
-                    | None -> false
+                    match park.Timeout with
+                    | FutexTimeout.Until deadline -> state.Clock >= deadline
+                    | FutexTimeout.Untimed
+                    | FutexTimeout.Unbounded -> false
 
                 if park.Taken then
                     Some (RefAnswer.Outcome "Completed 0", leavePark (p, t) state)
@@ -1036,10 +1170,11 @@ module TestFutex =
                     Some (RefAnswer.Outcome "Failed ETIMEDOUT", leavePark (p, t) state)
                 elif Set.contains (p, t) state.Pending then
                     let ending =
-                        match park.Deadline with
-                        | Some _ -> InterruptedCall.FailsWithEintr
-                        | None when Map.find p state.Restart -> InterruptedCall.Restarts
-                        | None -> InterruptedCall.FailsWithEintr
+                        match park.Timeout with
+                        | FutexTimeout.Until _
+                        | FutexTimeout.Unbounded -> InterruptedCall.FailsWithEintr
+                        | FutexTimeout.Untimed when Map.find p state.Restart -> InterruptedCall.Restarts
+                        | FutexTimeout.Untimed -> InterruptedCall.FailsWithEintr
 
                     Some (
                         RefAnswer.Outcome "Interrupted",
@@ -1198,7 +1333,7 @@ module TestFutex =
                                 | ParkState.Asleep -> false
                                 | ParkState.Woken _ -> true
 
-                            $"parked %d{List.findIndex ((=) wait.FutexAddress) addresses} %A{wait.FutexDeadline} taken=%b{wait.TakenByWake} woken=%b{woken}"
+                            $"parked %d{List.findIndex ((=) wait.FutexAddress) addresses} %A{wait.FutexTimeout} taken=%b{wait.TakenByWake} woken=%b{woken}"
                         | other -> $"parked in %s{UnionCaseName.ofValue other}"
                     | None, None -> "running"
                     | None, Some (OwedReturn.Interrupted _) -> "owes interrupted"
@@ -1219,7 +1354,7 @@ module TestFutex =
             | RefThread.Owes None -> "owes signal"
             | RefThread.Owes (Some _) -> "owes interrupted"
             | RefThread.Parked park ->
-                $"parked %d{park.Address} %A{park.Deadline} taken=%b{park.Taken} woken=%b{park.Woken}"
+                $"parked %d{park.Address} %A{park.Timeout} taken=%b{park.Taken} woken=%b{park.Woken}"
         )
 
     /// What a run of the reference reached, for coverage.
@@ -1232,6 +1367,8 @@ module TestFutex =
         | Restarted
         | WokeSeveral
         | WokeNone
+        /// A signal ended a wait whose timeout Linux saturates.
+        | UnboundedInterrupted
 
     [<Test>]
     let ``the kernel's futex queues are the reference's`` () : unit =
@@ -1273,11 +1410,18 @@ module TestFutex =
 
                             match refThread state (p, t) with
                             | RefThread.Parked {
-                                                   Deadline = Some deadline
+                                                   Timeout = FutexTimeout.Until deadline
                                                } when state.Clock >= deadline -> cover RunLabel.TakenAfterTimeout
                             | _ -> ()
                         | Op.Finish _, RefAnswer.Outcome "Failed ETIMEDOUT" -> cover RunLabel.TimedOut
-                        | Op.Finish _, RefAnswer.Outcome "Interrupted" -> cover RunLabel.Interrupted
+                        | Op.Finish (p, t), RefAnswer.Outcome "Interrupted" ->
+                            cover RunLabel.Interrupted
+
+                            match refThread state (p, t) with
+                            | RefThread.Parked {
+                                                   Timeout = FutexTimeout.Unbounded
+                                               } -> cover RunLabel.UnboundedInterrupted
+                            | _ -> ()
                         | Op.Return _, RefAnswer.Ended (Some InterruptedCall.Restarts) -> cover RunLabel.Restarted
                         | Op.Wake _, RefAnswer.Outcome "Completed 0" -> cover RunLabel.WokeNone
                         | Op.Wake _, RefAnswer.Outcome count when count <> "Completed 1" -> cover RunLabel.WokeSeveral
@@ -1309,5 +1453,6 @@ module TestFutex =
                 RunLabel.Restarted
                 RunLabel.WokeSeveral
                 RunLabel.WokeNone
+                RunLabel.UnboundedInterrupted
             ] do
             (label, coverage.Count label > 5) |> shouldEqual (label, true)

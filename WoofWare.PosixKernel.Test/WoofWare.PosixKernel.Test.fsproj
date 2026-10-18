@@ -306,6 +306,7 @@
     <Compile Include="TestShutdownAgainstHost.fs" />
     <Compile Include="TestKeventWriteData.fs" />
     <Compile Include="TestDarwinPoll.fs" />
+    <Compile Include="TestHugeTimeoutMeasured.fs" />
     <Compile Include="TestPollEntryCount.fs" />
     <Compile Include="TestKqueueTimerReserved.fs" />
     <Compile Include="TestPipeBuffer.fs" />
@@ -359,6 +360,9 @@
     <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.darwin.txt" />
+    <!-- docs/probes/huge-timeout. `TestHugeTimeoutMeasured` replays every row whose call the model makes. -->
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
