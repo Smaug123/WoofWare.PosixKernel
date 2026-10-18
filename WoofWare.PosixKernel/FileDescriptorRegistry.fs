@@ -1261,6 +1261,205 @@ type private OpenFileEntry =
         NameIdentity : OpenFileDescriptionId
     }
 
+/// The entries of the machine's open file table, and two indexes of them that
+/// a sleeping call's wake condition reads: how many live descriptions name
+/// each end of each pipe, and which descriptions hold a `flock` on each
+/// object. A real kernel keeps both beside the object: a pipe's count of
+/// readers and writers, an inode's list of locks.
+///
+/// The representation is private to this module, so every change to an
+/// entry goes through `add`, `remove` or `map`, which keep the indexes, and
+/// nothing else can change one.
+[<RequireQualifiedAccess>]
+module private OpenFileEntries =
+
+    /// How many live descriptions name each end of one pipe.
+    [<Struct>]
+    type PipeEndCounts =
+        {
+            Readers : int
+            Writers : int
+        }
+
+    type Entries =
+        private
+            {
+                All : Map<OpenFileDescriptionId, OpenFileEntry>
+                /// Keyed by the `PipeId`'s value, since a `Map` boxes a struct
+                /// key at every comparison. A pipe no live description names
+                /// has no key.
+                PipeEnds : Map<int64, PipeEndCounts>
+                /// The lock each live description holding one holds, by the
+                /// object it holds it on (`OpenFileDescription.object`), keyed
+                /// by the description's identity's value. An object no
+                /// description holds a lock on has no key.
+                Flocks : Map<OpenFileObject, Map<int64, FlockMode>>
+            }
+
+    let empty : Entries =
+        {
+            All = Map.empty
+            PipeEnds = Map.empty
+            Flocks = Map.empty
+        }
+
+    /// Every entry, by its description's identity.
+    let all (entries : Entries) : Map<OpenFileDescriptionId, OpenFileEntry> = entries.All
+
+    let tryFind (id : OpenFileDescriptionId) (entries : Entries) : OpenFileEntry option = Map.tryFind id entries.All
+
+    /// `entries`'s indexes with `entry`, of the description `id`, counted in
+    /// them (`step` 1) or no longer counted (`step` -1).
+    let private count (step : int) (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
+        let pipeEnds =
+            match entry.Description.Target with
+            | OpenFileTarget.Pipe (PipeId pipe, pipeEnd) ->
+                let before =
+                    Map.tryFind pipe entries.PipeEnds
+                    |> Option.defaultValue
+                        {
+                            Readers = 0
+                            Writers = 0
+                        }
+
+                let after =
+                    match pipeEnd with
+                    | PipeEnd.Read ->
+                        { before with
+                            Readers = before.Readers + step
+                        }
+                    | PipeEnd.Write ->
+                        { before with
+                            Writers = before.Writers + step
+                        }
+
+                if after.Readers < 0 || after.Writers < 0 then
+                    failwith
+                        $"OpenFileEntries: pipe %d{pipe} would be named by %d{after.Readers} read ends and %d{after.Writers} write ends, after a description of it that was never counted left the table (this is a bug in this library)."
+
+                if after.Readers = 0 && after.Writers = 0 then
+                    Map.remove pipe entries.PipeEnds
+                else
+                    Map.add pipe after entries.PipeEnds
+            | OpenFileTarget.File _
+            | OpenFileTarget.Directory _
+            | OpenFileTarget.CharacterDevice _
+            | OpenFileTarget.Fifo _
+            | OpenFileTarget.Socket _
+            | OpenFileTarget.Kqueue _
+            | OpenFileTarget.Inotify _
+            | OpenFileTarget.Epoll _ -> entries.PipeEnds
+
+        let flocks =
+            match entry.Description.Flock with
+            | None -> entries.Flocks
+            | Some mode ->
+                let object = OpenFileDescription.object id entry.Description
+                let (OpenFileDescriptionId raw) = id
+                let held = Map.tryFind object entries.Flocks |> Option.defaultValue Map.empty
+
+                let held =
+                    if step > 0 then
+                        Map.add raw mode held
+                    else
+                        Map.remove raw held
+
+                if Map.isEmpty held then
+                    Map.remove object entries.Flocks
+                else
+                    Map.add object held entries.Flocks
+
+        {
+            All = entries.All
+            PipeEnds = pipeEnds
+            Flocks = flocks
+        }
+
+    /// `entries` with `entry` as the description `id`'s, in place of any it had.
+    let add (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
+        let uncounted =
+            match Map.tryFind id entries.All with
+            | Some before -> count -1 id before entries
+            | None -> entries
+
+        { count 1 id entry uncounted with
+            All = Map.add id entry entries.All
+        }
+
+    /// `entries` without the description `id`'s, if it has one.
+    let remove (id : OpenFileDescriptionId) (entries : Entries) : Entries =
+        match Map.tryFind id entries.All with
+        | None -> entries
+        | Some before ->
+            { count -1 id before entries with
+                All = Map.remove id entries.All
+            }
+
+    /// Whether `before` and `after`, entries of the description `id`, are
+    /// counted alike in the indexes: onto the same pipe end or none, and
+    /// holding the same lock on the same object or none.
+    let private indexedAlike (id : OpenFileDescriptionId) (before : OpenFileEntry) (after : OpenFileEntry) : bool =
+        LanguagePrimitives.PhysicalEquality before after
+        || (match before.Description.Target, after.Description.Target with
+            | OpenFileTarget.Pipe (PipeId first, firstEnd), OpenFileTarget.Pipe (PipeId second, secondEnd) ->
+                first = second && firstEnd = secondEnd
+            | OpenFileTarget.Pipe _, _
+            | _, OpenFileTarget.Pipe _ -> false
+            | _, _ -> true)
+           && before.Description.Flock = after.Description.Flock
+           && (before.Description.Flock.IsNone
+               || OpenFileDescription.object id before.Description = OpenFileDescription.object id after.Description)
+
+    /// `entries` with each description's entry rewritten by `f`, in time
+    /// linear in the number of entries and logarithmic in it for each entry
+    /// `f` counts differently in the indexes.
+    let map (f : OpenFileDescriptionId -> OpenFileEntry -> OpenFileEntry) (entries : Entries) : Entries =
+        // Map.map keeps the map's shape, which adding each entry again would
+        // not: a rename rewrites every description onto an inode.
+        let recounted =
+            ResizeArray<struct (OpenFileDescriptionId * OpenFileEntry * OpenFileEntry)> ()
+
+        let all =
+            entries.All
+            |> Map.map (fun id entry ->
+                let rewritten = f id entry
+
+                if not (indexedAlike id entry rewritten) then
+                    recounted.Add (struct (id, entry, rewritten))
+
+                rewritten
+            )
+
+        ({ entries with
+            All = all
+         },
+         recounted)
+        ||> Seq.fold (fun entries (struct (id, before, after)) -> count 1 id after (count -1 id before entries))
+
+    /// Entries of exactly the descriptions in `all`.
+    let ofMap (all : Map<OpenFileDescriptionId, OpenFileEntry>) : Entries =
+        (empty, all) ||> Map.fold (fun entries id entry -> add id entry entries)
+
+    /// Whether a live description names the `pipeEnd` end of `pipe`.
+    let describesPipeEnd (PipeId pipe) (pipeEnd : PipeEnd) (entries : Entries) : bool =
+        match Map.tryFind pipe entries.PipeEnds with
+        | None -> false
+        | Some counts ->
+            match pipeEnd with
+            | PipeEnd.Read -> counts.Readers > 0
+            | PipeEnd.Write -> counts.Writers > 0
+
+    /// The `flock` each live description holding one on `object` holds, by
+    /// the value of the description's identity.
+    let flocksOn (object : OpenFileObject) (entries : Entries) : Map<int64, FlockMode> =
+        Map.tryFind object entries.Flocks |> Option.defaultValue Map.empty
+
+    /// Whether the indexes are those of the entries, as `ofMap` would build
+    /// them afresh.
+    let indexesFresh (entries : Entries) : bool =
+        let fresh = ofMap entries.All
+        fresh.PipeEnds = entries.PipeEnds && fresh.Flocks = entries.Flocks
+
 /// The machine's open file descriptions, POSIX's "open file description" and
 /// Linux's `struct file`: what every descriptor in every process names, by
 /// identity, and which identity the next one gets.
@@ -1280,7 +1479,7 @@ type private OpenFileEntry =
 type OpenFileTable =
     private
         {
-            Entries : Map<OpenFileDescriptionId, OpenFileEntry>
+            Entries : OpenFileEntries.Entries
             /// The identity the next description will be given. Stored and
             /// monotonic rather than derived as one past the highest live id,
             /// which would reuse the identity of a closed description. Nothing
@@ -1524,6 +1723,10 @@ type internal FileDescriptorRegistryDefect =
     /// through a name hold one name until it is unlinked, and a rename moves
     /// every record of it.
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
+    /// The table's count of the descriptions naming each end of each pipe, or
+    /// its record of the `flock`s held on each object, is not what its
+    /// descriptions say.
+    | StaleIndex
 
 [<RequireQualifiedAccess>]
 module internal FileDescriptorRegistryDefect =
@@ -1537,7 +1740,7 @@ module OpenFileTable =
     /// A machine with no open file description, whose first gets identity 0.
     let internal empty : OpenFileTable =
         {
-            Entries = Map.empty
+            Entries = OpenFileEntries.empty
             NextId = OpenFileDescriptionId 0L
         }
 
@@ -1546,11 +1749,12 @@ module OpenFileTable =
     /// Builds the map afresh, in time and space linear in the number of live
     /// descriptions; a caller that wants one description wants `tryFind`.
     let descriptions (table : OpenFileTable) : Map<OpenFileDescriptionId, OpenFileDescription> =
-        table.Entries |> Map.map (fun _ entry -> entry.Description)
+        OpenFileEntries.all table.Entries |> Map.map (fun _ entry -> entry.Description)
 
     /// The description `id` names, if it is live.
     let tryFind (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescription option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Description)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Description)
 
     /// The description `id` names and the name it was opened through
     /// (`openedThrough`), if it is live: one lookup, so the two agree.
@@ -1559,13 +1763,15 @@ module OpenFileTable =
         (table : OpenFileTable)
         : (OpenFileDescription * ReachedThrough option) option
         =
-        Map.tryFind id table.Entries
+        OpenFileEntries.tryFind id table.Entries
         |> Option.map (fun entry -> entry.Description, entry.OpenedThrough)
 
     /// Every live description and its identity, in identity order, for a walk
     /// that would otherwise build `descriptions` only to read it once.
     let internal toSeq (table : OpenFileTable) : (OpenFileDescriptionId * OpenFileDescription) seq =
-        table.Entries |> Map.toSeq |> Seq.map (fun (id, entry) -> id, entry.Description)
+        OpenFileEntries.all table.Entries
+        |> Map.toSeq
+        |> Seq.map (fun (id, entry) -> id, entry.Description)
 
     /// The live description `id` names. Loudly partial: `operation`, named in
     /// the message, holds an identity it resolved moments ago.
@@ -1580,13 +1786,20 @@ module OpenFileTable =
     /// table on the machine, if it is live. Zero for a description only a call
     /// in flight holds.
     let descriptorCount (id : OpenFileDescriptionId) (table : OpenFileTable) : int option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Descriptors)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Descriptors)
 
     /// How many holds syscalls in flight have on the description `id`, in every
     /// process on the machine, if it is live: one for each time a park names it
     /// (`ParkedSyscall.descriptions`).
     let holdCount (id : OpenFileDescriptionId) (table : OpenFileTable) : int option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Holds)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Holds)
+
+    /// Whether a live description names the `pipeEnd` end of the pipe
+    /// `pipeId`, in time logarithmic in the number of pipes.
+    let internal describesPipeEnd (pipeId : PipeId) (pipeEnd : PipeEnd) (table : OpenFileTable) : bool =
+        OpenFileEntries.describesPipeEnd pipeId pipeEnd table.Entries
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
@@ -1612,7 +1825,7 @@ module OpenFileTable =
     /// exactly for a description onto an inode (`namesInode`). Loudly partial
     /// on a description that is not live.
     let internal openedThrough (id : OpenFileDescriptionId) (table : OpenFileTable) : ReachedThrough option =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | Some entry -> entry.OpenedThrough
         | None ->
             failwith
@@ -1624,7 +1837,7 @@ module OpenFileTable =
     /// after an unlink is another, though it has the same directory and the
     /// same text (measured, `inotify-self-probe.c` row N relinked).
     let internal nameHeldElsewhere (destroyed : DestroyedDescription) (table : OpenFileTable) : bool =
-        table.Entries
+        OpenFileEntries.all table.Entries
         |> Map.exists (fun _ entry ->
             entry.NameIdentity = destroyed.NameIdentity
             && entry.OpenedThrough = destroyed.OpenedThrough
@@ -1649,7 +1862,7 @@ module OpenFileTable =
                 false
             )
 
-        table.Entries
+        OpenFileEntries.all table.Entries
         |> Map.exists (fun _ entry ->
             entry.OpenedThrough = Some through
             && inodeOf entry.Description.Target = Some inode
@@ -1661,7 +1874,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : (OpenFileDescriptionId * OpenFileDescription * ReachedThrough) seq
         =
-        table.Entries
+        OpenFileEntries.all table.Entries
         |> Map.toSeq
         |> Seq.choose (fun (id, entry) ->
             entry.OpenedThrough
@@ -1691,7 +1904,7 @@ module OpenFileTable =
         let nameIdentity =
             match openedThrough, inodeOf description.Target with
             | Some (ReachedThrough.Name (_, false) as through), Some inode ->
-                table.Entries
+                OpenFileEntries.all table.Entries
                 |> Map.tryPick (fun _ entry ->
                     if
                         entry.OpenedThrough = Some through
@@ -1707,7 +1920,7 @@ module OpenFileTable =
         id,
         {
             Entries =
-                Map.add
+                OpenFileEntries.add
                     id
                     {
                         Description = description
@@ -1744,7 +1957,7 @@ module OpenFileTable =
         { table with
             Entries =
                 table.Entries
-                |> Map.map (fun _ entry ->
+                |> OpenFileEntries.map (fun _ entry ->
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some through, Some inode ->
                         { entry with
@@ -1770,13 +1983,13 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | None ->
             failwith
                 $"OpenFileTable.%s{operation}: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
         | Some entry ->
             { table with
-                Entries = Map.add id (f entry) table.Entries
+                Entries = OpenFileEntries.add id (f entry) table.Entries
             }
 
     /// Rewrite the live description `id`. `operation` names the caller for the
@@ -1893,8 +2106,8 @@ module OpenFileTable =
         // names a live description, never this one
         // (`KqueueRegistrationThroughClosedDescriptor`).
         let entries =
-            Map.remove id table.Entries
-            |> Map.map (fun _ entry ->
+            OpenFileEntries.remove id table.Entries
+            |> OpenFileEntries.map (fun _ entry ->
                 match entry.Description.Target with
                 | OpenFileTarget.Epoll epollState ->
                     { entry with
@@ -1938,7 +2151,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable * DestroyedDescription option
         =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | None -> table, None
         | Some entry ->
             if entry.Descriptors > 0 || entry.Holds > 0 then
@@ -1982,18 +2195,12 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        table.Entries
-        |> Map.exists (fun otherId (other : OpenFileEntry) ->
-            otherId <> requester
-            // Identity, not the whole description: two descriptions on one
-            // file contend however far apart their offsets are.
-            && OpenFileDescription.object otherId other.Description = object
-            && (
-                match other.Description.Flock with
-                | None -> false
-                | Some held -> locksConflict mode held
-            )
-        )
+        // By identity, not the whole description: two descriptions on one
+        // file contend however far apart their offsets are.
+        let (OpenFileDescriptionId requester) = requester
+
+        OpenFileEntries.flocksOn object table.Entries
+        |> Map.exists (fun other held -> other <> requester && locksConflict mode held)
 
     /// `flock(2)` on the open file description directly, for a caller that holds
     /// one rather than a descriptor.
@@ -2323,7 +2530,7 @@ module OpenFileTable =
         =
         let entries =
             table.Entries
-            |> Map.map (fun _ entry ->
+            |> OpenFileEntries.map (fun _ entry ->
                 match entry.Description.Target with
                 | OpenFileTarget.Kqueue _
                 | OpenFileTarget.File _
@@ -2571,7 +2778,7 @@ module OpenFileTable =
             |> Map.ofList
 
         let counts =
-            table.Entries
+            OpenFileEntries.all table.Entries
             |> Map.toList
             |> List.choose (fun (id, entry) ->
                 let actual = Map.tryFind id naming |> Option.defaultValue 0
@@ -2804,7 +3011,7 @@ module OpenFileTable =
             )
 
         let openedThrough =
-            table.Entries
+            OpenFileEntries.all table.Entries
             |> Map.toList
             |> List.choose (fun (id, entry) ->
                 if namesInode entry.Description.Target = entry.OpenedThrough.IsSome then
@@ -2815,7 +3022,7 @@ module OpenFileTable =
 
         let namesShared =
             let named =
-                table.Entries
+                OpenFileEntries.all table.Entries
                 |> Map.toList
                 |> List.choose (fun (id, entry) ->
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
@@ -2853,7 +3060,14 @@ module OpenFileTable =
                 | OpenFileTarget.Inotify state -> inotifyDefects instance description.AccessMode state
             )
 
+        let staleIndex =
+            if OpenFileEntries.indexesFresh table.Entries then
+                []
+            else
+                [ FileDescriptorRegistryDefect.StaleIndex ]
+
         counts
+        @ staleIndex
         @ freshness
         @ negativeOffsets
         @ writableDirectories
@@ -4024,6 +4238,7 @@ module FileDescriptorRegistry =
                                     NameIdentity = id
                                 }
                             )
+                            |> OpenFileEntries.ofMap
                         NextId = nextId
                     }
             }
@@ -4051,9 +4266,9 @@ module FileDescriptorRegistry =
                 OpenFiles =
                     { registry.OpenFiles with
                         Entries =
-                            Map.add
+                            OpenFileEntries.add
                                 id
-                                { Map.find id registry.OpenFiles.Entries with
+                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
                                     OpenedThrough = through
                                 }
                                 registry.OpenFiles.Entries
@@ -4072,9 +4287,9 @@ module FileDescriptorRegistry =
                 OpenFiles =
                     { registry.OpenFiles with
                         Entries =
-                            Map.add
+                            OpenFileEntries.add
                                 id
-                                { Map.find id registry.OpenFiles.Entries with
+                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
                                     Descriptors = count
                                 }
                                 registry.OpenFiles.Entries

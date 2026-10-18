@@ -285,32 +285,59 @@ module UnixWait =
 
     /// The sleeping threads `system` wakes now, in the order they parked, each
     /// with the primitives of its wake condition which hold: what `wake`
-    /// answers, before it records the wakes.
-    let private wakesAmong<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// answers, before it records the wakes. And the earliest deadline any
+    /// sleeping thread's call waits for (`deadlines`), which a system whose
+    /// sweep woke nobody remembers.
+    let private sweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
-        : (Caller<'Thread> * Set<WakePrimitive>) list
+        : (Caller<'Thread> * Set<WakePrimitive>) list * int64 voption
         =
         let machine = system.Machine
-        let parks = parks "UnixWait.wake" system
 
-        let satisfied =
-            parks
-            |> List.choose (fun (caller, slot, park) ->
-                match park.State with
-                | ParkState.Woken _ -> None
-                | ParkState.Asleep ->
-                    let thread = Caller.thread caller
+        // One pass over the parks, in which each sleeping thread's condition is
+        // made once and asked of the view from its own process, which is made
+        // once for all the process's threads.
+        let struct (satisfied, earliest) =
+            (struct ([], ValueNone), system.Processes)
+            ||> Map.fold (fun acc key slot ->
+                let pid = ProcessId.parseOrFail "UnixWait.wake" key
+                let view = lazy (ProcessView.ofSlot pid slot system)
 
-                    let fired =
-                        ProcessView.ofSlot (Caller.processId caller) slot system
-                        |> WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall)
+                (acc, slot.Threads)
+                ||> Map.fold (fun (struct (satisfied, earliest) as acc) thread state ->
+                    match state.Parked with
+                    | None -> acc
+                    | Some park ->
 
-                    if Set.isEmpty fired then
-                        None
-                    else
-                        Some (park.Ordinal, caller, fired)
+                    match park.State with
+                    | ParkState.Woken _ -> acc
+                    | ParkState.Asleep ->
+                        let condition = WakeCondition.ofPark park.Syscall
+
+                        let earliest =
+                            (earliest, WakeCondition.deadlines condition)
+                            ||> List.fold (fun earliest deadline ->
+                                match earliest with
+                                | ValueSome sooner when sooner <= deadline -> earliest
+                                | ValueSome _
+                                | ValueNone -> ValueSome deadline
+                            )
+
+                        let fired = WakeCondition.satisfied thread condition view.Value
+
+                        if Set.isEmpty fired then
+                            struct (satisfied, earliest)
+                        else
+                            struct ((park.Ordinal, Caller.make pid thread, fired) :: satisfied, earliest)
+                )
             )
-            |> List.sortBy (fun (ordinal, _, _) -> ordinal)
+
+        match satisfied with
+        | [] -> [], earliest
+        | satisfied ->
+
+        let satisfied = satisfied |> List.sortBy (fun (ordinal, _, _) -> ordinal)
+        let parks = parks "UnixWait.wake" system
 
         // Measured on Linux 6.18.5 (`epoll-wait.c`, section F): `epoll_wait`
         // queues its waiters exclusively at the *front* of the epoll instance's wait
@@ -421,7 +448,8 @@ module UnixWait =
                 | None -> true
             )
         )
-        |> List.map (fun (_, caller, fired) -> caller, fired)
+        |> List.map (fun (_, caller, fired) -> caller, fired),
+        earliest
 
     /// Every deadline the sleeping threads' calls are waiting for, in
     /// nanoseconds since boot, with a repeat for each park that waits for it. A
@@ -442,16 +470,13 @@ module UnixWait =
         )
 
     /// `system`, whose sweep woke no thread, remembering that sweep: what it
-    /// read, and the earliest deadline a sleeping thread waits for.
+    /// read, and `earliest`, the earliest deadline a sleeping thread waits
+    /// for.
     let private remembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (earliest : int64 voption)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let earliest =
-            match deadlines system with
-            | [] -> ValueNone
-            | deadlines -> ValueSome (List.min deadlines)
-
         let remembered : RememberedSweep<'Thread, 'Handler> =
             {
                 Machine = system.Machine
@@ -532,9 +557,9 @@ module UnixWait =
             let hits = System.Threading.Interlocked.Increment &remembered.HitsSinceSweep - 1
 
             if WakeMemo.crossChecks hits then
-                match wakesAmong system with
-                | [] -> ()
-                | woken ->
+                match sweep system with
+                | [], _ -> ()
+                | woken, _ ->
                     failwith
                         $"UnixWait.wake: the system's memo says it wakes no thread, but a sweep wakes %A{woken}, at answer %d{hits} since the memo's sweep (this is a bug in this library)."
 #endif
@@ -542,9 +567,9 @@ module UnixWait =
         | ValueSome _
         | ValueNone ->
 
-        match wakesAmong system with
-        | [] -> [], remembering system
-        | woken ->
+        match sweep system with
+        | [], earliest -> [], remembering earliest system
+        | woken, _ ->
             let processes =
                 (system.Processes, woken)
                 ||> List.fold (fun processes (caller, fired) ->

@@ -302,6 +302,8 @@
     <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeMemo.fs" />
+    <Compile Include="TestWakeSweepCost.fs" />
+    <Compile Include="TestOpenFileIndex.fs" />
     <Compile Include="TestUnixWaitFinish.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
     <Compile Include="TestTimeWait.fs" />
