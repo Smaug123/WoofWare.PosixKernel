@@ -624,8 +624,12 @@ module UnixKqueue =
         : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         if List.length changes > max nchanges 0 then
-            failwith
-                $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixKqueue.kevent"
+                    (RefusalKind.Contradictory "changes")
+                    $"%d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
+            )
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -789,6 +793,7 @@ module UnixKqueue =
     /// The caller's thread must not already be parked. Under the Linux flavour
     /// every call is refused: Linux has no kqueue.
     /// </summary>
+    /// <exception cref="T:System.ArgumentException">`changes` holds more changes than `nchanges`, or any for an `nchanges` of zero or less: the copy-in reads at most `nchanges`.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

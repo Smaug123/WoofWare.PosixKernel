@@ -75,6 +75,36 @@ module TestUnixSignal =
         | other -> failwith $"unexpected answer: %O{other}"
 
     [<Test>]
+    let ``sigreturn of a frame that is not the thread's innermost is the client's mistake`` () : unit =
+        for flavour in flavours do
+            let refused (frame : HandlerFrameId) (system : UnixSystem<int, string>) : unit =
+                let exn =
+                    Assert.Throws<ArgumentException> (fun () ->
+                        UnixSignal.sigreturn (Callers.leader system) frame system
+                        |> ignore<UnixSystem<int, string>>
+                    )
+
+                exn.ParamName |> shouldEqual "frame"
+
+            let none = systemOn flavour
+            refused (HandlerFrameId 0L) none
+
+            let twice =
+                none
+                |> HandlerFrames.enterIn "outer" 0 Set.empty
+                |> HandlerFrames.enterIn "inner" 0 Set.empty
+
+            match SignalState.framesOf 0 (Lone.proc twice).Signals with
+            | [ inner ; outer ] ->
+                refused outer.Id twice
+
+                UnixSignal.sigreturn (Callers.leader twice) inner.Id twice
+                |> fun system -> SignalState.framesOf 0 (Lone.proc system).Signals
+                |> List.map (fun frame -> frame.Id)
+                |> shouldEqual [ outer.Id ]
+            | frames -> failwith $"expected two frames, got %A{frames}"
+
+    [<Test>]
     let ``a death by a signal that dumps core carries the core flag exactly when the process writes dumps`` () : unit =
         // SIGQUIT dumps core on both flavours; SIGTERM on neither.
         for flavour in flavours do

@@ -1041,7 +1041,7 @@ module TestKqueue =
         exn.Message |> shouldContainText "is not parked"
 
         let exn =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.ArgumentException> (fun () ->
                 UnixKqueue.tryKevent
                     (Callers.thread 1 system)
                     fd
@@ -1055,6 +1055,7 @@ module TestKqueue =
             )
 
         exn.Message |> shouldContainText "at most nchanges"
+        exn.ParamName |> shouldEqual "changes"
 
     [<Test>]
     let ``checkInvariants rejects a kevent park no call could have made`` () : unit =

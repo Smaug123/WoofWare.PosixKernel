@@ -1526,3 +1526,19 @@ module TestSigsuspend =
                 refusal
                 |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (main, Signal.SIGCONT))
             | other -> failwith $"%A{disposition}: sigprocmask answered %A{other}"
+
+    [<Test>]
+    let ``Darwin: rt_sigsuspend is not a system call there`` () : unit =
+        let darwin = boot SimulatedUnixFlavour.Darwin
+
+        Assert.Throws<PlatformNotSupportedException> (fun () ->
+            UnixSignal.rtSigsuspend (Callers.thread main darwin) SignalMask.Empty 8UL darwin
+            |> ignore<SigsuspendOutcome * UnixSystem<int, string>>
+        )
+        |> ignore
+
+        Assert.Throws<PlatformNotSupportedException> (fun () ->
+            UnixSystem.step (Callers.thread main darwin) (Syscall.RtSigSuspend (SignalMask.Empty, 8UL)) darwin
+            |> ignore<SteppedCall<int, string>>
+        )
+        |> ignore

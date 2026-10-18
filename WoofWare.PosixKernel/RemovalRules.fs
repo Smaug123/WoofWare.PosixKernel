@@ -1,28 +1,8 @@
 namespace WoofWare.PosixKernel
 
-/// Why this kernel will not say what a sticky directory's rule does to an
-/// `unlink(2)`, `rmdir(2)` or `rename(2)`: Darwin's answer for this caller has
-/// not been measured.
-///
-/// Each case carries the sticky directory, the entry the call would remove or
-/// replace, and how the caller stands towards that entry, which it owns
-/// neither of.
-[<RequireQualifiedAccess>]
-type internal StickyRefusal =
-    /// A privileged caller, on Darwin. Whether Darwin's sticky rule exempts
-    /// root has not been measured: that needs root and a second user.
-    | DarwinPrivilegedCaller of directory : InodeNumber * entry : InodeNumber * standing : Standing
-    /// A `rename(2)` on Darwin in which a directory displaces the directory
-    /// `entry`. Darwin consults the displaced directory's own write bit there
-    /// rather than its parent's, and whether it consults the parent's sticky
-    /// bit at all has not been measured.
-    | DarwinDirectoryDisplacingDirectory of directory : InodeNumber * entry : InodeNumber * standing : Standing
-
 /// Why this kernel will not answer an `unlink(2)` or an `rmdir(2)`.
 [<RequireQualifiedAccess>]
 type internal RemovalRefusal =
-    /// Darwin's sticky rule has not been measured for this caller.
-    | Sticky of StickyRefusal
     /// This kernel will not resolve the path.
     | Path of PathRefusal
     /// The call would remove `name` from `directory`, on the device
@@ -36,29 +16,11 @@ type internal RemovalRefusal =
     | MountPoint of mountRoot : InodeNumber
 
 [<RequireQualifiedAccess>]
-module internal StickyRefusal =
-    /// What this kernel knows about why it will not answer. A client adds which
-    /// entry point asked, and with which paths.
-    let describe (refusal : StickyRefusal) : string =
-        match refusal with
-        | StickyRefusal.DarwinPrivilegedCaller (directory, entry, standing) ->
-            $"inode %O{directory} is a sticky directory, and the caller, standing %A{standing} towards its entry %O{entry}, owns neither of them but is privileged. Whether Darwin's sticky rule exempts a privileged caller has not been measured (it needs root and a second user)."
-        | StickyRefusal.DarwinDirectoryDisplacingDirectory (directory, entry, standing) ->
-            $"a directory would displace the directory %O{entry} in the sticky directory %O{directory}, and the caller, standing %A{standing} towards %O{entry}, owns neither of them. Darwin consults the displaced directory's own write bit there rather than its parent's, and whether it consults the sticky bit at all has not been measured."
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : StickyRefusal) : RefusalKind =
-        match refusal with
-        | StickyRefusal.DarwinPrivilegedCaller _ -> RefusalKind.Unmodelled
-        | StickyRefusal.DarwinDirectoryDisplacingDirectory _ -> RefusalKind.Unmodelled
-
-[<RequireQualifiedAccess>]
 module internal RemovalRefusal =
     /// What this kernel knows about why it will not answer. A client adds which
     /// entry point asked, and with which path.
     let describe (refusal : RemovalRefusal) : string =
         match refusal with
-        | RemovalRefusal.Sticky refusal -> StickyRefusal.describe refusal
         | RemovalRefusal.Path refusal -> PathRefusal.describe refusal
         | RemovalRefusal.MountPoint mountRoot ->
             $"the path names inode %O{mountRoot}, the root of a mounted filesystem, in a sticky directory. Whether the sticky rule lets the caller remove the name depends on the covered directory's owner, which this kernel does not hold."
@@ -68,7 +30,6 @@ module internal RemovalRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : RemovalRefusal) : RefusalKind =
         match refusal with
-        | RemovalRefusal.Sticky inner -> StickyRefusal.kind inner
         | RemovalRefusal.Path inner -> PathRefusal.kind inner
         | RemovalRefusal.DeviceFileSystem _ -> RefusalKind.Unmodelled
         | RemovalRefusal.MountPoint _ -> RefusalKind.Unmodelled
@@ -246,21 +207,24 @@ module private RemovalChecks =
 
     /// Whether Darwin's sticky rule refuses this caller removing, renaming or
     /// replacing `name`, which is bound to `target`. Darwin refuses with EACCES,
-    /// at the position of the write check (the two cannot be told apart). What
-    /// it does for root has not been measured, so that is a refusal.
+    /// at the position of the write check (the two cannot be told apart), and
+    /// exempts a privileged caller.
     let darwinStickyRefuses
         (credentials : Credentials)
         (directory : InodeNumber)
         (name : DirectoryEntryName)
         (target : InodeNumber)
         (vfs : VirtualFileSystem)
-        : Result<bool, StickyRefusal>
+        : bool
         =
+        // Measured as root by `docs/probes/darwin-root/root-files.c` (STICKY):
+        // root unlinks, removes and renames uid 504's entries out of uid 502's
+        // sticky directory, at 01777 and at 01555, and replaces them with its
+        // own.
         match sticky credentials directory name target vfs with
-        | StickyRemoval.Unrestricted -> Ok false
-        | StickyRemoval.Forbidden -> Ok true
-        | StickyRemoval.ForbiddenButPrivileged ->
-            Error (StickyRefusal.DarwinPrivilegedCaller (directory, target, standingTowards credentials target vfs))
+        | StickyRemoval.Unrestricted
+        | StickyRemoval.ForbiddenButPrivileged -> false
+        | StickyRemoval.Forbidden -> true
 
     /// <summary>
     /// Whether the inode a name is bound to is a directory.
@@ -382,8 +346,7 @@ module internal UnlinkRules =
     ///    of, and Darwin spends EACCES on it where Linux spends EPERM — so it is
     ///    indistinguishable from the write check, and below the directory arm
     ///    as that is: `unlink` of root's directory in root's writable sticky
-    ///    directory is EPERM. Whether it exempts a privileged caller has not
-    ///    been measured, and such a caller is refused.
+    ///    directory is EPERM. It exempts a privileged caller.
     ///
     /// EPERM is privilege-independent — measured at uid 0, where `unlink("d")`
     /// is still EPERM and `rmdir("d")` succeeds. The `unlink(2)` man page's "and
@@ -402,51 +365,46 @@ module internal UnlinkRules =
         (credentials : Credentials)
         (resolution : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<UnlinkVerdict, StickyRefusal>
+        : UnlinkVerdict
         =
         match resolution.Target with
         | ResolvedTarget.Directory (inode, reachedBy) ->
             match reachedBy with
-            | FinalNavigation.Root -> Ok (UnlinkVerdict.Refuse UnixError.EISDIR)
+            | FinalNavigation.Root -> UnlinkVerdict.Refuse UnixError.EISDIR
             | FinalNavigation.Current
             | FinalNavigation.Parent ->
                 if inode = VirtualFileSystem.root vfs then
-                    Ok (UnlinkVerdict.Refuse UnixError.EBUSY)
+                    UnlinkVerdict.Refuse UnixError.EBUSY
                 else
-                    Ok (UnlinkVerdict.Refuse UnixError.EPERM)
+                    UnlinkVerdict.Refuse UnixError.EPERM
         | ResolvedTarget.Entry (directory, name, existing) ->
 
         match existing with
-        | None -> Ok (UnlinkVerdict.Refuse UnixError.ENOENT)
+        | None -> UnlinkVerdict.Refuse UnixError.ENOENT
         | Some target ->
 
         if RemovalChecks.isDirectory target vfs then
-            Ok (UnlinkVerdict.Refuse UnixError.EPERM)
-        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
-            Ok (UnlinkVerdict.Refuse UnixError.EACCES)
+            UnlinkVerdict.Refuse UnixError.EPERM
+        elif
+            RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs
+            || RemovalChecks.darwinStickyRefuses credentials directory name target vfs
+        then
+            UnlinkVerdict.Refuse UnixError.EACCES
         else
-
-        match RemovalChecks.darwinStickyRefuses credentials directory name target vfs with
-        | Error refusal -> Error refusal
-        | Ok true -> Ok (UnlinkVerdict.Refuse UnixError.EACCES)
-        | Ok false -> Ok (UnlinkVerdict.Remove (directory, name))
+            UnlinkVerdict.Remove (directory, name)
 
     /// <summary>
     /// Decide what <c>unlink(2)</c> does, given how its input path resolved.
     /// </summary>
-    /// <remarks>
-    /// Refused where Darwin's sticky rule has not been measured for this caller;
-    /// see <c>StickyRefusal</c>.
-    /// </remarks>
     let verdict
         (flavour : SimulatedUnixFlavour)
         (credentials : Credentials)
         (resolution : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<UnlinkVerdict, StickyRefusal>
+        : UnlinkVerdict
         =
         match flavour with
-        | SimulatedUnixFlavour.Linux -> Ok (linuxVerdict credentials resolution vfs)
+        | SimulatedUnixFlavour.Linux -> linuxVerdict credentials resolution vfs
         | SimulatedUnixFlavour.Darwin -> darwinVerdict credentials resolution vfs
 
 // The ordering half lives in `RmDirRules.linuxVerdict` and
@@ -650,7 +608,7 @@ module internal RmDirRules =
     ///    of, with EACCES, as `unlink`'s does on this flavour: below ENOTDIR
     ///    (`rmdir` of root's file in root's sticky directory is ENOTDIR) and
     ///    above ENOTEMPTY (of root's non-empty directory there, EACCES). A
-    ///    privileged caller is refused, as `unlink` refuses one.
+    ///    privileged caller is exempt, as it is from `unlink`'s.
     ///  * A directory that still holds an entry is ENOTEMPTY, and the write
     ///    check beats it: `rmdir("nowrite/kfull")` is EACCES.
     ///
@@ -664,39 +622,35 @@ module internal RmDirRules =
         (credentials : Credentials)
         (resolution : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<RmDirVerdict, StickyRefusal>
+        : RmDirVerdict
         =
         match resolution.Target with
         | ResolvedTarget.Directory (inode, reachedBy) ->
             match reachedBy with
-            | FinalNavigation.Root -> Ok (RmDirVerdict.Refuse UnixError.EISDIR)
+            | FinalNavigation.Root -> RmDirVerdict.Refuse UnixError.EISDIR
             | FinalNavigation.Current
             | FinalNavigation.Parent ->
                 if inode = VirtualFileSystem.root vfs then
-                    Ok (RmDirVerdict.Refuse UnixError.EBUSY)
+                    RmDirVerdict.Refuse UnixError.EBUSY
                 else
-                    Ok (RmDirVerdict.Refuse UnixError.EINVAL)
+                    RmDirVerdict.Refuse UnixError.EINVAL
         | ResolvedTarget.Entry (directory, name, existing) ->
 
         match existing with
-        | None -> Ok (RmDirVerdict.Refuse UnixError.ENOENT)
+        | None -> RmDirVerdict.Refuse UnixError.ENOENT
         | Some target ->
 
         if not (RemovalChecks.isDirectory target vfs) then
-            Ok (RmDirVerdict.Refuse UnixError.ENOTDIR)
-        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
-            Ok (RmDirVerdict.Refuse UnixError.EACCES)
+            RmDirVerdict.Refuse UnixError.ENOTDIR
+        elif
+            RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs
+            || RemovalChecks.darwinStickyRefuses credentials directory name target vfs
+        then
+            RmDirVerdict.Refuse UnixError.EACCES
+        elif not (RemovalChecks.isEmptyDirectory target vfs) then
+            RmDirVerdict.Refuse UnixError.ENOTEMPTY
         else
-
-        match RemovalChecks.darwinStickyRefuses credentials directory name target vfs with
-        | Error refusal -> Error refusal
-        | Ok true -> Ok (RmDirVerdict.Refuse UnixError.EACCES)
-        | Ok false ->
-
-        if not (RemovalChecks.isEmptyDirectory target vfs) then
-            Ok (RmDirVerdict.Refuse UnixError.ENOTEMPTY)
-        else
-            Ok (RmDirVerdict.Remove (directory, name))
+            RmDirVerdict.Remove (directory, name)
 
     /// Decide what an `rmdir(2)` owes, given how its path resolved.
     ///
@@ -706,16 +660,13 @@ module internal RmDirRules =
     /// `rmdir` makes the case more strongly than `unlink` did — the two flavours
     /// disagree about which of the root and the *path to it* is the special
     /// thing, which no table of errnos can express.
-    ///
-    /// Refused where Darwin's sticky rule has not been measured for this caller;
-    /// see `StickyRefusal`.
     let verdict
         (flavour : SimulatedUnixFlavour)
         (credentials : Credentials)
         (resolution : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<RmDirVerdict, StickyRefusal>
+        : RmDirVerdict
         =
         match flavour with
-        | SimulatedUnixFlavour.Linux -> Ok (linuxVerdict credentials resolution vfs)
+        | SimulatedUnixFlavour.Linux -> linuxVerdict credentials resolution vfs
         | SimulatedUnixFlavour.Darwin -> darwinVerdict credentials resolution vfs

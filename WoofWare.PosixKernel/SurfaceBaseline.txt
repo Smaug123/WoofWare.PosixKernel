@@ -3549,33 +3549,18 @@ WoofWare.PosixKernel.PortHold.Tag [property]: [read-only] int
 WoofWare.PosixKernel.PrivilegedExecution inherit obj, implements WoofWare.PosixKernel.PrivilegedExecution System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PrivilegedExecution System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.PrivilegedExecution+Tags inherit obj
 WoofWare.PosixKernel.PrivilegedExecution+Tags.NeedsAnExecuteBit [static field]: int = 0
-WoofWare.PosixKernel.PrivilegedExecution+Tags.Unmeasured [static field]: int = 1
+WoofWare.PosixKernel.PrivilegedExecution+Tags.RegularFileNeedsAnExecuteBit [static field]: int = 1
 WoofWare.PosixKernel.PrivilegedExecution.Equals [method]: (WoofWare.PosixKernel.PrivilegedExecution, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.PrivilegedExecution.get_IsNeedsAnExecuteBit [method]: unit -> bool
-WoofWare.PosixKernel.PrivilegedExecution.get_IsUnmeasured [method]: unit -> bool
+WoofWare.PosixKernel.PrivilegedExecution.get_IsRegularFileNeedsAnExecuteBit [method]: unit -> bool
 WoofWare.PosixKernel.PrivilegedExecution.get_NeedsAnExecuteBit [static method]: unit -> WoofWare.PosixKernel.PrivilegedExecution
+WoofWare.PosixKernel.PrivilegedExecution.get_RegularFileNeedsAnExecuteBit [static method]: unit -> WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.PrivilegedExecution.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.PrivilegedExecution.get_Unmeasured [static method]: unit -> WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.PrivilegedExecution.IsNeedsAnExecuteBit [property]: [read-only] bool
-WoofWare.PosixKernel.PrivilegedExecution.IsUnmeasured [property]: [read-only] bool
+WoofWare.PosixKernel.PrivilegedExecution.IsRegularFileNeedsAnExecuteBit [property]: [read-only] bool
 WoofWare.PosixKernel.PrivilegedExecution.NeedsAnExecuteBit [static property]: [read-only] WoofWare.PosixKernel.PrivilegedExecution
+WoofWare.PosixKernel.PrivilegedExecution.RegularFileNeedsAnExecuteBit [static property]: [read-only] WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.PrivilegedExecution.Tag [property]: [read-only] int
-WoofWare.PosixKernel.PrivilegedExecution.Unmeasured [static property]: [read-only] WoofWare.PosixKernel.PrivilegedExecution
-WoofWare.PosixKernel.PrivilegedModeChange inherit obj, implements WoofWare.PosixKernel.PrivilegedModeChange System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PrivilegedModeChange System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
-WoofWare.PosixKernel.PrivilegedModeChange+Tags inherit obj
-WoofWare.PosixKernel.PrivilegedModeChange+Tags.SetsRequestedBits [static field]: int = 0
-WoofWare.PosixKernel.PrivilegedModeChange+Tags.Unmeasured [static field]: int = 1
-WoofWare.PosixKernel.PrivilegedModeChange.Equals [method]: (WoofWare.PosixKernel.PrivilegedModeChange, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.PrivilegedModeChange.get_IsSetsRequestedBits [method]: unit -> bool
-WoofWare.PosixKernel.PrivilegedModeChange.get_IsUnmeasured [method]: unit -> bool
-WoofWare.PosixKernel.PrivilegedModeChange.get_SetsRequestedBits [static method]: unit -> WoofWare.PosixKernel.PrivilegedModeChange
-WoofWare.PosixKernel.PrivilegedModeChange.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.PrivilegedModeChange.get_Unmeasured [static method]: unit -> WoofWare.PosixKernel.PrivilegedModeChange
-WoofWare.PosixKernel.PrivilegedModeChange.IsSetsRequestedBits [property]: [read-only] bool
-WoofWare.PosixKernel.PrivilegedModeChange.IsUnmeasured [property]: [read-only] bool
-WoofWare.PosixKernel.PrivilegedModeChange.SetsRequestedBits [static property]: [read-only] WoofWare.PosixKernel.PrivilegedModeChange
-WoofWare.PosixKernel.PrivilegedModeChange.Tag [property]: [read-only] int
-WoofWare.PosixKernel.PrivilegedModeChange.Unmeasured [static property]: [read-only] WoofWare.PosixKernel.PrivilegedModeChange
 WoofWare.PosixKernel.ProcessFate`3 inherit obj, implements WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.ProcessFate`3+Continues inherit WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+Continues.get_outcome [method]: unit -> 'Outcome
@@ -4523,7 +4508,6 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.pageSize [static method]: WoofW
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.pathLimits [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PathLimits
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.presentedIpv6Address [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool -> WoofWare.PosixKernel.Ipv4Address -> WoofWare.PosixKernel.Ipv6Address
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.privilegedExecution [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PrivilegedExecution
-WoofWare.PosixKernel.SimulatedUnixPlatformModule.privilegedModeChange [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PrivilegedModeChange
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.providesPosixFadvise [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.rawErrnoNumbering [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.RawErrnoNumbering
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.readlinkEmptyPath [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.EmptyPathMeaning
@@ -8452,7 +8436,7 @@ WoofWare.PosixKernel.UnixSystem.threads [static method]: WoofWare.PosixKernel.Pr
 WoofWare.PosixKernel.UnixSystem.umask [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PermissionBits * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSystem.unprivilegedPortStart [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.UInt16
 WoofWare.PosixKernel.UnixSystem.userBufferCheck [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UserBufferCheck
-WoofWare.PosixKernel.UnixSystem.writePidMaxSysctl [static method]: string -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixSystem.writePidMaxSysctl [static method]: int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem`2 inherit obj, implements WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.UnixSystem`2.Equals [method]: (WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.UnixSystemDefect inherit obj
