@@ -114,6 +114,13 @@ module DarwinRootFiles =
     let section (name : string) : Row list =
         rows |> List.filter (fun row -> row.Section = name)
 
+    /// The spot rows of one section (`STICKY`, `UTIMENS`, `MKNOD`, ...), each
+    /// split at its tabs, without the section's name.
+    let spot (name : string) : string[] list =
+        lines
+        |> List.filter (fun line -> line.StartsWith (name + "\t"))
+        |> List.map (fun line -> line.Split '\t' |> Array.tail)
+
     /// The credentials each caller held (the run's `CRED` rows): root with its
     /// one group 0, and uid 501 in groups 20 and 701, 20 being its effective
     /// group.

@@ -1906,7 +1906,6 @@ module TestVirtualFileSystemAgainstHost =
                 (Owners.caller (hostPrivilege ()))
                 resolution
                 vfs
-            |> Answered.unrefused
         with
         | UnlinkVerdict.Refuse error -> UnlinkOutcome.Failed (hostErrno error)
         | UnlinkVerdict.Remove (directory, name) ->
@@ -2119,7 +2118,6 @@ module TestVirtualFileSystemAgainstHost =
                 (Owners.caller (hostPrivilege ()))
                 resolution
                 vfs
-            |> Answered.unrefused
         with
         | RmDirVerdict.Refuse error -> UnlinkOutcome.Failed (hostErrno error)
         | RmDirVerdict.Remove (directory, name) ->
