@@ -327,12 +327,8 @@ module TestEpollCtl =
             None
         elif events &&& EpollEvents.Exclusive <> 0u then
             Some EpollCtlRefusal.Exclusive
-        elif events &&& EpollEvents.OneShot <> 0u then
-            Some EpollCtlRefusal.OneShot
         elif events &&& EpollEvents.WakeUp <> 0u then
             Some EpollCtlRefusal.WakeUp
-        elif events &&& EpollEvents.EdgeTriggered = 0u then
-            Some EpollCtlRefusal.LevelTriggered
         else
             None
 
@@ -632,11 +628,11 @@ module TestEpollCtl =
         if delivered <> expected then
             failwith $"mask 0x%08x{mask}: expected %A{expected}, reported %A{delivered}"
 
-    /// The events a mask is registered with here: edge-triggered, and without
-    /// the modes this library refuses, so that every mask is answered.
+    /// The events a mask is registered with here: without the modes this
+    /// library refuses, so that every mask is answered. The trigger modes it
+    /// keeps change nothing about a first wait.
     let private answerable (mask : uint32) : uint32 =
-        (mask ||| edge)
-        &&& ~~~(EpollEvents.Exclusive ||| EpollEvents.OneShot ||| EpollEvents.WakeUp)
+        mask &&& ~~~(EpollEvents.Exclusive ||| EpollEvents.WakeUp)
 
     /// Every single bit and every pair of bits, as the probe swept them.
     [<Test>]
@@ -764,26 +760,27 @@ module TestEpollCtl =
                 UnixPoll.tryEpollCtl (Callers.leader darwin) 99 op 99 argument darwin
                 |> shouldEqual expected
 
-    /// A level-triggered request is refused only where it would commit: a
-    /// failure that precedes the commit is still the kernel's answer.
+    /// `EPOLLWAKEUP` is refused only where the call would commit: a failure
+    /// that precedes the commit is still the kernel's answer.
     [<Test>]
-    let ``a level-triggered request is refused at the commit, and answered where it would fail`` () : unit =
+    let ``an EPOLLWAKEUP request is refused at the commit, and answered where it would fail`` () : unit =
         let queueFd, system = withEpoll linux
         let socketFd, system = idleSocket system
+        let wakeUp = EpollEvents.In ||| EpollEvents.WakeUp
 
-        ctl queueFd add socketFd EpollEvents.In system
-        |> shouldEqual (Error EpollCtlRefusal.LevelTriggered)
+        ctl queueFd add socketFd wakeUp system
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
-        ctl queueFd modify socketFd EpollEvents.In system
+        ctl queueFd modify socketFd wakeUp system
         |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, system))
 
-        let registered = applied queueFd add socketFd (EpollEvents.In ||| edge) system
+        let registered = applied queueFd add socketFd EpollEvents.In system
 
-        ctl queueFd add socketFd EpollEvents.In registered
+        ctl queueFd add socketFd wakeUp registered
         |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.AlreadyRegistered, registered))
 
-        ctl queueFd modify socketFd EpollEvents.In registered
-        |> shouldEqual (Error EpollCtlRefusal.LevelTriggered)
+        ctl queueFd modify socketFd wakeUp registered
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
     /// Linux registers an `AF_UNIX` `SOCK_SEQPACKET` socket, but what an epoll
     /// wait reports for one is not measured. The ADD is refused where it would
@@ -928,8 +925,8 @@ module TestEpollCtl =
 
         let otherFd, system = idleSocket system
 
-        ctl queueFd add otherFd (EpollEvents.In ||| EpollEvents.OneShot ||| edge) system
-        |> shouldEqual (Error EpollCtlRefusal.OneShot)
+        ctl queueFd add otherFd (EpollEvents.In ||| EpollEvents.WakeUp ||| edge) system
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
     // ------------------------------------------------------------------
     // Pending at registration time

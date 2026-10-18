@@ -2596,3 +2596,52 @@ module TestFileDescriptorRegistry =
 
         FileDescriptorRegistry.checkInvariants (withReady [ sockFd, sockId ])
         |> shouldEqual []
+
+        // A one-shot registration that has reported holds only its mode bits,
+        // and no path leaves one pending.
+        let disarmed =
+            FileDescriptorRegistry.Unchecked.mapDescription
+                queueId
+                (fun description ->
+                    match description.Target with
+                    | OpenFileTarget.Epoll queueState ->
+                        { description with
+                            Target =
+                                OpenFileTarget.Epoll
+                                    { queueState with
+                                        Registrations =
+                                            queueState.Registrations
+                                            |> Map.map (fun _ registration ->
+                                                { registration with
+                                                    Events = EpollEvents.OneShot ||| EpollEvents.EdgeTriggered
+                                                }
+                                            )
+                                    }
+                        }
+                    | other -> failwith $"not an epoll instance: %O{other}"
+                )
+                registry
+
+        FileDescriptorRegistry.checkInvariants disarmed |> shouldEqual []
+
+        FileDescriptorRegistry.checkInvariants (
+            FileDescriptorRegistry.Unchecked.mapDescription
+                queueId
+                (fun description ->
+                    match description.Target with
+                    | OpenFileTarget.Epoll queueState ->
+                        { description with
+                            Target =
+                                OpenFileTarget.Epoll
+                                    { queueState with
+                                        Ready = [ sockFd, sockId ]
+                                    }
+                        }
+                    | other -> failwith $"not an epoll instance: %O{other}"
+                )
+                disarmed
+        )
+        |> shouldEqual
+            [
+                FileDescriptorRegistryDefect.EpollReadyEntryDisarmed (queueId, sockFd, sockId)
+            ]

@@ -1,5 +1,6 @@
 namespace WoofWare.PosixKernel.Test
 
+open System.Collections.Immutable
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -1151,6 +1152,339 @@ module TestSocketEventDelivery =
 
             assertSound closed
         | other -> failwith $"expected the last close to succeed, got %O{other}"
+
+    // --- docs/probes/epoll-modes: level-triggered and one-shot registrations ---
+
+    /// `EPOLL_CTL_ADD` (1) or `EPOLL_CTL_MOD` (3) of `targetFd` with `events`
+    /// as given: no `EPOLLET` is added, so a mask without it is
+    /// level-triggered.
+    let private ctlWith
+        (op : int)
+        (queueFd : int)
+        (targetFd : int)
+        (events : uint32)
+        (data : uint64)
+        (kernel : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match
+            UnixPoll.tryEpollCtl
+                (Callers.leader kernel)
+                queueFd
+                op
+                targetFd
+                (EpollEventArgument.Readable (events, data))
+                kernel
+        with
+        | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
+        | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"epoll_ctl %d{op} of 0x%x{events} failed: %O{reason}"
+        | Error refusal -> failwith $"epoll_ctl %d{op} of 0x%x{events} refused: %s{EpollCtlRefusal.describe refusal}"
+
+    let private levelIn : uint32 = EpollEvents.In
+    let private oneShotIn : uint32 = EpollEvents.In ||| EpollEvents.OneShot
+
+    /// Listeners on loopback ports 5001, 5002, ... registered in that order
+    /// with `modes`, each with its 1-based index as `data`, and a fresh client
+    /// for each to connect with: the probe's `l1`, `l2`, ...
+    let private listenersWith
+        (modes : uint32 list)
+        : int * OpenFileDescriptionId * (int * SocketId * uint16) list * UnixSystem<int, string>
+        =
+        let queueFd, queueId, kernel = addEpoll initialSystem
+
+        let listeners, kernel =
+            ((([] : (int * SocketId * uint16) list), kernel), List.indexed modes)
+            ||> List.fold (fun (listeners, kernel) (index, events) ->
+                let port = 5001us + uint16 index
+                let fd, socketId, kernel = addListener port kernel
+                let kernel = ctlWith 1 queueFd fd events (uint64 (index + 1)) kernel
+                (fd, socketId, port) :: listeners, kernel
+            )
+
+        queueFd, queueId, List.rev listeners, kernel
+
+    /// A connect to the listener at `port` from a fresh client: one edge.
+    let private edgeAt (port : uint16) (kernel : UnixSystem<int, string>) : UnixSystem<int, string> =
+        let _, clientId, kernel = addStream kernel
+        snd (connect clientId false (loopback port) kernel)
+
+    /// `accept` on the listener `listenerId`, draining the one connection it
+    /// holds.
+    let private drainListener (listenerId : SocketId) (kernel : UnixSystem<int, string>) : UnixSystem<int, string> =
+        let _, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
+        kernel
+
+    /// Waits of the given `maxevents`, in order, each answering the `data`
+    /// of what it reported.
+    let private waits
+        (queueId : OpenFileDescriptionId)
+        (counts : int list)
+        (kernel : UnixSystem<int, string>)
+        : uint64 list list * UnixSystem<int, string>
+        =
+        let answers, kernel =
+            (([], kernel), counts)
+            ||> List.fold (fun (answers, kernel) count ->
+                let delivered, kernel = deliverEpollEvents queueId count kernel
+                dataOf delivered :: answers, kernel
+            )
+
+        assertSound kernel
+        List.rev answers, kernel
+
+    /// Section A: a level-triggered registration reports at every wait while
+    /// its target is ready, and not once it has been drained.
+    [<Test>]
+    let ``epoll-modes A: a level-triggered entry reports at every wait until drained`` () : unit =
+        let _, queueId, listeners, kernel = listenersWith [ levelIn ]
+        let _, l1, port1 = listeners.[0]
+        let kernel = edgeAt port1 kernel
+
+        let answers, kernel = waits queueId [ 8 ; 8 ; 8 ; 8 ] kernel
+        answers |> shouldEqual [ [ 1UL ] ; [ 1UL ] ; [ 1UL ] ; [ 1UL ] ]
+
+        let answers, kernel = waits queueId [ 8 ; 8 ] (drainListener l1 kernel)
+        answers |> shouldEqual [ [] ; [] ]
+        readyOf queueId kernel |> shouldEqual []
+
+    /// Section B: a reported level-triggered entry goes back behind the
+    /// entries `maxevents` spared, in the order the wait reported them.
+    [<Test>]
+    let ``epoll-modes B: requeued entries go behind the ones maxevents spared`` () : unit =
+        let _, queueId, listeners, kernel = listenersWith [ levelIn ; levelIn ; levelIn ]
+
+        let kernel =
+            listeners |> List.fold (fun kernel (_, _, port) -> edgeAt port kernel) kernel
+
+        let answers, _ = waits queueId [ 1 ; 8 ; 8 ; 2 ; 8 ] kernel
+
+        answers
+        |> shouldEqual
+            [
+                [ 1UL ]
+                [ 2UL ; 3UL ; 1UL ]
+                [ 2UL ; 3UL ; 1UL ]
+                [ 2UL ; 3UL ]
+                [ 1UL ; 2UL ; 3UL ]
+            ]
+
+    /// Section C: an edge-triggered entry between two level-triggered ones is
+    /// consumed, and they are not.
+    [<Test>]
+    let ``epoll-modes C: only the level-triggered entries of a batch come back`` () : unit =
+        let _, queueId, listeners, kernel =
+            listenersWith [ levelIn ; EpollEvents.In ||| EpollEvents.EdgeTriggered ; levelIn ]
+
+        let kernel =
+            listeners |> List.fold (fun kernel (_, _, port) -> edgeAt port kernel) kernel
+
+        let answers, _ = waits queueId [ 8 ; 8 ] kernel
+        answers |> shouldEqual [ [ 1UL ; 2UL ; 3UL ] ; [ 1UL ; 3UL ] ]
+
+    /// Section D: a requeued entry is pending, so its target's next wake does
+    /// not move it.
+    [<Test>]
+    let ``epoll-modes D: an edge on a requeued entry leaves its place`` () : unit =
+        let _, queueId, listeners, kernel = listenersWith [ levelIn ; levelIn ]
+
+        let kernel =
+            listeners |> List.fold (fun kernel (_, _, port) -> edgeAt port kernel) kernel
+
+        let answers, kernel = waits queueId [ 8 ] kernel
+        answers |> shouldEqual [ [ 1UL ; 2UL ] ]
+
+        let _, _, port1 = listeners.[0]
+        let answers, _ = waits queueId [ 8 ] (edgeAt port1 kernel)
+        answers |> shouldEqual [ [ 1UL ; 2UL ] ]
+
+    /// Section E: a requeued entry whose target has been drained is stale at
+    /// the next wait, which drops it; its target's next edge queues it afresh.
+    [<Test>]
+    let ``epoll-modes E: a drained requeued entry is dropped, and its next edge queues it afresh`` () : unit =
+        let _, queueId, listeners, kernel =
+            listenersWith [ levelIn ; EpollEvents.In ||| EpollEvents.EdgeTriggered ]
+
+        let _, l1, port1 = listeners.[0]
+        let _, _, port2 = listeners.[1]
+
+        let answers, kernel = waits queueId [ 8 ] (edgeAt port1 kernel)
+        answers |> shouldEqual [ [ 1UL ] ]
+
+        let kernel = kernel |> drainListener l1 |> edgeAt port2
+        let answers, kernel = waits queueId [ 8 ] kernel
+        answers |> shouldEqual [ [ 2UL ] ]
+        readyOf queueId kernel |> shouldEqual []
+
+        let kernel = kernel |> edgeAt port1 |> edgeAt port2
+        let answers, _ = waits queueId [ 8 ] kernel
+        answers |> shouldEqual [ [ 1UL ; 2UL ] ]
+
+    /// Section F: a one-shot registration, level-triggered or not, reports
+    /// once and is then silent, through a fresh edge too, until a MOD re-arms
+    /// it; a MOD without `EPOLLONESHOT` makes it an ordinary registration of
+    /// its trigger mode.
+    [<Test>]
+    let ``epoll-modes F: a one-shot entry reports once until a MOD re-arms it`` () : unit =
+        for edgeTriggered in [ false ; true ] do
+            let mode = if edgeTriggered then EpollEvents.EdgeTriggered else 0u
+            let queueFd, queueId, listeners, kernel = listenersWith [ oneShotIn ||| mode ]
+            let fd1, _, port1 = listeners.[0]
+            let kernel = edgeAt port1 kernel
+
+            let delivered, kernel = deliverEpollEvents queueId 8 kernel
+            delivered |> shouldEqual [ 1UL, EpollEvents.In ]
+
+            let answers, kernel = waits queueId [ 8 ] kernel
+            answers |> shouldEqual [ [] ]
+
+            let answers, kernel = waits queueId [ 8 ] (edgeAt port1 kernel)
+            answers |> shouldEqual [ [] ]
+
+            let kernel = ctlWith 3 queueFd fd1 (oneShotIn ||| mode) 1UL kernel
+            let answers, kernel = waits queueId [ 8 ; 8 ] kernel
+            answers |> shouldEqual [ [ 1UL ] ; [] ]
+
+            let kernel = ctlWith 3 queueFd fd1 (EpollEvents.In ||| mode) 1UL kernel
+            let answers, _ = waits queueId [ 8 ; 8 ] kernel
+
+            answers
+            |> shouldEqual (
+                if edgeTriggered then
+                    [ [ 1UL ] ; [] ]
+                else
+                    [ [ 1UL ] ; [ 1UL ] ]
+            )
+
+    /// Section G: an entry `maxevents` spares is not disarmed, and reports at
+    /// the next wait.
+    [<Test>]
+    let ``epoll-modes G: maxevents spares a one-shot entry armed`` () : unit =
+        let _, queueId, listeners, kernel = listenersWith [ oneShotIn ; oneShotIn ]
+
+        let kernel =
+            listeners |> List.fold (fun kernel (_, _, port) -> edgeAt port kernel) kernel
+
+        let answers, _ = waits queueId [ 1 ; 1 ; 8 ] kernel
+        answers |> shouldEqual [ [ 1UL ] ; [ 2UL ] ; [] ]
+
+    /// Section H: a wait that finds a one-shot entry stale does not disarm it.
+    [<Test>]
+    let ``epoll-modes H: a stale one-shot entry stays armed`` () : unit =
+        let _, queueId, listeners, kernel = listenersWith [ oneShotIn ]
+        let _, l1, port1 = listeners.[0]
+        let kernel = kernel |> edgeAt port1 |> drainListener l1
+
+        let answers, kernel = waits queueId [ 8 ] kernel
+        answers |> shouldEqual [ [] ]
+
+        let answers, _ = waits queueId [ 8 ] (edgeAt port1 kernel)
+        answers |> shouldEqual [ [ 1UL ] ]
+
+    /// Section I: the peer's FIN, an unkeyed wake that queues a registration
+    /// whatever its interest (`order8.c`), does not queue a disarmed one; the
+    /// MOD that re-arms it queues it, behind an edge that came after the FIN.
+    [<Test>]
+    let ``epoll-modes I: no wake queues a disarmed entry, not even an unkeyed one`` () : unit =
+        let queueFd, queueId, kernel = addEpoll initialSystem
+        let _, listenerId, kernel = addListener 5000us kernel
+        let clientFd, clientId, kernel = addStream kernel
+        let _, kernel = connect clientId false (loopback 5000us) kernel
+        let serverFd, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
+        let l2Fd, _, kernel = addListener 5001us kernel
+
+        let clientMask =
+            EpollEvents.In
+            ||| EpollEvents.RdHup
+            ||| EpollEvents.OneShot
+            ||| EpollEvents.EdgeTriggered
+
+        let kernel = ctlWith 1 queueFd clientFd clientMask 1UL kernel
+
+        let kernel =
+            ctlWith 1 queueFd l2Fd (EpollEvents.In ||| EpollEvents.EdgeTriggered) 2UL kernel
+
+        let delivered, kernel = deliverEpollEvents queueId 8 kernel
+        delivered |> shouldEqual []
+
+        let kernel =
+            match
+                WriteOutcomes.admitThenWrite
+                    (Lone.leader kernel)
+                    serverFd
+                    UserBuffer.Mapped
+                    (ImmutableArray.Create 0x78uy)
+                    kernel
+            with
+            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, kernel)) -> kernel
+            | other -> failwith $"the peer's write: %A{other}"
+
+        let delivered, kernel = deliverEpollEvents queueId 8 kernel
+        delivered |> shouldEqual [ 1UL, EpollEvents.In ]
+
+        let kernel =
+            match closeFd serverFd kernel with
+            | Ok kernel -> kernel
+            | Error error -> failwith $"close failed: %O{error}"
+
+        readyOf queueId kernel |> shouldEqual []
+
+        let kernel = kernel |> edgeAt 5001us |> ctlWith 3 queueFd clientFd clientMask 1UL
+
+        let delivered, kernel = deliverEpollEvents queueId 8 kernel
+
+        delivered
+        |> shouldEqual [ 2UL, EpollEvents.In ; 1UL, EpollEvents.In ||| EpollEvents.RdHup ]
+
+        assertSound kernel
+
+    /// Section J: a MOD that clears `EPOLLONESHOT` on a disarmed entry whose
+    /// target is not ready re-arms it without queueing it; its next edge
+    /// queues it, level-triggered from then on.
+    [<Test>]
+    let ``epoll-modes J: a MOD re-arms an idle disarmed entry without queueing it`` () : unit =
+        let queueFd, queueId, listeners, kernel = listenersWith [ oneShotIn ]
+        let fd1, l1, port1 = listeners.[0]
+
+        let answers, kernel = waits queueId [ 8 ] (edgeAt port1 kernel)
+        answers |> shouldEqual [ [ 1UL ] ]
+
+        let kernel = kernel |> drainListener l1 |> ctlWith 3 queueFd fd1 levelIn 1UL
+        let answers, kernel = waits queueId [ 8 ] kernel
+        answers |> shouldEqual [ [] ]
+
+        let answers, _ = waits queueId [ 8 ; 8 ] (edgeAt port1 kernel)
+        answers |> shouldEqual [ [ 1UL ] ; [ 1UL ] ]
+
+    /// What a disarmed registration stores: its mode bits alone, as Linux's
+    /// `ep_send_events` leaves `epi->event.events`, and what a MOD then
+    /// stores is the MOD's mask with `EPOLLERR` and `EPOLLHUP`, as for any
+    /// other.
+    [<Test>]
+    let ``a disarmed registration keeps only its mode bits until a MOD`` () : unit =
+        let queueFd, queueId, listeners, kernel =
+            listenersWith [ oneShotIn ||| EpollEvents.EdgeTriggered ||| EpollEvents.Out ]
+
+        let fd1, _, port1 = listeners.[0]
+
+        let storedEvents (kernel : UnixSystem<int, string>) : uint32 =
+            let key =
+                match FileDescriptorRegistry.tryFindId fd1 (Lone.fileDescriptors kernel) with
+                | Some id -> fd1, id
+                | None -> failwith "listener fd not live"
+
+            match (Map.find queueId (OpenFileTable.descriptions kernel.Machine.OpenFiles)).Target with
+            | OpenFileTarget.Epoll queueState -> (Map.find key queueState.Registrations).Events
+            | other -> failwith $"not an epoll instance: %O{other}"
+
+        let _, kernel = waits queueId [ 8 ] (edgeAt port1 kernel)
+
+        storedEvents kernel
+        |> shouldEqual (EpollEvents.OneShot ||| EpollEvents.EdgeTriggered)
+
+        let kernel = ctlWith 3 queueFd fd1 oneShotIn 1UL kernel
+
+        storedEvents kernel
+        |> shouldEqual (oneShotIn ||| EpollEvents.Err ||| EpollEvents.Hup)
 
     // --- forged invariants ---
 
