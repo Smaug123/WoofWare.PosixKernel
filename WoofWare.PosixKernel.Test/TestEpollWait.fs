@@ -734,7 +734,7 @@ module TestEpollWait =
                 |> after clock
 
             let parkedThreads =
-                (Lone.threads system)
+                (Lone.threadMap system)
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
                     match state.Parked with

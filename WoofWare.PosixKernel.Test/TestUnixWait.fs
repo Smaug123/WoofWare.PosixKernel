@@ -142,7 +142,7 @@ module TestUnixWait =
 
             withRegistry registry system
         | Op.Register thread ->
-            if Map.containsKey thread (Lone.threads system) then
+            if Map.containsKey thread (Lone.threadMap system) then
                 system
             else
                 withThread thread system
@@ -169,7 +169,7 @@ module TestUnixWait =
                     | Op.Register _ -> None
 
                 // Every other thread keeps its park, ordinal and all.
-                for thread in Map.keys (Lone.threads before) do
+                for thread in Map.keys (Lone.threadMap before) do
                     if Some thread <> subject then
                         UnixThreadTable.parkOf thread (Lone.threads after)
                         |> shouldEqual (UnixThreadTable.parkOf thread (Lone.threads before))

@@ -683,7 +683,7 @@ module TestUnixWaitFinish =
     let private agreeForWoken (cover : string -> unit) (system : UnixSystem<int, string>) : unit =
         let _, woken = UnixWait.wake system
 
-        for KeyValue (thread, state) in Lone.threads woken do
+        for KeyValue (thread, state) in Lone.threadMap woken do
             match UnixThreadState.park state with
             | Some {
                        State = ParkState.Woken _

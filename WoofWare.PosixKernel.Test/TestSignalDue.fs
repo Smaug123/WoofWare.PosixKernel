@@ -787,8 +787,10 @@ module TestSignalDue =
         let mutable frames : Map<int, HandlerFrameId list> = Map.empty
         let mutable ended = false
 
-        let threads () : Map<int, UnixThreadState> = Proc.threads pid system
-        let live (thread : int) : bool = Map.containsKey thread (threads ())
+        let threads () : ThreadTable<int> = Proc.threads pid system
+
+        let live (thread : int) : bool =
+            UnixThreadTable.contains thread (threads ())
 
         let owes (thread : int) : bool =
             (UnixThreadTable.owedBy thread (threads ())).IsSome
@@ -801,9 +803,9 @@ module TestSignalDue =
         let commit (step : string) (actor : int) (after : UnixSystem<int, string>) : unit =
             let before = threads ()
 
-            for KeyValue (thread, state) in Proc.threads pid after do
+            for KeyValue (thread, state) in Proc.threadMap pid after do
                 let owedBefore =
-                    match Map.tryFind thread before with
+                    match UnixThreadTable.tryFind thread before with
                     | Some before -> before.Owes.IsSome
                     | None -> false
 
@@ -916,7 +918,7 @@ module TestSignalDue =
             match step with
             | Step.Finish -> finishAll ()
             | Step.Spawn parent ->
-                let child = (threads () |> Map.keys |> Seq.max) + 1
+                let child = (UnixThreadTable.byName (threads ()) |> Map.keys |> Seq.max) + 1
 
                 if child < mostThreads && live parent && not (parked parent) && returned parent then
                     match UnixThreadLifecycle.trySpawn (Caller.make pid parent) child (CpuId 0) system with

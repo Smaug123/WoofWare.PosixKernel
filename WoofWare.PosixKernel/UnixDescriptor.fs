@@ -2034,7 +2034,7 @@ module UnixDescriptor =
         | Some (closingId, closing) ->
 
         let parked () : ('Thread * ParkedSyscall) list =
-            system.Threads
+            UnixThreadTable.byName system.Threads
             |> Map.toList
             |> List.choose (fun (thread, state) -> state.Parked |> Option.map (fun park -> thread, park.Syscall))
 
@@ -2550,7 +2550,7 @@ module UnixDescriptor =
                 && ObjectLifetime.lingerCanRefuseRelease (UnixMachineState.socket socketId system.Machine)
                 ->
                 let holder =
-                    threads
+                    UnixThreadTable.byName threads
                     |> Map.toSeq
                     |> Seq.tryPick (fun (thread, state) ->
                         match state.Parked with

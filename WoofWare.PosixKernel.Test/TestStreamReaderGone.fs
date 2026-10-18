@@ -227,7 +227,7 @@ module TestStreamReaderGone =
             let system =
                 systemOn platform (Set.singleton 1) (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
 
-            let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+            let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
             let system =
                 system

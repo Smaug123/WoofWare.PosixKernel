@@ -116,7 +116,7 @@ module HandlerFrames =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+        let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
         let numbering = SimulatedUnixPlatform.signalNumbering (UnixSystem.platform system)
 
         system

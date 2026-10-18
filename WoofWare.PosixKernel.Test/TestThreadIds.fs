@@ -54,7 +54,7 @@ module TestThreadIds =
     let ``a fresh process's leader has the process ID as its thread ID, on both flavours`` () : unit =
         for system in [ linux ; darwin ] do
             Lone.leader system |> shouldEqual 0
-            Lone.threads system |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
+            Lone.threadMap system |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
 
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
@@ -749,7 +749,7 @@ module TestThreadIds =
         | Setup.Darwin first -> idOf 0 system |> shouldEqual first
 
         let liveIds (system : UnixSystem<int, string>) : Set<uint64> =
-            (Lone.threads system)
+            (Lone.threadMap system)
             |> Map.toSeq
             |> Seq.map (fun (thread, _) -> idOf thread system)
             |> Set.ofSeq
@@ -757,7 +757,7 @@ module TestThreadIds =
         let check (system : UnixSystem<int, string>) : unit =
             UnixSystem.checkInvariants system |> shouldEqual []
             // Unique among live threads.
-            (liveIds system).Count |> shouldEqual (Lone.threads system).Count
+            (liveIds system).Count |> shouldEqual (Lone.threadMap system).Count
 
             // The machine's allocator records exactly the live threads' IDs, which
             // is what it skips.
@@ -773,7 +773,7 @@ module TestThreadIds =
             ((system, model, nextName, minted, last) : UnixSystem<int, string> * Model * int * Set<uint64> * uint64)
             (op : Op)
             =
-            let live = Lone.threads system |> Map.keys |> List.ofSeq
+            let live = Lone.threadMap system |> Map.keys |> List.ofSeq
 
             match op with
             | Op.Spawn index ->

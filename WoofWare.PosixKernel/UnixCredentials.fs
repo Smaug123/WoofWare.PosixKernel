@@ -315,7 +315,7 @@ module UnixCredentials =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<unit, SetxidSignalRefusal>
         =
-        let others = system.Threads |> Map.remove caller
+        let others = UnixThreadTable.byName system.Threads |> Map.remove caller
 
         let blocksSignal =
             others

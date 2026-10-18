@@ -284,7 +284,7 @@ module TestPthreadKill =
             else
                 HandlerFrames.carrier
 
-        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+        let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
         system
         |> Lone.mapProc (fun proc ->
