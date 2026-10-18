@@ -125,7 +125,7 @@ Each row runs in a fresh forked child that is in a process group of its own, und
 - *Interruption* (F10): the target's leader asleep in `accept`, `read` of a pipe, `poll` with and without a timeout, `sigsuspend`, `pause`, and on Linux a futex wait. Each is ended by a caught `SIGUSR1` from outside, with and without `SA_RESTART`. Does the call fail with EINTR or restart? A subset of the existing in-process rows is enough to confirm that they agree.
 - *Ignored and continue* (F13): `SIGUSR1` under `SIG_IGN`, `SIGWINCH` at its default, and `SIGCONT` at its default and caught, each to a target whose leader blocks it or does not. Is it pending afterwards (`sigpending`), and does a handler installed later run?
 - *Defaults that end* (F11): `SIGTERM`, `SIGKILL`, and `SIGQUIT` with `RLIMIT_CORE` 0 and infinite, to a target whose threads are asleep, spinning, or blocking the signal. The `waitpid` status. Whether a target that blocks `SIGTERM` in every thread survives with it pending. The order in which the target's descriptors are closed, as seen from the sender's end of a socket pair.
-- *The time between* (F18), observed before any `waitpid`, straight after `kill` returns and again after `sched_yield` and after a short sleep: a non-blocking read of a pipe whose only writer is the target (`EAGAIN` or end of file); a non-blocking read of the sender's end of a socket pair whose other end the target holds; `kill(target, 0)`; and a second `kill(target, SIGUSR1)`. On Linux, also with the sender and the target pinned to one CPU and the sender under `SCHED_FIFO`, so that the target cannot preempt it, with each target thread's `/proc/<tid>/schedstat` read before and after to confirm the target did not run in between (as root only, for `SCHED_FIFO`; a non-leader thread whose entry has gone has run its exit); and pinned to two CPUs, where it can (Darwin has neither an affinity call nor a way to read a thread's run time from outside, so its rows show only what some schedule allows). This decides Decision T: one schedule in which the target still holds its descriptors after `kill` has returned rules out ending the target inside the call, and end of file seen straight after `kill` rules out nothing, because the target may have run first. A probe cannot see the target's threads exit one by one, so it can only bound the window, not say which thread's exit closed the descriptors.
+- *The time between* (F18), observed before any `waitpid`, straight after `kill` returns and again after `sched_yield` and after a short sleep: a non-blocking read of the sender's end of a loopback TCP connection whose other end the target holds and has written nothing to (`EAGAIN` while the target holds it, end of file once its end has closed), which is the cross-process resource the model can build (a pipe cannot reach another process in the model); a non-blocking read of a pipe whose only writer is the target, for comparison with the reviewer's Darwin observation; `kill(target, 0)`; and a second `kill(target, SIGUSR1)`. On Linux, also with the sender and the target pinned to one CPU and the sender under `SCHED_FIFO`, so that the target cannot preempt it, with each target thread's `/proc/<tid>/schedstat` read before and after to confirm the target did not run in between (as root only, for `SCHED_FIFO`; a non-leader thread whose entry has gone has run its exit); and pinned to two CPUs, where it can (Darwin has neither an affinity call nor a way to read a thread's run time from outside, so its rows show only what some schedule allows). This decides Decision T: one schedule in which the target still holds its descriptors after `kill` has returned rules out ending the target inside the call, and end of file seen straight after `kill` rules out nothing, because the target may have run first. A probe cannot see the target's threads exit one by one, so it can only bound the window, not say which thread's exit closed the descriptors.
 - *Stops* (F12), measured though not modelled under E1: `SIGSTOP` and `SIGTSTP` to a target, then `SIGCONT`. `waitpid` with `WUNTRACED | WCONTINUED`. What became of a target thread asleep in `read`.
 
 **P2: Linux senders holding uid 0 partly** (F3, F4). Senders (0, 1000, 1000), (1000, 0, 1000), (1000, 1000, 0), (0, 0, 1000), (0, 1000, 0) and (1000, 0, 0); targets (1001, 1001, 1001), (0, 0, 0), (1001, 0, 1001) and (0, 1001, 1001); signals 0 and `SIGUSR1`. This can be a section of P1. It decides whether "the sender's effective uid is 0" is the privilege test (`CAP_KILL` follows the effective uid), as it already is for `setresuid`.
@@ -146,11 +146,11 @@ Each decision has at least two options, with their blast radius, how reversible 
 ### Decision T: when a fatal signal from outside ends its target
 
 Today a signal whose default terminates the process ends it inside the call that generates it, wherever some thread could take it (chosen 2026-09-22, after Linux's `complete_signal`). For a self-kill, nothing outside the process can run in between, so the shortcut is invisible to the caller.
-From outside it is visible. The sender carries on after `kill` returns, and it can read a pipe the target still holds before the target's threads have run (§1, F18).
+From outside it is visible. The sender carries on after `kill` returns, and it can read a connection or pipe whose other end the target still holds before the target's threads have run (§1, F18).
 
 **T1. End the target inside the `kill`**, as a self-kill does: its threads go and its descriptors are closed before `kill` answers.
 - Blast radius: the smallest in the library. But it needs Decision A to report another process's end in kill's answer.
-- Against: it answers what the reviewer's Darwin observation contradicts. A sender's non-blocking read of a pipe the target was the only writer of answers end of file at once, where Darwin answered `EAGAIN` until the target had been reaped. Unless P1 shows that one flavour does close everything before `kill` returns, T1 invents an answer.
+- Against: it answers what the reviewer's Darwin observation contradicts. A sender's non-blocking read of a pipe the target was the only writer of, or of a connection whose other end the target holds, answers end of file at once, where Darwin answered `EAGAIN` until the target had been reaped. Unless P1 shows that one flavour does close everything before `kill` returns, T1 invents an answer.
 
 **T2. The target ends through its own threads.**
 The generation marks the target as exiting, with how it will end (`Signaled (signal, coreDumped)`), as Linux's `SIGNAL_GROUP_EXIT` does.
@@ -263,7 +263,9 @@ Inside `tryKillIn`, a helper `ProcessView.across target f view` does four things
 - Every way a per-process body's answer goes back into the kernel gains a check that the body left the other processes as it was handed them: each view in the answer has `Others` as the very map the body was handed (`obj.ReferenceEquals`). Otherwise it fails loudly, as a library bug. There are three such ways:
   - `Unfocus.Back` in `Entry.call`, for a process that carries on;
   - `Unfocus.Without` in `Entry.call`, for a process that ended (`exitGroup`, a fatal self-kill or `pthreadKill`, a write's `SIGPIPE`, a return to user mode);
-  - `Entry.resume`, for a call resumed after a copy-in pause (`writeWithBytes` and the rest). A paused value holds the view it paused in, so `Entry.resume` is handed that view's `Others` (or the paused view itself) to compare each answer view against.
+  - `Entry.resume`, for a call resumed after a copy-in pause (`writeWithBytes` and the rest).
+
+  A copy-in pause needs two more things, because `Shape.progress` passes a paused value through without unfocusing it. A body could change `Others` before it pauses, and the paused view would then carry the change into the resumption, where comparing against the paused view would accept it. So each paused value keeps the `Others` that `Entry.call` admitted, beside the view it paused in. `Shape.progress` checks the paused view against it at the pause, through an accessor for the paused value's view. `Entry.resume` checks each answer view against the admitted map, not against the paused view's.
 
   The check is always on. It costs one reference comparison per view, and allocates nothing, so it does not disturb `UnixScheduling.dispatch`, which bypasses `Entry.call` anyway.
 - A future cross-process signal that does not come from `kill` goes through `callKernel` too, such as a parent's `SIGCHLD`, or `SIGIO` to an `F_SETOWN` owner. The exception stays visible at the entry point.
@@ -287,7 +289,7 @@ This follows the gospel's "compute a description, then do it".
 
 **Tests that change:**
 - `TestMultiProcessFuzz`: `othersUnmoved` lets a kill step also change its target. The target's slot may differ only in `Process.Signals`, its threads' `Owes`, and (T2) its exiting mark. A new `Op.KillOther` (stage 3 onwards) sends signal 0, `SIGUSR1` with or without a handler installed in the target, a fatal default, `SIGKILL`, and a signal the target blocks. Under T2, the fuzzer's next return of any of the target's threads ends the target, and the fuzzer drops the target's asleep and woken threads, as it does for `exitGroup`.
-- `TestProcessView`: a test for each of the three ways back into the kernel (`Back`, `Without`, `Entry.resume`), each failing loudly for a body that writes `Others`, and each mutation-checked.
+- `TestProcessView`: a test for each of the three ways back into the kernel (`Back`, `Without`, `Entry.resume`), and one for a body that writes `Others` before it pauses for a copy-in, each failing loudly and each mutation-checked.
 - `TestKillTargetsMeasured`: the `cred` rows, which today must be refused, become answers: `answer` and `handled` must match.
 - `TestStepOracle` and `Stepped.fs`: kill to another pid joins the generator.
 - `TestUnixSystemInvariants`: `checkInvariants` after cross-process kills. Owed returns and pending signals are per process, and are checked already. T2 adds one defect: a thread of an exiting process that neither owes a return nor is parked.
@@ -437,11 +439,11 @@ The replay of those rows holds the model only to what every schedule allows: the
 
 **Dependencies:** none.
 
-**Implements:** B2's assertion on all three ways back into the kernel (`Unfocus.Back`, `Unfocus.Without`, `Entry.resume`), with no behaviour change.
+**Implements:** B2's assertion on all three ways back into the kernel (`Unfocus.Back`, `Unfocus.Without`, `Entry.resume`) and at a copy-in pause, with the admitted `Others` kept in each paused value; no behaviour change.
 
 **Correctness oracle:**
 - the whole suite is green, which shows no body writes `Others` today;
-- three new tests, one for each way back, each hand `Entry` a body (or a resumption) that rebuilds `Others`, and expect the loud failure. Mutation check: remove each assertion in turn and watch its test go red;
+- four new tests, one for each way back and one for a body that rebuilds `Others` before a copy-in pause, each expecting the loud failure. Mutation check: remove each assertion in turn (the pause's included) and watch its test go red;
 - `TestMultiProcessFuzz` and `TestProcessView` stay green unchanged.
 
 ### Stage 2 (under T1 only): kill's answer names its target
@@ -492,7 +494,7 @@ Mutation checks: swap EINVAL and EPERM in Linux's order; drop the saved uid from
 
 **Correctness oracle:**
 - P1's ending rows are replayed: the status, the core flag, and that a target blocking `SIGTERM` in every thread survives with it pending;
-- P1's "time between" rows are replayed: straight after the `kill`, the sender's non-blocking read of the target's pipe answers as P1 measured (`EAGAIN` while the target holds it), and end of file once the client has returned one of the target's threads;
+- P1's "time between" rows are replayed: straight after the `kill`, the sender's non-blocking read of its end of a loopback TCP connection to the target answers as P1 measured (`EAGAIN` while the target holds its end), and end of file once the client has returned one of the target's threads;
 - a property: the system after a fatal kill of B, then the return of any thread of B, equals the system after B's own `exitGroup`-shaped end with that `Signaled` termination (`UnixThreadLifecycle.tryEndProcess`). So the close order and the peers' resets are the measured ones the end tests already hold;
 - a property: between the kill and that return, every thread of B owes a return or is parked (the new `checkInvariants` rule); the first `UnixWait.wake` after the kill wakes every parked thread of B, whose finished calls answer `Interrupted`; and no call by a thread of B can be made;
 - the cross-process wake tests in `TestCrossProcess` gain a case: a client in A asleep on a socket whose peer B is killed wakes with a reset or end of file once B's end has happened;
