@@ -60,7 +60,7 @@ static const char *names[] = {
     "recv(MSG_PEEK)", "epoll_ctl(ADD, EPOLLIN) on a blocking socket",
     "epoll_wait (registered before the arrivals) on a blocking socket",
     "epoll_wait (registered before the arrivals) on a non-blocking socket",
-    "FIONREAD, then one take, then FIONREAD"
+    "FIONREAD, then one take, then the ten more, then FIONREAD"
 };
 
 int main(void)
@@ -112,11 +112,13 @@ int main(void)
         default: break;
         }
         int extra = -1;
-        if (call == FIONREAD_THEN_TAKE) {
-            recv(r, buf, sizeof buf, MSG_DONTWAIT);
-            ioctl(r, FIONREAD, &extra);
-        }
+        if (call == FIONREAD_THEN_TAKE) recv(r, buf, sizeof buf, MSG_DONTWAIT);
         for (int k = 0; k < 10; k++) send1(s, r, &to);
+        // With nine datagrams in the reader queue and ten arrivals: a FIONREAD
+        // that refilled a reader queue holding something would move the ten,
+        // and the nine takes would then leave ten behind and give nothing
+        // back.
+        if (call == FIONREAD_THEN_TAKE) ioctl(r, FIONREAD, &extra);
         unsigned int before = meminfo(r, SK_MEMINFO_RMEM_ALLOC);
         int takes = call == FIONREAD_THEN_TAKE ? 9 : 10;
         for (int k = 0; k < takes; k++) recv(r, buf, sizeof buf, MSG_DONTWAIT);

@@ -439,11 +439,12 @@ With a datagram queued from 127.0.0.1:p, the address length cell is in and out.
 
 ### 2.13 Sleeping receivers (S, and `datagram-park`)
 
-- **One datagram wakes one sleeper.** Three threads asleep in `recv` on one
+- **One datagram completes one taker.** Three threads asleep in `recv` on one
   socket: one datagram returned one of them, and a second returned another. The
-  third slept on until a signal, on both flavours. Linux wakes one waiter, and
-  Darwin wakes all of them, but the losers sleep again, so the answers are the
-  same.
+  third slept on until a signal, on both flavours.
+- **Peekers show who is woken** (S3 to S5). Linux wakes only the sleeper that
+  parked first, and Darwin wakes all: three peekers, one datagram, one returned
+  on Linux and all three on Darwin. Section 3.8 has the rest.
 - From `datagram-park` (R1–R6):
   - every receiving call sleeps;
   - a caught signal is `EINTR`, or a restart under `SA_RESTART`;
@@ -718,17 +719,29 @@ Darwin's datagram `connect` activating WRITE. That last is the reason
 or `recvmsg`'s source goes. It also gains, for Darwin, that a close has ended
 it (R3), as `SleepTarget.EndedByClose` is for a TCP read.
 
-- **(a) One primitive, `WakePrimitive.DatagramReceivable of reader`**: the
-  queue is non-empty, or an error is pending. Several sleepers may all be
-  satisfied by one datagram. The client runs one, it takes the datagram, and
-  the others find nothing on their finish and park again. That is Darwin's
-  mechanism outright, and Linux's answers. The kernel's finishing functions
-  already re-park a TCP reader that was beaten to the bytes.
-- **(b) An exclusive primitive** that wakes exactly one sleeper per datagram,
-  as Linux does. The answers would be the same, at the cost of a wake queue
-  that the per-call cost work deliberately did not build.
+Who a datagram wakes differs by flavour, and peeking sleepers show it (S3 to
+S5). **Linux** wakes exactly one sleeper per arriving datagram, the one that
+parked first, whatever it then does: of three peekers, one returned. Of a
+peeker parked before a taker, the peeker returned and the taker slept on, and
+of the two the other way round, the taker. **Darwin** wakes every sleeper: all
+three peekers returned, and so did a peeker parked before a taker.
 
-**Recommend (a).** S1 shows the two are indistinguishable to a program.
+- **(a) One primitive, `WakePrimitive.DatagramReceivable of reader`**,
+  satisfied by a non-empty queue or a pending error, on both flavours.
+  Several sleepers are satisfied by one datagram; the client runs one, and the
+  others either find what it left (peekers) or park again. That is Darwin's
+  rule outright. On Linux it is right for takers only: it would complete all
+  three peekers of S3 where Linux completes one.
+- **(b) Per flavour.** On Darwin, (a). On Linux, an arrival wakes the
+  earliest-parked sleeper on the socket that is not already woken, by park
+  ordinal (`ThreadPark.Ordinal`), and marks it woken in the kernel's wake
+  state, as the W stages built. No wake queue is needed: the ordinal orders
+  the parks, and a sweep finds the earliest. Whom a pending error wakes, with
+  several asleep, is unmeasured (L9 has one sleeper), so U4 measures it
+  first.
+
+**Recommend (b).** (a) is observably wrong for Linux peekers, and (b) costs
+one ordinal comparison over the socket's sleepers per arrival.
 
 ## 4. Staging
 
@@ -790,5 +803,6 @@ Patrick, 2026-10-18:
 - **Staging**: as section 4, U1 to U6 in order.
 
 Not put to Patrick, so the recommendation stands until he says otherwise:
-3.8's (a), one primitive with losers parking again; and 3.2's sysctls as
+3.8's (b), Linux's earliest-parked wake (the draft recommended (a), which S3
+showed wrong for Linux); and 3.2's sysctls as
 machine settings without setters.

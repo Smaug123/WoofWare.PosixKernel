@@ -1558,12 +1558,12 @@ static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static int done_count(void) { pthread_mutex_lock(&mu); int v = sleepers_done; pthread_mutex_unlock(&mu); return v; }
 static void done_reset(void) { pthread_mutex_lock(&mu); sleepers_done = 0; pthread_mutex_unlock(&mu); }
 static void on_usr1(int sig) { (void)sig; }
-struct sleeper { int fd; ssize_t ret; int err; };
+struct sleeper { int fd; int flags; ssize_t ret; int err; };
 static void *sleep_recv(void *p)
 {
     struct sleeper *s = p;
     char buf[16];
-    s->ret = recv(s->fd, buf, sizeof buf, 0);
+    s->ret = recv(s->fd, buf, sizeof buf, s->flags);
     s->err = errno;
     pthread_mutex_lock(&mu); sleepers_done++; pthread_mutex_unlock(&mu);
     return NULL;
@@ -1579,7 +1579,7 @@ static void section_s(void)
     struct sleeper sl[3];
     pthread_t th[3];
     done_reset();
-    for (int i = 0; i < 3; i++) { sl[i].fd = r; sl[i].ret = -2; pthread_create(&th[i], NULL, sleep_recv, &sl[i]); }
+    for (int i = 0; i < 3; i++) { sl[i].fd = r; sl[i].flags = 0; sl[i].ret = -2; pthread_create(&th[i], NULL, sleep_recv, &sl[i]); }
     usleep(100000);
     send_to(s, "one", 3, portof(r));
     usleep(100000);
@@ -1595,6 +1595,7 @@ static void section_s(void)
     {
         struct sleeper z;
         z.fd = r;
+        z.flags = 0;
         pthread_t t;
         done_reset();
         // recv of 0 bytes: does it sleep at all?
@@ -1609,6 +1610,37 @@ static void section_s(void)
         if (!after) pthread_kill(t, SIGUSR1);
         pthread_join(t, NULL);
         printf("S2 (control) a sleeper with buffer 16: returned before the datagram %d, after %d, answer %s\n", before, after, res(z.ret, z.err));
+    }
+    // S3 to S5: sleepers that peek, and peekers beside a taker, parked 50 ms
+    // apart in the order given; one datagram 100 ms after the last; who has
+    // returned 100 ms later, before a signal ends the rest.
+    {
+        static const struct { const char *name; int n; int peek[3]; } rows[] = {
+            { "S3 three peekers", 3, { 1, 1, 1 } },
+            { "S4 a peeker, then a taker", 2, { 1, 0 } },
+            { "S5 a taker, then a peeker", 2, { 0, 1 } },
+        };
+        for (unsigned row = 0; row < sizeof rows / sizeof *rows; row++) {
+            int r2 = bound();
+            struct sleeper sp[3];
+            pthread_t tp[3];
+            done_reset();
+            for (int i = 0; i < rows[row].n; i++) {
+                sp[i].fd = r2; sp[i].flags = rows[row].peek[i] ? MSG_PEEK : 0; sp[i].ret = -2;
+                pthread_create(&tp[i], NULL, sleep_recv, &sp[i]);
+                usleep(50000);
+            }
+            usleep(50000);
+            send_to(s, "one", 3, portof(r2));
+            usleep(100000);
+            int returned = done_count();
+            for (int i = 0; i < rows[row].n; i++) pthread_kill(tp[i], SIGUSR1);
+            for (int i = 0; i < rows[row].n; i++) pthread_join(tp[i], NULL);
+            printf("%s: %d returned after the datagram; answers", rows[row].name, returned);
+            for (int i = 0; i < rows[row].n; i++) printf(" %s%s", rows[row].peek[i] ? "peek " : "take ", res(sp[i].ret, sp[i].err));
+            printf("; then the queue holds %s\n", drain(r2));
+            close(r2);
+        }
     }
     close(r); close(s);
 }
