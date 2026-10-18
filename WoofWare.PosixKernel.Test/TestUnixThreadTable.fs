@@ -13,7 +13,7 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestUnixThreadTable =
 
-    let private empty : Map<int, UnixThreadState> = Map.empty
+    let private empty : ThreadTable<int> = UnixThreadTable.empty
 
     /// A Linux process whose leader is thread 0, with process ID 4242, on a
     /// machine with four processors.
@@ -29,7 +29,7 @@ module TestUnixThreadTable =
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{name} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{name} was refused: %s{SpawnRefusal.describe refusal}"
 
-    let private idOf (name : int) (threads : Map<int, UnixThreadState>) : uint64 =
+    let private idOf (name : int) (threads : ThreadTable<int>) : uint64 =
         OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get name threads))
 
     [<Test>]
@@ -98,21 +98,21 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``reconcile is silent when the table matches`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([], [])
 
     [<Test>]
     let ``reconcile reports a live thread the table has no entry for`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0))
+        let threads = (Lone.threadMap (initial |> withThread 1 0))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [])
 
     [<Test>]
     let ``reconcile reports an entry no live thread claims`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) threads
         |> shouldEqual ([], [ 2 ])
@@ -121,7 +121,7 @@ module TestUnixThreadTable =
     let ``reconcile reports both directions at once`` () : unit =
         // The row that separates "reports both" from "reports whichever it
         // happens to check first".
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 3 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 3 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [ 3 ])

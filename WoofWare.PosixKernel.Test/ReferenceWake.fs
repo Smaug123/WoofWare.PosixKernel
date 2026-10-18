@@ -30,7 +30,7 @@ module internal ReferenceWake =
                 let thread = Caller.thread caller
 
                 let slot =
-                    match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+                    match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
                     | Some slot -> slot
                     | None -> failwith $"ReferenceWake.wakes: the system holds no process %O{pid}"
 
@@ -49,11 +49,11 @@ module internal ReferenceWake =
             |> List.sortBy (fun (ordinal, _, _) -> ordinal)
 
         let finishing : Set<ExclusiveWaitQueue> =
-            system.Processes
+            ProcessTable.slots system.Processes
             |> Seq.collect (fun (KeyValue (key, slot)) ->
                 let pid = ProcessId.parseOrFail "ReferenceWake.wakes" key
 
-                slot.Threads
+                UnixThreadTable.byName slot.Threads
                 |> Map.toSeq
                 |> Seq.filter (fun (thread, _) -> not (Set.contains (Caller.make pid thread) asleep))
             )
@@ -123,7 +123,7 @@ module internal ReferenceWake =
             let thread = Caller.thread caller
 
             let slot =
-                match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+                match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
                 | Some slot -> slot
                 | None -> failwith $"ReferenceWake.deadlines: the system holds no process %O{pid}"
 

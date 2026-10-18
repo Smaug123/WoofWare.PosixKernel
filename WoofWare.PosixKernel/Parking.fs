@@ -47,13 +47,16 @@ module internal WakeMemo =
     /// ones.
     let private sameSlots<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (remembered : RememberedSweep<'Thread, 'Handler>)
-        (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
+        (processes : ProcessTable<'Thread, 'Handler>)
         : bool
         =
-        remembered.Processes.Count = processes.Count
+        let read = ProcessTable.slots remembered.Processes
+        let processes = ProcessTable.slots processes
+
+        read.Count = processes.Count
         && processes
            |> Map.forall (fun processId slot ->
-               match remembered.Processes.TryGetValue processId with
+               match read.TryGetValue processId with
                | true, before ->
                    // The leader is not compared: it is fixed when its
                    // process is launched, and every launch makes a new
@@ -70,7 +73,7 @@ module internal WakeMemo =
     let internal readsSame<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (remembered : RememberedSweep<'Thread, 'Handler>)
         (machine : UnixMachineState)
-        (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
+        (processes : ProcessTable<'Thread, 'Handler>)
         : bool
         =
         // `sameSlots`, which allocates, only when the process map is another
@@ -93,7 +96,7 @@ module internal WakeMemo =
         (remembered : RememberedSweep<'Thread, 'Handler>)
         (machine : UnixMachineState)
         (scheduling : UnixSchedulingState)
-        (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
+        (processes : ProcessTable<'Thread, 'Handler>)
         : bool
         =
         (match remembered.EarliestDeadline with

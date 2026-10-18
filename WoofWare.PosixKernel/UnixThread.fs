@@ -963,12 +963,130 @@ module UnixThreadState =
     let parkedIn (thread : UnixThreadState) : ParkedSyscall option =
         thread.Parked |> Option.map (fun park -> park.Syscall)
 
+/// The threads one process owns, by whatever a client uses to name one, with
+/// the names of those parked in a syscall.
+///
+/// Its representation is private to this file, so that the functions of
+/// `UnixThreadTable`, which keep the names of the parked threads with every
+/// change to a thread, are the only way to change one; a sweep of the sleeping
+/// threads (`UnixWait.wake`) reads those names rather than every thread.
+type internal ThreadTable<'Thread when 'Thread : comparison> =
+    private
+        {
+            /// Every thread of the process, by its name.
+            ByName : Map<'Thread, UnixThreadState>
+            /// The names of the threads in `ByName` whose `Parked` is `Some`,
+            /// and of no others.
+            ParkedNames : Set<'Thread>
+        }
+
 /// The threads a simulated process owns, by whatever a client uses to name one.
 ///
 /// Generic in the thread name for the same reason `SignalState` is: the identity
 /// of a scheduling entity is the client's, not this library's.
 [<RequireQualifiedAccess>]
 module UnixThreadTable =
+
+    /// A process's threads before it has any.
+    let internal empty<'Thread when 'Thread : comparison> : ThreadTable<'Thread> =
+        {
+            ByName = Map.empty
+            ParkedNames = Set.empty
+        }
+
+    /// Every thread of `table`, by its name.
+    let internal byName<'Thread when 'Thread : comparison>
+        (table : ThreadTable<'Thread>)
+        : Map<'Thread, UnixThreadState>
+        =
+        table.ByName
+
+    /// The names of the threads of `table` that are parked in a syscall, asleep
+    /// or woken.
+    let internal parked<'Thread when 'Thread : comparison> (table : ThreadTable<'Thread>) : Set<'Thread> =
+        table.ParkedNames
+
+    /// The names of the threads of `threads` that are parked in a syscall,
+    /// found by asking every thread.
+    let private parkedOf<'Thread when 'Thread : comparison> (threads : Map<'Thread, UnixThreadState>) : Set<'Thread> =
+        (Set.empty, threads)
+        ||> Map.fold (fun parked name state ->
+            match state.Parked with
+            | Some _ -> Set.add name parked
+            | None -> parked
+        )
+
+    /// The table of exactly the threads `threads` holds.
+    let internal ofMap<'Thread when 'Thread : comparison>
+        (threads : Map<'Thread, UnixThreadState>)
+        : ThreadTable<'Thread>
+        =
+        {
+            ByName = threads
+            ParkedNames = parkedOf threads
+        }
+
+    /// Whether the names `table` keeps of its parked threads are those a scan
+    /// of every thread finds.
+    let internal parkedNamesFresh<'Thread when 'Thread : comparison> (table : ThreadTable<'Thread>) : bool =
+        parkedOf table.ByName = table.ParkedNames
+
+    /// `table` with `name`'s thread as `state`, and `name` among the parked
+    /// threads' names exactly if `state` is parked: the one way a thread is
+    /// written.
+    let private put<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (state : UnixThreadState)
+        (table : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let parkedNames =
+            match state.Parked with
+            | Some _ when not (Set.contains name table.ParkedNames) -> Set.add name table.ParkedNames
+            | None when Set.contains name table.ParkedNames -> Set.remove name table.ParkedNames
+            | Some _
+            | None -> table.ParkedNames
+
+        {
+            ByName = Map.add name state table.ByName
+            ParkedNames = parkedNames
+        }
+
+    /// `table` without `name`'s thread, which has exited; `table` itself if it
+    /// has no thread by that name.
+    ///
+    /// Fails loudly if the thread is parked: a thread leaves its park before it
+    /// leaves the table, since its park holds descriptions only the park's end
+    /// lets go of (`UnixParkState.unpark`).
+    let internal remove<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (table : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        match Map.tryFind name table.ByName with
+        | None -> table
+        | Some {
+                   Parked = Some park
+               } ->
+            failwith
+                $"UnixThreadTable.remove: thread %O{name} is leaving the table while parked in %A{park.Syscall}. A thread leaves its park, which lets go of what the park holds, before it exits (this is a bug in this library)."
+        | Some _ ->
+            {
+                ByName = Map.remove name table.ByName
+                ParkedNames = table.ParkedNames
+            }
+
+    /// The thread `name` is, or `None` if `table` has no thread by that name.
+    let internal tryFind<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (table : ThreadTable<'Thread>)
+        : UnixThreadState option
+        =
+        Map.tryFind name table.ByName
+
+    /// Whether `table` has a thread named `name`.
+    let internal contains<'Thread when 'Thread : comparison> (name : 'Thread) (table : ThreadTable<'Thread>) : bool =
+        Map.containsKey name table.ByName
 
     /// The thread `name` is.
     ///
@@ -977,14 +1095,14 @@ module UnixThreadTable =
     /// resolves to nothing is a client bug rather than anything a process did.
     let internal get<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
         let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if threads.TryGetValue (name, &thread) then
+        if threads.ByName.TryGetValue (name, &thread) then
             thread
         else
             failwith
@@ -998,14 +1116,14 @@ module UnixThreadTable =
         (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
-        if Map.containsKey name threads then
+        if Map.containsKey name threads.ByName then
             failwith
                 $"UnixThreadTable.add: %O{name} already names a thread. A thread is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
-        Map.add
+        put
             name
             {
                 Cpu = cpu
@@ -1020,7 +1138,7 @@ module UnixThreadTable =
     /// of the state it looked up instead.
     let internal parkedFor<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : ParkedSyscall option
         =
         UnixThreadState.parkedIn (get name threads)
@@ -1028,7 +1146,7 @@ module UnixThreadTable =
     /// The park `name` is in, with its place in park order, if it is parked.
     let internal parkOf<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : ThreadPark option
         =
         (get name threads).Parked
@@ -1039,14 +1157,14 @@ module UnixThreadTable =
     let internal requireThread<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, as in `get`: every read and
         // write asks this.
         let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if not (threads.TryGetValue (name, &thread)) then
+        if not (threads.ByName.TryGetValue (name, &thread)) then
             invalidOp
                 $"%s{operation}: thread %O{name} is not one of the process's threads: the thread table names no thread %O{name}, which was never created or has already exited (this is a bug in the client)."
 
@@ -1061,7 +1179,7 @@ module UnixThreadTable =
     let internal requireIssuer<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : unit
         =
         let thread = requireThread operation name threads
@@ -1085,7 +1203,7 @@ module UnixThreadTable =
     let internal requireReturning<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : unit
         =
         match (requireThread operation name threads).Parked with
@@ -1101,7 +1219,7 @@ module UnixThreadTable =
     let internal requireParked<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : ParkedSyscall
         =
         match (requireThread operation name threads).Parked with
@@ -1117,7 +1235,7 @@ module UnixThreadTable =
     let internal requireWoken<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : unit
         =
         match (requireThread operation name threads).Parked with
@@ -1142,7 +1260,7 @@ module UnixThreadTable =
         (operation : string)
         (choose : ParkedSyscall -> 'Expected option)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : 'Expected
         =
         let parked = requireParked operation name threads
@@ -1182,8 +1300,8 @@ module UnixThreadTable =
     let internal withPark<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (park : ThreadPark)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
@@ -1243,7 +1361,7 @@ module UnixThreadTable =
             failwith
                 $"UnixThreadTable.withPark: thread %O{name} is parked in %A{before} and is being parked again as %A{park}. A re-park is a woken thread's going back to sleep, so it is made only of a woken park, and is asleep (this is a bug in this library)."
 
-        Map.add
+        put
             name
             { existing with
                 Parked = Some park
@@ -1260,8 +1378,8 @@ module UnixThreadTable =
     let internal markWoken<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (fired : Set<WakePrimitive>)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
@@ -1273,7 +1391,7 @@ module UnixThreadTable =
         | Some ({
                     State = ParkState.Asleep
                 } as park) ->
-            Map.add
+            put
                 name
                 { existing with
                     Parked =
@@ -1294,7 +1412,7 @@ module UnixThreadTable =
     /// `UnixThreadState.Owes`.
     let internal owedBy<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : OwedReturn option
         =
         (get name threads).Owes
@@ -1308,8 +1426,8 @@ module UnixThreadTable =
     let internal owe<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (owed : OwedReturn)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
@@ -1321,7 +1439,7 @@ module UnixThreadTable =
             failwith
                 $"UnixThreadTable.owe: thread %O{name} already owes a return to user mode (%A{before}), and is being marked again (%A{owed}); a return clears the first before the thread can make the call that would set the second (this is a bug in this library)."
         | None, None ->
-            Map.add
+            put
                 name
                 { existing with
                     Owes = Some owed
@@ -1331,15 +1449,15 @@ module UnixThreadTable =
     /// Record that `name` has returned to user mode: it owes nothing.
     let internal settle<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
         match existing.Owes with
         | None -> threads
         | Some _ ->
-            Map.add
+            put
                 name
                 { existing with
                     Owes = None
@@ -1354,15 +1472,31 @@ module UnixThreadTable =
     /// its holds.
     let internal unpark<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
-        Map.add
+        put
             name
             { existing with
                 Parked = None
+            }
+            threads
+
+    /// Record that `name` last ran on `cpu`: see `UnixThreadState.Cpu`.
+    let internal withCpu<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (cpu : CpuId)
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let existing = get name threads
+
+        put
+            name
+            { existing with
+                Cpu = cpu
             }
             threads
 

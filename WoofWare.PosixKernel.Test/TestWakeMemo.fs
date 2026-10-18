@@ -126,8 +126,8 @@ module TestWakeMemo =
         |> shouldEqual true
 
         LanguagePrimitives.PhysicalEquality
-            signalled.Processes.[ProcessId.toInt32 pid].Threads
-            swept.Processes.[ProcessId.toInt32 pid].Threads
+            (ProcessTable.find "test" (ProcessId.toInt32 pid) signalled.Processes).Threads
+            (ProcessTable.find "test" (ProcessId.toInt32 pid) swept.Processes).Threads
         |> shouldEqual true
 
         // The call carried the memo into the system it answered.
@@ -161,11 +161,11 @@ module TestWakeMemo =
     /// finished `accept` leaves it: a forged state, whose open file table still
     /// counts the park's hold.
     let private finishedInThreadsAlone (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let slot = machine.Processes.[ProcessId.toInt32 pid]
+        let slot = ProcessTable.find "test" (ProcessId.toInt32 pid) machine.Processes
 
         { machine with
             Processes =
-                Map.add
+                ProcessTable.add
                     (ProcessId.toInt32 pid)
                     { slot with
                         Threads = UnixThreadTable.unpark 0 slot.Threads
@@ -197,7 +197,10 @@ module TestWakeMemo =
         let withCopy =
             { finished with
                 Processes =
-                    Map.add (ProcessId.toInt32 other) machine.Processes.[ProcessId.toInt32 pid] finished.Processes
+                    ProcessTable.add
+                        (ProcessId.toInt32 other)
+                        (ProcessTable.find "test" (ProcessId.toInt32 pid) machine.Processes)
+                        finished.Processes
             }
 
         let woken, swept = waking withCopy
@@ -218,10 +221,10 @@ module TestWakeMemo =
         let replaced =
             { swept with
                 Processes =
-                    Map.add
+                    ProcessTable.add
                         9998
-                        { machine.Processes.[ProcessId.toInt32 pid] with
-                            Threads = Map.empty
+                        { ProcessTable.find "test" (ProcessId.toInt32 pid) machine.Processes with
+                            Threads = UnixThreadTable.empty
                         }
                         finished.Processes
             }
@@ -476,15 +479,16 @@ module TestWakeMemo =
 
         // The process's threads, the same threads in another map: the memo does not answer, and the
         // sweep wakes nobody, so the system it answers remembers it afresh.
-        let slot = swept.Processes.[ProcessId.toInt32 pid]
+        let slot = ProcessTable.find "test" (ProcessId.toInt32 pid) swept.Processes
 
         let copied =
             { swept with
                 Processes =
-                    Map.add
+                    ProcessTable.add
                         (ProcessId.toInt32 pid)
                         { slot with
-                            Threads = Map.ofList (Map.toList slot.Threads)
+                            Threads =
+                                UnixThreadTable.ofMap (Map.ofList (Map.toList (UnixThreadTable.byName slot.Threads)))
                         }
                         swept.Processes
             }

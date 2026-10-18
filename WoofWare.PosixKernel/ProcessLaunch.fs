@@ -624,7 +624,7 @@ module ProcessLaunch =
         (pid : ProcessId)
         (leaderThreadId : OsThreadId)
         (machine : UnixMachineState)
-        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>, LaunchRefusal>
+        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * ThreadTable<'Thread>, LaunchRefusal>
         =
         let platform = machine.UnixPlatform
 
@@ -688,4 +688,4 @@ module ProcessLaunch =
                 PendingSignalLimit = launch.PendingSignalLimit
             }
 
-        Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId Map.empty)
+        Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId UnixThreadTable.empty)

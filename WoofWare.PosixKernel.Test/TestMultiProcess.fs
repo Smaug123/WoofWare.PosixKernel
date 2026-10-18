@@ -418,7 +418,7 @@ module TestMultiProcess =
 
         assertClean lowered
         Proc.state pids.[1] lowered |> shouldEqual (Proc.state pids.[1] machine)
-        Proc.threads pids.[1] lowered |> shouldEqual (Proc.threads pids.[1] machine)
+        Proc.threadMap pids.[1] lowered |> shouldEqual (Proc.threadMap pids.[1] machine)
 
     [<Test>]
     let ``a process ID recorded as live that no process has is reported`` () : unit =

@@ -549,7 +549,7 @@ module TestUnblockForAnotherThread =
         match Lone.wakes after with
         | [] -> None
         | _ ->
-            let threads = Lone.threads after |> Map.keys |> Set.ofSeq
+            let threads = Lone.threadMap after |> Map.keys |> Set.ofSeq
 
             let suspended =
                 match case.Sleep with

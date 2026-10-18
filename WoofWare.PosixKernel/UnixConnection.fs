@@ -2570,10 +2570,16 @@ module UnixConnection =
                    } -> waitingOn = listener
             | _ -> false
 
-        (system.Threads
-         |> Map.exists (fun name state -> name <> thread && asleepOnListener state))
-        || (system.Others
-            |> Map.exists (fun _ slot -> slot.Threads |> Map.exists (fun _ state -> asleepOnListener state)))
+        // Only parked threads can be asleep on it, so only those are asked.
+        let anyAsleep (except : 'Thread voption) (threads : ThreadTable<'Thread>) : bool =
+            UnixThreadTable.parked threads
+            |> Set.exists (fun name -> except <> ValueSome name && asleepOnListener (UnixThreadTable.get name threads))
+
+        anyAsleep (ValueSome thread) system.Threads
+        || (ProcessTable.withParks system.Others
+            |> Set.exists (fun key ->
+                anyAsleep ValueNone (ProcessTable.find "UnixConnection.accept" key system.Others).Threads
+            ))
 
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)

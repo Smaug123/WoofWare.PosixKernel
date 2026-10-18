@@ -7,7 +7,7 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
         /// The process's threads. A thread is named by the client, separately in
         /// each process: two processes may each have a thread the client calls
         /// by the same name.
-        Threads : Map<'Thread, UnixThreadState>
+        Threads : ThreadTable<'Thread>
         /// The process's first thread, which it started with: its thread-group
         /// leader.
         ///
@@ -16,6 +16,131 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
         /// long as the process is running. On Linux its thread ID is the process ID.
         Leader : 'Thread
     }
+
+/// Every process of a `UnixSystem`, keyed by its process ID's `pid_t`
+/// (`ProcessId.toInt32`), with the keys of those with a thread parked in a
+/// syscall.
+///
+/// Its representation is private to this file, so that the functions of
+/// `ProcessTable`, which keep those keys with every change to a slot, are the
+/// only way to change one; a sweep of the sleeping threads (`UnixWait.wake`)
+/// reads those keys rather than every process.
+type internal ProcessTable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            Slots : Map<int32, ProcessSlot<'Thread, 'Handler>>
+            /// The keys of the slots in `Slots` some thread of whose is parked
+            /// (`UnixThreadTable.parked`), and of no others.
+            WithParks : Set<int32>
+        }
+
+// Keyed by the `pid_t` rather than by the `ProcessId`, a struct, because a
+// `Map` compares a struct key through F#'s generic comparison, which boxes
+// both keys at every comparison (measured: 48 bytes a lookup), and
+// `UnixScheduling.dispatch`, which a client makes before every instruction,
+// finds its caller's process here and must allocate nothing.
+
+/// Reading and changing a `ProcessTable`.
+[<RequireQualifiedAccess>]
+module internal ProcessTable =
+
+    /// No process.
+    let empty<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> : ProcessTable<'Thread, 'Handler> =
+        {
+            Slots = Map.empty
+            WithParks = Set.empty
+        }
+
+    /// Every process's slot, by its key.
+    let slots<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (table : ProcessTable<'Thread, 'Handler>)
+        : Map<int32, ProcessSlot<'Thread, 'Handler>>
+        =
+        table.Slots
+
+    /// The keys of the processes some thread of whose is parked in a syscall,
+    /// asleep or woken, in increasing order.
+    let withParks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (table : ProcessTable<'Thread, 'Handler>)
+        : Set<int32>
+        =
+        table.WithParks
+
+    /// The slot under `key`, or `None` if `table` holds none.
+    let tryFind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (key : int32)
+        (table : ProcessTable<'Thread, 'Handler>)
+        : ProcessSlot<'Thread, 'Handler> option
+        =
+        Map.tryFind key table.Slots
+
+    /// The slot under `key`, failing loudly if `table` holds none: `operation`
+    /// names the function that read it, whose caller knows the key is there.
+    let find<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (key : int32)
+        (table : ProcessTable<'Thread, 'Handler>)
+        : ProcessSlot<'Thread, 'Handler>
+        =
+        let mutable slot = Unchecked.defaultof<ProcessSlot<'Thread, 'Handler>>
+
+        if table.Slots.TryGetValue (key, &slot) then
+            slot
+        else
+            failwith $"%s{operation}: the kernel holds no process under %d{key} (this is a bug in this library)."
+
+    /// `table` with `slot` under `key`, in place of any slot there.
+    let add<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (key : int32)
+        (slot : ProcessSlot<'Thread, 'Handler>)
+        (table : ProcessTable<'Thread, 'Handler>)
+        : ProcessTable<'Thread, 'Handler>
+        =
+        let parks = not (UnixThreadTable.parked slot.Threads).IsEmpty
+        let listed = Set.contains key table.WithParks
+
+        {
+            Slots = Map.add key slot table.Slots
+            WithParks =
+                if parks && not listed then Set.add key table.WithParks
+                elif listed && not parks then Set.remove key table.WithParks
+                else table.WithParks
+        }
+
+    /// `table` without a slot under `key`.
+    let remove<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (key : int32)
+        (table : ProcessTable<'Thread, 'Handler>)
+        : ProcessTable<'Thread, 'Handler>
+        =
+        {
+            Slots = Map.remove key table.Slots
+            WithParks =
+                if Set.contains key table.WithParks then
+                    Set.remove key table.WithParks
+                else
+                    table.WithParks
+        }
+
+    /// Whether the keys `table` keeps of its processes with a parked thread
+    /// are those a scan of every process finds, and each process's own names
+    /// of its parked threads are those a scan of its threads finds.
+    let parksFresh<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (table : ProcessTable<'Thread, 'Handler>)
+        : bool
+        =
+        let withParks =
+            (Set.empty, table.Slots)
+            ||> Map.fold (fun withParks key slot ->
+                if (UnixThreadTable.parked slot.Threads).IsEmpty then
+                    withParks
+                else
+                    Set.add key withParks
+            )
+
+        withParks = table.WithParks
+        && table.Slots
+           |> Map.forall (fun _ slot -> UnixThreadTable.parkedNamesFresh slot.Threads)
 
 /// What a sweep of a kernel's sleeping threads that woke none of them read:
 /// everything a wake condition is asked of but the clock, among it which
@@ -26,7 +151,7 @@ type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'H
         Machine : UnixMachineState
         /// Every process's state and threads, whose parks say which threads
         /// sleep.
-        Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
+        Processes : ProcessTable<'Thread, 'Handler>
         /// The earliest `WakePrimitive.DeadlinePassed` among the wake
         /// conditions of the threads asleep in `Processes`, if any has one.
         EarliestDeadline : int64 voption
@@ -79,21 +204,14 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             /// How long the machine has been up, and which thread each of its
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
-            /// Every process on the machine, keyed by its process ID's
-            /// `pid_t` (`ProcessId.toInt32`).
-            Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
+            /// Every process on the machine.
+            Processes : ProcessTable<'Thread, 'Handler>
             /// The wake memo (`UnixWait.wake`), which equality ignores. Every
             /// change but a wake carries it into the kernel it makes: it
             /// compares what it read by reference, so it never answers for a
             /// kernel that differs from the one it read.
             Sweep : WakeMemo<'Thread, 'Handler>
         }
-
-// Keyed by the `pid_t` rather than by the `ProcessId`, a struct, because a
-// `Map` compares a struct key through F#'s generic comparison, which boxes
-// both keys at every comparison (measured: 48 bytes a lookup), and
-// `UnixScheduling.dispatch`, which a client makes before every instruction,
-// finds its caller's process here and must allocate nothing.
 
 /// One process's view of a `UnixSystem`, which a call's body works on: the
 /// machine, which thread each processor runs, the process with its threads,
@@ -115,12 +233,11 @@ type internal ProcessView<'Thread, 'Handler when 'Thread : comparison and 'Handl
         ProcessId : ProcessId
         Process : UnixProcessState<'Thread, 'Handler>
         /// The process's threads: see `ProcessSlot.Threads`.
-        Threads : Map<'Thread, UnixThreadState>
+        Threads : ThreadTable<'Thread>
         /// The process's leader: see `ProcessSlot.Leader`.
         Leader : 'Thread
-        /// Every process on the machine but this one, keyed as
-        /// `UnixSystem.Processes` is.
-        Others : Map<int32, ProcessSlot<'Thread, 'Handler>>
+        /// Every process on the machine but this one.
+        Others : ProcessTable<'Thread, 'Handler>
         /// The kernel's wake memo (`UnixSystem.Sweep`), which no call's body
         /// reads: held so that putting the view back puts it back too.
         Sweep : WakeMemo<'Thread, 'Handler>
@@ -145,7 +262,7 @@ module internal ProcessView =
             Process = slot.Process
             Threads = slot.Threads
             Leader = slot.Leader
-            Others = Map.remove (ProcessId.toInt32 pid) system.Processes
+            Others = ProcessTable.remove (ProcessId.toInt32 pid) system.Processes
             Sweep = system.Sweep
         }
 
@@ -156,7 +273,7 @@ module internal ProcessView =
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessView<'Thread, 'Handler> option
         =
-        match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+        match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
         | Some slot -> Some (ofSlot pid slot system)
         | None -> None
 
@@ -170,7 +287,7 @@ module internal ProcessView =
             Machine = view.Machine
             Scheduling = view.Scheduling
             Processes =
-                Map.add
+                ProcessTable.add
                     (ProcessId.toInt32 view.ProcessId)
                     {
                         Process = view.Process
@@ -191,9 +308,9 @@ module internal ProcessView =
         (view : ProcessView<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if not view.Threads.IsEmpty then
+        if not (UnixThreadTable.byName view.Threads).IsEmpty then
             failwith
-                $"ProcessView.unfocusWithout: process %O{view.ProcessId} still has the threads %A{Map.keys view.Threads |> List.ofSeq}, so it has not ended (this is a bug in this library)."
+                $"ProcessView.unfocusWithout: process %O{view.ProcessId} still has the threads %A{Map.keys (UnixThreadTable.byName view.Threads) |> List.ofSeq}, so it has not ended (this is a bug in this library)."
 
         {
             Machine = view.Machine
@@ -319,7 +436,7 @@ module internal OwedReturns =
         (system : ProcessView<'Thread, 'Handler>)
         : ProcessView<'Thread, 'Handler>
         =
-        match Map.tryFind thread system.Threads with
+        match UnixThreadTable.tryFind thread system.Threads with
         | Some {
                    Parked = None
                    Owes = None
@@ -744,7 +861,9 @@ module internal Entry =
         // option.
         let mutable slot = Unchecked.defaultof<ProcessSlot<'Thread, 'Handler>>
 
-        if not (system.Processes.TryGetValue (ProcessId.toInt32 (Caller.processId caller), &slot)) then
+        if
+            not ((ProcessTable.slots system.Processes).TryGetValue (ProcessId.toInt32 (Caller.processId caller), &slot))
+        then
             invalidOp
                 $"%s{operation}: the caller is %O{caller}, but the system holds no process %O{Caller.processId caller}, so the call cannot be made in it (this is a bug in the client)."
 

@@ -251,7 +251,7 @@ module TestSigcontGeneration =
     let private advance (actor : int) : Step =
         fun r ->
             let others =
-                (Lone.threads r.System)
+                (Lone.threadMap r.System)
                 |> Map.keys
                 |> Seq.filter (fun thread -> thread <> actor)
                 |> List.ofSeq

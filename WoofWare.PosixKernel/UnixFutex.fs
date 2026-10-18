@@ -184,7 +184,7 @@ module UnixFutex =
             // they parked: a waiter a signal or its timeout has woken keeps its
             // place until it runs (measured, the "race" rows).
             let taken =
-                system.Threads
+                UnixThreadTable.byName system.Threads
                 |> Map.toList
                 |> List.choose (fun (waiter, state) ->
                     match UnixThreadState.park state with

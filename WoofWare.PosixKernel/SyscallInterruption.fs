@@ -220,7 +220,7 @@ module SyscallInterruption =
         (signals : SignalState<'Thread, 'Handler>)
         : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
         =
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
         let rec decide
@@ -282,7 +282,7 @@ module SyscallInterruption =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<HandlerFrame<'Thread, 'Handler> list, SyscallInterruptionRefusal>
         =
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq
 
         // Only asked: the walk's own state (the frames pushed, the ignored
         // signals discarded) is dropped. The thread returns to user mode for real
@@ -359,7 +359,7 @@ module SyscallInterruption =
                 (UnixSystemState.signalNumbering system)
                 system.Process.CoreDumps
                 system.Leader
-                (system.Threads |> Map.keys |> Set.ofSeq)
+                (UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq)
                 thread
                 system.Process.Signals
         with
@@ -626,7 +626,7 @@ module SyscallInterruption =
                     $"SyscallInterruption.ofPark: thread %O{thread} is not asleep in a syscall, so no signal can interrupt one (this is a bug in the caller)."
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq
 
         // Only asked: the walk's own state is dropped. The thread returns to
         // user mode for real once its syscall has answered.
