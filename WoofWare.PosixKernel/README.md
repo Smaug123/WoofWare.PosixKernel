@@ -545,20 +545,22 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 #### Futexes
 
-Linux's `futex(2)`, for the two operations a private lock or semaphore is built on: `FUTEX_WAIT_PRIVATE` (128) and `FUTEX_WAKE_PRIVATE` (129), which `op` takes raw.
+Linux's `futex(2)`, for the operations a private lock, condition variable or semaphore is built on: `FUTEX_WAIT_PRIVATE` (128), `FUTEX_WAKE_PRIVATE` (129), `FUTEX_WAIT_BITSET_PRIVATE` (137, or 393 with `FUTEX_CLOCK_REALTIME`) and `FUTEX_WAKE_BITSET_PRIVATE` (138), which `op` takes raw, with the call's sixth argument, `val3`, the bitset of a bitset wait or wake.
 A process's waiters on one address form one queue, in the order they began to wait, which no other process reaches.
 The kernel holds no word: the word is the caller's memory.
-A wait screens its timeout, a relative time on the monotonic clock, and then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping; a timeout of zero sleeps too, as Linux's does.
-Both screen the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`).
-A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
-A timeout Linux saturates, of `KTIME_SEC_MAX` (9223372036) seconds or more or one that ends past the last instant the clock can represent, never expires: the park's timeout is `FutexTimeout.Unbounded`, and `UnixWait.deadlines` holds nothing for it. Any other timeout expires at its instant (`FutexTimeout.Until`), however far off.
+A wait screens its timeout, then its bitset (`EINVAL` for 0), then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping.
+A `FUTEX_WAIT_PRIVATE`'s timeout is a length of time on the monotonic clock; a `FUTEX_WAIT_BITSET_PRIVATE`'s is an instant on the monotonic clock, or with `FUTEX_CLOCK_REALTIME` on the realtime clock, which the park holds as nanoseconds since boot (`FutexTimeout.At`), less the boot time; a timeout of zero, or an instant already passed, sleeps too, as Linux's does.
+A wait or a wake screens the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`); a bitset wake screens its bitset first (`EINVAL` for 0).
+A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, passing over any whose bitset shares no bit with its own (a plain wait or wake has every bit), and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
+A timeout Linux saturates, of `KTIME_SEC_MAX` (9223372036) seconds or more or a relative one that ends past the last instant the clock can represent, never expires: the park's timeout is `FutexTimeout.Unbounded`, and `UnixWait.deadlines` holds nothing for it. Any other timeout expires at its instant (`FutexTimeout.Until` for a relative one, `FutexTimeout.At` for an absolute one), however far off.
 A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout, even one that never expires, with `EINTR`.
-A restarted wait reads its word again, so the client makes the call again; a wait with a deadline whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`, and one whose timeout never expires restarts, as one with no timeout does.
-Every other operation throws `UnmodelledException`, and Darwin, which has no `futex`, throws `PlatformNotSupportedException`.
+A restarted wait reads its word again, so the client makes the call again with its first arguments; a bitset wait whose waking signal has gone by the time it is finished restarts so, naming the same instant, but a `FUTEX_WAIT_PRIVATE` with a deadline, which Linux would restart with its first deadline, throws `UnmodelledException`. One whose timeout never expires restarts, as one with no timeout does.
+An `op` Linux does not decode answers `ENOSYS`, as `FUTEX_CLOCK_REALTIME` on any command but a bitset wait does, after the timeout of a command that takes one is screened.
+Every other command Linux has, and any command without `FUTEX_PRIVATE_FLAG`, throws `UnmodelledException`, and Darwin, which has no `futex`, throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| Linux's `futex(2)` | `UnixFutex.futex (caller : Caller) (address : uint64) (op : int) (value : int) (word : UserBuffer) (timeout : TimespecArgument)` | `CallProgress<PausedFutexWait, SyscallOutcome * UnixSystem>` |
+| Linux's `futex(2)` | `UnixFutex.futex (caller : Caller) (address : uint64) (op : int) (value : int) (word : UserBuffer) (timeout : TimespecArgument) (val3 : uint32)` | `CallProgress<PausedFutexWait, SyscallOutcome * UnixSystem>` |
 | `futex(2)`'s wait, given the word | `UnixFutex.futexWithWord (word : uint32) (paused : PausedFutexWait)` | `SyscallOutcome * UnixSystem` |
 
 #### Signals
@@ -611,7 +613,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 #### What is not modelled
 
-These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendto`, `recvfrom`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex` operations other than a private wait and wake, Darwin's `__ulock` and `__psynch` calls, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
+These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendto`, `recvfrom`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex` operations other than a private wait and wake and their bitset forms, Darwin's `__ulock` and `__psynch` calls, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
 "What the kernel leaves to the client" says which of those are the client's by design.
 
 #### Calls that copy in from the caller's memory
@@ -624,7 +626,7 @@ A `getsockopt` stops where the kernel reads the caller's length cell instead, an
 Nothing else can be done to the system in between, since the paused call holds it.
 
 A call whose pathname is copied in after something observable stops there too, and takes that pathname in its resume function: `rename` and `renameat` stop before the destination (`UnixNamespace.renameWithDestination`), `link` and `linkat` before the new path (`UnixNamespace.linkWithDestination`), `symlink` and `symlinkat` before the link's own path (`UnixNamespace.symlinkWithPath`), `access` and `faccessat` before the path (`UnixPathResolution.accessWithPath`), since Linux answers a bad mode or flag word without reading it, and `inotify_add_watch` before the path (`UnixInotify.inotifyAddWatchWithPath`), since Linux answers a bad mask or descriptor without reading it.
-A futex wait stops where the kernel reads its word, once its timeout and address have passed their screens, and `UnixFutex.futexWithWord` takes what the word holds, read as that is called.
+A futex wait stops where the kernel reads its word, once its timeout, bitset and address have passed their screens, and `UnixFutex.futexWithWord` takes what the word holds, read as that is called.
 `clonefile` stops twice: before the source (`UnixNamespace.cloneFileWithSource`) and before the destination (`UnixNamespace.cloneFileWithDestination`).
 A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step`, whose `Syscall` case holds what each copy reads (see "One entry point"), or resumes each paused call as soon as it is answered.
 
@@ -1240,10 +1242,10 @@ Nothing here maps a file.
 
 ### Blocks inside the process
 
-**What.** A thread that waits without asking the kernel to watch a descriptor or a clock: Darwin's `__psynch_*` and `__ulock_*` calls, Linux's `futex` operations other than a private wait and wake, and the mutexes, condition variables and timed waits that the C library builds on them.
+**What.** A thread that waits without asking the kernel to watch a descriptor or a clock: Darwin's `__psynch_*` and `__ulock_*` calls, Linux's `futex` operations other than a private wait and wake and their bitset forms, and the mutexes, condition variables and timed waits that the C library builds on them.
 
 **Why the client's, for now.** Each is keyed by a user address and reads or writes user memory, which is the client's (see above).
-Linux's private `futex` wait and wake are the kernel's (see "Futexes"): the client hands over the word it reads, as it hands over any bytes a call copies in.
+Linux's private `futex` wait and wake, and their bitset forms, are the kernel's (see "Futexes"): the client hands over the word it reads, as it hands over any bytes a call copies in.
 The rest the client keeps itself for now; the long-term plan is to model them in the kernel too, so that every block happens there and the client has no blocked threads of its own (see [the tracking issue](https://github.com/Smaug123/WoofWare.PawPrint/issues/1726)).
 
 **Where they meet.** A thread the client holds blocked is parked in no call this library knows of, so as far as the library knows it could run.
