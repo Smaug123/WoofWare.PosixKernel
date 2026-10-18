@@ -370,6 +370,7 @@
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-aarch64-uid1000.txt" />
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.12.113-x86_64-uid0-qemu.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-x86_64-uid0.txt" />
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid0.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
     <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
