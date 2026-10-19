@@ -22,7 +22,8 @@ type internal SyscallInterruptionRefusal =
     /// user mode: another thread has discarded the signal, or the thread
     /// blocks it. Whether the syscall then ends or sleeps on is unmeasured.
     | WakingSignalGone
-    /// A signal woke the thread asleep in a futex wait with a timeout, and by
+    /// A signal woke the thread asleep in a futex wait with a relative timeout
+    /// (`FutexTimeout.Until`), and by
     /// the time the call is finished the thread would take no signal as it
     /// returned to user mode. The wait then restarts with its first deadline,
     /// reading the word at its address again, which only the caller can read;
@@ -44,7 +45,7 @@ module internal SyscallInterruptionRefusal =
         | SyscallInterruptionRefusal.WakingSignalGone ->
             "a signal woke a thread asleep in a syscall, and by the time the syscall was finished the thread would take no signal as it returned to user mode: another thread had discarded the signal, or the thread blocked it. Whether the syscall then ends with EINTR or sleeps on is unmeasured."
         | SyscallInterruptionRefusal.FutexRestartKeepsDeadline ->
-            "a signal woke a thread asleep in a futex wait with a timeout, and by the time the call was finished the thread would take no signal as it returned to user mode. Linux restarts such a wait with its first deadline, reading the word at its address again; only the caller can read that word, and a caller making the call again with its own arguments gives the wait a later deadline."
+            "a signal woke a thread asleep in a futex wait with a relative timeout, and by the time the call was finished the thread would take no signal as it returned to user mode. Linux restarts such a wait with its first deadline, reading the word at its address again; only the caller can read that word, and a caller making the call again with its own arguments gives the wait a later deadline."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallInterruptionRefusal) : RefusalKind =
@@ -191,13 +192,16 @@ module SyscallInterruption =
         // EINTR without SA_RESTART and went on sleeping with it. A Darwin
         // connect never sleeps.
         | ParkedSyscall.Connect _ -> SignalRestartRule.RestartsUnderSaRestart
-        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "signal" rows): a
-        // wait with no timeout returned EINTR without SA_RESTART and went on
-        // sleeping with it; one with a timeout returned EINTR either way.
+        // Measured on Linux 6.18.5 (`docs/probes/futex` and
+        // `docs/probes/futex-bitset`, the "signal" rows): a wait with no
+        // timeout returned EINTR without SA_RESTART and went on sleeping with
+        // it; one with a timeout, relative or absolute on either clock,
+        // returned EINTR either way.
         | ParkedSyscall.Futex wait ->
             match wait.FutexTimeout with
             | FutexTimeout.Untimed -> SignalRestartRule.RestartsUnderSaRestart
             | FutexTimeout.Until _
+            | FutexTimeout.At _
             | FutexTimeout.Unbounded -> SignalRestartRule.FailsWithEintr
 
     /// What a thread in `sigsuspend` does now, its temporary mask in force.
@@ -405,15 +409,18 @@ module SyscallInterruption =
             measuredWithoutTimeout poll.Deadline InterruptedCall.FailsWithEintr
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.Kevent wait ->
             measuredWithoutTimeout wait.Deadline InterruptedCall.FailsWithEintr
-        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "stop" rows): a
-        // wait stopped and continued, no handler run, went on sleeping, and
-        // one with a timeout still timed out at its first deadline. A saturated
-        // timeout's first deadline never comes, and the call made again with
-        // the same arguments saturates too (a later "now" only overflows
-        // further), so it restarts as an untimed wait does.
+        // Measured on Linux 6.18.5 (`docs/probes/futex` and
+        // `docs/probes/futex-bitset`, the "stop" rows): a wait stopped and
+        // continued, no handler run, went on sleeping, and one with a timeout
+        // still timed out at its first deadline. A saturated timeout's first
+        // deadline never comes, and the call made again with the same
+        // arguments saturates too (a later "now" only overflows further), and
+        // an absolute deadline is the instant the call made again names, so
+        // each restarts as the call made again.
         | SimulatedUnixFlavour.Linux, ParkedSyscall.Futex wait ->
             match wait.FutexTimeout with
             | FutexTimeout.Untimed
+            | FutexTimeout.At _
             | FutexTimeout.Unbounded -> UnhandledInterruption.Ends InterruptedCall.Restarts
             | FutexTimeout.Until _ -> UnhandledInterruption.RestartsWithRemainingTime
         // A park the flavour never makes, and the reserved parks.

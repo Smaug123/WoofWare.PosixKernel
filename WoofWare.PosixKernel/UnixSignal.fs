@@ -112,8 +112,8 @@ type internal ReturnToUserRefusal =
     /// takes as it returns is `signal`, at its default, which stops or
     /// continues the process.
     | DefaultAction of signal : Signal
-    /// `signal` interrupted the thread's Linux `poll` or futex wait, which had
-    /// a timeout, and no handler runs as the thread returns. Linux restarts
+    /// `signal` interrupted the thread's Linux `poll`, or its futex wait with a
+    /// relative timeout, and no handler runs as the thread returns. Linux restarts
     /// such a call with what is left of its timeout, which the call as first
     /// made does not. `signal` is `None` where the signal that woke the call had gone
     /// by the time the call was finished (`Interruption.Signal`).
@@ -156,7 +156,7 @@ module internal ReturnToUserRefusal =
         | ReturnToUserRefusal.DefaultAction signal ->
             $"a signal interrupted the thread's call, and the first signal it takes as it returns is %O{signal}, at a default that stops or continues the process. What that does to the call is unmeasured."
         | ReturnToUserRefusal.RestartWithRemainingTime signal ->
-            $"%s{interrupter signal} interrupted the thread's poll or futex wait, which had a timeout, and no handler runs as the thread returns. Linux restarts such a call with what is left of its timeout (restart_syscall), which a client making the call again with its own arguments cannot do."
+            $"%s{interrupter signal} interrupted the thread's poll, or its futex wait with a relative timeout, and no handler runs as the thread returns. Linux restarts such a call with what is left of its timeout (restart_syscall), which a client making the call again with its own arguments cannot do."
         | ReturnToUserRefusal.UnmeasuredWithoutHandler signal ->
             $"%s{interrupter signal} interrupted the thread's call, and no handler runs as the thread returns: by then the signal has been discarded or is blocked. What the call does then is unmeasured."
         | ReturnToUserRefusal.ChangedSinceInterruption (signal, flavour) ->

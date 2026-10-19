@@ -102,7 +102,7 @@ module TestProcessView =
         | Op.Call (proc, call) ->
             match UnixSystem.tryStep (leaderOf proc) call system with
             | Ok stepped ->
-                match Stepped.carriedOn stepped with
+                match Stepped.carriedOn (leaderOf proc) system stepped with
                 | Some system -> system
                 | None -> failwith $"%A{call} answered %A{Stepped.view stepped}, leaving no system to walk on from"
             // Outside what the kernel models, so the step changes nothing.

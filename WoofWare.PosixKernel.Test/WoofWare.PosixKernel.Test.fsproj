@@ -16,6 +16,7 @@
     <Compile Include="HostCalls.fs" />
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
+    <Compile Include="HostCorpus.fs" />
     <Compile Include="TestOrder.fs" />
     <Compile Include="Expect.fs" />
     <Compile Include="UnionCaseName.fs" />
@@ -187,6 +188,7 @@
     <Compile Include="TestSigsuspend.fs" />
     <Compile Include="TestSleepPark.fs" />
     <Compile Include="TestFutex.fs" />
+    <Compile Include="TestFutexBitset.fs" />
     <Compile Include="TestFifoOpenPark.fs" />
     <Compile Include="TestSelectPark.fs" />
     <Compile Include="TestSignalWaitPark.fs" />
@@ -297,12 +299,13 @@
     <Compile Include="TestFaultingFileWrite.fs" />
     <Compile Include="TestFileContentsCost.fs" />
     <Compile Include="TestInotifyDeliveryMeasured.fs" />
+    <Compile Include="TestInotifyRemovedDirectoryMeasured.fs" />
     <Compile Include="TestInotifyDentryMeasured.fs" />
     <Compile Include="TestInotifySelfMeasured.fs" />
     <Compile Include="InotifyDeliveryOps.fs" />
     <Compile Include="TestInotifyDelivery.fs" />
     <Compile Include="TestInotifyDeliveryAgainstHost.fs" />
-    <Compile Include="TestInotifyRefusals.fs" />
+    <Compile Include="TestInotifyRemovedDirectory.fs" />
     <Compile Include="TestKqueue.fs" />
     <Compile Include="KeventWorld.fs" />
     <Compile Include="TestDispositionBeforeReturn.fs" />
@@ -404,6 +407,8 @@
     <EmbeddedResource Include="..\docs\probes\first-wake\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.darwin.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
+    <!-- docs/probes/futex-bitset. `TestFutexBitset` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\futex-bitset\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex-bitset.linux.txt" />
     <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.darwin.txt" />
@@ -427,6 +432,9 @@
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-delivery-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDelivery.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-dentry-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDentry.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-self-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifySelf.linux.txt" />
+    <!-- What Linux 6.18.5 reported of a change to a removed directory.
+         `TestInotifyRemovedDirectoryMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-removed-directory\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyRemovedDirectory.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -790,6 +798,10 @@
     <!-- What a real pipe answered to random non-blocking reads and writes,
          measured per flavour; `TestPipeBufferCorpus` holds `PipeBuffer` to it. -->
     <EmbeddedResource Include="pipeBuffer\*.txt" />
+    <!-- What a kernel answered to a `HostComparison`'s generated inputs, recorded by
+         `HostCorpus.live` on a host of that flavour; each comparison's replay test
+         holds the model to it on every host. -->
+    <EmbeddedResource Include="hostCorpus\*.txt" />
     <!-- What a real pipe held as a reader drained it while one blocking write was
          still filling it, measured per flavour; `TestSuppliedPipe` replays it. -->
     <EmbeddedResource Include="suppliedPipe\*.txt" />

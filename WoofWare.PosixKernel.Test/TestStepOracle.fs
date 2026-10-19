@@ -489,8 +489,8 @@ module TestStepOracle =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> CallProgress.resumeWith (fun paused -> UnixFutex.tryFutexWithWord (cell word) paused)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
@@ -1804,7 +1804,14 @@ module TestStepOracle =
                         [
                             4, Gen.constant UnixFutex.FutexWaitPrivate
                             3, Gen.constant UnixFutex.FutexWakePrivate
-                            1, Gen.elements [ 0 ; 9 ; 384 ]
+                            3,
+                            Gen.elements
+                                [
+                                    UnixFutex.FutexWaitBitsetPrivate
+                                    UnixFutex.FutexWaitBitsetPrivate ||| UnixFutex.FutexClockRealtime
+                                    UnixFutex.FutexWakeBitsetPrivate
+                                ]
+                            1, Gen.elements [ 0 ; 9 ; 384 ; 2 ; 6 ]
                         ]
 
                 let! value = Gen.elements [ 0 ; 0 ; 1 ; -1 ]
@@ -1833,7 +1840,8 @@ module TestStepOracle =
                             TimespecArgument.Unreadable
                         ]
 
-                return Syscall.Futex (address, op, value, word, timeout)
+                let! val3 = Gen.elements [ UnixFutex.FutexBitsetMatchAny ; 1u ; 2u ; 0u ]
+                return Syscall.Futex (address, op, value, word, timeout, val3)
             }
         ]
 
@@ -1880,8 +1888,8 @@ module TestStepOracle =
         | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
             UnixSocket.tryGetsockopt caller fd level optionName value (bufferOf length) system
             |> stopped
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> stopped
         | other -> failwith $"%s{UnionCaseName.ofValue other} copies no buffer in"
 
@@ -1961,7 +1969,7 @@ module TestStepOracle =
                     try
                         match reference leader call system with
                         | Ok stepped ->
-                            Stepped.carriedOn stepped
+                            Stepped.carriedOn leader system stepped
                             |> Option.bind (returned leader)
                             |> Option.bind owingReturned
                             |> Option.defaultValue system
@@ -1979,6 +1987,10 @@ module TestStepOracle =
 
             let caller = Callers.thread caller system
 
+            // Whether `SteppedCall.system` disagreed with the system the
+            // answer holds, found without naming a case.
+            let systemMismatch : string option ref = ref None
+
             let viaStep =
                 observe (fun () ->
                     let stepped = UnixSystem.tryStep caller call system
@@ -1989,8 +2001,27 @@ module TestStepOracle =
                     | Ok _
                     | Error _ -> ()
 
+                    match stepped with
+                    | Ok stepped ->
+                        let expected =
+                            match Stepped.heldSystems stepped with
+                            | [] -> system
+                            | [ held ] -> held
+                            | held ->
+                                failwith $"%A{call}: the answer holds %d{List.length held} systems, not at most one"
+
+                        if not (obj.ReferenceEquals (SteppedCall.system system stepped, expected)) then
+                            systemMismatch.Value <-
+                                Some
+                                    $"%A{call} by %O{caller}: SteppedCall.system of %A{Stepped.view stepped} is not the system the answer holds, or the one the call was made in"
+                    | Error _ -> ()
+
                     stepped
                 )
+
+            match systemMismatch.Value with
+            | Some message -> failwith message
+            | None -> ()
 
             let direct = observe (fun () -> reference caller call system)
 

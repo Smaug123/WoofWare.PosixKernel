@@ -596,14 +596,27 @@ module TestUnixWait =
                                 match deadline with
                                 | None -> FutexTimeout.Untimed
                                 | Some deadline -> FutexTimeout.Until deadline
+                            FutexBitset = UnixFutex.FutexBitsetMatchAny
                             TakenByWake = taken
                         }
+
+                    match deadline with
+                    | None -> ()
+                    | Some deadline ->
+                        ParkedSyscall.Futex
+                            {
+                                FutexAddress = 0x1000UL
+                                FutexTimeout = FutexTimeout.At deadline
+                                FutexBitset = 1u
+                                TakenByWake = taken
+                            }
 
             for taken in [ false ; true ] do
                 ParkedSyscall.Futex
                     {
                         FutexAddress = 0x1000UL
                         FutexTimeout = FutexTimeout.Unbounded
+                        FutexBitset = UnixFutex.FutexBitsetMatchAny
                         TakenByWake = taken
                     }
 

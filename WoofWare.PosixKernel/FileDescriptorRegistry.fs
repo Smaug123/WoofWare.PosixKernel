@@ -1332,7 +1332,9 @@ type private OpenFileEntry =
         /// Which name that is, as Linux's dentry: descriptions opened through
         /// one name while it stayed linked hold one name, and say so by
         /// carrying the identity of the first of them; a name linked again
-        /// after an unlink is another (`OpenFileTable.nameHeldElsewhere`).
+        /// after an unlink is another (`OpenFileTable.nameHeldElsewhere`). A
+        /// directory has one name, which every description of it opened
+        /// through a name holds, before its removal or after.
         NameIdentity : OpenFileDescriptionId
     }
 
@@ -1768,7 +1770,6 @@ module private OpenFileEntries =
                 let (InodeNumber parent) = dentry.Parent
                 bump step parent held, bump step parent heldDirectories
             | Some ReachedThrough.Unnamed
-            | Some (ReachedThrough.RemovedDirectory _)
             | None -> held, heldDirectories
 
         { entries with
@@ -2496,9 +2497,10 @@ type internal FileDescriptorRegistryDefect =
     | OpenedThroughMismatch of description : OpenFileDescriptionId * target : OpenFileTarget
     /// The descriptions `description` and `other` are onto one inode, and
     /// either hold one name (one name identity) and record it differently,
-    /// or record one name still linked and hold two: descriptions opened
-    /// through a name hold one name until it is unlinked, and a rename moves
-    /// every record of it.
+    /// or record one name, still linked or of a directory, and hold two:
+    /// descriptions opened through a name hold one name until it is
+    /// unlinked, and a directory has one name only, and a rename moves every
+    /// record of it.
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
     /// The table's count of the descriptions naming each end of each pipe,
     /// its record of the `flock`s held on each object, its record of the
@@ -2674,20 +2676,19 @@ module OpenFileTable =
                 $"OpenFileTable: an index names open file description %d{raw}, which is not in the table (this is a bug in this library)."
 
     /// The identity of the name held by the first live description, in
-    /// identity order, onto `inode` opened through the name `name` in
-    /// `directory` while it is linked: in time logarithmic in the number of
+    /// identity order, onto `inode` whose record of the name it was opened
+    /// through is `through`: in time logarithmic in the number of
     /// descriptions, and linear in the number of identities that name has
     /// and in the descriptions opened through it onto other inodes, which
     /// `FileDescriptorRegistryDefect.OpenedThroughNameNotShared` and
     /// `FileDescriptorRegistryDefect.OpenedThroughMismatch` rule out.
-    let private holdingLinkedName
-        (directory : InodeNumber)
-        (name : DirectoryEntryName)
+    let private holdingName
+        (through : ReachedThrough)
         (inode : InodeNumber)
         (table : OpenFileTable)
         : OpenFileDescriptionId option
         =
-        OpenFileEntries.openedThrough (ReachedThrough.ofEntry directory name) table.Entries
+        OpenFileEntries.openedThrough through table.Entries
         |> Seq.choose (fun (KeyValue (identity, ids)) ->
             ids
             |> Seq.tryFind (fun raw -> inodeOf (indexed raw table).Description.Target = Some inode)
@@ -2709,7 +2710,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        (holdingLinkedName directory name inode table).IsSome
+        (holdingName (ReachedThrough.ofEntry directory name) inode table).IsSome
 
     /// Whether a live description is onto `inode`, or was opened through a
     /// name in it, in time logarithmic in the number of inodes they hold.
@@ -2758,12 +2759,17 @@ module OpenFileTable =
 
         // A name still linked that a live description was opened through is
         // the name this one is opened through: Linux's dentry, which that
-        // description holds, so the walk found it again.
+        // description holds, so the walk found it again. So is a removed
+        // directory's unlinked name, which a walk reaches by ".": a directory
+        // has one name, which it keeps once that name has gone.
         let nameIdentity =
-            match openedThrough, inodeOf description.Target with
-            | Some (ReachedThrough.Name (dentry, false)), Some inode ->
-                holdingLinkedName dentry.Parent dentry.Name inode table
-                |> Option.defaultValue id
+            match openedThrough, description.Target with
+            | Some (ReachedThrough.Name (_, false) as through), target ->
+                match inodeOf target with
+                | Some inode -> holdingName through inode table |> Option.defaultValue id
+                | None -> id
+            | Some (ReachedThrough.Name (_, true) as through), OpenFileTarget.Directory (inode, _) ->
+                holdingName through inode table |> Option.defaultValue id
             | _ -> id
 
         id,
@@ -4031,19 +4037,33 @@ module OpenFileTable =
                 |> List.choose (fun (id, entry) ->
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some (ReachedThrough.Name (_, unlinked) as through), Some inode ->
-                        Some (id, inode, through, unlinked, entry.NameIdentity)
+                        let isDirectory =
+                            match entry.Description.Target with
+                            | OpenFileTarget.Directory _ -> true
+                            | OpenFileTarget.File _
+                            | OpenFileTarget.CharacterDevice _
+                            | OpenFileTarget.Epoll _
+                            | OpenFileTarget.Kqueue _
+                            | OpenFileTarget.Inotify _
+                            | OpenFileTarget.Socket _
+                            | OpenFileTarget.Fifo _
+                            | OpenFileTarget.Pipe _ -> false
+
+                        Some (id, inode, through, unlinked, isDirectory, entry.NameIdentity)
                     | _ -> None
                 )
 
             [
-                for id, inode, through, unlinked, identity in named do
-                    for other, otherInode, otherThrough, _, otherIdentity in named do
+                for id, inode, through, unlinked, isDirectory, identity in named do
+                    for other, otherInode, otherThrough, _, _, otherIdentity in named do
                         if id < other && inode = otherInode then
                             let sameName = identity = otherIdentity
 
+                            // A directory has one name, which every
+                            // description of it opened through a name holds.
                             if
                                 sameName && through <> otherThrough
-                                || not sameName && not unlinked && through = otherThrough
+                                || not sameName && (not unlinked || isDirectory) && through = otherThrough
                             then
                                 FileDescriptorRegistryDefect.OpenedThroughNameNotShared (id, other)
             ]
