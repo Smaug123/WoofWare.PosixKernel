@@ -292,7 +292,7 @@ module TestHugeTimeoutMeasured =
             | Error error -> failwith $"sigaction failed with %O{error}"
 
         let call =
-            Syscall.Futex (address, UnixFutex.FutexWaitPrivate, 0, CopiedArgument.Readable 0u, timespecOf row)
+            Syscall.Futex (address, UnixFutex.FutexWaitPrivate, 0, CopiedArgument.Readable 0u, timespecOf row, 0u)
 
         match step pid 1 call system with
         | SteppedCall.Futex (outcome, system) -> pid, outcome, system
@@ -335,7 +335,8 @@ module TestHugeTimeoutMeasured =
                                 UnixFutex.FutexWakePrivate,
                                 1,
                                 CopiedArgument.Addressless,
-                                TimespecArgument.Null
+                                TimespecArgument.Null,
+                                0u
                             ))
                             system
                     with

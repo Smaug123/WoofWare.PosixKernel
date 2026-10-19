@@ -873,6 +873,7 @@ module TestSyscallInterruption =
                 {
                     FutexAddress = 0x1000UL
                     FutexTimeout = FutexTimeout.Untimed
+                    FutexBitset = UnixFutex.FutexBitsetMatchAny
                     TakenByWake = false
                 }
         ]
@@ -921,6 +922,7 @@ module TestSyscallInterruption =
             match wait.FutexTimeout with
             | FutexTimeout.Untimed -> SignalRestartRule.RestartsUnderSaRestart
             | FutexTimeout.Until _
+            | FutexTimeout.At _
             | FutexTimeout.Unbounded -> SignalRestartRule.FailsWithEintr
 
     [<Test>]
@@ -947,13 +949,20 @@ module TestSyscallInterruption =
                 |> shouldEqual (flavour, caseName parked, measuredRule flavour parked)
 
             // A futex wait's rule turns on its timeout, of which
-            // `oneParkOfEach` holds one: here are the other two.
-            for timeout in [ FutexTimeout.Until 5L ; FutexTimeout.Unbounded ] do
+            // `oneParkOfEach` holds one: here are the others.
+            for timeout in
+                [
+                    FutexTimeout.Until 5L
+                    FutexTimeout.Unbounded
+                    FutexTimeout.At 5L
+                    FutexTimeout.At -5L
+                ] do
                 let parked =
                     ParkedSyscall.Futex
                         {
                             FutexAddress = 0x1000UL
                             FutexTimeout = timeout
+                            FutexBitset = UnixFutex.FutexBitsetMatchAny
                             TakenByWake = false
                         }
 

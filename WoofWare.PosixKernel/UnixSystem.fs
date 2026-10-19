@@ -1884,12 +1884,12 @@ module UnixSystem =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | Syscall.Futex (address, op, value, word, timeout) ->
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
             CopiedArgument.copyValue
                 "UnixSystem.step of Syscall.Futex"
                 UnixFutex.tryFutexWithWord
                 word
-                (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout system)
+                (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout val3 system)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
 
