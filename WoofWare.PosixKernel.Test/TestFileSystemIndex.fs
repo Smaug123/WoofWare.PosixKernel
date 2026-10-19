@@ -12,8 +12,7 @@ open WoofWare.PosixKernel
 /// each name and of the inodes the descriptions hold, which an unlink, a
 /// rename and the release of a name read. Over random walks of the table's
 /// own changes, each answers what a scan of every description answers, and
-/// what reads them (`InotifyDelivery.deliver`,
-/// `InotifyDelivery.unplacedRefusal`, `OpenFileTable.followChanges`,
+/// what reads them (`InotifyDelivery.deliver`, `OpenFileTable.followChanges`,
 /// `OpenFileTable.create`) does what its scan of every description did.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -54,7 +53,6 @@ module TestFileSystemIndex =
                             unlinked
                         )
             ReachedThrough.Unnamed
-            ReachedThrough.RemovedDirectory (InodeNumber 1L)
         ]
 
     let private events : InotifyEvent list =
@@ -105,7 +103,8 @@ module TestFileSystemIndex =
     /// The identity `OpenFileTable.create` must give the name a description
     /// onto `target` opened through `through` holds, by a scan of every
     /// description: that of the first live description onto the same inode
-    /// opened through the same name, still linked, or `fresh`.
+    /// recording the same name, still linked, or unlinked onto a directory,
+    /// or `fresh`.
     let private identityByScan
         (target : OpenFileTarget)
         (through : ReachedThrough option)
@@ -113,8 +112,14 @@ module TestFileSystemIndex =
         (table : OpenFileTable)
         : OpenFileDescriptionId
         =
+        let shares =
+            match through, target with
+            | Some (ReachedThrough.Name (_, false)), _
+            | Some (ReachedThrough.Name (_, true)), OpenFileTarget.Directory _ -> true
+            | _ -> false
+
         match through, OpenFileTable.inodeOf target with
-        | Some (ReachedThrough.Name (_, false)), Some inode ->
+        | Some (ReachedThrough.Name _), Some inode when shares ->
             OpenFileTable.toSeqOpenedThrough table
             |> Seq.tryPick (fun (id, other, otherThrough) ->
                 if Some otherThrough = through && OpenFileTable.inodeOf other.Target = Some inode then
@@ -132,6 +137,21 @@ module TestFileSystemIndex =
         |> Seq.choose (fun (_, description, through) ->
             match through, OpenFileTable.inodeOf description.Target with
             | ReachedThrough.Name (_, false), Some inode -> Some (through, inode)
+            | _ -> None
+        )
+        |> List.ofSeq
+
+    /// Each name a walk could open through again that a live description in
+    /// `table` holds, and a target onto the inode that description is onto: a
+    /// name still linked, or a removed directory's, which a walk reaches by
+    /// ".", and so only onto a directory.
+    let private reachableNames (table : OpenFileTable) : (ReachedThrough * OpenFileTarget) list =
+        OpenFileTable.toSeqOpenedThrough table
+        |> Seq.choose (fun (_, description, through) ->
+            match through, description.Target with
+            | ReachedThrough.Name (_, false), target ->
+                OpenFileTable.inodeOf target |> Option.map (fun inode -> through, onto inode)
+            | ReachedThrough.Name (_, true), (OpenFileTarget.Directory _ as target) -> Some (through, target)
             | _ -> None
         )
         |> List.ofSeq
@@ -219,13 +239,14 @@ module TestFileSystemIndex =
         match rng.Next 12, live table with
         | 0, _
         | _, [] ->
-            // Often through a name, still linked, that a live description
-            // was opened through, onto its inode: the name it holds.
+            // Often through a name that a live description holds and a walk
+            // could reach again, onto its inode: a linked name, or a removed
+            // directory's unlinked one.
             let target, through =
-                match linkedNames table with
-                | _ :: _ as linked when rng.Next 2 = 0 ->
-                    let through, inode = pick rng linked
-                    onto inode, Some through
+                match reachableNames table with
+                | _ :: _ as reachable when rng.Next 2 = 0 ->
+                    let through, target = pick rng reachable
+                    target, Some through
                 | _ -> onto (pick rng inodes), Some (pick rng throughs)
 
             let id, created = OpenFileTable.create (description target) through table
@@ -592,22 +613,6 @@ module TestFileSystemIndex =
         )
         |> fst
 
-    /// `InotifyDelivery.unplacedRefusal` as it was before the table indexed
-    /// the watches: the first watch on the old parent asking for an event of
-    /// it, of every instance's watches in turn.
-    let private unplacedRefusalByScan (unplaced : Unplaced) (table : OpenFileTable) : UnplacedChangeRefusal option =
-        instances table
-        |> Seq.collect (fun (instance, state) ->
-            state.Watches |> Map.toSeq |> Seq.map (fun (wd, watch) -> instance, wd, watch)
-        )
-        |> Seq.tryFind (fun (_, _, watch) ->
-            watch.Inode = unplaced.OldParent
-            && not (Set.intersect unplaced.Events watch.Mask.Events).IsEmpty
-        )
-        |> Option.map (fun (instance, wd, _) ->
-            UnplacedChangeRefusal.RemovedDirectoryName (unplaced.OldParent, unplaced.Events, instance, wd)
-        )
-
     let private effect (rng : System.Random) : InotifyEffect =
         if rng.Next 4 = 0 then
             InotifyEffect.WatchesEnd (pick rng inodes)
@@ -638,15 +643,6 @@ module TestFileSystemIndex =
                 |> shouldEqual (OpenFileTable.descriptions (deliverByScan maxQueuedEvents effects table))
 
                 agree delivered
-
-                let unplaced : Unplaced =
-                    {
-                        OldParent = pick rng inodes
-                        Events = Set.singleton (pick rng events)
-                    }
-
-                InotifyDelivery.unplacedRefusal (Some unplaced) delivered
-                |> shouldEqual (unplacedRefusalByScan unplaced delivered)
 
                 // Delivery and the walk's own changes, in turn.
                 step rng delivered

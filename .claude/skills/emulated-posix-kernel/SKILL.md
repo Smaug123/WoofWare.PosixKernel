@@ -14,8 +14,8 @@ follows.
 First ask whether it is the kernel's at all. `WoofWare.PosixKernel/README.md`,
 "What the kernel leaves to the client", lists what the library deliberately does
 not do — user memory and `mmap`, blocks inside the process (`__psynch`,
-`__ulock`, and every `futex` operation but a private wait and wake, which are
-the kernel's), choosing which thread runs, when time passes, running a signal
+`__ulock`, and every `futex` operation but a private wait and wake and their
+bitset forms, which are the kernel's), choosing which thread runs, when time passes, running a signal
 handler, `sigaltstack`, process creation — with why each is the client's and how
 the two meet. Change that section when you move the line.
 

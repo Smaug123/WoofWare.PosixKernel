@@ -468,6 +468,7 @@ module TestCredentialThreadsMeasured =
                             FutexTimeout.Untimed
                         else
                             FutexTimeout.Until 400L
+                    FutexBitset = UnixFutex.FutexBitsetMatchAny
                     TakenByWake = false
                 }
         | "read-pipe" ->

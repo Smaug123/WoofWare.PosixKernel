@@ -14,8 +14,9 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 /// Which records a filesystem change queues on the inotify instances watching
 /// it, against a real Linux kernel: random sequences (`InotifyDeliveryOps`) of
 /// path syscalls (creating, truncating, linking, unlinking, renaming, changing
-/// modes, owners and times), of descriptors opened, written through, truncated,
-/// `fchmod`ed and closed, and of watches added and removed, some with
+/// modes, owners and times), of descriptors opened (by path, and onto a
+/// directory by "." from another), written through, truncated, `fchmod`ed and
+/// closed, and of watches added and removed, some with
 /// `IN_EXCL_UNLINK` or `IN_DONT_FOLLOW`, on two instances, each made as one
 /// `Syscall` on the model and on a fresh real temporary directory holding the
 /// same tree.
@@ -48,6 +49,9 @@ module TestInotifyDeliveryAgainstHost =
 
     [<DllImport("libc", EntryPoint = "fchmod", SetLastError = true)>]
     extern int private hostFchmod(int fd, int mode)
+
+    [<DllImport("libc", EntryPoint = "openat", SetLastError = true)>]
+    extern int private hostOpenat(int dirfd, byte[] path, int flags, int mode)
 
     let private context : string = "TestInotifyDeliveryAgainstHost"
 
@@ -150,6 +154,10 @@ module TestInotifyDeliveryAgainstHost =
             returned (int64 (HostCalls.write (hostFd fd, Seq.toArray bytes, unativeint count)))
         | Syscall.FTruncate (fd, length) -> returned (int64 (HostCalls.ftruncate (hostFd fd, length)))
         | Syscall.FChMod (fd, mode) -> returned (int64 (hostFchmod (hostFd fd, mode)))
+        // The path is relative to the descriptor, so it is not made under
+        // `root`.
+        | Syscall.OpenAt (dirfd, path, flags, mode) ->
+            returned (int64 (hostOpenat (hostFd dirfd, terminated path, flags, mode)))
         | Syscall.Close fd -> returned (int64 (HostCalls.close (hostFd fd)))
         | other -> failwith $"the operations make no %A{other}"
 
@@ -238,11 +246,12 @@ module TestInotifyDeliveryAgainstHost =
                             Error error
 
                     match op, host, model with
-                    | Op.Open _, Ok hostOpened, Ok modelOpened -> kept.Add (int hostOpened, int modelOpened)
+                    | (Op.Open _ | Op.OpenDotAt _), Ok hostOpened, Ok modelOpened ->
+                        kept.Add (int hostOpened, int modelOpened)
                     | _ ->
 
                     match op, host with
-                    | Op.Open _, Ok hostOpened -> HostCalls.close (int hostOpened) |> ignore<int>
+                    | (Op.Open _ | Op.OpenDotAt _), Ok hostOpened -> HostCalls.close (int hostOpened) |> ignore<int>
                     | Op.Close slot, _ -> kept.RemoveAt (slotIndex slot kept.Count)
                     | _ -> ()
 

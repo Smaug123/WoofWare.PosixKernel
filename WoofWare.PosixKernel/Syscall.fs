@@ -555,8 +555,15 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | GetCpu
     /// Linux's `futex(2)` on the word at `address`, as `UnixFutex.futex` makes
     /// it, with `word` what the caller's memory at `address` held as the call
-    /// was made. A `FUTEX_WAKE_PRIVATE` reads neither `word` nor `timeout`.
-    | Futex of address : uint64 * op : int * value : int * word : CopiedArgument<uint32> * timeout : TimespecArgument
+    /// was made, and `val3` the call's sixth argument. A wake reads neither
+    /// `word` nor `timeout`, and a plain wait or wake does not read `val3`.
+    | Futex of
+        address : uint64 *
+        op : int *
+        value : int *
+        word : CopiedArgument<uint32> *
+        timeout : TimespecArgument *
+        val3 : uint32
 
 /// What `UnixSystem.step` answers for a `Syscall.Nanosleep`: what
 /// `SteppedCall.Nanosleep` holds.

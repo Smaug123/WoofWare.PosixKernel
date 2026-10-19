@@ -871,16 +871,57 @@ module TestInotifyInvariants =
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.OpenedThroughNoNameNotRoot (id, f) ]
 
-        openedThroughForged id (Some (ReachedThrough.RemovedDirectory d)) system
-        |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.OpenedThroughRemovedDirectoryNamed (id, f, d) ]
-
         // An unlinked name the directory still binds to the inode is no defect:
         // the name may have been given again (`inotify-dentry-probe.c` section
         // L).
         openedThroughForged id (named "f" true) system
         |> UnixSystem.checkInvariants
         |> shouldEqual []
+
+    [<Test>]
+    let ``a directory's unlinked name is the one it had when its last name went`` () : unit =
+        let system, _, d, _ = openedThroughName ()
+
+        let fd, system =
+            InotifyReplay.openFd
+                { InotifyReplay.openFlags FileAccessMode.ReadOnly false false false with
+                    Directory = true
+                }
+                "d/e"
+                0
+                system
+
+        let id = idOf fd system
+        let e = InotifyReplay.numberOf "d/e" system
+
+        let named (entry : string) (unlinked : bool) : ReachedThrough option =
+            Some (
+                ReachedThrough.Name (
+                    {
+                        Parent = d
+                        Name = name entry
+                    },
+                    unlinked
+                )
+            )
+
+        // Still named: no name of it has gone.
+        openedThroughForged id (named "e" true) system
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (id, e, d, name "e")
+            ]
+
+        let removed = InotifyReplay.rmdir "d/e" system
+        UnixSystem.checkInvariants removed |> shouldEqual []
+
+        openedThroughForged id (named "z" true) removed
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (id, e, d, name "z")
+            ]
 
     [<Test>]
     let ``descriptions holding one name record it alike, and two recording one linked name hold one name`` () : unit =

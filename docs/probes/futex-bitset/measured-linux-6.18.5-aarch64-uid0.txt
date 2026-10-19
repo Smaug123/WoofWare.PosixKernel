@@ -1,0 +1,544 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, container --cap-add ALL
+# Linux 6.18.5 aarch64, uid 0, 5 CPUs
+decode op=0 (WAIT) timeout=null ret=-1 errno=EAGAIN
+decode op=0 (WAIT) timeout=past ret=-1 errno=EAGAIN
+decode op=0 (WAIT) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=0 (WAIT) timeout=unmapped ret=-1 errno=EFAULT
+decode op=1 (WAKE) timeout=null ret=0 errno=0
+decode op=1 (WAKE) timeout=past ret=0 errno=0
+decode op=1 (WAKE) timeout=nsec=1e9 ret=0 errno=0
+decode op=1 (WAKE) timeout=unmapped ret=0 errno=0
+decode op=9 (WAIT_BITSET) timeout=null ret=-1 errno=EAGAIN
+decode op=9 (WAIT_BITSET) timeout=past ret=-1 errno=EAGAIN
+decode op=9 (WAIT_BITSET) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=9 (WAIT_BITSET) timeout=unmapped ret=-1 errno=EFAULT
+decode op=10 (WAKE_BITSET) timeout=null ret=0 errno=0
+decode op=10 (WAKE_BITSET) timeout=past ret=0 errno=0
+decode op=10 (WAKE_BITSET) timeout=nsec=1e9 ret=0 errno=0
+decode op=10 (WAKE_BITSET) timeout=unmapped ret=0 errno=0
+decode op=128 (WAIT_PRIVATE) timeout=null ret=-1 errno=EAGAIN
+decode op=128 (WAIT_PRIVATE) timeout=past ret=-1 errno=EAGAIN
+decode op=128 (WAIT_PRIVATE) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=128 (WAIT_PRIVATE) timeout=unmapped ret=-1 errno=EFAULT
+decode op=129 (WAKE_PRIVATE) timeout=null ret=0 errno=0
+decode op=129 (WAKE_PRIVATE) timeout=past ret=0 errno=0
+decode op=129 (WAKE_PRIVATE) timeout=nsec=1e9 ret=0 errno=0
+decode op=129 (WAKE_PRIVATE) timeout=unmapped ret=0 errno=0
+decode op=137 (WAIT_BITSET_PRIVATE) timeout=null ret=-1 errno=EAGAIN
+decode op=137 (WAIT_BITSET_PRIVATE) timeout=past ret=-1 errno=EAGAIN
+decode op=137 (WAIT_BITSET_PRIVATE) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=137 (WAIT_BITSET_PRIVATE) timeout=unmapped ret=-1 errno=EFAULT
+decode op=138 (WAKE_BITSET_PRIVATE) timeout=null ret=0 errno=0
+decode op=138 (WAKE_BITSET_PRIVATE) timeout=past ret=0 errno=0
+decode op=138 (WAKE_BITSET_PRIVATE) timeout=nsec=1e9 ret=0 errno=0
+decode op=138 (WAKE_BITSET_PRIVATE) timeout=unmapped ret=0 errno=0
+decode op=256 (WAIT|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=256 (WAIT|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=256 (WAIT|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=256 (WAIT|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=257 (WAKE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=257 (WAKE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=257 (WAKE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=257 (WAKE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=259 (REQUEUE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=259 (REQUEUE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=259 (REQUEUE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=259 (REQUEUE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=260 (CMP_REQUEUE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=260 (CMP_REQUEUE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=260 (CMP_REQUEUE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=260 (CMP_REQUEUE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=261 (WAKE_OP|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=261 (WAKE_OP|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=261 (WAKE_OP|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=261 (WAKE_OP|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=262 (LOCK_PI|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=262 (LOCK_PI|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=262 (LOCK_PI|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=262 (LOCK_PI|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=263 (UNLOCK_PI|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=263 (UNLOCK_PI|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=263 (UNLOCK_PI|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=263 (UNLOCK_PI|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=264 (TRYLOCK_PI|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=264 (TRYLOCK_PI|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=264 (TRYLOCK_PI|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=264 (TRYLOCK_PI|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=265 (WAIT_BITSET|CLOCK_REALTIME) timeout=null ret=-1 errno=EAGAIN
+decode op=265 (WAIT_BITSET|CLOCK_REALTIME) timeout=past ret=-1 errno=EAGAIN
+decode op=265 (WAIT_BITSET|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=265 (WAIT_BITSET|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=266 (WAKE_BITSET|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=266 (WAKE_BITSET|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=266 (WAKE_BITSET|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=266 (WAKE_BITSET|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=268 (CMP_REQUEUE_PI|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=268 (CMP_REQUEUE_PI|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=268 (CMP_REQUEUE_PI|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=268 (CMP_REQUEUE_PI|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=384 (WAIT_PRIVATE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=384 (WAIT_PRIVATE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=384 (WAIT_PRIVATE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=384 (WAIT_PRIVATE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=385 (WAKE_PRIVATE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=385 (WAKE_PRIVATE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=385 (WAKE_PRIVATE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=385 (WAKE_PRIVATE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=393 (WAIT_BITSET_PRIVATE|CLOCK_REALTIME) timeout=null ret=-1 errno=EAGAIN
+decode op=393 (WAIT_BITSET_PRIVATE|CLOCK_REALTIME) timeout=past ret=-1 errno=EAGAIN
+decode op=393 (WAIT_BITSET_PRIVATE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=393 (WAIT_BITSET_PRIVATE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=394 (WAKE_BITSET_PRIVATE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=394 (WAKE_BITSET_PRIVATE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=394 (WAKE_BITSET_PRIVATE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=394 (WAKE_BITSET_PRIVATE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=2 (FD) timeout=null ret=-1 errno=ENOSYS
+decode op=2 (FD) timeout=past ret=-1 errno=ENOSYS
+decode op=2 (FD) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=2 (FD) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=130 (FD_PRIVATE) timeout=null ret=-1 errno=ENOSYS
+decode op=130 (FD_PRIVATE) timeout=past ret=-1 errno=ENOSYS
+decode op=130 (FD_PRIVATE) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=130 (FD_PRIVATE) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=14 (cmd14) timeout=null ret=-1 errno=ENOSYS
+decode op=14 (cmd14) timeout=past ret=-1 errno=ENOSYS
+decode op=14 (cmd14) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=14 (cmd14) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=142 (cmd14|PRIVATE) timeout=null ret=-1 errno=ENOSYS
+decode op=142 (cmd14|PRIVATE) timeout=past ret=-1 errno=ENOSYS
+decode op=142 (cmd14|PRIVATE) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=142 (cmd14|PRIVATE) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=15 (cmd15) timeout=null ret=-1 errno=ENOSYS
+decode op=15 (cmd15) timeout=past ret=-1 errno=ENOSYS
+decode op=15 (cmd15) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=15 (cmd15) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=127 (cmd127) timeout=null ret=-1 errno=ENOSYS
+decode op=127 (cmd127) timeout=past ret=-1 errno=ENOSYS
+decode op=127 (cmd127) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=127 (cmd127) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=511 (cmd127|PRIVATE|CLOCK_REALTIME) timeout=null ret=-1 errno=ENOSYS
+decode op=511 (cmd127|PRIVATE|CLOCK_REALTIME) timeout=past ret=-1 errno=ENOSYS
+decode op=511 (cmd127|PRIVATE|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=511 (cmd127|PRIVATE|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=512 (cmd512) timeout=null ret=-1 errno=ENOSYS
+decode op=512 (cmd512) timeout=past ret=-1 errno=ENOSYS
+decode op=512 (cmd512) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=512 (cmd512) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=649 (WAIT_BITSET_PRIVATE|512) timeout=null ret=-1 errno=ENOSYS
+decode op=649 (WAIT_BITSET_PRIVATE|512) timeout=past ret=-1 errno=ENOSYS
+decode op=649 (WAIT_BITSET_PRIVATE|512) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=649 (WAIT_BITSET_PRIVATE|512) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=1153 (WAKE_PRIVATE|1024) timeout=null ret=-1 errno=ENOSYS
+decode op=1153 (WAKE_PRIVATE|1024) timeout=past ret=-1 errno=ENOSYS
+decode op=1153 (WAKE_PRIVATE|1024) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=1153 (WAKE_PRIVATE|1024) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=-1 (-1) timeout=null ret=-1 errno=ENOSYS
+decode op=-1 (-1) timeout=past ret=-1 errno=ENOSYS
+decode op=-1 (-1) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=-1 (-1) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=-2147483648 (INT_MIN) timeout=null ret=-1 errno=ENOSYS
+decode op=-2147483648 (INT_MIN) timeout=past ret=-1 errno=ENOSYS
+decode op=-2147483648 (INT_MIN) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=-2147483648 (INT_MIN) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=-2147483511 (WAIT_BITSET_PRIVATE|0x80000000) timeout=null ret=-1 errno=ENOSYS
+decode op=-2147483511 (WAIT_BITSET_PRIVATE|0x80000000) timeout=past ret=-1 errno=ENOSYS
+decode op=-2147483511 (WAIT_BITSET_PRIVATE|0x80000000) timeout=nsec=1e9 ret=-1 errno=ENOSYS
+decode op=-2147483511 (WAIT_BITSET_PRIVATE|0x80000000) timeout=unmapped ret=-1 errno=ENOSYS
+decode op=6 (LOCK_PI) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=6 (LOCK_PI) timeout=unmapped ret=-1 errno=EFAULT
+decode op=134 (LOCK_PI_PRIVATE) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=134 (LOCK_PI_PRIVATE) timeout=unmapped ret=-1 errno=EFAULT
+decode op=11 (WAIT_REQUEUE_PI) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=11 (WAIT_REQUEUE_PI) timeout=unmapped ret=-1 errno=EFAULT
+decode op=139 (WAIT_REQUEUE_PI_PRIVATE) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=139 (WAIT_REQUEUE_PI_PRIVATE) timeout=unmapped ret=-1 errno=EFAULT
+decode op=267 (WAIT_REQUEUE_PI|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=267 (WAIT_REQUEUE_PI|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+decode op=13 (LOCK_PI2) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=13 (LOCK_PI2) timeout=unmapped ret=-1 errno=EFAULT
+decode op=141 (LOCK_PI2_PRIVATE) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=141 (LOCK_PI2_PRIVATE) timeout=unmapped ret=-1 errno=EFAULT
+decode op=269 (LOCK_PI2|CLOCK_REALTIME) timeout=nsec=1e9 ret=-1 errno=EINVAL
+decode op=269 (LOCK_PI2|CLOCK_REALTIME) timeout=unmapped ret=-1 errno=EFAULT
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=past mask=any ret=-1 errno=ETIMEDOUT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=soon mask=any ret=-1 errno=ETIMEDOUT took=10
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=match timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=null mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=past mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=soon mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=mismatch timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=misaligned-mismatch timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=unmapped-misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=null timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE addr=beyond-misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=past mask=any ret=-1 errno=ETIMEDOUT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=soon mask=any ret=-1 errno=ETIMEDOUT took=10
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=match timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=null mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=past mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=soon mask=any ret=-1 errno=EAGAIN took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=mismatch timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=misaligned-mismatch timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=unmapped-misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=null timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=null mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=past mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=soon mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=null mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=null mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=past mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=past mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=soon mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=soon mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=nsec=1e9 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=nsec=1e9 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=nsec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=nsec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=sec=-1 mask=any ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=sec=-1 mask=0x0 ret=-1 errno=EINVAL took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=unmapped mask=any ret=-1 errno=EFAULT took=0
+wait-screen op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME addr=beyond-misaligned timeout=unmapped mask=0x0 ret=-1 errno=EFAULT took=0
+wake-screen addr=aligned-no-waiters mask=any n=1 ret=0 errno=0
+wake-screen addr=aligned-no-waiters mask=0x1 n=1 ret=0 errno=0
+wake-screen addr=aligned-no-waiters mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=misaligned mask=any n=1 ret=-1 errno=EINVAL
+wake-screen addr=misaligned mask=0x1 n=1 ret=-1 errno=EINVAL
+wake-screen addr=misaligned mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=unmapped mask=any n=1 ret=0 errno=0
+wake-screen addr=unmapped mask=0x1 n=1 ret=0 errno=0
+wake-screen addr=unmapped mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=unmapped-misaligned mask=any n=1 ret=-1 errno=EINVAL
+wake-screen addr=unmapped-misaligned mask=0x1 n=1 ret=-1 errno=EINVAL
+wake-screen addr=unmapped-misaligned mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=null mask=any n=1 ret=0 errno=0
+wake-screen addr=null mask=0x1 n=1 ret=0 errno=0
+wake-screen addr=null mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=beyond mask=any n=1 ret=-1 errno=EFAULT
+wake-screen addr=beyond mask=0x1 n=1 ret=-1 errno=EFAULT
+wake-screen addr=beyond mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=beyond-misaligned mask=any n=1 ret=-1 errno=EINVAL
+wake-screen addr=beyond-misaligned mask=0x1 n=1 ret=-1 errno=EINVAL
+wake-screen addr=beyond-misaligned mask=0x0 n=1 ret=-1 errno=EINVAL
+wake-screen addr=kernel-half mask=any n=1 ret=-1 errno=EFAULT
+wake-screen addr=kernel-half mask=0x1 n=1 ret=-1 errno=EFAULT
+wake-screen addr=kernel-half mask=0x0 n=1 ret=-1 errno=EINVAL
+switches op=WAIT_BITSET_PRIVATE deadline=past x1000 switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=3272
+switches op=WAIT_BITSET_PRIVATE deadline=now x1000 switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=81718
+switches op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME deadline=past x1000 switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=3996
+switches op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME deadline=now x1000 switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=75259
+switches op=WAIT_BITSET_PRIVATE deadline=past mismatch x1000 switches=0 ETIMEDOUT=0 EAGAIN=1000 ok=0 other=0 took-us=217
+switches op=WAIT_PRIVATE timeout=zero x1000 (control) switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=77075
+huge op=WAIT_BITSET_PRIVATE tv_sec=9223372035 woke=1 W:ret=0 errno=0 at=105
+huge op=WAIT_BITSET_PRIVATE tv_sec=9223372036 woke=1 W:ret=0 errno=0 at=103
+huge op=WAIT_BITSET_PRIVATE tv_sec=9223372036854775807 woke=1 W:ret=0 errno=0 at=105
+huge op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME tv_sec=9223372035 woke=1 W:ret=0 errno=0 at=103
+huge op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME tv_sec=9223372036 woke=1 W:ret=0 errno=0 at=104
+huge op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME tv_sec=9223372036854775807 woke=1 W:ret=0 errno=0 at=100
+match wait-mask=0x1 wake-mask=0x1 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x1 wake-mask=0x2 woke=0 errno=0 W=asleep
+match wait-mask=0x1 wake-mask=0x4 woke=0 errno=0 W=asleep
+match wait-mask=0x1 wake-mask=0x80000000 woke=0 errno=0 W=asleep
+match wait-mask=0x1 wake-mask=any woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x2 wake-mask=0x1 woke=0 errno=0 W=asleep
+match wait-mask=0x2 wake-mask=0x2 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x2 wake-mask=0x4 woke=0 errno=0 W=asleep
+match wait-mask=0x2 wake-mask=0x80000000 woke=0 errno=0 W=asleep
+match wait-mask=0x2 wake-mask=any woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x3 wake-mask=0x1 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x3 wake-mask=0x2 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x3 wake-mask=0x4 woke=0 errno=0 W=asleep
+match wait-mask=0x3 wake-mask=0x80000000 woke=0 errno=0 W=asleep
+match wait-mask=0x3 wake-mask=any woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x80000000 wake-mask=0x1 woke=0 errno=0 W=asleep
+match wait-mask=0x80000000 wake-mask=0x2 woke=0 errno=0 W=asleep
+match wait-mask=0x80000000 wake-mask=0x4 woke=0 errno=0 W=asleep
+match wait-mask=0x80000000 wake-mask=0x80000000 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=0x80000000 wake-mask=any woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=any wake-mask=0x1 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=any wake-mask=0x2 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=any wake-mask=0x4 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=any wake-mask=0x80000000 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait-mask=any wake-mask=any woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait=WAIT_PRIVATE wake=WAKE_BITSET_PRIVATE wake-mask=0x1 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait=WAIT_PRIVATE wake=WAKE_BITSET_PRIVATE wake-mask=0x80000000 woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait=WAIT_BITSET_PRIVATE wait-mask=0x1 wake=WAKE_PRIVATE woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait=WAIT_BITSET_PRIVATE|CLOCK_REALTIME wait-mask=0x2 wake=WAKE_PRIVATE woke=1 errno=0 W:ret=0 errno=0 at=1
+match wait=WAIT_BITSET_PRIVATE|CLOCK_REALTIME wait-mask=0x2 wake=WAKE_BITSET_PRIVATE wake-mask=0x1 woke=0 errno=0 W=asleep
+match wait=WAIT_BITSET_PRIVATE|CLOCK_REALTIME wait-mask=0x2 wake=WAKE_BITSET_PRIVATE wake-mask=0x2 woke=1 errno=0 W:ret=0 errno=0 at=1
+order mask=0x1,n=1 x3; mask=0x2,n=1 trial=0 woke=1:A,1:C,1:D,1:B
+order mask=0x1,n=1 x3; mask=0x2,n=1 trial=1 woke=1:A,1:C,1:D,1:B
+order mask=0x1,n=1 x3; mask=0x2,n=1 trial=2 woke=1:A,1:C,1:D,1:B
+order mask=0x1,n=1 x3; mask=0x2,n=1 trial=3 woke=1:A,1:C,1:D,1:B
+order mask=0x1,n=1 x3; mask=0x2,n=1 trial=4 woke=1:A,1:C,1:D,1:B
+order mask=0x1,n=0 trial=0 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x1,n=0 trial=1 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x1,n=-1 trial=0 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x1,n=-1 trial=1 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x1,n=INT_MIN trial=0 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x1,n=INT_MIN trial=1 woke=1:A B=asleep C=asleep D=asleep
+order mask=0x2,n=0 trial=0 woke=1:B A=asleep C=asleep D=asleep
+order mask=0x2,n=0 trial=1 woke=1:B A=asleep C=asleep D=asleep
+order mask=0x1,n=INT_MAX trial=0 woke=3:ACD B=asleep
+order mask=0x1,n=INT_MAX trial=1 woke=3:ACD B=asleep
+order mask=0x4,n=INT_MAX trial=0 woke=1:D A=asleep B=asleep C=asleep
+order mask=0x4,n=INT_MAX trial=1 woke=1:D A=asleep B=asleep C=asleep
+order mask=0x4,n=0 trial=0 woke=1:D A=asleep B=asleep C=asleep
+order mask=0x4,n=0 trial=1 woke=1:D A=asleep B=asleep C=asleep
+order mask=0x3,n=2; mask=0x3,n=2 trial=0 woke=2:AB,2:CD
+order mask=0x3,n=2; mask=0x3,n=2 trial=1 woke=2:AB,2:CD
+order mask=any,n=2; mask=0x1,n=1 trial=0 woke=2:AB,1:C D=asleep
+order mask=any,n=2; mask=0x1,n=1 trial=1 woke=2:AB,1:C D=asleep
+signal op=WAIT_BITSET_PRIVATE handler flags=0 untimed handled=104 woke=0 W:ret=-1 errno=EINTR at=104
+signal op=WAIT_BITSET_PRIVATE handler flags=SA_RESTART untimed handled=100 woke=1 W:ret=0 errno=0 at=303
+signal op=WAIT_BITSET_PRIVATE handler-stores-1 flags=0 untimed handled=104 woke=0 W:ret=-1 errno=EINTR at=104
+signal op=WAIT_BITSET_PRIVATE handler-stores-1 flags=SA_RESTART untimed handled=103 woke=0 W:ret=-1 errno=EAGAIN at=103
+signal op=WAIT_BITSET_PRIVATE handler flags=0 deadline=2s handled=102 woke=0 W:ret=-1 errno=EINTR at=102
+signal op=WAIT_BITSET_PRIVATE handler flags=SA_RESTART deadline=2s handled=105 woke=0 W:ret=-1 errno=EINTR at=105
+signal op=WAIT_BITSET_PRIVATE handler-stores-1 flags=0 deadline=2s handled=105 woke=0 W:ret=-1 errno=EINTR at=105
+signal op=WAIT_BITSET_PRIVATE handler-stores-1 flags=SA_RESTART deadline=2s handled=104 woke=0 W:ret=-1 errno=EINTR at=104
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler flags=0 untimed handled=104 woke=0 W:ret=-1 errno=EINTR at=104
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler flags=SA_RESTART untimed handled=105 woke=1 W:ret=0 errno=0 at=305
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler-stores-1 flags=0 untimed handled=100 woke=0 W:ret=-1 errno=EINTR at=100
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler-stores-1 flags=SA_RESTART untimed handled=101 woke=0 W:ret=-1 errno=EAGAIN at=101
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler flags=0 deadline=2s handled=103 woke=0 W:ret=-1 errno=EINTR at=103
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler flags=SA_RESTART deadline=2s handled=100 woke=0 W:ret=-1 errno=EINTR at=100
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler-stores-1 flags=0 deadline=2s handled=105 woke=0 W:ret=-1 errno=EINTR at=105
+signal op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME handler-stores-1 flags=SA_RESTART deadline=2s handled=104 woke=0 W:ret=-1 errno=EINTR at=104
+stop op=WAIT_BITSET_PRIVATE untimed no-store ready-at=1 stop-at=103 stopped=1 woke=1 W:ret=0 errno=0 at=604
+stop op=WAIT_BITSET_PRIVATE untimed store-1 ready-at=1 stop-at=100 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=203
+stop op=WAIT_BITSET_PRIVATE deadline=300ms no-store ready-at=1 stop-at=102 stopped=1 woke=0 W:ret=-1 errno=ETIMEDOUT at=300
+stop op=WAIT_BITSET_PRIVATE deadline=2s store-1 ready-at=1 stop-at=101 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=205
+stop op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME untimed no-store ready-at=1 stop-at=102 stopped=1 woke=1 W:ret=0 errno=0 at=602
+stop op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME untimed store-1 ready-at=1 stop-at=102 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=203
+stop op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME deadline=300ms no-store ready-at=1 stop-at=101 stopped=1 woke=0 W:ret=-1 errno=ETIMEDOUT at=300
+stop op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME deadline=2s store-1 ready-at=1 stop-at=100 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=205
+race op=WAIT_BITSET_PRIVATE signal-then-wake deadline=2s flags=SA_RESTART trial=0 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE signal-then-wake deadline=2s flags=SA_RESTART trial=1 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE signal-then-wake deadline=2s flags=SA_RESTART trial=2 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=0 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=1 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=2 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=0 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race op=WAIT_BITSET_PRIVATE timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=1 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race op=WAIT_BITSET_PRIVATE timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=2 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME signal-then-wake deadline=2s flags=SA_RESTART trial=0 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME signal-then-wake deadline=2s flags=SA_RESTART trial=1 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME signal-then-wake deadline=2s flags=SA_RESTART trial=2 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=0 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=1 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-wake deadline=10ms spin=50ms flags=SA_RESTART trial=2 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=0 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=1 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race op=WAIT_BITSET_PRIVATE|CLOCK_REALTIME timeout-then-signal deadline=10ms spin=50ms flags=SA_RESTART trial=2 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
