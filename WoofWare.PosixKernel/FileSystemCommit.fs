@@ -40,8 +40,9 @@ module internal CommittedFileSystem =
     /// ended, and each description's record of the name it was opened
     /// through moved or marked unlinked by them
     /// (`OpenFileTable.followChanges`). `notice` says how the syscall reached
-    /// what it changed, or that a description let go of a name
-    /// (`ChangeNotice.NameReleased`, with `VirtualFileSystem.unchanged`).
+    /// what it changed, or that a description was released or let go of a
+    /// name (`ChangeNotice.Released`, `ChangeNotice.NameReleased`, with
+    /// `VirtualFileSystem.unchanged`).
     let commit
         (notice : ChangeNotice)
         (maxQueuedEvents : int)

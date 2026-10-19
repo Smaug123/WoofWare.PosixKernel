@@ -78,6 +78,10 @@ type internal ChangeNotice =
     /// since unlinked, was released (Linux's dentry going), and nothing in
     /// the graph changed (`VirtualFileSystem.unchanged`).
     | NameReleased of inode : InodeNumber
+    /// An open file description onto `inode`, opened `through` a name, and
+    /// for writing if `writable`, was released: nothing references it any
+    /// more. Nothing in the graph changed (`VirtualFileSystem.unchanged`).
+    | Released of inode : InodeNumber * through : ReachedThrough * writable : bool
     /// A read of `inode` moved its access time, the one change it holds
     /// (`FsChange.AttributesChanged`). It raises nothing: Linux's
     /// `IN_ACCESS` is the read's own, raised whether or not the time moves
@@ -103,10 +107,12 @@ type internal InotifyNotification =
         /// A watch with `IN_EXCL_UNLINK` hears nothing of it: an event Linux
         /// raises with the path the change went through, whose name has been
         /// unlinked since the descriptor was opened through it. That is a
-        /// write's `IN_MODIFY`, at the directory's watch and the inode's own,
-        /// and not a `setattr`'s, nor the `IN_ATTRIB` of the set-ID bits a
-        /// write clears (measured, `inotify-dentry-probe.c` section E,
-        /// `inotify-delivery-probe.c` row Z write-unlinked-excl-unlink).
+        /// write's `IN_MODIFY` and a release's `IN_CLOSE_*`, at the
+        /// directory's watch and the inode's own, and not a `setattr`'s, nor
+        /// the `IN_ATTRIB` of the set-ID bits a write clears (measured,
+        /// `inotify-dentry-probe.c` section E, `inotify-delivery-probe.c` row
+        /// Z write-unlinked-excl-unlink, `docs/probes/inotify-close` section
+        /// U).
         HiddenByExclUnlink : bool
     }
 
@@ -371,6 +377,21 @@ module internal InotifyDelivery =
                 [ InotifyEffect.WatchesEnd inode ], nextCookie
             else
                 [], nextCookie
+        | ChangeNotice.Released (inode, through, writable) ->
+            if not (List.isEmpty changes) then
+                failwith
+                    $"InotifyDelivery: the release of a description onto inode %O{inode} changed the graph, %A{changes} (this is a bug in this library)."
+
+            // Linux's `fsnotify_close`, which chooses by `FMODE_WRITE`, whether
+            // or not anything was written (measured, `docs/probes/inotify-close`
+            // section A).
+            let event =
+                if writable then
+                    InotifyEvent.CloseWrite
+                else
+                    InotifyEvent.CloseNoWrite
+
+            notified (reached mutation through inode (Set.singleton event) true), nextCookie
         | ChangeNotice.SetAttributes (through, set) ->
             let inode, contents, attributes = attributeChanges "a setattr" changes
 
