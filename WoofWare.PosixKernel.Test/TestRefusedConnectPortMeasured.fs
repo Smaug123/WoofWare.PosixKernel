@@ -99,12 +99,13 @@ module TestRefusedConnectPortMeasured =
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     NextEphemeralPort = port
                 }
-        }
+            )
+            system
 
     let private newSocket (reuse : bool) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, system =
@@ -118,7 +119,7 @@ module TestRefusedConnectPortMeasured =
         (system : UnixSystem<int, string>)
         : UnixError option * UnixSystem<int, string>
         =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform at) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) at) system with
         | Ok (BindAnswer.Bound _, system) -> None, system
         | Ok (BindAnswer.Failed error, system) -> Some error, system
         | Error refusal -> failwith $"bind %s{Ipv4Endpoint.toString at}: refused %A{refusal}"
@@ -129,14 +130,14 @@ module TestRefusedConnectPortMeasured =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform destination) system with
+        match CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) destination) system with
         | Ok result -> result
         | Error refusal ->
             failwith $"connect %s{Ipv4Endpoint.toString destination}: refused %s{ConnectRefusal.describe refusal}"
 
     /// `getsockopt(SO_ERROR)`, as the errno's name, or `OK` for 0.
     let private takeError (fd : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
@@ -160,7 +161,7 @@ module TestRefusedConnectPortMeasured =
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -207,8 +208,8 @@ module TestRefusedConnectPortMeasured =
                     if path = "b" then
                         system
                     else
-                        Lone.UnixSystemState.withFileDescriptors
-                            (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
+                        Lone.withFileDescriptors
+                            (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                             system
 
                 let answer, system = connect fd closedPort system

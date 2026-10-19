@@ -256,7 +256,7 @@ module KeventWorld =
 
     /// `getsockopt(SO_ERROR)` on `fd`.
     let readSocketError (fd : int) (system : UnixSystem<int, string>) : GetSockOptAnswer * UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
@@ -300,7 +300,11 @@ module KeventWorld =
                 changes
                 nevents
                 UserBuffer.Mapped
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
         with
         | Ok answered -> answered

@@ -409,7 +409,7 @@ module TestOpenFlagWord =
                         | OpenFlagWord.Decoding.Refused _ ->
                             // Each refused cell must be a refusal, whatever the path.
                             for column, _ in row.Cells do
-                                match OpenOutcomes.openPath row.Word (argument column) 0o644 system with
+                                match OpenOutcomes.openPath (argument column) row.Word 0o644 system with
                                 | Error _ -> ()
                                 | Ok answer ->
                                     yield
@@ -420,7 +420,7 @@ module TestOpenFlagWord =
                                 replayed <- replayed + 1
 
                                 let modelled =
-                                    match OpenOutcomes.openPath row.Word (argument column) 0o644 system with
+                                    match OpenOutcomes.openPath (argument column) row.Word 0o644 system with
                                     | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
                                     | Ok (SyscallAnswer.Completed fd, after) ->
                                         // F_GETFL (3) and F_GETFD (1), which
@@ -501,7 +501,7 @@ module TestOpenFlagWord =
         =
         match Lone.UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
-        | Ok path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory flags path 0o644 system
+        | Ok path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory path flags 0o644 system
 
     [<Test>]
     let ``every request the parsed entry point took decodes from its word`` () : unit =
@@ -534,7 +534,7 @@ module TestOpenFlagWord =
                         let path = argument column
                         compared <- compared + 1
 
-                        (column, flags, OpenOutcomes.openPath word path 0o644 system)
+                        (column, flags, OpenOutcomes.openPath path word 0o644 system)
                         |> shouldEqual (column, flags, parsedEntryPoint flags path system)
 
         compared |> shouldBeGreaterThan 10000

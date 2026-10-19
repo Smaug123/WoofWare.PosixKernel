@@ -543,7 +543,7 @@ module TestFcntlReference =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals
@@ -574,8 +574,8 @@ module TestFcntlReference =
         | Ok (SteppedCall.Close (answer, after)) -> Outcome.Answered answer, after
         | Ok (SteppedCall.Pipe2 (Pipe2Answer.Created (readFd, _), after)) ->
             Outcome.Answered (SyscallAnswer.Completed (int64 readFd)), after
-        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after)))
-        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after)))
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after), _))
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after), _))
         | Ok (SteppedCall.PWrite (answer, after)) -> Outcome.Answered (ofWrite answer), after
         | Ok stepped -> failwith $"%A{call} answered %A{stepped}"
         | Error (SyscallRefusal.Open (OpenRefusal.DescriptorLimit refusal))
@@ -924,7 +924,7 @@ module TestFcntlReference =
                         failwith $"%s{where ()}: F_GETFL of %d{fd} refused: %s{SyscallRefusal.describe refusal}"
 
                 // Every description's status is its machine's flavour's.
-                for KeyValue (id, description) in OpenFileTable.descriptions system.Machine.OpenFiles do
+                for KeyValue (id, description) in OpenFileTable.descriptions (UnixSystem.openFiles system) do
                     if not (statusIsOf (SimulatedUnixPlatform.flavour platform) description.Status) then
                         failwith
                             $"%s{where ()}: description %O{id}'s status %A{description.Status} is not %O{platform}'s"

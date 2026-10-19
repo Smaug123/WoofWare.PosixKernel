@@ -53,11 +53,11 @@ module TestWithFileSystemAndCurrentDirectory =
     /// — so a row asserting "it stood in *this* inode" is checked against the
     /// graph rather than against the function's own answer.
     let private inodeOf (system : UnixSystem<int, string>) (path : string) : InodeNumber =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
@@ -392,7 +392,7 @@ module TestWithFileSystemAndCurrentDirectory =
         UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (absolute path))
 
-        system.Machine.UnixPlatform |> shouldEqual SimulatedUnixPlatform.macOsArm64
+        UnixSystem.platform system |> shouldEqual SimulatedUnixPlatform.macOsArm64
         UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]

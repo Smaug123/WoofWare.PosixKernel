@@ -176,17 +176,6 @@ type internal UnixMachineState =
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
             NextPipeId : PipeId
-            /// Every write that reached a client draining a pipe, oldest first: the
-            /// bytes the outside world has received from the machine's processes.
-            ///
-            /// A client reads what its own ends received by filtering on
-            /// `Delivery.Endpoint`, which names the process the pipe was launched
-            /// into as well as the descriptor. One log rather than one per endpoint, so that
-            /// the order of writes across endpoints is kept: a process writing to
-            /// its output, then its error stream, then its output again is read
-            /// back in that order. It grows without bound: a process that writes
-            /// gigabytes costs that much memory.
-            Delivered : DeliveryLog
             /// The inode number the next pipe end will be given, as `fstat(2)`
             /// reports it. Monotonic and never reused: a process can compare the
             /// numbers two descriptors report to decide whether they name one pipe,
@@ -424,15 +413,6 @@ module UnixMachineState =
     let internal hasProcessor (cpu : CpuId) (machine : UnixMachineState) : bool =
         let (CpuId.CpuId index) = cpu
         index >= 0 && index < machine.ProcessorCount
-
-    /// Every write that has reached a client draining one of this machine's
-    /// pipes, oldest first: what the outside world has received from the
-    /// process. See `UnixMachineState.Delivered`.
-    ///
-    /// The client that drains those pipes reads this through
-    /// `UnixSystem.delivered`. No process can read this back, because the bytes
-    /// have left the machine.
-    let internal delivered (machine : UnixMachineState) : DeliveryLog = machine.Delivered
 
     /// The socket `socketId` names.
     ///

@@ -674,18 +674,19 @@ module TestAccessTime =
             let cell =
                 { cell with
                     System =
-                        { cell.System with
-                            Machine =
-                                { cell.System.Machine with
+                        Kernel.mapMachine
+                            (fun machine ->
+                                { machine with
                                     CommittedFileSystem =
                                         CommittedFileSystem.initial (
-                                            GraphMutators.setTimes fileStatus.Inode times cell.System.Machine.FileSystem
+                                            GraphMutators.setTimes fileStatus.Inode times machine.FileSystem
                                         )
                                 }
-                        }
+                            )
+                            cell.System
                 }
 
-            let before = cell.System.Machine.FileSystem
+            let before = UnixSystem.fileSystem cell.System
             let fd, cell = openFile cell "/w/f" 0
             let cell = advance 5_000L cell
             let readAt = UnixClock.gettimeofday (leader cell) cell.System
@@ -721,7 +722,7 @@ module TestAccessTime =
                         entry.Times
                 )
 
-            VirtualFileSystem.inodes system.Machine.FileSystem
+            VirtualFileSystem.inodes (UnixSystem.fileSystem system)
             |> Map.map (fun _ entry -> entry.Times)
             |> shouldEqual expected
 

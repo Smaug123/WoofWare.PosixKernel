@@ -210,7 +210,7 @@ module TestMkNod =
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
@@ -227,11 +227,11 @@ module TestMkNod =
         : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>
         =
         let flags =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
             | SimulatedUnixFlavour.Linux -> 0x1 ||| 0x40 ||| 0x80
             | SimulatedUnixFlavour.Darwin -> 0x1 ||| 0x200 ||| 0x800
 
-        OpenOutcomes.openPath flags path mode system
+        OpenOutcomes.openPath path flags mode system
 
     // ------------------------------------------------------------ rendering
 
@@ -250,7 +250,7 @@ module TestMkNod =
     /// Every path under the cell `/c`, relative to it, with the inode each
     /// names, never following a link.
     let private cellPaths (system : UnixSystem<int, string>) : Map<string, InodeNumber> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : (string * InodeNumber) seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -269,7 +269,7 @@ module TestMkNod =
         let root =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -295,20 +295,20 @@ module TestMkNod =
             if parent = "/c" then
                 match
                     PathWalk.resolveExisting
-                        (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                         Owners.root
                         SymlinkProtection.Off
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         SymlinkPolicy.NoFollowFinal
                         (UnixPath.parseOrFail context "/c")
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok inode -> inode
                 | Error failure -> failwith $"%s{context}: /c does not resolve: %A{failure}"
             else
                 paths.[parent.Substring "/c/".Length]
 
-        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{context}: %s{parent} names no inode"
 
@@ -336,7 +336,7 @@ module TestMkNod =
         match made with
         | [ path, inode ] ->
             let entry =
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some entry -> entry
                 | None -> failwith $"%s{context}: %s{path} names no inode"
 
@@ -728,10 +728,7 @@ module TestMkNod =
                         let before = cell envelope "/c/w/d" 0o022
 
                         // The probe slept before it called.
-                        let system =
-                            { before with
-                                Scheduling = UnixSchedulingState.advanceClock 50_000_000L before.Scheduling
-                            }
+                        let system = UnixSystem.advanceClock 50_000_000L before
 
                         let result =
                             match call with
@@ -749,7 +746,7 @@ module TestMkNod =
                             | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
                             | Ok (SyscallAnswer.Completed _, after) ->
                                 let paths = cellPaths after
-                                let vfs = after.Machine.FileSystem
+                                let vfs = UnixSystem.fileSystem after
                                 let dirBefore = (holder "w/d/nx" before).Times
                                 let dirAfter = (holder "w/d/nx" after).Times
                                 let made = paths.["w/d/nx"]
@@ -964,12 +961,13 @@ module TestMkNod =
                     (CpuId 0)
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             let unmodelledNode : MkNodRefusal option =
                 match NodeTypeField.ofMode mode with

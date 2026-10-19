@@ -214,7 +214,7 @@ module internal FcntlWorld =
 
     /// `open(2)` of `path` with the raw word `flags`, which must succeed.
     let openRaw (flags : int) (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match OpenOutcomes.openPath flags (PathArg.ofText path) 0o644 system with
+        match OpenOutcomes.openPath (PathArg.ofText path) flags 0o644 system with
         | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
         | other -> failwith $"open(%s{path}, 0x%x{flags}): %A{other}"
 
@@ -225,7 +225,7 @@ module internal FcntlWorld =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        openRaw (OpenFlagWords.encode system.Machine.UnixPlatform flags) path system
+        openRaw (OpenFlagWords.encode (UnixSystem.platform system) flags) path system
 
     /// The request for `access` and nothing else.
     let opening (access : FileAccessMode) : OpenFlags =
@@ -315,7 +315,7 @@ module internal FcntlWorld =
     /// `accept4`, which this kernel does not model. Fails for a kind the probe
     /// did not make on `system`'s flavour.
     let make (kind : string) (system : UnixSystem<int, string>) : (int * UnixSystem<int, string>) option =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
         let socketWith (extra : int) =

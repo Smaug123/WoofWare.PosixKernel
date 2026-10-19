@@ -10,7 +10,7 @@ open WoofWare.PosixKernel
 /// `Lone` on a system holding one process, and forges a thread's state through
 /// `ForgedThread`, rather than through the `UnixSystem` record's fields or
 /// `UnixSystemState`, so that a change to what a `UnixSystem` holds changes
-/// these modules alone.
+/// these modules and `Kernel` alone (`scripts/check-test-boundaries.py`).
 ///
 /// Each function fails loudly unless `system` holds the process `pid`.
 [<RequireQualifiedAccess>]
@@ -62,13 +62,21 @@ module internal Proc =
         =
         ProcessView.unfocus view
 
-    /// `unview` of a view whose process carries on, and the system without
-    /// the process of one whose process has ended, as `Shape.map` takes them.
+    /// The system `view` is a view of, without the view's process, which has
+    /// ended. Fails loudly if the process still has a thread.
+    let unviewWithout<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : ProcessView<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        ProcessView.unfocusWithout view
+
+    /// `unview` of a view whose process carries on, and `unviewWithout` of one
+    /// whose process has ended, as `Shape.map` takes them.
     let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         : Unfocus<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>> =
         {
             Back = unview
-            Without = ProcessView.unfocusWithout
+            Without = unviewWithout
         }
 
     /// `f` in the view of `pid`, and the system its view is a view of.
@@ -212,6 +220,31 @@ module internal Proc =
                 }
             )
             system
+
+    /// `system` with the process `pid` held under the ID `renumbered` instead,
+    /// its own state recording that ID too, and nothing else changed: neither
+    /// the machine's record of process IDs nor any other process.
+    let renumber<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (renumbered : ProcessId)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let slot = slot "renumber" pid system
+
+        { system with
+            Processes =
+                system.Processes
+                |> ProcessTable.remove (ProcessId.toInt32 pid)
+                |> ProcessTable.add
+                    (ProcessId.toInt32 renumbered)
+                    { slot with
+                        Process =
+                            { slot.Process with
+                                ProcessId = renumbered
+                            }
+                    }
+        }
 
     /// The process `pid`'s descriptor table, read against the machine's open
     /// file descriptions.

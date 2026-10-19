@@ -92,8 +92,8 @@ type LaunchDescriptor =
     | Supplied of bytes : ImmutableArray<byte>
     /// The write end of a pipe, opened `O_WRONLY`. The client holds the read end
     /// and reads every byte the moment it is written, so a blocking write is
-    /// never short and never waits. What the client read is in
-    /// `UnixSystem.delivered`.
+    /// never short and never waits. What the client read is the `Delivery`
+    /// that `UnixReadWrite.writeWithBytes` answers beside each write's fate.
     | Drained
     /// The write end of a pipe, opened `O_WRONLY`, whose read end the client
     /// closed before the process started. Nothing will ever read it, so a write
@@ -391,11 +391,14 @@ module PipeState =
         | PipeOrigin.Launched (_, ClientEnd.ReadEndClosed) -> false
 
 /// The bytes one `write(2)` delivered to a client that drains a pipe: what the
-/// client read, in the order the process wrote it.
+/// client read, as `UnixReadWrite.writeWithBytes` answers it beside the write's
+/// fate.
 ///
 /// One per write that moved bytes, and never coalesced across writes, because a
 /// write's boundaries are what a reader draining the pipe as fast as it is
-/// written observes.
+/// written observes. The kernel keeps no record of it, since the bytes have left
+/// the machine: a client that wants what a process wrote keeps the deliveries
+/// itself, in the order the writes answered them.
 [<NoComparison>]
 type Delivery =
     {
@@ -404,59 +407,3 @@ type Delivery =
         /// The bytes, every one of them that the write moved.
         Bytes : ImmutableArray<byte>
     }
-
-/// Every delivery a machine has made, oldest first, as `UnixSystem.delivered`
-/// answers it.
-///
-/// Appending a delivery and counting the log each take constant time, so a
-/// process that writes n times costs time linear in n. `DeliveryLog.since` takes
-/// time linear in how many deliveries it returns, and `DeliveryLog.toList` time
-/// linear in the log's length.
-type DeliveryLog =
-    private
-        {
-            /// Newest first, so that appending is a cons.
-            NewestFirst : Delivery list
-            /// The length of `NewestFirst`.
-            Count : int
-        }
-
-/// Building and reading a `DeliveryLog`.
-[<RequireQualifiedAccess>]
-module DeliveryLog =
-
-    /// The log of a machine that has delivered nothing.
-    let internal empty : DeliveryLog =
-        {
-            NewestFirst = []
-            Count = 0
-        }
-
-    /// `log` with `delivery` after every delivery already in it.
-    let internal append (delivery : Delivery) (log : DeliveryLog) : DeliveryLog =
-        {
-            NewestFirst = delivery :: log.NewestFirst
-            Count = log.Count + 1
-        }
-
-    /// How many deliveries `log` holds.
-    let count (log : DeliveryLog) : int = log.Count
-
-    /// The deliveries appended to `log` after its first `count`, oldest first.
-    ///
-    /// Takes time linear in how many it returns. Throws
-    /// `ArgumentOutOfRangeException` if `count` is negative or more than `log`
-    /// holds.
-    let since (count : int) (log : DeliveryLog) : Delivery list =
-        if count < 0 || count > log.Count then
-            raise (
-                Refusal.exceptionOf
-                    "DeliveryLog.since"
-                    (RefusalKind.OutOfRange "count")
-                    $"asked for the deliveries after the first %d{count} of a log holding %d{log.Count}"
-            )
-
-        List.truncate (log.Count - count) log.NewestFirst |> List.rev
-
-    /// Every delivery in `log`, oldest first.
-    let toList (log : DeliveryLog) : Delivery list = List.rev log.NewestFirst

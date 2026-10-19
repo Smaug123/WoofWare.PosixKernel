@@ -186,7 +186,7 @@ module TestInotifyMeasured =
     /// names, queued directly.
     let private queue (fd : int) (record : InotifyRecord) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Lone.mapOpenFiles
-            (OpenFileTable.enqueueInotify system.Machine.InotifyLimits.MaxQueuedEvents (idOf fd system) record)
+            (OpenFileTable.enqueueInotify (Kernel.machine system).InotifyLimits.MaxQueuedEvents (idOf fd system) record)
             system
 
     let private event (wd : int) (events : uint32) (entry : string) : InotifyRecord =
@@ -489,7 +489,7 @@ module TestInotifyMeasured =
             | Error refusal -> failwith $"%A{refusal}"
 
         let regular, s =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "w/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "w/f") 0 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -764,7 +764,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -780,7 +780,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -959,7 +959,7 @@ module TestInotifyMeasured =
         let fd, s = init1 nonblock system
 
         let regular, s =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 s) 0 (PathArg.ofText "g/f") 0 s with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 s) (PathArg.ofText "g/f") 0 0 s with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -1037,7 +1037,7 @@ module TestInotifyMeasured =
         let fd, system = init1 nonblock system
 
         let regular, system =
-            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "g/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "g/f") 0 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -1473,6 +1473,7 @@ module TestInotifyMeasured =
         let isatty =
             match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
+            | TerminalAttributesAnswer.Attributes _ -> "isatty=1"
 
         let pread () =
             match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0L system with
@@ -1514,8 +1515,8 @@ module TestInotifyMeasured =
 
         let ficlone =
             match UnixDescriptor.tryFileClone (Callers.leader system) fd other system with
-            | Ok error -> $"-1 %O{error}"
-            | Error refusal -> failwith $"%A{refusal}"
+            | Ok (SyscallAnswer.Failed error, _) -> $"-1 %O{error}"
+            | other -> failwith $"%A{other}"
 
         let getdents =
             match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with

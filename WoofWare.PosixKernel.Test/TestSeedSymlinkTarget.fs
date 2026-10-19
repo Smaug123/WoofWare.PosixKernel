@@ -76,7 +76,7 @@ module TestSeedSymlinkTarget =
 
         let answer =
             if at then
-                let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+                let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
                 Eager.trySymlinkatAs (Callers.leader system) target (AtDirectory.atFdCwd flavour) path system
             else
                 Eager.trySymlink target path system

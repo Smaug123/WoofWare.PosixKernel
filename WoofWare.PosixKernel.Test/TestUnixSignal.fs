@@ -230,7 +230,7 @@ module TestUnixSignal =
                     else
                         match
                             SignalState.generate
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 coreDumps
                                 (QueueAccounts.ofLone SignalSender.Kill system)
                                 0
@@ -238,9 +238,7 @@ module TestUnixSignal =
                                 (Set.singleton 0)
                                 {
                                     Signal =
-                                        match
-                                            Signal.ofRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signo
-                                        with
+                                        match Signal.ofRawSignoUnder (Kernel.signalNumbering system) signo with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueNone
@@ -331,7 +329,7 @@ module TestUnixSignal =
         : UnixSystem<int, string>
         =
         let system = systemLaunchedWith (ProcessLaunch.withCoreDumps coreDumps) flavour
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
         let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
         let system =
@@ -382,7 +380,7 @@ module TestUnixSignal =
             for coreDumps in [ CoreDumps.Suppressed ; CoreDumps.Written ] do
                 for signal, coreDumped in fatalSignals coreDumps do
                     let pending = pendingBehindMask flavour coreDumps signal
-                    let numbering = Lone.UnixSystemState.signalNumbering pending
+                    let numbering = Kernel.signalNumbering pending
                     let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
                     let unblocked =
@@ -510,7 +508,7 @@ module TestUnixSignal =
 
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
         let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
-            let numbering = Lone.UnixSystemState.signalNumbering system
+            let numbering = Kernel.signalNumbering system
             let mask = SignalMask.ofSignals numbering signals
 
             match
@@ -532,7 +530,7 @@ module TestUnixSignal =
                 match
                     UnixSignal.sigaction
                         (Callers.leader system)
-                        (Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signal)
+                        (Signal.toRawSignoUnder (Kernel.signalNumbering system) signal)
                         (Some disposition)
                         system
                 with
@@ -551,8 +549,7 @@ module TestUnixSignal =
                 | None -> None
                 | Some system ->
 
-                let signo =
-                    Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) send.Signal
+                let signo = Signal.toRawSignoUnder (Kernel.signalNumbering system) send.Signal
 
                 let answer =
                     match send.Target with
@@ -578,7 +575,7 @@ module TestUnixSignal =
         // deliverable to the thread under the mask it was sent under, and a
         // thread that owes a return to user mode makes no call.
         let maskedOnReturn (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            let numbering = Lone.UnixSystemState.signalNumbering system
+            let numbering = Kernel.signalNumbering system
 
             system
             |> Lone.mapProc (fun proc ->
@@ -609,7 +606,7 @@ module TestUnixSignal =
 
             let decided =
                 SignalState.onReturnToUser
-                    (Lone.UnixSystemState.signalNumbering system)
+                    (Kernel.signalNumbering system)
                     (Lone.proc system).CoreDumps
                     (Lone.leader system)
                     threads

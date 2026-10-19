@@ -871,7 +871,7 @@ module TestInotifyDelivery =
                 | _ -> None, false
 
             let system, reference, kept =
-                match syscallOf system.Machine.UnixPlatform treeOwner fds kept op with
+                match syscallOf (UnixSystem.platform system) treeOwner fds kept op with
                 | None -> system, reference, kept
                 | Some syscall ->
 

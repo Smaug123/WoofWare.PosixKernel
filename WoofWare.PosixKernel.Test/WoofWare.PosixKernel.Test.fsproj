@@ -21,6 +21,7 @@
     <Compile Include="UnionCaseName.fs" />
     <Compile Include="GraphMutators.fs" />
     <Compile Include="Configured.fs" />
+    <Compile Include="Kernel.fs" />
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
     <Compile Include="QueueAccounts.fs" />
@@ -223,6 +224,8 @@
     <Compile Include="TestBindingAgainstHost.fs" />
     <Compile Include="TestArchitectureFacts.fs" />
     <Compile Include="TestArchitectureAgainstHost.fs" />
+    <Compile Include="HashedValues.fs" />
+    <Compile Include="TestHashAcrossProcesses.fs" />
     <Compile Include="SocketSweep.fs" />
     <Compile Include="TestSocketSyscall.fs" />
     <Compile Include="TestSocketSyscallAgainstHost.fs" />
@@ -338,7 +341,7 @@
     <Compile Include="TestPipeBufferCorpus.fs" />
     <Compile Include="TestPipeBufferAgainstHost.fs" />
     <Compile Include="TestPipe.fs" />
-    <Compile Include="TestDeliveryLog.fs" />
+    <Compile Include="TestDeliveries.fs" />
     <Compile Include="TestLaunchedStreams.fs" />
     <Compile Include="TestSuppliedPipe.fs" />
     <Compile Include="TestBlockingPipe.fs" />
@@ -353,6 +356,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The source `TestHashAcrossProcesses` runs in a child process. -->
+    <EmbeddedResource Include="HashedValues.fs" LogicalName="WoofWare.PosixKernel.Test.HashedValues.fs" />
     <!-- What `socket(2)` answered for raw arguments, measured per flavour by
          docs/plans/2026-08-23-posix-kernel-extraction/socket-arguments.c.
          `TestSocketSyscall` holds `UnixSocket.socket` to it. -->

@@ -72,7 +72,7 @@ module TestStatBlocks =
         ImmutableArray.CreateRange (Array.init count (fun i -> byte (i % 251 + 1)))
 
     let private create (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath creating (UnixPath.parseOrFail context path) 0o644 system with
+        match Answered.openPath (UnixPath.parseOrFail context path) creating 0o644 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | SyscallAnswer.Failed error, _ -> failwith $"creat %s{path}: %O{error}"
 

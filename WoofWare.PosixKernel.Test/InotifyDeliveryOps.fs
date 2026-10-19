@@ -468,20 +468,21 @@ module internal InotifyDeliveryOps =
         | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
         | SteppedCall.OpenAt (SyscallOutcome.Answered answer, after) -> answer, after
         | SteppedCall.OpenAt (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after)) ->
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after), _) ->
             SyscallAnswer.Completed written, after
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after)) ->
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after), _) ->
             SyscallAnswer.Failed error, after
-        | SteppedCall.Write (ProcessFate.Continues (outcome, _)) ->
+        | SteppedCall.Write (ProcessFate.Continues (outcome, _), _) ->
             failwith $"expected a write that returns and raises no signal, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _)) ->
+        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _), _) ->
             failwith $"expected a write that returns and raises no signal, but it ended the process: %A{ended}"
         | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call the property makes"
 
     /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
     /// the `write(2)` of `bytes` through `fd` in `system`, is what the same
     /// write answers through the call's own functions, held to it made a step
-    /// at a time (`WriteOutcomes.admitThenWrite`), leaving the same system.
+    /// at a time (`WriteOutcomes.admitThenWriteDeliveringAs`), leaving the same
+    /// system and delivering the same bytes.
     let private requireWrittenAlike
         (fd : int)
         (bytes : System.Collections.Immutable.ImmutableArray<byte>)
@@ -490,29 +491,32 @@ module internal InotifyDeliveryOps =
         : unit
         =
         let throughSteps =
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
-            |> Result.map (fun step ->
-                match step with
-                | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
-                | WriteStep.ReturnsRaising (answer, signal, after) ->
-                    ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
-                | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
-                | WriteStep.WouldBlock (condition, after) ->
-                    ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
-                | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+            WriteOutcomes.admitThenWriteDeliveringAs (Callers.thread 0 system) fd UserBuffer.Mapped bytes system
+            |> Result.map (fun (step, delivery) ->
+                let fate =
+                    match step with
+                    | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+                    | WriteStep.ReturnsRaising (answer, signal, after) ->
+                        ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+                    | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+                    | WriteStep.WouldBlock (condition, after) ->
+                        ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+                    | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+
+                fate, delivery
             )
 
         match stepped, throughSteps with
-        | SteppedCall.Write fate, Ok steps when fate = steps -> ()
+        | SteppedCall.Write (fate, delivery), Ok steps when (fate, delivery) = steps -> ()
         | _ ->
-            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>) : string =
+            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>, delivery : Delivery option) : string =
                 match fate with
-                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}"
-                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}"
+                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}, delivering %A{delivery}"
+                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}, delivering %A{delivery}"
 
             let viaStep =
                 match stepped with
-                | SteppedCall.Write fate -> answered fate
+                | SteppedCall.Write (fate, delivery) -> answered (fate, delivery)
                 | other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
 
             failwith

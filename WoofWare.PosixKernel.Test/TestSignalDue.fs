@@ -28,7 +28,7 @@ module TestSignalDue =
         | other -> failwith $"%O{caller}'s return to user mode: expected it to take nothing, got %A{other}"
 
     let private signo (system : UnixSystem<int, string>) (signal : Signal) : int =
-        Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signal
+        Signal.toRawSignoUnder (Kernel.signalNumbering system) signal
 
     /// `sigaction(signal, disposition)` by `caller`, followed by its return to
     /// user mode.
@@ -78,7 +78,7 @@ module TestSignalDue =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
 
         match
             UnixSignal.pthreadSigmask
@@ -214,7 +214,7 @@ module TestSignalDue =
                 | CallProgress.Answered (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system)) -> system
                 | CallProgress.NeedsCopyIn paused ->
                     match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 0uy) paused with
-                    | ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system) -> system
+                    | ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system), None -> system
                     | other -> failwith $"%O{platform}: the write: %A{other}"
                 | other -> failwith $"%O{platform}: the write: %A{other}"
 
@@ -258,7 +258,7 @@ module TestSignalDue =
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
                 with
-                | ProcessFate.Continues (WriteOutcome.WouldBlock _, system) -> system
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, system), None -> system
                 | other -> failwith $"the write: expected it to sleep, got %A{other}"
             | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
 
@@ -474,7 +474,7 @@ module TestSignalDue =
             match UnixReadWrite.write leader writeFd UserBuffer.Mapped 1UL asleep with
             | CallProgress.NeedsCopyIn paused ->
                 match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 7uy) paused with
-                | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 1L), system) -> system
+                | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 1L), system), None -> system
                 | other -> failwith $"the write: %A{other}"
             | CallProgress.Answered other -> failwith $"the write: %A{other}"
             |> resumes leader
@@ -747,12 +747,12 @@ module TestSignalDue =
         | SteppedCall.SigAction (Ok (_, after))
         | SteppedCall.SigSuspend (_, after)
         | SteppedCall.Read (_, after)
-        | SteppedCall.Write (ProcessFate.Continues (_, after)) -> Some (Ok after)
+        | SteppedCall.Write (ProcessFate.Continues (_, after), _) -> Some (Ok after)
         | SteppedCall.Kill (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _)))
         | SteppedCall.Kill (Ok (ProcessFate.ProcessEnded _))
         | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _)))
         | SteppedCall.PthreadKill (Ok (ProcessFate.ProcessEnded _))
-        | SteppedCall.Write (ProcessFate.ProcessEnded _) -> None
+        | SteppedCall.Write (ProcessFate.ProcessEnded _, _) -> None
         | SteppedCall.Kill (Error errno)
         | SteppedCall.PthreadKill (Error errno)
         | SteppedCall.PthreadSigMask (Error errno)

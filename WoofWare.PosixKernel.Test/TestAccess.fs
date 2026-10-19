@@ -580,12 +580,13 @@ module TestAccess =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = inodeAt vfs cwd
@@ -1036,7 +1037,7 @@ module TestAccess =
         }
 
     let private openOrFail (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath plainOpen (path p) 0 system with
+        match Answered.openPath (path p) plainOpen 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"open(%s{p}) did not open: %O{other}"
 

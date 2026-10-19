@@ -42,8 +42,8 @@ module TestFileSystemType =
         (UnixSystem.initial<int, string> (HostPlatform.platformOf flavour)
          |> UnixBootImage.tryWithMount mount
          |> Configured.expectOk MountRefusal.describe
-         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-            .Machine
+         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+         |> Kernel.machine)
 
     let private everyFlavour : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
@@ -256,7 +256,7 @@ module TestFileSystemType =
         }
 
     let private openPath (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath reading (UnixPath.parseOrFail context path) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context path) reading 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | SyscallAnswer.Failed error, _ -> failwith $"test bug: open %s{path} failed with %O{error}"
 
@@ -713,12 +713,13 @@ module TestFileSystemType =
                 systemWith (HostPlatform.platformOf flavour) (EmulatedMount.defaultFor flavour)
 
             let incoherent =
-                { coherent with
-                    Machine =
-                        { coherent.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Mount = EmulatedMount.defaultOf fsType
                         }
-                }
+                    )
+                    coherent
 
             for fd in [ 0 ; 4242 ] do
                 Assert.Throws (fun () ->

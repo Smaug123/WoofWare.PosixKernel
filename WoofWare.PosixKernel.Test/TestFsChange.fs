@@ -850,7 +850,7 @@ module TestFsChange =
 
     [<Test>]
     let ``committing a mutation leaves its graph on the machine`` () : unit =
-        let machine = (booted ()).Machine
+        let machine = Kernel.machine (booted ())
         let root = VirtualFileSystem.root machine.FileSystem
 
         let _, mutation =
@@ -872,7 +872,7 @@ module TestFsChange =
 
     [<Test>]
     let ``committing a mutation of another graph is refused`` () : unit =
-        let machine = (booted ()).Machine
+        let machine = Kernel.machine (booted ())
         let root = VirtualFileSystem.root machine.FileSystem
 
         let _, first =
