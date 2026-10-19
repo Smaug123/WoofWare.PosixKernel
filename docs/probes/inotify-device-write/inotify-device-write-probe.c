@@ -110,7 +110,8 @@ static const char *drain(int fd)
     return out;
 }
 
-// A write's result, as the process sees it.
+// A write's result, as the process sees it: called as the write returns,
+// before anything else can set errno.
 static const char *rc(ssize_t r)
 {
     static char b[4][32];
@@ -170,40 +171,40 @@ static void deviceRows(const char *name)
     check("open device", n);
     const char *opened = drain(fd);
 
-    ssize_t r = write(n, "x", 1);
+    const char *r = rc(write(n, "x", 1));
     snprintf(row, sizeof row, "%s-write", name);
-    line("D", row, "%s dev=%d own=%d opened: %s; write=%s: %s", identity(path), wdev, wown, opened, rc(r), drain(fd));
+    line("D", row, "%s dev=%d own=%d opened: %s; write=%s: %s", identity(path), wdev, wown, opened, r, drain(fd));
 
-    r = write(n, "x", 0);
+    r = rc(write(n, "x", 0));
     snprintf(row, sizeof row, "%s-empty", name);
-    line("D", row, "write=%s: %s", rc(r), drain(fd));
+    line("D", row, "write=%s: %s", r, drain(fd));
 
-    ssize_t r1 = write(n, "x", 1);
-    ssize_t r2 = write(n, "yz", 2);
+    const char *r1 = rc(write(n, "x", 1));
+    const char *r2 = rc(write(n, "yz", 2));
     snprintf(row, sizeof row, "%s-twice", name);
-    line("D", row, "write=%s write=%s: %s", rc(r1), rc(r2), drain(fd));
+    line("D", row, "write=%s write=%s: %s", r1, r2, drain(fd));
 
-    r = write(n, (const void *)-1, 1);
+    r = rc(write(n, (const void *)-1, 1));
     snprintf(row, sizeof row, "%s-fault", name);
-    line("D", row, "write=%s: %s", rc(r), drain(fd));
+    line("D", row, "write=%s: %s", r, drain(fd));
 
     // A user address with nothing mapped at it, which passes the screen ahead
     // of the driver that (void*)-1 fails.
     void *gone = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check("mmap", gone == MAP_FAILED ? -1 : 0);
     check("munmap", munmap(gone, 4096));
-    r = write(n, gone, 1);
+    r = rc(write(n, gone, 1));
     snprintf(row, sizeof row, "%s-unmapped", name);
-    line("D", row, "write=%s: %s", rc(r), drain(fd));
+    line("D", row, "write=%s: %s", r, drain(fd));
 
-    r = pwrite(n, "x", 1, 5);
+    r = rc(pwrite(n, "x", 1, 5));
     snprintf(row, sizeof row, "%s-pwrite", name);
-    line("D", row, "pwrite=%s: %s", rc(r), drain(fd));
+    line("D", row, "pwrite=%s: %s", r, drain(fd));
 
     struct iovec iov[2] = { { "ab", 2 }, { "c", 1 } };
-    r = writev(n, iov, 2);
+    r = rc(writev(n, iov, 2));
     snprintf(row, sizeof row, "%s-writev", name);
-    line("D", row, "writev=%s: %s", rc(r), drain(fd));
+    line("D", row, "writev=%s: %s", r, drain(fd));
 
     check("close", close(n));
     snprintf(row, sizeof row, "%s-close", name);
@@ -238,24 +239,24 @@ static void sectionN(void)
     int c = open("n/c", O_WRONLY);
     check("open n/c", c);
     const char *opened = drain(fd);
-    ssize_t r = write(c, "x", 1);
-    line("N", "node", "%s n=%d c=%d opened: %s; write=%s: %s", identity("n/c"), wn, wc, opened, rc(r), drain(fd));
+    const char *r = rc(write(c, "x", 1));
+    line("N", "node", "%s n=%d c=%d opened: %s; write=%s: %s", identity("n/c"), wn, wc, opened, r, drain(fd));
     check("close", close(c));
     line("N", "node-close", "%s", drain(fd));
 
     int p = open("n/p", O_RDWR | O_NONBLOCK);
     check("open n/p", p);
     opened = drain(fd);
-    r = write(p, "x", 1);
-    line("N", "fifo", "p=%d opened: %s; write=%s: %s", wp, opened, rc(r), drain(fd));
+    r = rc(write(p, "x", 1));
+    line("N", "fifo", "p=%d opened: %s; write=%s: %s", wp, opened, r, drain(fd));
     check("close", close(p));
     line("N", "fifo-close", "%s", drain(fd));
 
     f = open("n/f", O_WRONLY);
     check("open n/f", f);
     opened = drain(fd);
-    r = write(f, "x", 1);
-    line("N", "file", "f=%d opened: %s; write=%s: %s", wf, opened, rc(r), drain(fd));
+    r = rc(write(f, "x", 1));
+    line("N", "file", "f=%d opened: %s; write=%s: %s", wf, opened, r, drain(fd));
     check("close", close(f));
     line("N", "file-close", "%s", drain(fd));
     close(fd);
@@ -284,17 +285,17 @@ static void exclUnlinkRows(const char *prefix, const char *directory, const char
     line("E", row, "%s: %s; %s: %s; plain dir=%d own=%d; excl dir=%d own=%d; opened: plain: %s; excl: %s",
          first, identity(first), second, identity(second), pd, po, ed, eo, plainOpened, exclOpened);
 
-    ssize_t r = write(n, "x", 1);
+    const char *r = rc(write(n, "x", 1));
     snprintf(row, sizeof row, "%s-linked", prefix);
-    line("E", row, "write=%s: plain: %s; excl: %s", rc(r), drain(plain), drain(excl));
+    line("E", row, "write=%s: plain: %s; excl: %s", r, drain(plain), drain(excl));
 
     check("unlink second name", unlink(second));
     snprintf(row, sizeof row, "%s-unlink", prefix);
     line("E", row, "plain: %s; excl: %s", drain(plain), drain(excl));
 
-    r = write(n, "x", 1);
+    r = rc(write(n, "x", 1));
     snprintf(row, sizeof row, "%s-unlinked", prefix);
-    line("E", row, "write=%s: plain: %s; excl: %s", rc(r), drain(plain), drain(excl));
+    line("E", row, "write=%s: plain: %s; excl: %s", r, drain(plain), drain(excl));
 
     check("close", close(n));
     snprintf(row, sizeof row, "%s-close", prefix);

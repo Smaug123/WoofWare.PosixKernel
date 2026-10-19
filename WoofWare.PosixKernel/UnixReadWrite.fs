@@ -1694,8 +1694,9 @@ module UnixReadWrite =
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
     /// passed; `None` where it copies them, which it then takes all of.
-    /// Neither device in `CharacterDevice.all` changes anything a later call
-    /// could see, so a write moves no timestamp, position or pool.
+    /// Neither device in `CharacterDevice.all` keeps what it is given, so a
+    /// write moves no timestamp, position or pool; the caller reports one that
+    /// moved bytes to inotify (`deviceWritten`).
     let private deviceWriteWithoutBytes
         (device : CharacterDevice)
         (buffer : UserBuffer)
