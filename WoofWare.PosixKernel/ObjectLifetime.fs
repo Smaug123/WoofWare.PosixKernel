@@ -359,7 +359,6 @@ module ObjectLifetime =
             match destroyedDescription.OpenedThrough with
             | Some (ReachedThrough.Name (dentry, _)) -> Ok (forgetIfUnheld dentry.Parent system)
             | Some ReachedThrough.Unnamed
-            | Some (ReachedThrough.RemovedDirectory _)
             | None -> Ok system
         | OpenFileTarget.Fifo (inode, _) -> ReservedFifo.fail "ObjectLifetime.releaseDestroyed" inode
         | OpenFileTarget.Pipe (pipeId, _) ->

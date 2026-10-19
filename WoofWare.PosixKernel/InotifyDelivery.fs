@@ -123,46 +123,6 @@ type internal InotifyEffect =
     /// going), not the inode's going (measured, `inotify-self-probe.c`).
     | WatchesEnd of inode : InodeNumber
 
-/// Events Linux raises at the watch on the directory a removed directory was
-/// last named in, `OldParent`, under the name it had there, which this kernel
-/// does not keep: `CommittedFileSystem.commit` refuses the change if a watch
-/// there asks for any of `Events` (`UnplacedChangeRefusal`).
-type internal Unplaced =
-    {
-        OldParent : InodeNumber
-        Events : Set<InotifyEvent>
-    }
-
-/// Why this kernel will not commit a filesystem change: Linux would report it
-/// to an inotify watch through a name this kernel does not keep, and some
-/// watch that could be that one asks for an event the change raises.
-[<RequireQualifiedAccess>]
-type internal UnplacedChangeRefusal =
-    /// A change to a directory whose last name had gone when the walk that
-    /// reached it, or that opened the descriptor that did, reached it by ".",
-    /// "..", or "/", raising `events`, which Linux reports to `watch` of the
-    /// instance `instance`, on the directory it was last named in
-    /// (`oldParent`), under the name it had there, which this kernel does not
-    /// keep.
-    | RemovedDirectoryName of
-        oldParent : InodeNumber *
-        events : Set<InotifyEvent> *
-        instance : OpenFileDescriptionId *
-        watch : WatchDescriptor
-
-[<RequireQualifiedAccess>]
-module internal UnplacedChangeRefusal =
-    /// What this kernel knows about why it will not commit the change.
-    let describe (refusal : UnplacedChangeRefusal) : string =
-        match refusal with
-        | UnplacedChangeRefusal.RemovedDirectoryName (oldParent, events, instance, watch) ->
-            $"a change to a directory reached by \".\", \"..\" or \"/\" after its last name had gone raises %A{Set.toList events}, which Linux reports to watch %O{watch} of the inotify instance %O{instance}, on the directory it was last named in (inode %O{oldParent}), under the name it had there. This kernel does not keep that name."
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : UnplacedChangeRefusal) : RefusalKind =
-        match refusal with
-        | UnplacedChangeRefusal.RemovedDirectoryName _ -> RefusalKind.Unmodelled
-
 /// The records a filesystem change queues on the inotify instances watching
 /// it, in Linux's order (docs/plans/2026-10-11-inotify.md, 4.2 and 4.5).
 [<RequireQualifiedAccess>]
@@ -215,17 +175,16 @@ module internal InotifyDelivery =
 
     /// One event, reported first to the watch on the directory of the name
     /// the change went `through`, under that name, and then to the inode's
-    /// own watch (measured, `inotify-delivery-probe.c` section Y); and the
-    /// event Linux reports at a removed directory's old parent, which this
-    /// kernel cannot place. `hiddenWhenUnlinked` says a watch with
-    /// `IN_EXCL_UNLINK` hears nothing of it when that name has been unlinked.
+    /// own watch (measured, `inotify-delivery-probe.c` section Y).
+    /// `hiddenWhenUnlinked` says a watch with `IN_EXCL_UNLINK` hears nothing
+    /// of it when that name has been unlinked.
     let private reached
         (mutation : VfsMutation)
         (through : ReachedThrough)
         (inode : InodeNumber)
         (events : Set<InotifyEvent>)
         (hiddenWhenUnlinked : bool)
-        : InotifyNotification list * Unplaced option
+        : InotifyNotification list
         =
         let isDirectory = isDirectoryIn mutation inode
         let after = VfsMutation.after mutation
@@ -249,22 +208,13 @@ module internal InotifyDelivery =
                     $"InotifyDelivery: the change to inode %O{inode} came through \"%s{DirectoryEntryName.toEscaped dentry.Name}\" in inode %O{dentry.Parent} (unlinked: %b{unlinked}), which is not a directory naming it, or, unlinked, not a directory at all (this is a bug in this library)."
 
             let hidden = unlinked && hiddenWhenUnlinked
-            [ at dentry.Parent (Some dentry.Name) hidden ; at inode None hidden ], None
-        | ReachedThrough.Unnamed -> [ at inode None false ], None
-        // Linux reports the change at the old parent's watch, and then at
-        // the directory's own; only the second can be placed.
-        | ReachedThrough.RemovedDirectory oldParent ->
-            [ at inode None false ],
-            Some
-                {
-                    OldParent = oldParent
-                    Events = events
-                }
+            [ at dentry.Parent (Some dentry.Name) hidden ; at inode None hidden ]
+        | ReachedThrough.Unnamed -> [ at inode None false ]
 
     /// What `mutation`, made under `notice`, does to the inotify instances, in
-    /// the order Linux does it; the events this kernel cannot place
-    /// (`Unplaced`); and the next rename's cookie, `nextCookie` being this
-    /// one's. `openFiles` is the machine's open file table before the change.
+    /// the order Linux does it, and the next rename's cookie, `nextCookie`
+    /// being this one's. `openFiles` is the machine's open file table before
+    /// the change.
     ///
     /// Every rename takes a cookie, whatever watches it (Linux's
     /// `fsnotify_get_cookie`, measured to count every rename since boot), and
@@ -288,7 +238,7 @@ module internal InotifyDelivery =
         (mutation : VfsMutation)
         (openFiles : OpenFileTable)
         (nextCookie : uint32)
-        : InotifyEffect list * Unplaced option * uint32
+        : InotifyEffect list * uint32
         =
         let changes = VfsMutation.changes mutation
         let isDirectory = isDirectoryIn mutation
@@ -394,13 +344,13 @@ module internal InotifyDelivery =
                         InotifyEffect.WatchesEnd inode :: reversed, cookie, Set.add inode gone
                 )
 
-            List.rev reversed, None, cookie
+            List.rev reversed, cookie
         | ChangeNotice.Read inode ->
             if changes <> [ FsChange.AttributesChanged inode ] then
                 failwith
                     $"InotifyDelivery: a read of inode %O{inode} made %A{changes}, where it moves that inode's access time alone (this is a bug in this library)."
 
-            [], None, nextCookie
+            [], nextCookie
         | ChangeNotice.NameReleased inode ->
             if not (List.isEmpty changes) then
                 failwith
@@ -418,9 +368,9 @@ module internal InotifyDelivery =
             | Some (InodeContent.Fifo _) ->
 
             if VirtualFileSystem.bindingCount inode after = 0 then
-                [ InotifyEffect.WatchesEnd inode ], None, nextCookie
+                [ InotifyEffect.WatchesEnd inode ], nextCookie
             else
-                [], None, nextCookie
+                [], nextCookie
         | ChangeNotice.SetAttributes (through, set) ->
             let inode, contents, attributes = attributeChanges "a setattr" changes
 
@@ -430,13 +380,12 @@ module internal InotifyDelivery =
             let events = AttributesSet.events set
 
             if events.IsEmpty then
-                [], None, nextCookie
+                [], nextCookie
             else
 
             // A `setattr` carries no path, so no watch's `IN_EXCL_UNLINK`
             // keeps it out (measured, `inotify-dentry-probe.c` section E).
-            let notifications, unplaced = reached mutation through inode events false
-            notified notifications, unplaced, nextCookie
+            notified (reached mutation through inode events false), nextCookie
         | ChangeNotice.Written through ->
             // Linux's `file_remove_privs` raises `IN_ATTRIB` for the set-ID
             // bits a write clears, and the write `IN_MODIFY` (measured,
@@ -445,27 +394,26 @@ module internal InotifyDelivery =
 
             match through with
             | ReachedThrough.Name _ -> ()
-            | ReachedThrough.Unnamed
-            | ReachedThrough.RemovedDirectory _ ->
+            | ReachedThrough.Unnamed ->
                 failwith
                     $"InotifyDelivery: a write to inode %O{inode} came through %A{through}, where a write is of a regular file, which a descriptor is opened onto by a name (this is a bug in this library)."
 
             let cleared =
                 if attributes then
-                    fst (reached mutation through inode (Set.singleton InotifyEvent.Attrib) false)
+                    reached mutation through inode (Set.singleton InotifyEvent.Attrib) false
                 else
                     []
 
             let written =
                 if contents then
-                    fst (reached mutation through inode (Set.singleton InotifyEvent.Modify) true)
+                    reached mutation through inode (Set.singleton InotifyEvent.Modify) true
                 else
                     []
 
-            notified (cleared @ written), None, nextCookie
+            notified (cleared @ written), nextCookie
         | ChangeNotice.FaultedWrite through ->
             match changes with
-            | [] -> [], None, nextCookie
+            | [] -> [], nextCookie
             | _ ->
 
             // Linux's `file_remove_privs` raises `IN_ATTRIB` for the set-ID
@@ -477,17 +425,14 @@ module internal InotifyDelivery =
 
             match through with
             | ReachedThrough.Name _ -> ()
-            | ReachedThrough.Unnamed
-            | ReachedThrough.RemovedDirectory _ ->
+            | ReachedThrough.Unnamed ->
                 failwith
                     $"InotifyDelivery: a write to inode %O{inode} came through %A{through}, where a write is of a regular file, which a descriptor is opened onto by a name (this is a bug in this library)."
 
             if attributes then
-                notified (fst (reached mutation through inode (Set.singleton InotifyEvent.Attrib) false)),
-                None,
-                nextCookie
+                notified (reached mutation through inode (Set.singleton InotifyEvent.Attrib) false), nextCookie
             else
-                [], None, nextCookie
+                [], nextCookie
 
     /// The mask of the watch `wd` of the inotify instance `instance`. Loudly
     /// partial: the table's index of watches named it.
@@ -504,25 +449,6 @@ module internal InotifyDelivery =
         | None ->
             failwith
                 $"InotifyDelivery: the index of watches names watch %O{wd} of inotify instance %O{instance}, which holds no such watch (this is a bug in this library)."
-
-    /// The refusal of the change that raised `unplaced`, if some watch in
-    /// `openFiles` on its old parent asks for an event of it: the first such,
-    /// in the order of the instances' IDs and then of the watches'. In time
-    /// logarithmic in the number of watches on the machine, and linear in the
-    /// number on the old parent.
-    let unplacedRefusal (unplaced : Unplaced option) (openFiles : OpenFileTable) : UnplacedChangeRefusal option =
-        match unplaced with
-        | None -> None
-        | Some unplaced ->
-
-        OpenFileTable.inotifyWatchesOn unplaced.OldParent openFiles
-        |> Seq.collect (fun (instance, watches) -> watches |> Seq.map (fun wd -> instance, wd))
-        |> Seq.tryFind (fun (instance, wd) ->
-            not (Set.intersect unplaced.Events (maskOf instance wd openFiles).Events).IsEmpty
-        )
-        |> Option.map (fun (instance, wd) ->
-            UnplacedChangeRefusal.RemovedDirectoryName (unplaced.OldParent, unplaced.Events, instance, wd)
-        )
 
     /// The watch of each inotify instance in `openFiles` on `inode`, in the
     /// order of the instances' IDs, and its mask: of an instance holding

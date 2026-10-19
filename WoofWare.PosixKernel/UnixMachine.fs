@@ -324,64 +324,27 @@ module UnixMachineState =
     /// `machine` with the filesystem `mutation` leaves, which must have been
     /// made from `machine.FileSystem`, and the records its changes raise
     /// queued on the inotify instances watching what they changed, the
-    /// syscall having reached it as `notice` says; or the refusal of a change
-    /// an inotify watch could hear of through a name this kernel does not
-    /// keep (`CommittedFileSystem.commit`). Every syscall that changes the
-    /// filesystem stores its change through here or `commitFileSystem`.
-    let internal tryCommitFileSystem
-        (notice : ChangeNotice)
-        (mutation : VfsMutation)
-        (machine : UnixMachineState)
-        : Result<UnixMachineState, UnplacedChangeRefusal>
-        =
-        CommittedFileSystem.commit
-            notice
-            machine.InotifyLimits.MaxQueuedEvents
-            mutation
-            machine.OpenFiles
-            machine.CommittedFileSystem
-        |> Result.map (fun (committed, openFiles) ->
-            { machine with
-                CommittedFileSystem = committed
-                OpenFiles = openFiles
-            }
-        )
-
-    /// `tryCommitFileSystem`, for a change no watch can make this kernel
-    /// refuse: a change of names (`ChangeNotice.Names`), the release of a
-    /// name (`ChangeNotice.NameReleased`), a read (`ChangeNotice.Read`), or
-    /// one that reached
-    /// what it changed through a name or none, rather than through a removed
-    /// directory (`ReachedThrough.RemovedDirectory`). A write and a
-    /// truncation are such changes, being of a regular file, which only a
-    /// name reaches. Loudly partial on a notice of a removed directory.
+    /// syscall having reached it as `notice` says
+    /// (`CommittedFileSystem.commit`). Every syscall that changes the
+    /// filesystem stores its change through here.
     let internal commitFileSystem
         (notice : ChangeNotice)
         (mutation : VfsMutation)
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        match notice with
-        | ChangeNotice.Names
-        | ChangeNotice.NameReleased _
-        | ChangeNotice.Read _
-        | ChangeNotice.SetAttributes (ReachedThrough.Name _, _)
-        | ChangeNotice.SetAttributes (ReachedThrough.Unnamed, _)
-        | ChangeNotice.Written (ReachedThrough.Name _)
-        | ChangeNotice.Written ReachedThrough.Unnamed
-        | ChangeNotice.FaultedWrite (ReachedThrough.Name _)
-        | ChangeNotice.FaultedWrite ReachedThrough.Unnamed -> ()
-        | ChangeNotice.SetAttributes (ReachedThrough.RemovedDirectory _, _)
-        | ChangeNotice.Written (ReachedThrough.RemovedDirectory _)
-        | ChangeNotice.FaultedWrite (ReachedThrough.RemovedDirectory _) ->
-            failwith
-                $"UnixMachineState.commitFileSystem: committed %A{notice}, which may be refused; commit it through tryCommitFileSystem (this is a bug in this library)."
+        let committed, openFiles =
+            CommittedFileSystem.commit
+                notice
+                machine.InotifyLimits.MaxQueuedEvents
+                mutation
+                machine.OpenFiles
+                machine.CommittedFileSystem
 
-        match tryCommitFileSystem notice mutation machine with
-        | Ok machine -> machine
-        | Error refusal ->
-            failwith
-                $"UnixMachineState.commitFileSystem: %A{notice} was refused, which reached no removed directory: %s{UnplacedChangeRefusal.describe refusal} (this is a bug in this library)."
+        { machine with
+            CommittedFileSystem = committed
+            OpenFiles = openFiles
+        }
 
     /// The type of filesystem `inode` is on: the root filesystem's mount, or,
     /// for an inode on the device filesystem, tmpfs, which a Linux devtmpfs
