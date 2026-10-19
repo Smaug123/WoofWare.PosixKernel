@@ -170,6 +170,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -179,6 +180,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite

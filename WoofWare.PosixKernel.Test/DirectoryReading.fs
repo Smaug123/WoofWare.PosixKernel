@@ -18,6 +18,7 @@ module internal DirectoryReading =
             CloseOnExec = true
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = true
         }
 

@@ -9,10 +9,16 @@ open System.Collections.Immutable
 [<RequireQualifiedAccess>]
 type UnmodelledOpenFlag =
     /// `O_NOCTTY`, on both flavours.
+    ///
+    /// Nothing in this version produces it: `open(2)` answers a word holding
+    /// it, since no file this kernel opens is a terminal.
     | NoControllingTerminal
     /// `O_APPEND`, on both flavours.
     | Append
     /// `O_NONBLOCK`, on both flavours.
+    ///
+    /// Nothing in this version produces it: `open(2)` gives the description
+    /// it makes `O_NONBLOCK`, as `fcntl(F_SETFL)` would.
     | NonBlocking
     /// `O_ASYNC` (Linux's `FASYNC`), on both flavours.
     | Asynchronous
@@ -80,8 +86,9 @@ module UnmodelledOpenFlag =
 /// flavour.
 ///
 /// Every field is a flag this kernel acts on, or (`CloseOnExec`,
-/// `Synchronous`, `DataSynchronous`) one whose only effect here is what
-/// `fcntl` reports. A word
+/// `Synchronous`, `DataSynchronous`, `NonBlocking`) one whose only effect on
+/// what `open(2)` makes is what `fcntl` reports. `O_NOCTTY` has no field: it
+/// acts only on a terminal, and no file this kernel opens is one. A word
 /// holding any other bit its flavour defines never becomes one of these: the
 /// decoder refuses it, so the kernel cannot guess at a flag it does not
 /// model.
@@ -125,6 +132,13 @@ type internal OpenFlags =
         /// Darwin when the word holds it, which the decoder admits only beside
         /// `O_SYNC`.
         DataSynchronous : bool
+        /// `O_NONBLOCK`: give the description `O_NONBLOCK`, exactly as
+        /// `fcntl(F_SETFL)` would once it was open. Measured on both, it
+        /// changes nothing else about an open of a regular file or a directory
+        /// (`open-flags.c`), or what a read of a character device does
+        /// (`devices.c`). A FIFO, whose open it does change, is not opened by
+        /// this kernel.
+        NonBlocking : bool
         /// `O_DIRECTORY`: fail ENOTDIR unless the path names a directory.
         ///
         /// Modelled only as `opendir(3)` uses it: with `O_RDONLY`, and without
@@ -600,6 +614,11 @@ module internal OpenFlagWord =
         | Synchronous
         /// `O_DSYNC`, which `O_SYNC` beside it subsumes.
         | DataSynchronous
+        | NonBlocking
+        /// `O_NOCTTY`, which acts only on a terminal. No file this kernel
+        /// opens is one: the only character devices with nodes are
+        /// `/dev/null` and `/dev/urandom`, so it is read as nothing.
+        | NoControllingTerminal
         | Unmodelled of UnmodelledOpenFlag
 
     // Each flavour's numbering of every bit it defines above the access mode,
@@ -626,10 +645,10 @@ module internal OpenFlagWord =
         [
             0x40, Meaning.Create
             OpenFlagNumbering.LinuxExclusive, Meaning.Exclusive
-            0x100, Meaning.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+            0x100, Meaning.NoControllingTerminal
             0x200, Meaning.Truncate
             OpenFlagNumbering.LinuxAppend, Meaning.Unmodelled UnmodelledOpenFlag.Append
-            OpenFlagNumbering.LinuxNonBlock, Meaning.Unmodelled UnmodelledOpenFlag.NonBlocking
+            OpenFlagNumbering.LinuxNonBlock, Meaning.NonBlocking
             OpenFlagNumbering.LinuxDataSynchronous, Meaning.DataSynchronous
             OpenFlagNumbering.LinuxAsynchronous, Meaning.Unmodelled UnmodelledOpenFlag.Asynchronous
             direct, Meaning.Unmodelled UnmodelledOpenFlag.Direct
@@ -646,7 +665,7 @@ module internal OpenFlagWord =
 
     let private darwinBits : (int * Meaning) list =
         [
-            OpenFlagNumbering.DarwinNonBlock, Meaning.Unmodelled UnmodelledOpenFlag.NonBlocking
+            OpenFlagNumbering.DarwinNonBlock, Meaning.NonBlocking
             OpenFlagNumbering.DarwinAppend, Meaning.Unmodelled UnmodelledOpenFlag.Append
             0x10, Meaning.Unmodelled UnmodelledOpenFlag.SharedLock
             0x20, Meaning.Unmodelled UnmodelledOpenFlag.ExclusiveLock
@@ -659,7 +678,7 @@ module internal OpenFlagWord =
             0x1000, Meaning.Unmodelled UnmodelledOpenFlag.ResolveBeneath
             0x2000, Meaning.Unmodelled UnmodelledOpenFlag.Unique
             0x8000, Meaning.Unmodelled UnmodelledOpenFlag.EventOnly
-            0x20000, Meaning.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+            0x20000, Meaning.NoControllingTerminal
             0x100000, Meaning.Directory
             0x200000, Meaning.Unmodelled UnmodelledOpenFlag.Symlink
             OpenFlagNumbering.DarwinDataSynchronous, Meaning.DataSynchronous
@@ -696,7 +715,9 @@ module internal OpenFlagWord =
                 | Meaning.Directory
                 | Meaning.CloseOnExec
                 | Meaning.Synchronous
-                | Meaning.DataSynchronous -> None
+                | Meaning.DataSynchronous
+                | Meaning.NonBlocking
+                | Meaning.NoControllingTerminal -> None
             )
 
         // Refused first: a flag this kernel does not model can lift a screen
@@ -735,6 +756,7 @@ module internal OpenFlagWord =
                     match flavour with
                     | SimulatedUnixFlavour.Linux -> has Meaning.Synchronous
                     | SimulatedUnixFlavour.Darwin -> has Meaning.DataSynchronous
+                NonBlocking = has Meaning.NonBlocking
                 Directory = has Meaning.Directory
             }
 
@@ -879,9 +901,9 @@ module UnixNamespace =
 
         /// Hand out a descriptor onto `inode`, which the walk reached
         /// `through`, for the access that was asked for, with the descriptor
-        /// flag and the status flags the word asked for. `truncatedExisting` is
-        /// whether this open's `O_TRUNC` truncated a file that was there before
-        /// it.
+        /// flag, the status flags and the `O_NONBLOCK` the word asked for.
+        /// `truncatedExisting` is whether this open's `O_TRUNC` truncated a
+        /// file that was there before it.
         let opened
             (truncatedExisting : bool)
             (through : ReachedThrough)
@@ -910,6 +932,7 @@ module UnixNamespace =
                     FileDescriptorRegistry.openDirectory
                         descriptorFlags
                         status
+                        flags.NonBlocking
                         through
                         inode
                         (UnixSystemState.fileDescriptors system)
@@ -917,6 +940,7 @@ module UnixNamespace =
                     FileDescriptorRegistry.openCharacterDevice
                         descriptorFlags
                         status
+                        flags.NonBlocking
                         through
                         inode
                         device
@@ -934,6 +958,7 @@ module UnixNamespace =
                     FileDescriptorRegistry.openFile
                         descriptorFlags
                         status
+                        flags.NonBlocking
                         through
                         inode
                         flags.Access

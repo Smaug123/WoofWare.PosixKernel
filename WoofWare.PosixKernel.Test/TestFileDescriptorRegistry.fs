@@ -52,6 +52,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -63,6 +64,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 otherInode
                 FileAccessMode.ReadOnly
@@ -89,6 +91,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -98,6 +101,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -316,6 +320,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -332,6 +337,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 otherInode
                 FileAccessMode.ReadOnly
@@ -430,6 +436,7 @@ module TestFileDescriptorRegistry =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                     (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                    false
                     ReachedThrough.Unnamed
                     someInode
                     mode
@@ -712,6 +719,7 @@ module TestFileDescriptorRegistry =
                             FileDescriptorRegistry.openFile
                                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                                false
                                 ReachedThrough.Unnamed
                                 someInode
                                 FileAccessMode.ReadOnly
@@ -723,6 +731,7 @@ module TestFileDescriptorRegistry =
                             FileDescriptorRegistry.openDirectory
                                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                                false
                                 ReachedThrough.Unnamed
                                 otherInode
                                 registry
@@ -870,6 +879,7 @@ module TestFileDescriptorRegistry =
                             FileDescriptorRegistry.openFile
                                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                                false
                                 ReachedThrough.Unnamed
                                 someInode
                                 FileAccessMode.ReadOnly
@@ -1163,6 +1173,7 @@ module TestFileDescriptorRegistry =
         FileDescriptorRegistry.openFile
             (DescriptorFlags.none SimulatedUnixFlavour.Linux)
             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+            false
             ReachedThrough.Unnamed
             inode
             FileAccessMode.ReadOnly
@@ -1530,6 +1541,7 @@ module TestFileDescriptorRegistry =
                         FileDescriptorRegistry.openFile
                             (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                            false
                             ReachedThrough.Unnamed
                             inode
                             FileAccessMode.ReadOnly
@@ -1695,6 +1707,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1716,6 +1729,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1744,6 +1758,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1753,6 +1768,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1772,6 +1788,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1781,6 +1798,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1828,6 +1846,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1849,6 +1868,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1865,6 +1885,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1988,6 +2009,7 @@ module TestFileDescriptorRegistry =
                         FileDescriptorRegistry.openFile
                             (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                            false
                             ReachedThrough.Unnamed
                             (InodeNumber (int64 (rng.Next 5)))
                             FileAccessMode.ReadOnly
@@ -2147,6 +2169,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -2173,6 +2196,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadWrite

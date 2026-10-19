@@ -4589,11 +4589,13 @@ module FileDescriptorRegistry =
     /// process may open the file at all are decided before this is reached, and
     /// so is whether a descriptor below the bound is free
     /// (`SimulatedUnixPlatform.descriptorBound`), which `UnixSystem.checkInvariants`
-    /// holds every descriptor to. So are the descriptor's `flags` and the
-    /// description's `status`, which the flag word decides.
+    /// holds every descriptor to. So are the descriptor's `flags`, and the
+    /// description's `status` and whether it is non-blocking (`nonBlocking`),
+    /// which the flag word decides.
     let internal openFile
         (flags : DescriptorFlags)
         (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (accessMode : FileAccessMode)
@@ -4605,9 +4607,7 @@ module FileDescriptorRegistry =
             {
                 Target = OpenFileTarget.File (inode, 0L)
                 AccessMode = accessMode
-                // `UnixNamespace.openPath` refuses `O_NONBLOCK`, so
-                // every modelled open starts blocking.
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 // `open(2)` never takes a lock.
                 Flock = None
                 Status = status
@@ -4621,11 +4621,12 @@ module FileDescriptorRegistry =
     /// descriptor not in use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether the process may open the
-    /// node is decided before this is reached, and so are `flags` and
-    /// `status`.
+    /// node is decided before this is reached, and so are `flags`, `status`
+    /// and `nonBlocking`.
     let internal openCharacterDevice
         (flags : DescriptorFlags)
         (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (device : CharacterDevice)
@@ -4638,7 +4639,7 @@ module FileDescriptorRegistry =
             {
                 Target = OpenFileTarget.CharacterDevice (inode, device, CharacterDeviceState.Positionless)
                 AccessMode = accessMode
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 Flock = None
                 Status = status
             }
@@ -4651,11 +4652,12 @@ module FileDescriptorRegistry =
     /// use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether `inode` is a directory the
-    /// process may read is decided before this is reached, and so are `flags`
-    /// and `status`.
+    /// process may read is decided before this is reached, and so are
+    /// `flags`, `status` and `nonBlocking`.
     let internal openDirectory
         (flags : DescriptorFlags)
         (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (registry : FileDescriptorRegistry)
@@ -4666,7 +4668,7 @@ module FileDescriptorRegistry =
             {
                 Target = OpenFileTarget.Directory (inode, DirectoryPosition.Cursor DirectoryCursor.Start)
                 AccessMode = FileAccessMode.ReadOnly
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 Flock = None
                 Status = status
             }

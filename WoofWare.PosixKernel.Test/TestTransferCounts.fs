@@ -111,6 +111,7 @@ module TestTransferCounts =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -694,6 +695,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     mode
@@ -710,6 +712,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     registry
@@ -767,6 +770,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -785,6 +789,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -974,6 +979,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -1050,6 +1056,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
