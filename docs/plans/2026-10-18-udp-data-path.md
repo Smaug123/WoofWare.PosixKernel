@@ -758,8 +758,16 @@ it touches.
     answer changes.
   - **U1b.** The calls: `write` and `send` to a peer; `read` and `recv` of a
     queued datagram, or `EAGAIN` when non-blocking (a blocking one with nothing
-    queued stays refused); `MSG_TRUNC`; `FIONREAD`; Linux readiness and wakes
-    (3.7), including a blocking poll's refill; delivery by scan (3.3).
+    queued stays refused); `FIONREAD`; Linux readiness and wakes (3.7),
+    including a blocking poll's refill; delivery by scan (3.3).
+    - `MSG_TRUNC` moves to U3. Linux's makes `recv` return more than it
+      copies, which `ReadAnswer` cannot say, and `recvfrom` gets an answer
+      type of its own.
+    - `FIONREAD` (`UnixDescriptor.bytesAvailable`, `SteppedCall.BytesAvailable`)
+      now comes back with the system, since Linux's refills the reader queue.
+    - A socket a Linux connect to port 0 left connected is refused as a
+      receiver candidate: Linux takes a peer port of 0 as matching any source
+      port, and its rank is unmeasured.
     `TestDatagramTransferAgainstHost` replays sections B to K against the
     host, and a randomised sequence of sends and takes checks the capacity
     rules there.
