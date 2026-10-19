@@ -302,6 +302,7 @@
     <Compile Include="TestInotifyDeliveryMeasured.fs" />
     <Compile Include="TestInotifyRemovedDirectoryMeasured.fs" />
     <Compile Include="TestInotifyCloseMeasured.fs" />
+    <Compile Include="TestInotifyDeviceWriteMeasured.fs" />
     <Compile Include="TestInotifyDentryMeasured.fs" />
     <Compile Include="TestInotifySelfMeasured.fs" />
     <Compile Include="InotifyDeliveryOps.fs" />
@@ -441,6 +442,11 @@
          watch, measured by docs/probes/inotify-close/inotify-close-probe.c.
          `TestInotifyCloseMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\inotify-close\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyClose.linux.txt" />
+    <!-- What Linux 6.18.5 answered of a write to a character device under a
+         watch, measured by
+         docs/probes/inotify-device-write/inotify-device-write-probe.c.
+         `TestInotifyDeviceWriteMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-device-write\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDeviceWrite.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>

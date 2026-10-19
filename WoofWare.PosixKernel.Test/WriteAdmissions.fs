@@ -449,6 +449,8 @@ module internal WriteOutcomes =
             match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
             | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
+            | Ok (PWriteAdmission.DeviceAnswered (answer, inode, through)) ->
+                Ok (Lone.UnixReadWrite.applyPWriteDeviceAnswer answer inode through system)
             | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
             | Ok (PWriteAdmission.Transfer (count, into)) ->
                 if count > bytes.Length then

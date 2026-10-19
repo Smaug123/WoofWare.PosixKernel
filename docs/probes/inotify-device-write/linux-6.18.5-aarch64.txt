@@ -1,0 +1,52 @@
+6.18.5 aarch64
+D	null-write	ino=2 rdev=1,3 nlink=1 dev=1 own=2 opened: (none); write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	null-empty	write=0: (none)
+D	null-twice	write=1 write=2: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	null-fault	write=errno14: (none)
+D	null-unmapped	write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	null-pwrite	pwrite=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	null-writev	writev=3: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	null-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="null" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""
+D	zero-write	ino=3 rdev=1,5 nlink=1 dev=1 own=2 opened: (none); write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	zero-empty	write=0: (none)
+D	zero-twice	write=1 write=2: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	zero-fault	write=errno14: (none)
+D	zero-unmapped	write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	zero-pwrite	pwrite=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	zero-writev	writev=3: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	zero-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="zero" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""
+D	urandom-write	ino=6 rdev=1,9 nlink=1 dev=1 own=2 opened: (none); write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	urandom-empty	write=0: (none)
+D	urandom-twice	write=1 write=2: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	urandom-fault	write=errno14: (none)
+D	urandom-unmapped	write=errno14: (none)
+D	urandom-pwrite	pwrite=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	urandom-writev	writev=3: wd=2 mask=MODIFY cookie=0 len=0 name=""
+D	urandom-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="urandom" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""
+N	node	ino=33406977 rdev=1,3 nlink=1 n=1 c=2 opened: (none); write=1: wd=2 mask=MODIFY cookie=0 len=0 name=""
+N	node-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="c" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""
+N	fifo	p=3 opened: (none); write=1: wd=3 mask=MODIFY cookie=0 len=0 name=""
+N	fifo-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="p" | wd=3 mask=CLOSE_WRITE cookie=0 len=0 name=""
+N	file	f=4 opened: (none); write=1: wd=1 mask=MODIFY cookie=0 len=16 name="f" | wd=4 mask=MODIFY cookie=0 len=0 name=""
+N	file-close	wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="f" | wd=4 mask=CLOSE_WRITE cookie=0 len=0 name=""
+E	dev-null-fixture	/dev/null: ino=2 rdev=1,3 nlink=2; /dev/probe-null: ino=2 rdev=1,3 nlink=2; plain dir=1 own=2; excl dir=1 own=2; opened: plain: (none); excl: (none)
+E	dev-null-linked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: wd=2 mask=MODIFY cookie=0 len=0 name=""
+E	dev-null-unlink	plain: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="probe-null"; excl: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="probe-null"
+E	dev-null-unlinked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: (none)
+E	dev-null-close	plain: wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="probe-null" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""; excl: (none)
+E	holders	null=1 urandom=0
+E	dev-null-self-fixture	/dev/null: ino=2 rdev=1,3 nlink=1; /dev/null: ino=2 rdev=1,3 nlink=1; plain dir=1 own=2; excl dir=1 own=2; opened: plain: (none); excl: (none)
+E	dev-null-self-linked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: wd=2 mask=MODIFY cookie=0 len=0 name=""
+E	dev-null-self-unlink	plain: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="null"; excl: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="null"
+E	dev-null-self-unlinked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: (none)
+E	dev-null-self-close	plain: wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="null" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""; excl: (none)
+E	urandom-self-fixture	/dev/urandom: ino=6 rdev=1,9 nlink=1; /dev/urandom: ino=6 rdev=1,9 nlink=1; plain dir=1 own=2; excl dir=1 own=2; opened: plain: (none); excl: (none)
+E	urandom-self-linked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: wd=2 mask=MODIFY cookie=0 len=0 name=""
+E	urandom-self-unlink	plain: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="urandom"; excl: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="urandom"
+E	urandom-self-unlinked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: (none)
+E	urandom-self-close	plain: wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="urandom" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name="" | wd=2 mask=DELETE_SELF cookie=0 len=0 name="" | wd=2 mask=IGNORED cookie=0 len=0 name=""; excl: wd=2 mask=DELETE_SELF cookie=0 len=0 name="" | wd=2 mask=IGNORED cookie=0 len=0 name=""
+E	node-fixture	e/c: ino=33415169 rdev=1,3 nlink=2; e/d: ino=33415169 rdev=1,3 nlink=2; plain dir=1 own=2; excl dir=1 own=2; opened: plain: (none); excl: (none)
+E	node-linked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: wd=2 mask=MODIFY cookie=0 len=0 name=""
+E	node-unlink	plain: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="d"; excl: wd=2 mask=ATTRIB cookie=0 len=0 name="" | wd=1 mask=DELETE cookie=0 len=16 name="d"
+E	node-unlinked	write=1: plain: wd=2 mask=MODIFY cookie=0 len=0 name=""; excl: (none)
+E	node-close	plain: wd=1 mask=CLOSE_WRITE cookie=0 len=16 name="d" | wd=2 mask=CLOSE_WRITE cookie=0 len=0 name=""; excl: (none)
