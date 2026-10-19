@@ -48,8 +48,16 @@ module TestFutexBitset =
                 (int (bootNanoseconds % 1_000_000_000L)))
             threads
 
+    /// A readable timespec of `s` seconds and `ns` nanoseconds.
+    let private readable (s : int64) (ns : int64) : TimespecArgument =
+        TimespecArgument.Readable
+            {
+                Seconds = s
+                Nanoseconds = ns
+            }
+
     let private timespec (ns : int64) : TimespecArgument =
-        TimespecArgument.Readable (ns / 1_000_000_000L, ns % 1_000_000_000L)
+        readable (ns / 1_000_000_000L) (ns % 1_000_000_000L)
 
     /// The instant `ms` milliseconds after `system`'s present, on the clock a
     /// bitset wait with `op` measures its deadline on, as the probe's
@@ -273,11 +281,11 @@ module TestFutexBitset =
         =
         match name with
         | "null" -> TimespecArgument.Null, None
-        | "past" -> TimespecArgument.Readable (0L, 0L), Some 0L
+        | "past" -> readable 0L 0L, Some 0L
         | "soon" -> deadlineAfter op 10L system, Some 10_000_000L
-        | "nsec=1e9" -> TimespecArgument.Readable (0L, 1_000_000_000L), None
-        | "nsec=-1" -> TimespecArgument.Readable (0L, -1L), None
-        | "sec=-1" -> TimespecArgument.Readable (-1L, 0L), None
+        | "nsec=1e9" -> readable 0L 1_000_000_000L, None
+        | "nsec=-1" -> readable 0L (-1L), None
+        | "sec=-1" -> readable (-1L) 0L, None
         | "unmapped" -> TimespecArgument.Unreadable, None
         | other -> failwith $"the probe names no timeout %s{other}"
 
@@ -389,7 +397,7 @@ module TestFutexBitset =
                 let tvSec = int64 tvSec
                 let pid, system = boot 2
 
-                let system = parks pid 1 op any (TimespecArgument.Readable (tvSec, 0L)) system
+                let system = parks pid 1 op any (readable tvSec 0L) system
 
                 let expected =
                     if tvSec >= 9223372036L then
@@ -549,7 +557,7 @@ module TestFutexBitset =
             | _ -> failwith $"%s{line}: %A{groups}"
 
         for op in [ UnixFutex.FutexWaitBitsetPrivate ; realtimeWait ] do
-            for deadline in [ TimespecArgument.Readable (0L, 0L) ; deadlineAfter op 0L (snd (boot 1)) ] do
+            for deadline in [ readable 0L 0L ; deadlineAfter op 0L (snd (boot 1)) ] do
                 let pid, system = boot 2
                 let system = parks pid 1 op any deadline system
                 let count, system = wake pid UnixFutex.FutexWakePrivate 1 0u system
@@ -592,19 +600,19 @@ module TestFutexBitset =
         let pid, system =
             bootAt (UnixTimestamp.createOrFail "TestFutexBitset" 9_300_000_000L 0) 2
 
-        waitOn pid 1 realtimeWait any 1u (TimespecArgument.Readable (0L, 0L)) system
+        waitOn pid 1 realtimeWait any 1u (readable 0L 0L) system
         |> fst
         |> shouldEqual (failed UnixError.EAGAIN)
 
         (fun () ->
-            waitOn pid 1 realtimeWait any 0u (TimespecArgument.Readable (0L, 0L)) system
+            waitOn pid 1 realtimeWait any 0u (readable 0L 0L) system
             |> ignore<SyscallOutcome * UnixSystem<int, string>>
         )
         |> shouldFail<UnmodelledException>
 
         // The last instant before Linux saturates a deadline lies within
         // Int64.MaxValue nanoseconds of that boot, before it.
-        let late = TimespecArgument.Readable (9_223_372_035L, 0L)
+        let late = readable 9_223_372_035L 0L
 
         match waitOn pid 1 realtimeWait any 0u late system with
         | SyscallOutcome.WouldBlock _, system ->
