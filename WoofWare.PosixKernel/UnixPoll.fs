@@ -391,18 +391,10 @@ type internal EpollCtlRefusal =
     /// The event carries `EPOLLEXCLUSIVE`, which changes which of several epoll instances
     /// on one target a wake reaches. This library's wakes reach every epoll instance.
     | Exclusive
-    /// The event carries `EPOLLONESHOT`, which disarms the registration once it
-    /// has reported. This library's registrations stay armed.
-    | OneShot
     /// The event carries `EPOLLWAKEUP`. The kernel keeps it only for a caller
     /// with `CAP_BLOCK_SUSPEND` on a kernel built with power management, and
     /// silently clears it otherwise; this library models neither.
     | WakeUp
-    /// The event lacks `EPOLLET`, asking to be level-triggered. This library's epoll
-    /// models edge-triggered registrations only: a wait consumes every entry it
-    /// walks and never re-arms a still-ready one, so a wait after a partly
-    /// drained level would sleep where a real `epoll_wait` returns again.
-    | LevelTriggered
     /// An `EPOLL_CTL_ADD` whose target is an end of a pipe the process made.
     /// An edge-triggered registration reports what the pipe's own wakes
     /// signal, and which transfers and closes signal a pipe's waiters, and with
@@ -427,16 +419,12 @@ module internal EpollCtlRefusal =
             $"fd %d{targetFd} is itself an epoll instance. Linux would register it (subject to a loop check and a nesting depth of four, both ELOOP), but what a nested epoll instance reports and how a wake propagates through one are not modelled."
         | EpollCtlRefusal.Exclusive ->
             "the event carries EPOLLEXCLUSIVE, and the registration would succeed. An exclusive registration changes which of several epoll instances on one target a wake reaches, and this library's wakes reach every epoll instance. Model wake-one delivery before answering."
-        | EpollCtlRefusal.OneShot ->
-            "the event carries EPOLLONESHOT, and the registration would succeed. A one-shot registration disarms once it has reported until a MOD re-arms it, and this library's registrations stay armed. Model disarming before answering."
         | EpollCtlRefusal.WakeUp ->
             "the event carries EPOLLWAKEUP, and the registration would succeed. The kernel keeps the bit only for a caller with CAP_BLOCK_SUSPEND on a kernel built with power management, clearing it silently otherwise, and this library models neither capabilities nor wakeup sources."
         | EpollCtlRefusal.PipeTarget targetFd ->
             $"fd %d{targetFd} is an end of a pipe the process made, and the registration would succeed. An edge-triggered registration is made pending by the wakes its target signals, and which reads, writes and closes signal a pipe's waiters, with which events, is unmeasured: Linux's pipe_write, for one, wakes readers on every write once a waiter has polled the pipe, not only on the write that makes it non-empty. poll(2) on a pipe is answered; measure the pipe's wakes before registering one."
         | EpollCtlRefusal.UnmeasuredSocketKind (targetFd, domain, kind) ->
             $"fd %d{targetFd} is a %O{kind} socket in %O{domain}, and the registration would succeed. What an epoll wait reports for this kind is unmeasured: only poll(2)'s level is (OUT|HUP|WRNORM|WRBAND when fresh), and the two waiters read one level, which this kernel will not infer from one of them. Measure an epoll wait on one before registering it."
-        | EpollCtlRefusal.LevelTriggered ->
-            "the event lacks EPOLLET, asking to be level-triggered, and the registration would succeed. This library's epoll models edge-triggered registrations only: the ready list is consumed as it is drained and a still-ready entry is never re-armed, so a wait after a partly drained level would sleep where a real epoll_wait returns again. Register with EPOLLET, or model level-triggering before answering."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : EpollCtlRefusal) : RefusalKind =
@@ -444,9 +432,7 @@ module internal EpollCtlRefusal =
         | EpollCtlRefusal.UnmodelledFlavour _ -> RefusalKind.NotOnPlatform
         | EpollCtlRefusal.NestedEpoll _ -> RefusalKind.Unmodelled
         | EpollCtlRefusal.Exclusive -> RefusalKind.Unmodelled
-        | EpollCtlRefusal.OneShot -> RefusalKind.Unmodelled
         | EpollCtlRefusal.WakeUp -> RefusalKind.Unmodelled
-        | EpollCtlRefusal.LevelTriggered -> RefusalKind.Unmodelled
         | EpollCtlRefusal.PipeTarget _ -> RefusalKind.Unmodelled
         | EpollCtlRefusal.UnmeasuredSocketKind _ -> RefusalKind.Unmodelled
 
@@ -663,12 +649,8 @@ module UnixPoll =
         let unmodelledMode : EpollCtlRefusal option =
             if exclusive then
                 Some EpollCtlRefusal.Exclusive
-            elif events &&& EpollEvents.OneShot <> 0u then
-                Some EpollCtlRefusal.OneShot
             elif events &&& EpollEvents.WakeUp <> 0u then
                 Some EpollCtlRefusal.WakeUp
-            elif events &&& EpollEvents.EdgeTriggered = 0u then
-                Some EpollCtlRefusal.LevelTriggered
             else
                 None
 
@@ -679,6 +661,9 @@ module UnixPoll =
         // An ADD or MOD whose target is ready under the new mask makes the
         // registration pending at that moment (measured rows E, I and K), and
         // a MOD of an entry already pending leaves its place alone (row L).
+        // That is how a MOD re-arms a disarmed one-shot registration
+        // (`docs/probes/epoll-modes` sections F and I): no wake queued it while
+        // it was disarmed, so it is not pending.
         let pendIfReady (system : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
             let alreadyPending = List.contains key epollState.Ready
 
@@ -833,15 +818,17 @@ module UnixPoll =
     ///
     /// Under the Linux flavour every failure is answered, in Linux's order (see
     /// `EpollCtlError`), and so is every `EPOLL_CTL_DEL` and every `ADD` or
-    /// `MOD` of an edge-triggered registration without `EPOLLEXCLUSIVE`,
-    /// `EPOLLONESHOT` or `EPOLLWAKEUP`, whatever other bits it carries. The
-    /// registration stores the caller's `events` with `EPOLLERR` and `EPOLLHUP`
-    /// added, and a wait reports the target's readiness masked by that; an
-    /// `ADD` or `MOD` whose target is ready under the new
+    /// `MOD` without `EPOLLEXCLUSIVE` or `EPOLLWAKEUP`, whatever other bits it
+    /// carries. The registration stores the caller's `events` with `EPOLLERR`
+    /// and `EPOLLHUP` added, and a wait reports the target's readiness masked
+    /// by that; an `ADD` or `MOD` whose target is ready under the new
     /// mask makes the registration pending at once, and a `MOD` of an entry
-    /// already pending leaves its place alone. An `ADD` or `MOD` that would
-    /// succeed with one of the modes this library does not model, and an
-    /// `ADD` of another epoll instance, are refused.
+    /// already pending leaves its place alone. A registration is
+    /// level-triggered unless it carries `EPOLLET`, and one carrying
+    /// `EPOLLONESHOT` reports once until a `MOD` re-arms it (see `epollWait`).
+    /// An `ADD` or `MOD` that would succeed with `EPOLLEXCLUSIVE` or
+    /// `EPOLLWAKEUP`, which this library does not model, and an `ADD` of
+    /// another epoll instance, are refused.
     /// Under the Darwin flavour every call is refused: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
@@ -1837,7 +1824,12 @@ module UnixPoll =
     ///
     /// Delivery walks the epoll instance's pending registrations in order, reporting each
     /// one whose target is still ready and consuming each one walked, stale or
-    /// not; the entries a full `maxEvents` spared stay pending in order. A wait
+    /// not; the entries a full `maxEvents` spared stay pending in order. Each
+    /// level-triggered registration it reports then goes back on the list,
+    /// behind those, in the order reported, so that the next wait polls its
+    /// target again; each `EPOLLONESHOT` registration it reports is disarmed,
+    /// and nothing makes it pending again until an `epollCtl` `MOD` re-arms
+    /// it. A wait
     /// that finds something answers it
     /// whatever the timeout. One that finds nothing answers no events at once
     /// for a timeout of 0; parks the caller's thread for a positive timeout

@@ -267,7 +267,10 @@ module internal EpollReadyList =
     /// re-poll is nonempty, silently drop the stale ones, and stop once
     /// `maxCount` events are reported — every walked entry is consumed, and
     /// the entries the stop spared stay pending in order (measured,
-    /// `order2.c` row J).
+    /// `order2.c` row J). Each reported entry then has its registration's
+    /// `EpollRegistration.onReport` effect: the level-triggered ones go back
+    /// on the list behind the spared ones, in the order they were reported,
+    /// and the one-shot ones are disarmed.
     ///
     /// Returns the reported rows -- each the registration's `Data` and the
     /// `events` `epoll_wait` writes for it, in Linux's `<sys/epoll.h>`
@@ -305,34 +308,52 @@ module internal EpollReadyList =
                 $"EpollReadyList.drain: %O{epollId} is not an epoll instance (this is a bug in the caller of EpollReadyList.drain)."
         | OpenFileTarget.Epoll epollState ->
 
+        // Measured on Linux 6.18.5 (`docs/probes/epoll-modes` section B): a
+        // wait of maxevents 1 over three ready level-triggered entries left
+        // the two it spared ahead of the one it reported, and a wait of
+        // maxevents 2 over that list left the one it spared ahead of the two
+        // it reported, in their order. That is `ep_send_events` adding each
+        // reported level-triggered entry to the tail of the emptied list, and
+        // `ep_done_scan` putting the spared ones back at its head.
         let rec walk
+            (reported : int)
             (delivered : (uint64 * uint32) list)
+            (requeued : (int * OpenFileDescriptionId) list)
+            (disarming : (int * OpenFileDescriptionId) list)
             (remaining : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list)
-            : (uint64 * uint32) list * (int * OpenFileDescriptionId) list
+            : (uint64 * uint32) list *
+              (int * OpenFileDescriptionId) list *
+              (int * OpenFileDescriptionId) list *
+              (int * OpenFileDescriptionId) list
             =
             match remaining with
-            | [] -> List.rev delivered, []
-            | (_, registration, reported) :: rest ->
-                if List.length delivered = maxCount then
-                    List.rev delivered, remaining |> List.map (fun (key, _, _) -> key)
-                elif reported = 0u then
-                    walk delivered rest
-                else
-                    walk ((registration.Data, reported) :: delivered) rest
+            | [] -> List.rev delivered, [], List.rev requeued, disarming
+            | _ when reported = maxCount ->
+                List.rev delivered, remaining |> List.map (fun (key, _, _) -> key), List.rev requeued, disarming
+            | (_, _, 0u) :: rest -> walk reported delivered requeued disarming rest
+            | (key, registration, events) :: rest ->
+                let delivered = (registration.Data, events) :: delivered
 
-        let delivered, surviving = walk [] (annotatedReady epollState system)
+                match EpollRegistration.onReport registration with
+                | EpollReportEffect.Consume -> walk (reported + 1) delivered requeued disarming rest
+                | EpollReportEffect.Requeue -> walk (reported + 1) delivered (key :: requeued) disarming rest
+                | EpollReportEffect.Disarm -> walk (reported + 1) delivered requeued (key :: disarming) rest
+
+        let delivered, spared, requeued, disarming =
+            walk 0 [] [] [] (annotatedReady epollState system)
 
         // Each walked entry's target was polled again, as `ep_send_events`
         // polls each entry it takes off the list; the entries the stop spared
         // were not.
         let walked =
-            epollState.Ready |> List.filter (fun key -> not (List.contains key surviving))
+            List.take (List.length epollState.Ready - List.length spared) epollState.Ready
 
         let system =
             (system, walked)
             ||> List.fold (fun system (_, targetId) -> LinuxReadiness.polled targetId system)
 
-        delivered, UnixSystemState.mapOpenFiles (OpenFileTable.setEpollReady epollId surviving) system
+        delivered,
+        UnixSystemState.mapOpenFiles (OpenFileTable.settleEpollWalk epollId (spared @ requeued) disarming) system
 
 /// What a kqueue filter reports of a descriptor on which it is ready. `data`
 /// is what the event's `data` field holds: for `EVFILT_READ` of a listener
