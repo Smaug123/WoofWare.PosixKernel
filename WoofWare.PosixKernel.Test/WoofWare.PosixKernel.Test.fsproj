@@ -16,6 +16,7 @@
     <Compile Include="HostCalls.fs" />
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
+    <Compile Include="HostCorpus.fs" />
     <Compile Include="TestOrder.fs" />
     <Compile Include="Expect.fs" />
     <Compile Include="UnionCaseName.fs" />
@@ -797,6 +798,10 @@
     <!-- What a real pipe answered to random non-blocking reads and writes,
          measured per flavour; `TestPipeBufferCorpus` holds `PipeBuffer` to it. -->
     <EmbeddedResource Include="pipeBuffer\*.txt" />
+    <!-- What a kernel answered to a `HostComparison`'s generated inputs, recorded by
+         `HostCorpus.live` on a host of that flavour; each comparison's replay test
+         holds the model to it on every host. -->
+    <EmbeddedResource Include="hostCorpus\*.txt" />
     <!-- What a real pipe held as a reader drained it while one blocking write was
          still filling it, measured per flavour; `TestSuppliedPipe` replays it. -->
     <EmbeddedResource Include="suppliedPipe\*.txt" />
