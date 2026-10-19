@@ -10,6 +10,17 @@ type KillOutcome =
     /// The signal stops the whole process.
     | ProcessStopped of signal : Signal
 
+/// What a `kill(2)` or `pthread_kill(3)` answered, if it did not end the
+/// calling process (see `ProcessFate`).
+[<RequireQualifiedAccess>]
+type KillAnswer =
+    /// The call returned 0, and did `outcome` to the calling process.
+    | Completed of outcome : KillOutcome
+    /// The call sent nothing, and failed with `error`: `kill` returns -1 and
+    /// the client stores `error` wherever its libc keeps errno, and
+    /// `pthread_kill` returns `error` itself, leaving errno alone.
+    | Failed of error : UnixError
+
 /// Why this library will not end a process: what closing its descriptors
 /// would do has not been measured.
 [<RequireQualifiedAccess>]

@@ -419,7 +419,7 @@ module TestNonBlockingAsleepMeasured =
 
         let system =
             match UnixSignal.pthreadKill (Callers.leader system) sleeper signo system with
-            | Ok (ProcessFate.Continues (_, system)) -> system
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 
         let system = Lone.waking [ sleeper ] system

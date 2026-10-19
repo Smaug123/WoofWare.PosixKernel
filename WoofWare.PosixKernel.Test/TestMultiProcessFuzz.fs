@@ -876,6 +876,23 @@ module TestMultiProcessFuzz =
         | ProcessFate.Continues (outcome, _) -> $"continues %A{outcome}"
         | ProcessFate.ProcessEnded (ended, _) -> $"ends %A{EndedProcess.termination ended}"
 
+    /// What a `kill` or `pthread_kill` made on `before` answered, with its errno
+    /// apart from what its signal did, as the recorded transcripts print it.
+    /// Fails the test if a failed call changed the system.
+    let private killFate
+        (before : UnixSystem<int, string>)
+        (fate : ProcessFate<KillAnswer, int, string>)
+        : Result<ProcessFate<KillOutcome, int, string>, UnixError>
+        =
+        match fate with
+        | ProcessFate.Continues (KillAnswer.Failed errno, after) ->
+            after
+            |> Expect.equal (fun () -> $"a kill failing with %O{errno} changed the system") before
+
+            Error errno
+        | ProcessFate.Continues (KillAnswer.Completed outcome, after) -> Ok (ProcessFate.Continues (outcome, after))
+        | ProcessFate.ProcessEnded (ended, after) -> Ok (ProcessFate.ProcessEnded (ended, after))
+
     /// What a write answered, for a transcript.
     let private writeText
         (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
@@ -959,6 +976,18 @@ module TestMultiProcessFuzz =
         | Error refusal -> log $"  refused %A{refusal}"
 
         result
+
+    /// `logged`, for a mask call: what it answered, without the system.
+    let private loggedMask
+        (log : string -> unit)
+        (answer : SignalMaskAnswer * UnixSystem<int, string>)
+        : SignalMaskAnswer * UnixSystem<int, string>
+        =
+        match answer with
+        | SignalMaskAnswer.Completed old, _ -> log $"  %A{old}"
+        | SignalMaskAnswer.Failed errno, _ -> log $"  refused %A{errno}"
+
+        answer
 
     /// `answer`, having written to `log` what it answered, without the system.
     let private said<'a> (log : string -> unit) (answer : 'a * UnixSystem<int, string>) : 'a * UnixSystem<int, string> =
@@ -1119,10 +1148,10 @@ module TestMultiProcessFuzz =
 
             match
                 UnixSignal.pthreadSigmask (Caller.make pid thread) (MaskHow.number numbering change) (Some set) view
-                |> logged log
+                |> loggedMask log
             with
-            | Ok (_, after) -> returnToUser after
-            | Error errno -> failwith $"pthread_sigmask of %O{signal} failed with %O{errno}"
+            | SignalMaskAnswer.Completed _, after -> returnToUser after
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask of %O{signal} failed with %O{errno}"
 
         match op with
         | Op.Socket nonBlocking ->
@@ -1480,7 +1509,9 @@ module TestMultiProcessFuzz =
             | Made.Answered blocked ->
                 let signo = Signal.toRawSignoUnder (Kernel.signalNumbering blocked) signal
 
-                let killed = UnixSignal.tryPthreadKill (Caller.make pid thread) thread signo blocked
+                let killed =
+                    UnixSignal.tryPthreadKill (Caller.make pid thread) thread signo blocked
+                    |> Result.map (killFate blocked)
 
                 match killed with
                 | Ok (Ok fate) -> log $"  %s{fateText fate}"
@@ -3116,8 +3147,8 @@ module TestMultiProcessFuzz =
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             match UnixSignal.pthreadSigmask caller how (Some set) kernel with
-            | Error errno -> Ended.Refused $"pthread_sigmask: %O{errno}"
-            | Ok (_, kernel) -> returning onwards kernel
+            | SignalMaskAnswer.Failed errno, _ -> Ended.Refused $"pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, kernel -> returning onwards kernel
 
         match ending with
         | Ending.ExitGroup ->
@@ -3125,13 +3156,19 @@ module TestMultiProcessFuzz =
             | Ok (ended, kernel) -> Ended.Ended (EndedProcess.termination ended, kernel)
             | Error refusal -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
         | Ending.Kill signal ->
-            match UnixSignal.tryKill caller (ProcessId.toInt32 pid) (signo signal) machine with
+            match
+                UnixSignal.tryKill caller (ProcessId.toInt32 pid) (signo signal) machine
+                |> Result.map (killFate machine)
+            with
             | Error (KillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
             | Error refusal -> Ended.Refused $"kill: %A{refusal}"
             | Ok (Error errno) -> Ended.Refused $"kill: %O{errno}"
             | Ok (Ok fate) -> fateOnly "kill" fate
         | Ending.Raise ->
-            match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) machine with
+            match
+                UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) machine
+                |> Result.map (killFate machine)
+            with
             | Error (ThreadKillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
             | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"
             | Ok (Error errno) -> Ended.Refused $"pthread_kill: %O{errno}"
@@ -3141,7 +3178,10 @@ module TestMultiProcessFuzz =
             |> mask
                 true
                 (fun kernel ->
-                    match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) kernel with
+                    match
+                        UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) kernel
+                        |> Result.map (killFate kernel)
+                    with
                     | Error (ThreadKillRefusal.ProcessEnd refusal) ->
                         Ended.EndRefused (ProcessEndRefusal.describe refusal)
                     | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"

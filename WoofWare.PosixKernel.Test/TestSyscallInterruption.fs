@@ -1034,7 +1034,7 @@ module TestSyscallInterruption =
 
             let system =
                 match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
             let woken, system = Lone.wake system

@@ -161,8 +161,8 @@ module TestFutexBitset =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (Caller.make pid 0) (usr1 system) (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -173,7 +173,7 @@ module TestFutexBitset =
     /// USR1 sent by `pid`'s thread 0 to its thread 1.
     let private kill (pid : ProcessId) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.pthreadKill (Caller.make pid 0) 1 (usr1 system) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
         | other -> failwith $"pthread_kill answered %A{other}"
 
     let private parkedTimeout (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : FutexTimeout =
