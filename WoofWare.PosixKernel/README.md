@@ -508,6 +508,8 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
 | Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
 
+An epoll registration is level-triggered, or edge-triggered with `EPOLLET`, and with `EPOLLONESHOT` it reports once until an `EPOLL_CTL_MOD` re-arms it, all as Linux's are. A registration with `EPOLLEXCLUSIVE` or `EPOLLWAKEUP` is refused, as is one of another epoll instance, of a pipe the process made, or of an `AF_UNIX` `SOCK_SEQPACKET` socket.
+
 #### Watching the filesystem
 
 Linux's inotify.

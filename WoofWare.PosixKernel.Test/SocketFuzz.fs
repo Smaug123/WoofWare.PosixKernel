@@ -696,9 +696,11 @@ module SocketFuzz =
     /// Raw `<sys/epoll.h>` events for `EpollAdd` and `EpollMod`: Linux's named
     /// readiness bits, including those the interest bits cannot express, alone
     /// and together, and bits epoll names nothing for, which it stores and
-    /// never reports. Edge-triggered but for one draw in 32, which asks for a mode the model refuses
-    /// (level-triggering, `EPOLLEXCLUSIVE`, `EPOLLONESHOT` or `EPOLLWAKEUP`),
-    /// so that the failures which precede a refusal are compared too.
+    /// never reports. In every trigger mode: edge-triggered, level-triggered,
+    /// and one-shot of either, each often enough that a sequence's waits see
+    /// one requeued or disarmed; and in one draw in 32 with a mode the model
+    /// refuses (`EPOLLEXCLUSIVE` or `EPOLLWAKEUP`), so that the failures which
+    /// precede a refusal are compared too.
     let private randomEpollEvents (rng : Random) : uint32 =
         let readiness =
             [
@@ -726,18 +728,23 @@ module SocketFuzz =
             | 6 -> uint32 (rng.Next 0x10000000)
             | _ -> pick rng [ 0x20u ; 0x800u ; 0x1000u ; 0x4000u ; 0x8000u ; 0x100000u ; 0x8000000u ]
 
-        if rng.Next 32 = 0 then
-            body
-            ||| pick
+        let mode =
+            match rng.Next 32 with
+            | 0 ->
+                pick
                     rng
                     [
-                        0u
+                        EpollEvents.Exclusive
                         EpollEvents.EdgeTriggered ||| EpollEvents.Exclusive
-                        EpollEvents.EdgeTriggered ||| EpollEvents.OneShot
+                        EpollEvents.WakeUp
                         EpollEvents.EdgeTriggered ||| EpollEvents.WakeUp
                     ]
-        else
-            body ||| EpollEvents.EdgeTriggered
+            | draw when draw < 11 -> 0u
+            | draw when draw < 15 -> EpollEvents.OneShot
+            | draw when draw < 19 -> EpollEvents.OneShot ||| EpollEvents.EdgeTriggered
+            | _ -> EpollEvents.EdgeTriggered
+
+        body ||| mode
 
     /// A `poll(2)` request mask, in Linux's own `<poll.h>` numbering.
     ///
