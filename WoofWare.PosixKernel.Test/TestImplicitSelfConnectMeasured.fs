@@ -105,14 +105,14 @@ module TestImplicitSelfConnectMeasured =
 
         if nonBlocking then
             fd,
-            Lone.UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
+            Lone.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
         else
             fd, system
 
     let private bindOrFail (fd : int) (at : Ipv4Endpoint) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform at) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) at) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"bind %s{Ipv4Endpoint.toString at}: %A{other}"
 
@@ -122,7 +122,7 @@ module TestImplicitSelfConnectMeasured =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, ConnectRefusal>
         =
-        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform destination) system
+        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) destination) system
 
     /// What `getsockname(2)` (`peer` false) or `getpeername(2)` reports, as the
     /// probe prints it: `address:port`, or the errno's name.
@@ -135,7 +135,7 @@ module TestImplicitSelfConnectMeasured =
 
         match call (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"

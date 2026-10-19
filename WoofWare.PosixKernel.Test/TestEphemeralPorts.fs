@@ -157,7 +157,7 @@ module TestEphemeralPorts =
     let private localPort (fd : int) (system : UnixSystem<int, string>) : uint16 =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith $"fd %d{fd} is unbound"
         | other -> failwith $"fd %d{fd} is %A{other}, not a socket"
@@ -189,7 +189,7 @@ module TestEphemeralPorts =
         let system = closeFd clientFd system
 
         // The connection outlives its client.
-        system.Machine.Connections
+        (Kernel.machine system).Connections
         |> Map.exists (fun _ connection -> connection.ClientAddress = loopback clientPort)
         |> shouldEqual true
 
@@ -206,12 +206,13 @@ module TestEphemeralPorts =
         let occupied, system = closedClientAtFirstPort platform range
 
         occupied,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     NextEphemeralPort = occupied
                 }
-        }
+            )
+            system
 
     [<TestCaseSource(nameof platforms)>]
     let ``bind(0) skips a port a closed client's connection still occupies`` (platform : SimulatedUnixPlatform) : unit =
@@ -269,7 +270,7 @@ module TestEphemeralPorts =
 
         let _, system = acceptFrom listener1 system
         let system = closeFd filler system
-        system.Machine.NextEphemeralPort |> shouldEqual 40000us
+        (Kernel.machine system).NextEphemeralPort |> shouldEqual 40000us
         occupied, listener1, system
 
     [<Test>]
@@ -395,7 +396,7 @@ module TestEphemeralPorts =
     let private phaseOf (fd : int) (run : Run) : SocketPhase * bool =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
-            let socket = UnixMachineState.socket socketId run.System.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine run.System)
 
             socket.Phase,
             socket.Ipv4Binding
@@ -407,7 +408,7 @@ module TestEphemeralPorts =
     let private implicitBindHasAPort (fd : int) (destination : Ipv4Endpoint) (run : Run) : bool =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
-            let socket = UnixMachineState.socket socketId run.System.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine run.System)
 
             let candidate (port : uint16) : Ipv4Binding =
                 {
@@ -419,12 +420,12 @@ module TestEphemeralPorts =
 
             match
                 UnixMachineState.allocateEphemeralPort
-                    run.System.Scheduling.NanosecondsSinceBoot
+                    (UnixSystem.nanosecondsSinceBoot run.System)
                     (EphemeralPortUse.ConnectTo destination)
                     socketId
                     socket
                     candidate
-                    run.System.Machine
+                    (Kernel.machine run.System)
             with
             | Ok found -> Option.isSome found
             | Error refusal -> failwith $"socket fd %d{fd}'s search met %A{refusal}"
@@ -654,9 +655,9 @@ module TestEphemeralPorts =
     /// Whether the socket behind `fd` reports a port its refused connect gave
     /// back.
     let private givenBack (fd : int) (run : Run) : bool =
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors run.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
-            (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
+            (UnixMachineState.socket socketId (Kernel.machine run.System)).Ipv4Binding
             |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
         | other -> failwith $"socket fd %d{fd} is %A{other}"
 
@@ -743,7 +744,7 @@ module TestEphemeralPorts =
     /// socket has gone.
     let private orphanedEndpointPorts (system : UnixSystem<int, string>) : Set<uint16> =
         let boundEndpoints =
-            system.Machine.Sockets
+            (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.choose (fun (_, socket) ->
                 socket.Ipv4Binding
@@ -752,7 +753,7 @@ module TestEphemeralPorts =
             )
             |> Set.ofSeq
 
-        system.Machine.Connections
+        (Kernel.machine system).Connections
         |> Map.toSeq
         |> Seq.collect (fun (_, connection) -> [ connection.ClientAddress ; connection.ServerAddress ])
         |> Seq.filter (fun endpoint -> not (Set.contains endpoint boundEndpoints))
@@ -796,7 +797,7 @@ module TestEphemeralPorts =
                 let orphaned = orphanedEndpointPorts run'.System
 
                 let reservedOverlap =
-                    run'.System.Machine.Sockets
+                    (Kernel.machine run'.System).Sockets
                     |> Map.toList
                     |> List.choose (fun (socketId, socket) ->
                         match socket.Ipv4Binding, socket.Phase with
@@ -817,17 +818,17 @@ module TestEphemeralPorts =
                 // A port a refused connect gave back holds nothing: taking the
                 // socket away changes no conflict a new socket's bind meets
                 // and no port an allocation chooses.
-                for KeyValue (socketId, socket) in run'.System.Machine.Sockets do
+                for KeyValue (socketId, socket) in (Kernel.machine run'.System).Sockets do
                     match socket.Ipv4Binding with
                     | Some binding when not (PortHold.isHeld binding.PortHold) ->
-                        let machine = run'.System.Machine
+                        let machine = Kernel.machine run'.System
 
                         let without =
                             { machine with
                                 Sockets = Map.remove socketId machine.Sockets
                             }
 
-                        if invisibleTo run'.System.Scheduling.NanosecondsSinceBoot machine without |> not then
+                        if invisibleTo (UnixSystem.nanosecondsSinceBoot run'.System) machine without |> not then
                             failwith
                                 $"after %A{call}: socket %O{socketId}, whose port was given back, still holds something"
                     | _ -> ()

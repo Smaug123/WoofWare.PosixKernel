@@ -105,7 +105,7 @@ module TestEphemeralSearchMeasured =
         (system : UnixSystem<int, string>)
         : Outcome * UnixSystem<int, string>
         =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> Answered None, system
         | Ok (BindAnswer.Failed error, system) -> Answered (Some error), system
         | Error refusal -> Refused (BindRefusal.describe refusal), system
@@ -123,7 +123,7 @@ module TestEphemeralSearchMeasured =
         : Outcome * UnixSystem<int, string>
         =
         match
-            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopback port)) system
+            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopback port)) system
         with
         | Ok (SyscallAnswer.Completed _, system) -> Answered None, system
         | Ok (SyscallAnswer.Failed error, system) -> Answered (Some error), system
@@ -133,7 +133,7 @@ module TestEphemeralSearchMeasured =
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : string =
         match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"

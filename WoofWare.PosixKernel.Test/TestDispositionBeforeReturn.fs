@@ -332,9 +332,13 @@ module TestDispositionBeforeReturn =
 
             let timeout =
                 if milliseconds < 0 then
-                    KeventTimeout.Null
+                    TimespecArgument.Null
                 else
-                    KeventTimeout.Readable (int64 (milliseconds / 1000), int64 (milliseconds % 1000) * 1_000_000L)
+                    TimespecArgument.Readable
+                        {
+                            Seconds = int64 (milliseconds / 1000)
+                            Nanoseconds = int64 (milliseconds % 1000) * 1_000_000L
+                        }
 
             UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps
@@ -349,7 +353,7 @@ module TestDispositionBeforeReturn =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
                 | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
                 | other -> failwith $"open: %A{other}"
 

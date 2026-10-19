@@ -42,7 +42,7 @@ module TestConnectedTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -229,12 +229,12 @@ module TestConnectedTransfer =
         let client, system = KeventWorld.client port system
         let server, system = KeventWorld.accept listener system
 
-        (UnixMachineState.socket (socketOf client system) system.Machine).Phase
+        (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase
         |> SocketPhase.connectionEnd
         |> Option.map snd
         |> shouldEqual (Some ConnectionEnd.Client)
 
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the report pending, got %A{other}"
 
@@ -247,7 +247,7 @@ module TestConnectedTransfer =
         read |> shouldEqual 7
 
         // The transfers leave the report pending; the next connect makes it.
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the report pending, got %A{other}"
 
@@ -389,7 +389,7 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : (UnixSystem<int, string> -> string * UnixSystem<int, string>) * UnixSystem<int, string>
         =
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid system)) 0 system with
@@ -733,7 +733,7 @@ module TestConnectedTransfer =
     /// `l_onoff` of `onOff` and a time of `seconds`, through `SO_LINGER_SEC`
     /// where the flavour has it and `SO_LINGER` otherwise.
     let private lingerFor (fd : int) (onOff : int) (seconds : int) (system : UnixSystem<int, string>) =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -794,7 +794,7 @@ module TestConnectedTransfer =
 
         let system = if lingers then system else lingerFor c 0 1 system
 
-        (UnixMachineState.socket (socketOf c system) system.Machine).Options.Linger
+        (UnixMachineState.socket (socketOf c system) (Kernel.machine system)).Options.Linger
         |> shouldEqual
             {
                 Enabled = lingers
@@ -851,7 +851,9 @@ module TestConnectedTransfer =
               Error (CloseRefusal.Release (DescriptionReleaseRefusal.LingeringClose (socket, _, unsent))) ->
                 socket |> shouldEqual (socketOf c system)
                 // Whatever the peer's receive buffer could not take.
-                let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> snd
+                let connection =
+                    (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> snd
+
                 let arrived = TcpTransfer.readable ConnectionEnd.Server connection.Transfer
                 int64 unsent |> shouldEqual (filled - int64 arrived)
                 unsent |> shouldBeGreaterThan 0
@@ -1012,7 +1014,8 @@ module TestConnectedTransfer =
             // time would wait.
             let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) c false system
 
-            let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> snd
+            let connection =
+                (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> snd
 
             let expectedStranded =
                 match SimulatedUnixPlatform.flavour platform with
@@ -1135,7 +1138,7 @@ module TestConnectedTransfer =
                 let system = KeventWorld.listen listener system
 
                 let port =
-                    match (UnixMachineState.socket (socketOf listener system) system.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (socketOf listener system) (Kernel.machine system)).Ipv4Binding with
                     | Some binding -> binding.Endpoint.Port
                     | None -> failwith "the listener is unbound"
 
@@ -1165,7 +1168,7 @@ module TestConnectedTransfer =
                 let system = KeventWorld.close gone system
 
                 let endpoint =
-                    match (UnixMachineState.socket (socketOf keep system) system.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (socketOf keep system) (Kernel.machine system)).Ipv4Binding with
                     | Some binding -> binding.Endpoint
                     | None -> failwith "the survivor is unbound"
 
@@ -1216,7 +1219,7 @@ module TestConnectedTransfer =
                 let bindReuse, system = bindFresh true system
 
                 let portSame =
-                    (UnixMachineState.socket (socketOf keep system) system.Machine).Ipv4Binding
+                    (UnixMachineState.socket (socketOf keep system) (Kernel.machine system)).Ipv4Binding
                     |> Option.map (fun binding -> binding.Endpoint)
                     |> (=) (Some endpoint)
 
@@ -1267,7 +1270,9 @@ module TestConnectedTransfer =
                     let system = KeventWorld.close accepted system
 
                     let source =
-                        match (UnixMachineState.socket (socketOf client system) system.Machine).Ipv4Binding with
+                        match
+                            (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Ipv4Binding
+                        with
                         | Some binding -> binding.Endpoint
                         | None -> failwith "the client is unbound"
 
@@ -1314,7 +1319,7 @@ module TestConnectedTransfer =
                 CopyIn.connect second UserBuffer.Mapped 16u (CopyIn.inet platform (KeventWorld.loopback port)) system
             with
             | Ok (SyscallAnswer.Completed 0L, system) ->
-                (UnixMachineState.socket (socketOf second system) system.Machine).Ipv4Binding
+                (UnixMachineState.socket (socketOf second system) (Kernel.machine system)).Ipv4Binding
                 |> Option.map (fun binding -> binding.Endpoint.Port)
                 |> shouldEqual (Some 40000us)
 
@@ -1342,7 +1347,7 @@ module TestConnectedTransfer =
 
             match CopyIn.bind fresh UserBuffer.Mapped 16u (CopyIn.inet platform (KeventWorld.loopback 0us)) system with
             | Ok (BindAnswer.Bound _, system) ->
-                (UnixMachineState.socket (socketOf fresh system) system.Machine).Ipv4Binding
+                (UnixMachineState.socket (socketOf fresh system) (Kernel.machine system)).Ipv4Binding
                 |> Option.map (fun binding -> binding.Endpoint.Port)
                 |> shouldEqual (Some 40000us)
 
@@ -1553,7 +1558,7 @@ module TestConnectedTransfer =
 
         match KeventWorld.connect searching port system with
         | SyscallAnswer.Completed 0L, system ->
-            match (UnixMachineState.socket (socketOf searching system) system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket (socketOf searching system) (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port |> shouldEqual 40001us
             | None -> failwith "the searching socket is unbound"
 
@@ -1615,7 +1620,7 @@ module TestConnectedTransfer =
 
                 let cport =
                     int
-                        (UnixMachineState.socket (socketOf client system) system.Machine)
+                        (UnixMachineState.socket (socketOf client system) (Kernel.machine system))
                             .Ipv4Binding.Value.Endpoint.Port
 
                 let system = shut client 1 system
@@ -1730,22 +1735,25 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : ConnectionId * UnixSystem<int, string>
         =
-        let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> fst
-        let tcp = system.Machine.Connections.[connection]
+        let connection =
+            (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> fst
+
+        let tcp = (Kernel.machine system).Connections.[connection]
 
         connection,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections =
                         Map.add
                             connection
                             { tcp with
                                 Transfer = change tcp.Transfer
                             }
-                            system.Machine.Connections
+                            machine.Connections
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``checkInvariants rejects a connection whose bytes or ends disagree with its sockets`` () : unit =
@@ -1816,18 +1824,19 @@ module TestConnectedTransfer =
             // An end open with no socket: the server's socket has forgotten it.
             let serverSocket = socketOf s system
 
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
                             Map.add
                                 serverSocket
-                                { system.Machine.Sockets.[serverSocket] with
+                                { machine.Sockets.[serverSocket] with
                                     Phase = SocketPhase.Idle
                                 }
-                                system.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                system
             |> UnixSystem.checkInvariants
             |> shouldEqual
                 [
@@ -1879,7 +1888,7 @@ module TestConnectedTransfer =
         Machines.doIn
             pid
             (fun view ->
-                match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform view) with
                 | SimulatedUnixFlavour.Linux ->
                     let wait, view = edgeRegisterIn pid fd what view
                     let _, view = wait view
@@ -1919,7 +1928,7 @@ module TestConnectedTransfer =
                             []
                             2
                             UserBuffer.Mapped
-                            KeventTimeout.Null
+                            TimespecArgument.Null
                             view
                     with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view

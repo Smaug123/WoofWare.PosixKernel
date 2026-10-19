@@ -306,7 +306,7 @@ module TestDirectorySize =
         match op with
         | DirectorySizeOp.Create path ->
             let fd, system =
-                Answered.openPath creating (rooted path) 0o644 system
+                Answered.openPath (rooted path) creating 0o644 system
                 |> completed $"creat %s{path}"
 
             closeFd (int fd) system
@@ -349,7 +349,7 @@ module TestDirectorySize =
             |> applyToModel (DirectorySizeOp.MakeDirectory "o")
 
         let fd, system =
-            Answered.openPath reading (rooted "d") 0 system |> completed "open d"
+            Answered.openPath (rooted "d") reading 0 system |> completed "open d"
 
         int fd, system
 

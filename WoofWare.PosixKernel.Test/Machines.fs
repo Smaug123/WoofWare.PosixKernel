@@ -249,7 +249,7 @@ module internal Machines =
     let assertClean (system : UnixSystem<int, string>) : unit =
         checkInvariants system |> shouldEqual []
 
-        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
         |> shouldEqual []
 
     let platforms : SimulatedUnixPlatform list =

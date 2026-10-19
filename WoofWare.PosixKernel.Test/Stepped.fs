@@ -64,8 +64,8 @@ module internal Stepped =
         | SteppedCall.Recv (ReadOutcome.Answered _, system)
         // A signal a write raised is taken as its thread returns to user
         // mode.
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns _, system))
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system))
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns _, system), _)
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system), _)
         | SteppedCall.Send (ProcessFate.Continues (WriteOutcome.Returns _, system))
         | SteppedCall.Send (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system))
         | SteppedCall.Socket (Ok (_, system))

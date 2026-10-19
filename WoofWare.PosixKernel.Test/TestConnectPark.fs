@@ -82,7 +82,9 @@ module TestConnectPark =
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
+            OpenFileTable.holdCount socket (UnixSystem.openFiles asleep)
+            |> shouldEqual (Some 1)
+
             Lone.deadlines asleep |> shouldEqual []
 
             UnixWait.satisfied (Callers.thread thread asleep) asleep

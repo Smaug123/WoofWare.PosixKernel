@@ -312,7 +312,7 @@ module TestDirectoryReadAgainstHost =
                                 File.Create(Path.Combine (hostD, name)).Dispose ()
 
                                 let fd, system =
-                                    Answered.openPath creating (rooted $"d/%s{name}") 0o644 system
+                                    Answered.openPath (rooted $"d/%s{name}") creating 0o644 system
                                     |> completed $"creat %s{name}"
 
                                 match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
@@ -362,7 +362,7 @@ module TestDirectoryReadAgainstHost =
                         hostSucceeded "open d" hostFd
 
                         let modelFd, system =
-                            Answered.openPath reading (rooted "d") 0 system |> completed "open d"
+                            Answered.openPath (rooted "d") reading 0 system |> completed "open d"
 
                         live <-
                             live
@@ -596,7 +596,7 @@ module TestDirectoryReadAgainstHost =
                     |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                 let fd, system =
-                    Answered.openPath creating (rooted "f") 0o644 system |> completed "creat f"
+                    Answered.openPath (rooted "f") creating 0o644 system |> completed "creat f"
 
                 let system =
                     match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
@@ -604,14 +604,14 @@ module TestDirectoryReadAgainstHost =
                     | Error refusal -> failwith $"%A{refusal}"
 
                 let readable, system =
-                    Answered.openPath reading (rooted "f") 0 system |> completed "open f"
+                    Answered.openPath (rooted "f") reading 0 system |> completed "open f"
 
                 let writeOnly, system =
                     Answered.openPath
+                        (rooted "f")
                         { reading with
                             Access = FileAccessMode.WriteOnly
                         }
-                        (rooted "f")
                         0
                         system
                     |> completed "open f"

@@ -411,7 +411,7 @@ module TestAttributeChangeAt =
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"%s{context}: symlink(f, %s{name}): %A{other}"
             | Subject.File ->
-                match Answered.openPath creating (UnixPath.parseOrFail context name) 0o644 system with
+                match Answered.openPath (UnixPath.parseOrFail context name) creating 0o644 system with
                 | SyscallAnswer.Completed _, system -> system
                 | other -> failwith $"%s{context}: open(%s{name}, O_CREAT): %A{other}"
             | Subject.Directory ->
@@ -763,7 +763,7 @@ module TestAttributeChangeAt =
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
@@ -1085,7 +1085,7 @@ module TestAttributeChangeAt =
     // ------------------------------------------------------------ a Darwin link's own mode, in use
 
     let private openAnswer (path : string) (system : UnixSystem<int, string>) : string =
-        Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 system
+        Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 system
         |> fst
         |> errno
 

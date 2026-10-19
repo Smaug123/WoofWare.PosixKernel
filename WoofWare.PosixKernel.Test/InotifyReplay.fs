@@ -254,7 +254,7 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPathIn pid flags (PathArg.ofText path) mode system with
+        match OpenFlagWords.openPathIn pid (PathArg.ofText path) flags mode system with
         | Ok answered -> answered
         | Error refusal -> failwith $"open(%s{path}) refused: %s{OpenRefusal.describe refusal}"
 

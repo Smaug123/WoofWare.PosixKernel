@@ -296,7 +296,7 @@ module TestFirstWake =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
                 | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
                 | other -> failwith $"open: %A{other}"
 
@@ -515,9 +515,13 @@ module TestFirstWake =
 
                 let timeout =
                     if timed then
-                        KeventTimeout.Readable (0L, 100_000_000L)
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 100_000_000L
+                            }
                     else
-                        KeventTimeout.Null
+                        TimespecArgument.Null
 
                 let park (thread : int) (system : UnixSystem<int, string>) =
                     UnixKqueue.tryKevent (Callers.thread thread system) kq 0 [] 1 UserBuffer.Mapped timeout system
@@ -684,7 +688,7 @@ module TestFirstWake =
             OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
         let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
+            match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
             | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
             | other -> failwith $"open: %A{other}"
 

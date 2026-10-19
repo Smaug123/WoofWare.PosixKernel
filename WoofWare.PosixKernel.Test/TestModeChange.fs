@@ -269,13 +269,13 @@ module TestModeChange =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -284,7 +284,7 @@ module TestModeChange =
         |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{p} is absent"
 
@@ -312,7 +312,7 @@ module TestModeChange =
     /// the inode then has, which of its timestamps moved, and that a refusal
     /// changed nothing at all.
     let private sweep (standing : Standing) (system : UnixSystem<int, string>) : unit =
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         for p in [ "/t/f" ; "/t/d" ] do
             let before = inodeOf p system
@@ -407,7 +407,7 @@ module TestModeChange =
                 UnixSystem.defaultCredentials (SimulatedUnixPlatform.flavour platform)
 
             let system = systemOn platform credentials (tree (InodeOwner.ofProcess credentials))
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for p, bits in [ "/t/f", 0o600 ; "/t/d", 0o700 ] do
                 let before = inodeOf p system
@@ -499,10 +499,10 @@ module TestModeChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 access
                 (Lone.fileDescriptors system)
 
@@ -511,10 +511,10 @@ module TestModeChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
@@ -533,7 +533,7 @@ module TestModeChange =
             let system =
                 systemOn platform credentials (pathTree (InodeOwner.ofProcess credentials))
 
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for access, bits in
                 [
@@ -564,13 +564,13 @@ module TestModeChange =
             let system =
                 systemOn platform credentials (pathTree (InodeOwner.ofProcess credentials))
 
-            let inode = inodeAt system.Machine.FileSystem "/p/f"
+            let inode = inodeAt (UnixSystem.fileSystem system) "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
             let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchmodAnswer fd 0o400 unlinked with
             | SyscallAnswer.Completed 0L, after ->
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some orphan -> Inode.permissions orphan |> shouldEqual (mode 0o400)
                 | None -> failwith "the orphan was freed while a descriptor held it"
             | other -> failwith $"fchmod of an orphan: %A{other}"
@@ -616,7 +616,7 @@ module TestModeChange =
         // The flavour's own event queue: an epoll instance, or a kqueue.
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin ->
                     FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
@@ -716,10 +716,7 @@ module TestModeChange =
 
         let fds, system = pipeOrFail system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            }
+        let system = UnixSystem.advanceClock later system
 
         let system =
             if changesIds then
@@ -749,7 +746,7 @@ module TestModeChange =
                 withPipe SimulatedUnixPlatform.linuxX64 creator caller
 
             let standing = Standing.toward caller (InodeOwner.ofProcess creator)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
             let before = fstatOrFail readFd system
 
             for requested in allModes do

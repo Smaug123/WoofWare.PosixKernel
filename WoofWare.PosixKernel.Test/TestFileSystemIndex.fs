@@ -673,7 +673,7 @@ module TestFileSystemIndex =
         (kept : int list, system : UnixSystem<int, unit>)
         : int list * UnixSystem<int, unit>
         =
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
         let path () = PathArg.ofText (pick rng paths)
 
         let answered (call : unit -> SyscallAnswer * UnixSystem<int, unit>) : UnixSystem<int, unit> =
@@ -751,11 +751,11 @@ module TestFileSystemIndex =
             (([], booted), [ 1 .. rng.Next (1, 40) ])
             ||> List.fold (fun state _ ->
                 let kept, system = systemStep rng caller state
-                let graph = system.Machine.FileSystem
+                let graph = UnixSystem.fileSystem system
                 let pinned = ObjectLifetime.pinnedInodes system
 
                 for inode in Seq.append (VirtualFileSystem.inodes graph |> Map.keys) [ InodeNumber 999L ] do
-                    ObjectLifetime.isPinned graph inode system.Machine
+                    ObjectLifetime.isPinned graph inode (Kernel.machine system)
                     |> shouldEqual (Set.contains inode pinned)
 
                 UnixSystem.checkInvariants system |> shouldEqual []

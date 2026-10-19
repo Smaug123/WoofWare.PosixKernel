@@ -55,10 +55,10 @@ module TestSocketErrorOption =
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private phaseOf (fd : int) (system : UnixSystem<int, string>) : SocketPhase =
-        (UnixMachineState.socket (socketIdOf fd system) system.Machine).Phase
+        (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Phase
 
     let private endpointOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match (UnixMachineState.socket (socketIdOf fd system) system.Machine).Ipv4Binding with
+        match (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Ipv4Binding with
         | Some binding -> binding.Endpoint
         | None -> failwith $"fd %d{fd} is not bound"
 
@@ -123,7 +123,7 @@ module TestSocketErrorOption =
         (system : UnixSystem<int, string>)
         : GetSockOptAnswer * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
@@ -388,7 +388,7 @@ module TestSocketErrorOption =
         let fd, system = refused linux
         let _, system = readErrorPlainly fd system
 
-        UnixMachineState.socketReadinessLevel (socketIdOf fd system) system.Machine
+        UnixMachineState.socketReadinessLevel (socketIdOf fd system) (Kernel.machine system)
         |> shouldEqual
             {
                 In = true

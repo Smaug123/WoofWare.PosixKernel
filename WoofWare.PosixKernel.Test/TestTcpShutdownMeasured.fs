@@ -53,7 +53,7 @@ module TestTcpShutdownMeasured =
         let mutable transfer : TcpTransfer =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+            |> fun system -> TcpBufferSizing.newTransfer SocketDomain.Inet (Kernel.machine system)
 
         let mutable refused = false
 

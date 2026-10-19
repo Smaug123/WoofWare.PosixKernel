@@ -51,7 +51,7 @@ module TestUnprivilegedPortStartMeasured =
     /// What a bind of `port` from a fresh socket of the probe's `kind`
     /// answers, as the probe prints it; and the system with the socket closed.
     let private bindOne (kind : string) (port : uint16) (system : UnixSystem<int, string>) =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let domain, socketKind, protocol, blob, length =
             match kind with

@@ -331,7 +331,7 @@ module TestPeerNameAgainstHost =
     let private modelName (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint
             | None -> failwith $"the model's fd %d{fd} is not bound"
         | other -> failwith $"the model's fd %d{fd} names %A{other}, not a socket"
@@ -694,7 +694,7 @@ module TestPeerNameAgainstHost =
         (system : UnixSystem<int, string>)
         : Observed
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let userBuffer =
             match destination with

@@ -141,7 +141,7 @@ module TestPortHolders =
     /// The kernel clock: when time passes is the client's to say, so the walk
     /// reads it.
     let private now (walk : Walk) : int64 =
-        walk.System.Scheduling.NanosecondsSinceBoot
+        UnixSystem.nanosecondsSinceBoot walk.System
 
     /// `docs/probes/time-wait`, row W: Linux's TIME_WAIT held its port 60.2 s,
     /// and Darwin's 30.1 s at an msl of 15 s.
@@ -511,7 +511,7 @@ module TestPortHolders =
 
                     Found.Unknown
 
-        let found = sweep (sweepOrder walk.System.Machine)
+        let found = sweep (sweepOrder (Kernel.machine walk.System))
 
         match found with
         | Found.Port _ -> cover $"%s{flavour} %s{question} found a port"
@@ -525,8 +525,8 @@ module TestPortHolders =
     // ------------------------------------------------------------------
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketDescription =
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors system) with
-        | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId system.Machine
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
+        | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine system)
         | other -> failwith $"fd %d{fd} is %A{other}, not a socket"
 
     /// Where the socket behind `fd` reports itself bound.
@@ -632,7 +632,7 @@ module TestPortHolders =
 
     let private nextOp (rng : System.Random) (walk : Walk) : Op =
         let pick (list : 'a list) : 'a = list.[rng.Next list.Length]
-        let low, high = walk.System.Machine.EphemeralPortRange
+        let low, high = UnixSystem.ephemeralPortRange walk.System
         let linux = walk.Flavour = SimulatedUnixFlavour.Linux
 
         // Bound idle sockets a connect may aim at: where nothing listens at an
@@ -782,7 +782,7 @@ module TestPortHolders =
 
         let fail (what : string) : 'a =
             let sockets =
-                system.Machine.Sockets
+                (Kernel.machine system).Sockets
                 |> Map.toList
                 |> List.map (fun (id, socket) -> id, socket.Phase, socket.Ipv4Binding, socket.ReuseAddress)
 
@@ -844,7 +844,8 @@ module TestPortHolders =
                     cover $"%s{name} bind: admitted beside %s{holder.Label}"
 
             match
-                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform candidate) system, verdict
+                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) candidate) system,
+                verdict
             with
             | Ok (BindAnswer.Bound _, system), Judged.Clear ->
                 withSocket
@@ -872,7 +873,7 @@ module TestPortHolders =
                     fd
                     UserBuffer.Mapped
                     16u
-                    (CopyIn.inet system.Machine.UnixPlatform (Ipv4Endpoint.ofParts address 0us))
+                    (CopyIn.inet (UnixSystem.platform system) (Ipv4Endpoint.ofParts address 0us))
                     system,
                 expected
             with
@@ -992,7 +993,7 @@ module TestPortHolders =
                 | _ -> []
 
             let answer =
-                CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform destination) system
+                CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) destination) system
 
             if not (List.isEmpty droppedBy) then
                 for holder in droppedBy do
@@ -1313,10 +1314,7 @@ module TestPortHolders =
             | other -> fail $"close answered %s{brief other}"
         | Op.Advance milliseconds ->
             { walk with
-                System =
-                    { system with
-                        Scheduling = UnixSchedulingState.advanceClock (milliseconds * 1_000_000L) system.Scheduling
-                    }
+                System = UnixSystem.advanceClock (milliseconds * 1_000_000L) system
             }
 
     /// `op`, checked, and the kernel's invariants after it.
@@ -1346,7 +1344,7 @@ module TestPortHolders =
     /// `bind(2)` gave its port, done with its connection, met by a bind.
     let private opening (cover : string -> unit) (rng : System.Random) (walk : Walk) : Walk =
         let pick (list : 'a list) : 'a = list.[rng.Next list.Length]
-        let low, _ = walk.System.Machine.EphemeralPortRange
+        let low, _ = UnixSystem.ephemeralPortRange walk.System
 
         let isBound (fd : int) (walk : Walk) : bool =
             match walk.Sockets.[fd].State with
@@ -1431,12 +1429,13 @@ module TestPortHolders =
             let walk =
                 { walk with
                     System =
-                        { walk.System with
-                            Machine =
-                                { walk.System.Machine with
+                        Kernel.mapMachine
+                            (fun machine ->
+                                { machine with
                                     NextEphemeralPort = port
                                 }
-                        }
+                            )
+                            walk.System
                 }
 
             let searching, walk = fresh cover (rng.Next 2 = 0) walk

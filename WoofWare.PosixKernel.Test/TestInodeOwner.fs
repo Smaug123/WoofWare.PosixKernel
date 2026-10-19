@@ -205,7 +205,7 @@ module TestInodeOwner =
     /// report who owns each.
     let private createBoth (system : UnixSystem<int, string>) : InodeOwner * InodeOwner =
         let system =
-            match Answered.openPath creating (UnixPath.parseOrFail context "/p/file") 0o644 system with
+            match Answered.openPath (UnixPath.parseOrFail context "/p/file") creating 0o644 system with
             | SyscallAnswer.Completed _, system -> system
             | other -> failwith $"expected the file to be created, got %O{other}"
 
@@ -337,7 +337,7 @@ module TestInodeOwner =
                 vfs
             |> ok
 
-        system.Machine.FileSystem |> shouldEqual withDevices
+        UnixSystem.fileSystem system |> shouldEqual withDevices
 
     [<Test>]
     let ``every inode of a seed without owners belongs to the default owner`` () : unit =

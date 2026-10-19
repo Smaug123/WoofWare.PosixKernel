@@ -214,7 +214,7 @@ module TestSockOptAgainstHost =
                 HostCalls.close fds.[1] |> ignore<int>
         | Target.Socket (domain, kind) ->
             let rawDomain, rawKind, _ =
-                NewSocket.arguments system.Machine.UnixPlatform domain kind SocketProtocol.Default
+                NewSocket.arguments (UnixSystem.platform system) domain kind SocketProtocol.Default
 
             let fd = HostCalls.socket (rawDomain, rawKind, 0)
 
@@ -301,7 +301,7 @@ module TestSockOptAgainstHost =
             Marshal.FreeHGlobal storage
 
     let private modelReadBack (fd : int) (level : int) (name : int) (system : UnixSystem<int, string>) : int * byte[] =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let read =
             match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with

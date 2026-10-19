@@ -460,7 +460,7 @@ module TestFcntlMeasured =
                     failwith $"socket(%d{domain}, %d{kind}, %d{protocol}): %s{SocketRefusal.describe refusal}"
 
             let openOf (flags : int) (path : PathArgumentBytes) (system : UnixSystem<int, string>) =
-                match OpenOutcomes.openPath flags path 0o644 system with
+                match OpenOutcomes.openPath path flags 0o644 system with
                 | Ok (answer, _) -> Ok answer
                 | Error (OpenRefusal.DescriptorLimit refusal) -> Error refusal
                 | Error refusal -> failwith $"open: %s{OpenRefusal.describe refusal}"
@@ -844,7 +844,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -1209,11 +1209,11 @@ module TestFcntlMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
             }
@@ -1225,7 +1225,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread

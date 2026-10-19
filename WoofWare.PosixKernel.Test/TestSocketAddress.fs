@@ -338,11 +338,11 @@ module TestSocketAddress =
         (system : UnixSystem<int, string>)
         : unit
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let socket =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-            | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId system.Machine
+            | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine system)
             | other -> failwith $"fd %d{fd} names %A{other}"
 
         match socket.Domain, answered with
@@ -386,7 +386,7 @@ module TestSocketAddress =
                 | Family.Own ->
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                     | Some (OpenFileTarget.Socket socketId) ->
-                        match (UnixMachineState.socket socketId system.Machine).Domain with
+                        match (UnixMachineState.socket socketId (Kernel.machine system)).Domain with
                         | SocketDomain.Inet6 -> SimulatedUnixPlatform.internetV6AddressFamily platform
                         | SocketDomain.Inet
                         | SocketDomain.Unix -> SimulatedUnixPlatform.internetAddressFamily

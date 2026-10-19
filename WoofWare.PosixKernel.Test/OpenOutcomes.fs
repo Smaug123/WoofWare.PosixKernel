@@ -26,24 +26,24 @@ module internal OpenOutcomes =
     /// test if the call sleeps.
     let openPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenPath (Caller.make pid (Proc.leader pid system)) flags path mode system
+        UnixNamespace.tryOpenPath (Caller.make pid (Proc.leader pid system)) path flags mode system
         |> answered
 
     /// `openPathIn` the only process on the machine.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (flags : int)
         (path : PathArgumentBytes)
+        (flags : int)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        openPathIn (Lone.pid system) flags path mode system
+        openPathIn (Lone.pid system) path flags mode system
 
     /// `UnixNamespace.openat` by the process's leader, failing the test if the
     /// call sleeps.

@@ -66,13 +66,13 @@ module TestPosixFadvise =
     let private inodeOf (system : UnixSystem<int, string>) (path : string) : InodeNumber =
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
-                (VirtualFileSystem.root system.Machine.FileSystem)
+                (VirtualFileSystem.root (UnixSystem.fileSystem system))
                 SymlinkPolicy.Follow
                 (UnixPath.parseOrFail "test" path)
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
         with
         | Ok inode -> inode
         | Error error -> failwith $"could not resolve %s{path} in the test seed: %O{error}"
@@ -85,8 +85,8 @@ module TestPosixFadvise =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system (inodeOf system path))
                 (inodeOf system path)
                 mode
@@ -97,7 +97,7 @@ module TestPosixFadvise =
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         fd, Lone.withFileDescriptors registry system
