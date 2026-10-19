@@ -177,8 +177,8 @@ module TestUnixWaitFinish =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (UnixSystem.platform system)) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some disposition) system with
-        | Ok (_, system) -> returned system
-        | Error error -> failwith $"sigaction of %O{signal}: %O{error}"
+        | SigactionAnswer.Completed _, system -> returned system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction of %O{signal}: %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -595,9 +595,9 @@ module TestUnixWaitFinish =
 
         let signal (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
             match UnixSignal.pthreadKill leader sleeper (usr1 system) system with
-            | Ok (ProcessFate.Continues (_, system)) -> Some (returned system)
-            | Ok (ProcessFate.ProcessEnded _) -> None
-            | Error error -> failwith $"pthread_kill: %O{error}"
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> Some (returned system)
+            | ProcessFate.ProcessEnded _ -> None
+            | ProcessFate.Continues (KillAnswer.Failed error, _) -> failwith $"pthread_kill: %O{error}"
 
         let withSystem (system : UnixSystem<int, string>) : World option =
             Some

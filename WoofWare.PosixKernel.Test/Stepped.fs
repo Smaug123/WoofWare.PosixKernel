@@ -99,8 +99,8 @@ module internal Stepped =
     /// `ProcessFate.ProcessEnded`, or an `exit_group`'s.
     let endsProcess (stepped : SteppedCall<int, string>) : bool =
         match stepped with
-        | SteppedCall.Kill (Ok (ProcessFate.ProcessEnded _))
-        | SteppedCall.PthreadKill (Ok (ProcessFate.ProcessEnded _))
+        | SteppedCall.Kill (ProcessFate.ProcessEnded _)
+        | SteppedCall.PthreadKill (ProcessFate.ProcessEnded _)
         | SteppedCall.ExitThread (ProcessFate.ProcessEnded _)
         | SteppedCall.ExitGroup _ -> true
         | _ -> false

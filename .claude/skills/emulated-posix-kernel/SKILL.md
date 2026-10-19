@@ -196,6 +196,16 @@ reports one. Only a forged value (`Unchecked.defaultof`) still fails with
 `failwith`, and a setter keeps a `context` parameter only to name the knob in
 that throw.
 
+An errno is not a refusal, and is never a `Result`'s `Error` either: it is the
+`Failed` case of the call's own answer, beside the system wherever the call can
+change it, so that every call says its errno the same way. The answer is
+`SyscallAnswer` where the call returns one number, `DescriptorAnswer` (an `int`)
+where it makes a descriptor, and otherwise a union of the call's own whose other
+cases say what it returned or wrote (`Pipe2Answer`, `SigactionAnswer`, …). A
+call that can never fail answers its value alone; a call that cannot succeed
+*yet* still answers a type with room for success, its success case reserved,
+since from 1.0 adding a case is a major version.
+
 ## 6. Establish the fact by measuring, not by reading source
 
 For any kernel-behaviour constant, write the measure-the-host test *first* and
