@@ -1969,7 +1969,7 @@ module TestStepOracle =
                     try
                         match reference leader call system with
                         | Ok stepped ->
-                            Stepped.carriedOn stepped
+                            Stepped.carriedOn leader system stepped
                             |> Option.bind (returned leader)
                             |> Option.bind owingReturned
                             |> Option.defaultValue system
@@ -1987,6 +1987,10 @@ module TestStepOracle =
 
             let caller = Callers.thread caller system
 
+            // Whether `SteppedCall.system` disagreed with the system the
+            // answer holds, found without naming a case.
+            let systemMismatch : string option ref = ref None
+
             let viaStep =
                 observe (fun () ->
                     let stepped = UnixSystem.tryStep caller call system
@@ -1997,8 +2001,27 @@ module TestStepOracle =
                     | Ok _
                     | Error _ -> ()
 
+                    match stepped with
+                    | Ok stepped ->
+                        let expected =
+                            match Stepped.heldSystems stepped with
+                            | [] -> system
+                            | [ held ] -> held
+                            | held ->
+                                failwith $"%A{call}: the answer holds %d{List.length held} systems, not at most one"
+
+                        if not (obj.ReferenceEquals (SteppedCall.system system stepped, expected)) then
+                            systemMismatch.Value <-
+                                Some
+                                    $"%A{call} by %O{caller}: SteppedCall.system of %A{Stepped.view stepped} is not the system the answer holds, or the one the call was made in"
+                    | Error _ -> ()
+
                     stepped
                 )
+
+            match systemMismatch.Value with
+            | Some message -> failwith message
+            | None -> ()
 
             let direct = observe (fun () -> reference caller call system)
 
