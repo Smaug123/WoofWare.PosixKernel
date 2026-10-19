@@ -109,7 +109,7 @@ type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Hand
 /// readable while it holds one, and `ioctl(FIONREAD)` reports their bytes.
 ///
 /// A change to the filesystem, by any process, queues records on the instances
-/// watching it (`InotifyDelivery`).
+/// watching it.
 [<RequireQualifiedAccess>]
 module UnixInotify =
 

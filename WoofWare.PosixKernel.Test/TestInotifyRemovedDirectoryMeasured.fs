@@ -184,7 +184,7 @@ module TestInotifyRemovedDirectoryMeasured =
                 OpenOutcomes.openat
                     byName
                     (PathArg.ofText ".")
-                    (OpenFlagWords.encode system.Machine.UnixPlatform directoryFlags)
+                    (OpenFlagWords.encode (UnixSystem.platform system) directoryFlags)
                     0
                     system
             with
