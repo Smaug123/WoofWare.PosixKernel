@@ -67,6 +67,7 @@ module TestLaunchedStreams =
         | ReadBytes of int
         | ReadFailed of UnixError
         | Syscall of SyscallAnswer
+        | Descriptor of DescriptorAnswer
         | NonBlocking of SetNonBlockingAnswer
         | Level of uint32
 
@@ -177,12 +178,12 @@ module TestLaunchedStreams =
                    } -> Ok (Some (Answer.ReadFailed UnixError.EBADF), reference)
         | Op.Call (Syscall.Dup fd) ->
             match Map.tryFind fd reference.Fds with
-            | None -> Ok (Some (Answer.Syscall (SyscallAnswer.Failed UnixError.EBADF)), reference)
+            | None -> Ok (Some (Answer.Descriptor (DescriptorAnswer.Failed UnixError.EBADF)), reference)
             | Some id ->
                 let newFd = lowestFree reference.Fds
 
                 Ok (
-                    Some (Answer.Syscall (SyscallAnswer.Completed (int64 newFd))),
+                    Some (Answer.Descriptor (DescriptorAnswer.Returned newFd)),
                     { reference with
                         Fds = Map.add newFd id reference.Fds
                     }
@@ -396,7 +397,7 @@ module TestLaunchedStreams =
             | Error _ -> None
         | Op.Call (Syscall.Dup _ as call) ->
             match stepped call with
-            | Ok (SteppedCall.Dup (answer, after)) -> Some (Answer.Syscall answer, after, None)
+            | Ok (SteppedCall.Dup (answer, after)) -> Some (Answer.Descriptor answer, after, None)
             | Ok other -> unexpected call other
             | Error refusal -> failwith $"dup was refused: %s{SyscallRefusal.describe refusal}"
         | Op.Call (Syscall.Close _ as call) ->
@@ -540,7 +541,7 @@ module TestLaunchedStreams =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (epoll, system)) -> epoll, system
+            | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let queueId =
@@ -596,7 +597,7 @@ module TestLaunchedStreams =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (epoll, system)) -> epoll, system
+            | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.Out ||| EpollEvents.EdgeTriggered

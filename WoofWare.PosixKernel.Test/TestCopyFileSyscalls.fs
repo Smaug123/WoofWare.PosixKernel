@@ -219,11 +219,11 @@ module TestCopyFileSyscalls =
             | other -> failwith $"pipe2: %A{other}"
         | "socket" ->
             match UnixSocket.trySocket (Callers.leader system) 2 1 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket: %A{other}"
         | "port" ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
         | "closed" -> 700, system
         | "fd9999" -> 9999, system

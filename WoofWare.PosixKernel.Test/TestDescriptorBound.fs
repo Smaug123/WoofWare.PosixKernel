@@ -29,7 +29,7 @@ module TestDescriptorBound =
         ([ 4..last ], system)
         ||> List.foldBack (fun target system ->
             match UnixDescriptor.tryDup2 (Callers.leader system) 3 target system with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"filling the table at %d{target}: %A{other}"
         )
 
@@ -153,7 +153,7 @@ module TestDescriptorBound =
                 ([ client + 1 .. bound - 1 ], system)
                 ||> List.foldBack (fun target system ->
                     match UnixDescriptor.tryDup2 (Callers.leader system) file target system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system
+                    | Ok (DescriptorAnswer.Returned _, system) -> system
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 
@@ -191,7 +191,7 @@ module TestDescriptorBound =
                 ([ client + 1 .. bound - 1 ], system)
                 ||> List.foldBack (fun target system ->
                     match UnixDescriptor.tryDup2 (Callers.leader system) file target system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system
+                    | Ok (DescriptorAnswer.Returned _, system) -> system
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 

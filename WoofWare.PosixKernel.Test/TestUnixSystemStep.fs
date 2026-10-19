@@ -2132,6 +2132,11 @@ module TestUnixSystemStep =
                 | SyscallAnswer.Failed error, _ -> error
                 | other -> failwith $"expected a failure, got %A{other}"
 
+            let openAnswer (result : DescriptorAnswer * UnixSystem<int, string>) : UnixError =
+                match result with
+                | DescriptorAnswer.Failed error, _ -> error
+                | other -> failwith $"expected a failure, got %A{other}"
+
             [
                 (match
                     UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath path) system
@@ -2158,7 +2163,7 @@ module TestUnixSystemStep =
                     }
                     0
                     system
-                |> answer
+                |> openAnswer
                 (match DirectoryReading.openDirectory path system with
                  | Error error, _ -> error
                  | other -> failwith $"expected a failure, got %A{other}")
@@ -2431,7 +2436,7 @@ module TestUnixSystemStep =
 
         let fd, system =
             match OpenOutcomes.openPath (PathArg.ofText "/d/inner") 0 0 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open(/d/inner) did not open: %A{other}"
 
         let viaStep =
@@ -2472,7 +2477,7 @@ module TestUnixSystemStep =
 
         let opened (path : string) (system : UnixSystem<int, string>) =
             match OpenOutcomes.openPath (PathArg.ofText path) 0 0 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open(%s{path}) did not open: %A{other}"
 
         let innerFd, system = opened "/d/inner" system
@@ -2729,7 +2734,7 @@ module TestUnixSystemStep =
     [<Test>]
     let ``dup of a closed descriptor is EBADF and changes nothing`` () : unit =
         let answer, after = Answered.dup (Callers.leader linux) 7 linux
-        answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+        answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
         after |> shouldEqual linux
 
     [<Test>]
@@ -2739,7 +2744,7 @@ module TestUnixSystemStep =
 
         let duplicated =
             match answer with
-            | SyscallAnswer.Completed newFd -> int newFd
+            | DescriptorAnswer.Returned newFd -> newFd
             | other -> failwith $"expected a descriptor, got %O{other}"
 
         duplicated |> shouldNotEqual fd
@@ -3667,7 +3672,7 @@ module TestUnixSystemStep =
         match
             OpenOutcomes.answered (UnixNamespace.tryOpenPath (Callers.thread holderThread parkedIn) root 0 0 parkedIn)
         with
-        | Ok (SyscallAnswer.Completed _, _) -> ()
+        | Ok (DescriptorAnswer.Returned _, _) -> ()
         | other -> failwith $"the holder's open answered %A{other}"
 
     [<Test>]
@@ -3920,7 +3925,7 @@ module TestUnixSystemStep =
             let system =
                 if dupKept then
                     match Answered.dup (Callers.leader system) second system with
-                    | SyscallAnswer.Completed _, system -> system
+                    | DescriptorAnswer.Returned _, system -> system
                     | other -> failwith $"%A{other}"
                 else
                     system
@@ -4009,7 +4014,7 @@ module TestUnixSystemStep =
 
         let alias, system =
             match Answered.dup (Callers.leader system) second system with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"%A{other}"
 
         let held =
@@ -4067,11 +4072,12 @@ module TestUnixSystemStep =
         match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"expected an epoll instance, got %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok (fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
             | Error refusal -> failwith $"expected a kqueue, got %A{refusal}"
 
     /// Thread 7 parked in an `epoll_wait` on the epoll instance `fd` names.
@@ -4707,14 +4713,14 @@ module TestUnixSystemStep =
             Directory = false
         }
 
-    let private openedFd (answer : SyscallAnswer * UnixSystem<int, string>) : int =
+    let private openedFd (answer : DescriptorAnswer * UnixSystem<int, string>) : int =
         match answer with
-        | SyscallAnswer.Completed fd, _ -> int fd
+        | DescriptorAnswer.Returned fd, _ -> fd
         | other -> failwith $"expected a descriptor, got %O{other}"
 
-    let private openFailed (answer : SyscallAnswer * UnixSystem<int, string>) : UnixError =
+    let private openFailed (answer : DescriptorAnswer * UnixSystem<int, string>) : UnixError =
         match answer with
-        | SyscallAnswer.Failed error, _ -> error
+        | DescriptorAnswer.Failed error, _ -> error
         | other -> failwith $"expected a failure, got %O{other}"
 
     [<Test>]
@@ -4784,7 +4790,7 @@ module TestUnixSystemStep =
             let answer, after =
                 Answered.openPath (statPath "/dangling") creatingExclusive 0o666 system
 
-            answer |> shouldEqual (SyscallAnswer.Failed UnixError.EEXIST)
+            answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EEXIST)
 
             UnixPathResolution.tryStat
                 (Callers.leader after)
@@ -5010,7 +5016,7 @@ module TestUnixSystemStep =
 
             let fd =
                 match fst withBoth with
-                | SyscallAnswer.Completed fd -> int fd
+                | DescriptorAnswer.Returned fd -> fd
                 | other -> failwith $"expected a descriptor, got %A{other}"
 
             let after = snd withBoth
@@ -5125,7 +5131,7 @@ module TestUnixSystemStep =
 
             let answer, after = Answered.openPath (statPath "/new/") creating 0o666 system
 
-            answer |> shouldEqual (SyscallAnswer.Failed expected)
+            answer |> shouldEqual (DescriptorAnswer.Failed expected)
 
             // Nothing was created under either rule, which is the half an errno
             // alone does not assert.
@@ -5162,7 +5168,7 @@ module TestUnixSystemStep =
                         0o666
                         system
                 with
-                | SyscallAnswer.Completed fd, after -> int fd, after
+                | DescriptorAnswer.Returned fd, after -> fd, after
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             match ReadOutcomes.read writeOnlyFd UserBuffer.Mapped 8UL afterWriteOnly with
@@ -5171,7 +5177,7 @@ module TestUnixSystemStep =
 
             let readOnlyFd, afterReadOnly =
                 match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
-                | SyscallAnswer.Completed fd, after -> int fd, after
+                | DescriptorAnswer.Returned fd, after -> fd, after
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             match WriteAdmissions.unchanged readOnlyFd UserBuffer.Mapped 3UL afterReadOnly with
@@ -5328,14 +5334,14 @@ module TestUnixSystemStep =
 
             let withoutStream =
                 match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
-                | SyscallAnswer.Completed fd, _ -> int fd
+                | DescriptorAnswer.Returned fd, _ -> fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             let _, afterStream = openedStream system "/d/inner"
 
             let withStream =
                 match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 afterStream with
-                | SyscallAnswer.Completed fd, _ -> int fd
+                | DescriptorAnswer.Returned fd, _ -> fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             withStream |> shouldEqual (withoutStream + 1)

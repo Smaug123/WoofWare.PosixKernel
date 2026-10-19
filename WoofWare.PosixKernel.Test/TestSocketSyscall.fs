@@ -73,10 +73,14 @@ module TestSocketSyscall =
                     $"socket(%d{domain}, 0x%x{socketType}, %d{protocol}): measured %A{answer}, %s{message}"
 
             match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system, answer with
-            | Ok (Error error), MeasuredSocketAnswer.Failed measured ->
+            | Ok (DescriptorAnswer.Failed error, after), MeasuredSocketAnswer.Failed measured ->
                 if errno error <> measured then
                     describe $"library %O{error}"
-            | Ok (Ok (fd, after)), MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
+
+                if after <> system then
+                    describe $"library %O{error}, changing the system"
+            | Ok (DescriptorAnswer.Returned fd, after),
+              MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
                     | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine after)
@@ -152,8 +156,8 @@ module TestSocketSyscall =
 
                 if not consistent then
                     describe $"library refused: %s{SocketRefusal.describe refusal}"
-            | Ok (Ok _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
-            | Ok (Error error), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
+            | Ok (DescriptorAnswer.Returned _, _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
+            | Ok (DescriptorAnswer.Failed error, _), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
 
         List.ofSeq disagreements, refusals
 
@@ -281,7 +285,7 @@ module TestSocketSyscall =
 
         let property (domain : int, socketType : int, protocol : int) : unit =
             match UnixSocket.trySocket (Callers.leader before) domain socketType protocol before with
-            | Ok (Ok (fd, after)) ->
+            | Ok (DescriptorAnswer.Returned fd, after) ->
                 fd |> shouldEqual hole
 
                 let socketId = (Kernel.machine before).NextSocketId
@@ -296,7 +300,7 @@ module TestSocketSyscall =
 
                 Map.remove socketId (Kernel.machine after).Sockets
                 |> shouldEqual (Kernel.machine before).Sockets
-            | Ok (Error _)
+            | Ok (DescriptorAnswer.Failed _, after) -> after |> shouldEqual before
             | Error _ -> ()
 
         Prop.forAll (Arb.fromGen arguments) property |> Check.QuickThrowOnFailure
@@ -312,8 +316,9 @@ module TestSocketSyscall =
 
             let answer (socketType : int) =
                 match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system with
-                | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
-                | Ok (Error error) -> Ok (Error error)
+                | Ok (DescriptorAnswer.Returned fd, after) ->
+                    Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
+                | Ok (DescriptorAnswer.Failed error, _) -> Ok (Error error)
                 | Error refusal -> Error (refusalKind refusal)
 
             let plain = answer baseType

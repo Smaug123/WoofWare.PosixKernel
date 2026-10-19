@@ -671,7 +671,7 @@ module TestStepOracle =
 
             // EPOLLIN and EPOLLOUT, each with EPOLLET.
             match UnixPoll.epollCreate1 leader 0 system with
-            | Ok (13, system) -> system |> watch 10 0x8000_0001u |> watch 11 0x8000_0004u
+            | DescriptorAnswer.Returned 13, system -> system |> watch 10 0x8000_0001u |> watch 11 0x8000_0004u
             | other -> failwith $"setting up, epoll_create1: %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             let change (fd : int) (filter : int16) : Kevent =
@@ -685,7 +685,7 @@ module TestStepOracle =
                 }
 
             match UnixKqueue.kqueue leader system with
-            | 13, system ->
+            | DescriptorAnswer.Returned 13, system ->
                 let changes = [ change 10 KeventFilter.Read ; change 11 KeventFilter.Write ]
 
                 match
@@ -793,7 +793,7 @@ module TestStepOracle =
 
         let opened (path : string) (flags : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match UnixNamespace.openPath (Callers.leader system) (PathArg.ofText path) flags 0 system with
-            | SyscallOutcome.Answered (SyscallAnswer.Completed _), system -> system
+            | OpenOutcome.Answered (DescriptorAnswer.Returned _), system -> system
             | other -> failwith $"setting up, open(%s{path}): %A{other}"
 
         let system =
@@ -813,7 +813,7 @@ module TestStepOracle =
             | SimulatedUnixFlavour.Darwin -> opened "/d/e" 0 system
             | SimulatedUnixFlavour.Linux ->
                 match UnixInotify.inotifyInit1 (Callers.leader system) 0 system with
-                | Ok (7, system) ->
+                | DescriptorAnswer.Returned 7, system ->
                     // IN_CREATE.
                     match Eager.tryInotifyAddWatch 7 (PathArg.ofText "/d") 0x100u system with
                     | Ok (SyscallAnswer.Completed 1L, system) -> system

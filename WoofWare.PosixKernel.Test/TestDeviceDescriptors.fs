@@ -90,7 +90,7 @@ module TestDeviceDescriptors =
         : int * UnixSystem<int, string>
         =
         match OpenFlagWords.openPath (PathArg.ofText path) flags 0o644 system with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"open(%s{path}, %A{flags}): expected a descriptor, got %A{other}"
 
     let private openDevice
@@ -229,7 +229,7 @@ module TestDeviceDescriptors =
                 }
 
             match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0o644 booted with
-            | Ok (SyscallAnswer.Failed UnixError.EEXIST, _) -> ()
+            | Ok (DescriptorAnswer.Failed UnixError.EEXIST, _) -> ()
             | other -> failwith $"%O{device}: expected EEXIST, got %A{other}"
 
             let flags =
@@ -238,7 +238,7 @@ module TestDeviceDescriptors =
                 }
 
             match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0 booted with
-            | Ok (SyscallAnswer.Failed UnixError.ENOTDIR, _) -> ()
+            | Ok (DescriptorAnswer.Failed UnixError.ENOTDIR, _) -> ()
             | other -> failwith $"%O{device}: expected ENOTDIR, got %A{other}"
 
     [<Test>]
@@ -262,7 +262,7 @@ module TestDeviceDescriptors =
                 FileAccessMode.ReadWrite
             ] do
             match OpenFlagWords.openPath (PathArg.ofText "/dev/null") (opening access) 0 unprivileged with
-            | Ok (SyscallAnswer.Failed UnixError.EACCES, _) -> ()
+            | Ok (DescriptorAnswer.Failed UnixError.EACCES, _) -> ()
             | other -> failwith $"%A{access} as uid 1000: expected EACCES, got %A{other}"
 
             openDevice CharacterDevice.Null access narrowed
@@ -1174,7 +1174,7 @@ module TestDeviceDescriptors =
 
             let copy, system =
                 match Answered.dup (Callers.leader system) fd system with
-                | SyscallAnswer.Completed copy, system -> int copy, system
+                | DescriptorAnswer.Returned copy, system -> copy, system
                 | other -> failwith $"dup: %A{other}"
 
             let closed =

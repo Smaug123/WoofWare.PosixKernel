@@ -1643,7 +1643,7 @@ module UnixPoll =
     let private tryEpollCreate1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, EpollCreateRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollCreateRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -1653,7 +1653,7 @@ module UnixPoll =
         // create an epoll instance; every other single bit, EPOLL_CLOEXEC beside any other
         // bit, -1 and INT_MIN are EINVAL.
         if flags &&& ~~~EpollCreateFlags.CloseOnExec <> 0 then
-            Ok (Error UnixError.EINVAL)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         else
 
         // Measured (`fcntl-dup.c`, LIMIT rows): the flags' EINVAL ahead of the
@@ -1681,20 +1681,20 @@ module UnixPoll =
                     (flags &&& EpollCreateFlags.CloseOnExec <> 0))
                 registry
 
-        Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
     /// `epollCreate1`, with a refusal answered as the `Error` rather than raised.
     let internal tryEpollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, EpollCreateRefusal>
         =
         Entry.call
             "UnixPoll.epollCreate1"
             CallerRequirement.Running
             caller
-            (Shape.result (Shape.result Shape.withSystem))
+            (Shape.result Shape.withSystem)
             (tryEpollCreate1In flags)
             system
 
@@ -1713,7 +1713,7 @@ module UnixPoll =
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryEpollCreate1 caller flags system
         |> Refusal.orRaise "UnixPoll.epollCreate1" EpollCreateRefusal.kind EpollCreateRefusal.describe

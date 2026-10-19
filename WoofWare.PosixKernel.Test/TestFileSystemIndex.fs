@@ -710,8 +710,7 @@ module TestFileSystemIndex =
             let opened =
                 try
                     match UnixNamespace.openat caller (AtDirectory.atFdCwd flavour) (path ()) flags 0o644 system with
-                    | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
-                        Some (int fd, resume caller system)
+                    | OpenOutcome.Answered (DescriptorAnswer.Returned fd), system -> Some (fd, resume caller system)
                     | _ -> None
                 with :? UnmodelledException ->
                     None

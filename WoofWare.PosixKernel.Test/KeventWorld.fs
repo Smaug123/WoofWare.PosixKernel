@@ -44,7 +44,8 @@ module KeventWorld =
     /// A new kqueue, made by `caller`.
     let kqueueAs (caller : Caller<int>) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixKqueue.tryKqueue caller system with
-        | Ok created -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
         | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
 
     /// `kqueueAs` the leader of the process `pid`.
@@ -243,7 +244,7 @@ module KeventWorld =
     /// A `dup` of `fd` by `caller`, which must succeed.
     let dupAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup caller fd system with
-        | SyscallAnswer.Completed copy, system -> int copy, system
+        | DescriptorAnswer.Returned copy, system -> copy, system
         | other, _ -> failwith $"dup of fd %d{fd}: %A{other}"
 
     /// `dupAs` the leader of the process `pid`.

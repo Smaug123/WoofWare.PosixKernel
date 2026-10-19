@@ -578,13 +578,13 @@ module UnixDescriptor =
     let private tryDupIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, DescriptorLimitRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, DescriptorLimitRefusal>
         =
         let registry = UnixSystemState.fileDescriptors system
 
         // Measured (`fcntl-dup.c`, LIMIT rows): EBADF ahead of the allocation.
         match FileDescriptorRegistry.tryFindId fd registry with
-        | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
+        | None -> Ok (DescriptorAnswer.Failed UnixError.EBADF, system)
         | Some _ ->
 
         match
@@ -595,7 +595,7 @@ module UnixDescriptor =
 
         match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) fd registry with
         | Ok (newFd, registry) ->
-            Ok (SyscallAnswer.Completed (int64 newFd), UnixSystemState.withFileDescriptors registry system)
+            Ok (DescriptorAnswer.Returned newFd, UnixSystemState.withFileDescriptors registry system)
         | Error FileDescriptorDupError.BadFd ->
             failwith
                 $"UnixDescriptor.dup: fd %d{fd} was open a moment ago and is not now (this is a bug in this library)."
@@ -605,7 +605,7 @@ module UnixDescriptor =
         (caller : Caller<'Thread>)
         (fd : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, DescriptorLimitRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, DescriptorLimitRefusal>
         =
         Entry.call
             "UnixDescriptor.dup"
@@ -624,7 +624,7 @@ module UnixDescriptor =
         (caller : Caller<'Thread>)
         (fd : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup caller fd system
         |> Refusal.orRaise "UnixDescriptor.dup" DescriptorLimitRefusal.kind DescriptorLimitRefusal.describe
@@ -2857,7 +2857,7 @@ module UnixDescriptor =
         (newFd : int)
         (flags : DescriptorFlags)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         let registry = UnixSystemState.fileDescriptors system
         let bound = SimulatedUnixPlatform.descriptorBound system.Machine.UnixPlatform
@@ -2868,9 +2868,9 @@ module UnixDescriptor =
         // limit is EBADF too, so onto one at or above the bound the answer
         // turns on the limit.
         if newFd < 0 || (FileDescriptorRegistry.tryFindId oldFd registry).IsNone then
-            Ok (SyscallAnswer.Failed UnixError.EBADF, system)
+            Ok (DescriptorAnswer.Failed UnixError.EBADF, system)
         elif oldFd = newFd then
-            Ok (SyscallAnswer.Completed (int64 newFd), system)
+            Ok (DescriptorAnswer.Returned newFd, system)
         elif newFd >= bound then
             Error (
                 Dup2Refusal.DescriptorLimit
@@ -2899,7 +2899,7 @@ module UnixDescriptor =
 
         closed
         |> Result.map (fun system ->
-            SyscallAnswer.Completed (int64 newFd),
+            DescriptorAnswer.Returned newFd,
             withRegistry
                 (FileDescriptorRegistry.installAt oldFd newFd flags (UnixSystemState.fileDescriptors system))
                 system
@@ -2910,7 +2910,7 @@ module UnixDescriptor =
         (oldFd : int)
         (newFd : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         duplicateOnto
             oldFd
@@ -2924,7 +2924,7 @@ module UnixDescriptor =
         (oldFd : int)
         (newFd : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         Entry.call
             "UnixDescriptor.dup2"
@@ -2952,7 +2952,7 @@ module UnixDescriptor =
         (oldFd : int)
         (newFd : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup2 caller oldFd newFd system
         |> Refusal.orRaise "UnixDescriptor.dup2" Dup2Refusal.kind Dup2Refusal.describe
@@ -2963,7 +2963,7 @@ module UnixDescriptor =
         (newFd : int)
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup3Refusal<'Thread>>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, Dup3Refusal<'Thread>>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (Dup3Refusal.NotProvided SimulatedUnixFlavour.Darwin)
@@ -2972,9 +2972,9 @@ module UnixDescriptor =
         // Measured (`fcntl-dup.c`, DUP2 rows): the flags first, then the same
         // descriptor on both sides, then dup2's EBADFs.
         if flags &&& ~~~OpenFlagNumbering.LinuxCloseOnExec <> 0 then
-            Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         elif oldFd = newFd then
-            Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         else
 
         let descriptorFlags =
@@ -2994,7 +2994,7 @@ module UnixDescriptor =
         (newFd : int)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup3Refusal<'Thread>>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, Dup3Refusal<'Thread>>
         =
         Entry.call
             "UnixDescriptor.dup3"
@@ -3021,7 +3021,7 @@ module UnixDescriptor =
         (newFd : int)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup3 caller oldFd newFd flags system
         |> Refusal.orRaise "UnixDescriptor.dup3" Dup3Refusal.kind Dup3Refusal.describe

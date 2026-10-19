@@ -50,7 +50,8 @@ module TestKqueue =
 
     let private createKqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixKqueue.tryKqueue (Callers.leader system) system with
-        | Ok (fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =

@@ -556,6 +556,11 @@ module TestFcntlReference =
         | WriteAnswer.Completed written -> SyscallAnswer.Completed written
         | WriteAnswer.Failed error -> SyscallAnswer.Failed error
 
+    let private ofDescriptor (answer : DescriptorAnswer) : SyscallAnswer =
+        match answer with
+        | DescriptorAnswer.Returned fd -> SyscallAnswer.Completed (int64 fd)
+        | DescriptorAnswer.Failed error -> SyscallAnswer.Failed error
+
     /// The library's answer to `call`, made by the process's leader through
     /// `UnixSystem.tryStep`.
     let private library
@@ -564,11 +569,11 @@ module TestFcntlReference =
         : Outcome * UnixSystem<int, string>
         =
         match UnixSystem.tryStep (Callers.leader system) call system with
-        | Ok (SteppedCall.Open (SyscallOutcome.Answered answer, after))
+        | Ok (SteppedCall.Open (OpenOutcome.Answered answer, after))
         | Ok (SteppedCall.Dup (answer, after))
-        | Ok (SteppedCall.Fcntl (answer, after))
         | Ok (SteppedCall.Dup2 (answer, after))
-        | Ok (SteppedCall.Dup3 (answer, after))
+        | Ok (SteppedCall.Dup3 (answer, after)) -> Outcome.Answered (ofDescriptor answer), after
+        | Ok (SteppedCall.Fcntl (answer, after))
         | Ok (SteppedCall.FTruncate (answer, after))
         | Ok (SteppedCall.FLock (SyscallOutcome.Answered answer, after))
         | Ok (SteppedCall.Close (answer, after)) -> Outcome.Answered answer, after

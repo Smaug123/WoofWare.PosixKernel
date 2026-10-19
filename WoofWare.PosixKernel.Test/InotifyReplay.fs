@@ -154,7 +154,7 @@ module internal InotifyReplay =
     /// succeed.
     let init1In (pid : ProcessId) (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid system)) flags system with
-        | Ok (Ok created) -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
     /// `init1In` the only process on the machine.
@@ -252,7 +252,7 @@ module internal InotifyReplay =
         (path : string)
         (mode : int)
         (system : UnixSystem<int, string>)
-        : SyscallAnswer * UnixSystem<int, string>
+        : DescriptorAnswer * UnixSystem<int, string>
         =
         match OpenFlagWords.openPathIn pid (PathArg.ofText path) flags mode system with
         | Ok answered -> answered
@@ -264,7 +264,7 @@ module internal InotifyReplay =
         (path : string)
         (mode : int)
         (system : UnixSystem<int, string>)
-        : SyscallAnswer * UnixSystem<int, string>
+        : DescriptorAnswer * UnixSystem<int, string>
         =
         openAnswerIn (Lone.pid system) flags path mode system
 
@@ -279,8 +279,8 @@ module internal InotifyReplay =
         : int * UnixSystem<int, string>
         =
         match openAnswerIn pid flags path mode system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
 
     /// `openFdIn` the only process on the machine.
     let openFd

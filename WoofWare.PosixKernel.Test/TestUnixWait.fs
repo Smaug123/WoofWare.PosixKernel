@@ -748,8 +748,8 @@ module TestUnixWait =
                 match
                     UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system
                 with
-                | Ok (fd, system) -> fd, system
-                | Error error -> failwith $"socket failed with %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, system
+                | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
