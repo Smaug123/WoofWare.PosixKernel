@@ -1,0 +1,126 @@
+Linux 6.18.5 aarch64
+SO_RCVBUF 212992; an empty receiver's charge 0
+fill 0: charge each 832; admitted 256 (drained 256); charges that differ 0; admissions against the rule 0; final charge 212992
+fill 100: charge each 832; admitted 256 (drained 256); charges that differ 0; admissions against the rule 0; final charge 212992
+fill 198: charge each 1280; admitted 166 (drained 166); charges that differ 0; admissions against the rule 0; final charge 212480
+fill 1000: charge each 2304; admitted 92 (drained 92); charges that differ 0; admissions against the rule 0; final charge 211968
+fill 4096: charge each 8448; admitted 25 (drained 25); charges that differ 0; admissions against the rule 0; final charge 211200
+fill 9216: charge each 16640; admitted 12 (drained 12); charges that differ 0; admissions against the rule 0; final charge 199680
+fill 16918: charge each 17750; admitted 11 (drained 11); charges that differ 0; admissions against the rule 0; final charge 195250
+fill 40000: charge each 40832; admitted 5 (drained 5); charges that differ 0; admissions against the rule 0; final charge 204160
+fill 65507: charge each 66339; admitted 3 (drained 3); charges that differ 0; admissions against the rule 0; final charge 199017
+mixed trial 0: admitted 26 (drained 26); admissions against the rule 0; charges that differ from alone 0
+mixed trial 1: admitted 23 (drained 23); admissions against the rule 0; charges that differ from alone 0
+mixed trial 2: admitted 39 (drained 39); admissions against the rule 0; charges that differ from alone 0
+mixed trial 3: admitted 28 (drained 28); admissions against the rule 0; charges that differ from alone 0
+mixed trial 4: admitted 26 (drained 26); admissions against the rule 0; charges that differ from alone 0
+charge: size 197 is 832; size 198 is 1280
+charge: size 645 is 1280; size 646 is 2304
+charge: size 1669 is 2304; size 1670 is 4352
+charge: size 3717 is 4352; size 3718 is 8448
+charge: size 7813 is 8448; size 7814 is 16640
+charge: size 16004 is 16640; size 16005 is 16837
+charge: size 16005 is 16837; size 16006 is 16838
+charge: size 16006 is 16838; size 16007 is 16839
+charge: size 16007 is 16839; size 16008 is 16840
+charge: size 16008 is 16840; size 16009 is 16841
+charge: size 16009 is 16841; size 16010 is 16842
+charge: size 16010 is 16842; size 16011 is 16843
+charge: size 16011 is 16843; size 16012 is 16844
+charge: size 16012 is 16844; size 16013 is 16845
+charge: size 16013 is 16845; size 16014 is 16846
+charge: size 16014 is 16846; size 16015 is 16847
+charge: size 16015 is 16847; size 16016 is 16848
+charge: size 16016 is 16848; size 16017 is 16849
+charge: size 16017 is 16849; size 16018 is 16850
+charge: size 16018 is 16850; size 16019 is 16851
+charge: size 16019 is 16851; size 16020 is 16852
+charge: size 16020 is 16852; size 16021 is 16853
+charge: size 16021 is 16853; size 16022 is 16854
+charge: size 16022 is 16854; size 16023 is 16855
+charge: size 16023 is 16855; size 16024 is 16856
+charge: size 16024 is 16856; size 16025 is 16857
+charge: size 16025 is 16857; size 16026 is 16858
+charge: size 16026 is 16858; size 16027 is 16859
+charge: size 16027 is 16859; size 16028 is 16860
+charge: size 16028 is 16860; size 16029 is 16861
+charge: size 16029 is 16861; size 16030 is 16862
+charge: size 16030 is 16862; size 16031 is 16863
+charge: size 16031 is 16863; size 16032 is 16864
+charge: size 16032 is 16864; size 16033 is 16865
+charge: size 16033 is 16865; size 16034 is 16866
+charge: size 16034 is 16866; size 16035 is 16867
+charge: size 16035 is 16867; size 16036 is 16868
+charge: size 16036 is 16868; size 16037 is 16869
+charge: size 16037 is 16869; size 16038 is 16870
+charge: size 16038 is 16870; size 16039 is 16871
+charge: size 16039 is 16871; size 16040 is 16872
+charge: size 16040 is 16872; size 16041 is 16873
+charge: size 16041 is 16873; size 16042 is 16874
+charge: size 16042 is 16874; size 16043 is 16875
+charge: size 16043 is 16875; size 16044 is 16876
+charge: size 16044 is 16876; size 16045 is 16877
+charge: size 16045 is 16877; size 16046 is 16878
+charge: size 16046 is 16878; size 16047 is 16879
+charge: size 16047 is 16879; size 16048 is 16880
+charge: size 16048 is 16880; size 16049 is 16881
+charge: size 16049 is 16881; size 16050 is 16882
+charge: size 16050 is 16882; size 16051 is 16883
+charge: size 16051 is 16883; size 16052 is 16884
+charge: size 16052 is 16884; size 16053 is 16885
+charge: size 16053 is 16885; size 16054 is 16886
+charge: size 16054 is 16886; size 16055 is 16887
+charge: size 16055 is 16887; size 16056 is 16888
+charge: size 16056 is 16888; size 16057 is 16889
+charge: size 16057 is 16889; size 16058 is 16890
+charge: size 16058 is 16890; size 16059 is 16891
+charge: size 16059 is 16891; size 16060 is 16892
+charge: size 16060 is 16892; size 16061 is 16893
+charge: size 16061 is 16893; size 16062 is 16894
+charge: size 16062 is 16894; size 16063 is 16895
+charge: size 16063 is 16895; size 16064 is 16896
+charge: size 16064 is 16896; size 16065 is 16897
+charge: size 16065 is 16897; size 16066 is 16898
+charge: size 16066 is 16898; size 16067 is 16899
+charge: size 16067 is 16899; size 16068 is 16900
+charge: size 16068 is 16900; size 16069 is 16901
+charge: size 16069 is 16901; size 16070 is 16902
+charge: size 16070 is 16902; size 16071 is 16903
+charge: size 16071 is 16903; size 16072 is 16904
+charge: size 16072 is 16904; size 16073 is 16905
+charge: size 16073 is 16905; size 16074 is 16906
+charge: size 16074 is 16906; size 16075 is 16907
+charge: size 16075 is 16907; size 16076 is 16908
+charge: size 16076 is 16908; size 16077 is 16909
+charge: size 16077 is 16909; size 16078 is 16910
+charge: size 16078 is 16910; size 16079 is 16911
+charge: size 16079 is 16911; size 16080 is 16912
+charge: size 16080 is 16912; size 16081 is 16913
+charge: size 16081 is 16913; size 16082 is 16914
+charge: size 16082 is 16914; size 16083 is 16915
+charge: size 16083 is 16915; size 16084 is 16916
+charge: size 16084 is 16916; size 16085 is 16917
+charge: size 16085 is 16917; size 16086 is 16918
+charge: size 16086 is 16918; size 16087 is 16919
+charge: size 16087 is 16919; size 16088 is 16920
+charge: size 16088 is 16920; size 16089 is 16921
+charge: size 16089 is 16921; size 16090 is 16922
+charge: size 16090 is 16922; size 16091 is 16923
+charge: size 16091 is 16923; size 16092 is 16924
+charge: size 16092 is 16924; size 16093 is 16925
+charge: size 16093 is 16925; size 16094 is 16926
+charge: size 16094 is 16926; size 16095 is 16927
+charge: size 16095 is 16927; size 16096 is 16928
+charge: size 16096 is 16928; size 16097 is 16929
+charge: size 16097 is 16929; size 16098 is 16930
+charge: size 16098 is 16930; size 16099 is 16931
+charge: size 16099 is 16931; size 16100 is 16932
+charge: sampled 512 sizes from 16005 to 65507 against size + 832: 0 mismatches
+release: 92 datagrams of 1000 held, charge 211968; after each take: 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 211968 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 156672 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 101376 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 46080 0
+release: 40 held; take one, send one, 30 times; charge after each pair, and whether the send was queued: 94464 96768 99072 101376 103680 105984 108288 110592 112896 115200 117504 119808 122112 124416 126720 129024 131328 133632 135936 138240 140544 142848 145152 92160 94464 96768 99072 101376 103680 105984
+release: 92 of 1000 held, 1 taken (charge then 211968): 0 more admitted
+release: 92 of 1000 held, 8 taken (charge then 211968): 0 more admitted
+release: 92 of 1000 held, 15 taken (charge then 211968): 0 more admitted
+release: 92 of 1000 held, 22 taken (charge then 211968): 0 more admitted
+release: 92 of 1000 held, 29 taken (charge then 156672): 24 more admitted
+taking: 1000+100 charged 3136; after taking the 1000, 3136; after both, 0
