@@ -1473,7 +1473,7 @@ module TestSocketEventDelivery =
                 | Some id -> fd1, id
                 | None -> failwith "listener fd not live"
 
-            match (Map.find queueId (OpenFileTable.descriptions kernel.Machine.OpenFiles)).Target with
+            match (Map.find queueId (OpenFileTable.descriptions (UnixSystem.openFiles kernel))).Target with
             | OpenFileTarget.Epoll queueState -> (Map.find key queueState.Registrations).Events
             | other -> failwith $"not an epoll instance: %O{other}"
 
