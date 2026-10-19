@@ -55,7 +55,7 @@ module TestSignalReceiver =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             disposition
                             proc.Signals
@@ -278,7 +278,7 @@ module TestSignalReceiver =
 
             let signals =
                 SignalState.enqueue
-                    (Lone.UnixSystemState.signalNumbering system)
+                    (Kernel.signalNumbering system)
                     {
                         Signal = Signal.SIGUSR1
                         Target = ValueSome 2

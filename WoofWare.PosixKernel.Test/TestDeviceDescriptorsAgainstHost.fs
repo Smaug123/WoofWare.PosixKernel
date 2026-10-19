@@ -241,7 +241,8 @@ module TestDeviceDescriptorsAgainstHost =
                 "tcgetattr",
                 hostAnswer (int64 (hostTcGetAttr (host, Array.zeroCreate 256))),
                 (match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
-                 | TerminalAttributesAnswer.NotATerminal error -> Error error)
+                 | TerminalAttributesAnswer.NotATerminal error -> Error error
+                 | TerminalAttributesAnswer.Attributes _ -> failwith "the model's tcgetattr found a terminal")
 
                 for events in [ 0s ; 1s ; 4s ; 0x7FFFs ] do
                     $"poll %d{events}",
@@ -274,7 +275,7 @@ module TestDeviceDescriptorsAgainstHost =
                      HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =
                     FileDescriptorRegistry.createEpoll
-                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                         (Lone.fileDescriptors system)
 
                  let system = Lone.withFileDescriptors registry system

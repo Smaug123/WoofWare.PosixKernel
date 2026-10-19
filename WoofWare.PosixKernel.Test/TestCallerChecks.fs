@@ -141,20 +141,20 @@ module TestCallerChecks =
             }
 
         let socketOption (system : UnixSystem<int, string>) : int * int =
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
             SimulatedUnixPlatform.socketOptionLevel platform, SimulatedUnixPlatform.reuseAddressOption platform
 
         [
             running
-                "UnixDescriptor.effectiveUserId"
-                (fun caller system -> UnixDescriptor.effectiveUserId caller system |> ignore<UserId>)
+                "UnixCredentials.geteuid"
+                (fun caller system -> UnixCredentials.geteuid caller system |> ignore<UserId>)
             running
-                "UnixDescriptor.effectiveGroupId"
-                (fun caller system -> UnixDescriptor.effectiveGroupId caller system |> ignore<GroupId>)
+                "UnixCredentials.getegid"
+                (fun caller system -> UnixCredentials.getegid caller system |> ignore<GroupId>)
             running
-                "UnixDescriptor.getgroups"
+                "UnixCredentials.getgroups"
                 (fun caller system ->
-                    UnixDescriptor.getgroups caller UserBuffer.Mapped 0 system
+                    UnixCredentials.getgroups caller UserBuffer.Mapped 0 system
                     |> ignore<GetGroupsAnswer>
                 )
             running "UnixDescriptor.dup" (fun caller system -> UnixDescriptor.dup caller 0 system |> ignore)
@@ -187,7 +187,7 @@ module TestCallerChecks =
                 )
             running
                 "UnixDescriptor.fileClone"
-                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore<UnixError>)
+                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore)
             running
                 "UnixDescriptor.terminalAttributes"
                 (fun caller system ->
@@ -275,7 +275,19 @@ module TestCallerChecks =
             running
                 "UnixKqueue.kevent"
                 (fun caller system ->
-                    UnixKqueue.kevent caller 0 0 [] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        caller
+                        0
+                        0
+                        []
+                        1
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                     |> ignore
                 )
             finishing
@@ -756,7 +768,7 @@ module TestCallerChecks =
             | SimulatedUnixFlavour.Darwin ->
                 let kq, view = UnixKqueue.kqueue leader view
 
-                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null view with
+                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null view with
                 | KeventOutcome.WouldBlock _, view -> view
                 | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
 
@@ -787,7 +799,7 @@ module TestCallerChecks =
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
                 with
-                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view) -> view
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view), None -> view
                 | other -> failwith $"the write: expected it to sleep, got %A{other}"
             | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
 

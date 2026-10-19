@@ -51,7 +51,7 @@ module TestSuppliedPipe =
         | Some id -> Lone.LinuxReadiness.ofDescription id system
         | None -> failwith "descriptor 0 is not open"
 
-    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = system.Machine.Pipes.[PipeId 0L]
+    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = (UnixSystem.pipes system).[PipeId 0L]
 
     let private writerOpen (system : UnixSystem<int, string>) : bool =
         PipeState.heldByClient PipeEnd.Write (stdinPipe system)
@@ -509,7 +509,7 @@ module TestSuppliedPipe =
             // nothing holds the pipe.
             let system = closeOrFail duplicate system
             assertInvariants "after closing the duplicate" system
-            Map.containsKey (PipeId 0L) system.Machine.Pipes |> shouldEqual false
+            Map.containsKey (PipeId 0L) (UnixSystem.pipes system) |> shouldEqual false
 
     [<Test>]
     let ``a Linux writer resuming fills a free slot rather than merging into the newest`` () : unit =
@@ -558,18 +558,19 @@ module TestSuppliedPipe =
             // Emptied behind the client's back: it would have written into the
             // room, so a state where it has not is not one the kernel reaches.
             let emptied =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Pipes =
                                 Map.add
                                     (PipeId 0L)
                                     { stdinPipe system with
                                         Buffer = snd (PipeBuffer.read 65536 (stdinPipe system).Buffer)
                                     }
-                                    system.Machine.Pipes
+                                    machine.Pipes
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants emptied
             |> shouldEqual [ UnixSystemDefect.SuppliedPipeHasRoom (PipeId 0L) ]

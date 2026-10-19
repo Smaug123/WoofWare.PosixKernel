@@ -1072,20 +1072,6 @@ module UnixSystem =
             (fun (system : ProcessView<'Thread, 'Handler>) -> UnixThreadTable.byName system.Threads)
             system
 
-    /// Every write that has reached a client draining one of the machine's
-    /// pipes, oldest first: the bytes the outside world has received from the
-    /// machine's processes. No process can read them back.
-    ///
-    /// A client reads what its own ends received by filtering on
-    /// `Delivery.Endpoint`, which names the process the pipe was launched into
-    /// as well as the descriptor. The log is one for the whole machine, so the
-    /// order of writes across endpoints is kept. It grows without bound.
-    let delivered<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : DeliveryLog
-        =
-        UnixMachineState.delivered system.Machine
-
     /// The signal state of the process `pid`, which `SignalState`'s queries
     /// read.
     let signals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1495,12 +1481,10 @@ module UnixSystem =
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.TerminalAttributes fd ->
             Ok (SteppedCall.TerminalAttributes (UnixDescriptor.terminalAttributes caller fd system))
-        | Syscall.GetEffectiveUserId ->
-            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId caller system))
-        | Syscall.GetEffectiveGroupId ->
-            Ok (SteppedCall.GetEffectiveGroupId (UnixDescriptor.effectiveGroupId caller system))
+        | Syscall.GetEffectiveUserId -> Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid caller system))
+        | Syscall.GetEffectiveGroupId -> Ok (SteppedCall.GetEffectiveGroupId (UnixCredentials.getegid caller system))
         | Syscall.GetGroups (size, destination) ->
-            UnixDescriptor.tryGetgroups caller destination size system
+            UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
         | Syscall.Stat (policy, path) ->
@@ -1676,7 +1660,10 @@ module UnixSystem =
                 PausedWrite.copyRange
                 UnixReadWrite.tryWriteWithBytes
                 buffer
-                (fun buffer -> UnixReadWrite.tryWrite caller fd buffer count system)
+                (fun buffer ->
+                    UnixReadWrite.tryWrite caller fd buffer count system
+                    |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
+                )
             |> Result.map SteppedCall.Write
             |> Result.mapError SyscallRefusal.Write
         | Syscall.Send (fd, buffer, count, flags) ->
@@ -4199,7 +4186,6 @@ module UnixSystem =
                     Sockets = Map.empty
                     Pipes = Map.empty
                     NextPipeId = PipeId 0L
-                    Delivered = DeliveryLog.empty
                     // Any start would do; one, because no filesystem hands out
                     // inode 0.
                     NextPipeInode = InodeNumber 1L

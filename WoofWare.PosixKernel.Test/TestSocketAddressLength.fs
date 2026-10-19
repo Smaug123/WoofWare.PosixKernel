@@ -71,7 +71,7 @@ module TestSocketAddressLength =
         NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
     let private bindAt (endpoint : Ipv4Endpoint) (fd : int) (system : UnixSystem<int, string>) =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"binding fd %d{fd} at %O{endpoint}: %A{other}"
 
@@ -93,7 +93,7 @@ module TestSocketAddressLength =
                 fd
                 UserBuffer.Mapped
                 16u
-                (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                 system
         with
         | Ok (SyscallAnswer.Completed 0L, system) -> fd, system
@@ -102,7 +102,7 @@ module TestSocketAddressLength =
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Listening listenState -> ListenState.connections listenState
             | phase -> failwith $"fd %d{fd} is %A{phase}, not listening"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
@@ -340,7 +340,7 @@ module TestSocketAddressLength =
                                     fd
                                     UserBuffer.Mapped
                                     16u
-                                    (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                                    (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                                     system
                             with
                             | Ok (SyscallAnswer.Failed UnixError.EINPROGRESS, system) -> fd, system
@@ -390,19 +390,20 @@ module TestSocketAddressLength =
             FileDescriptorRegistry.fds (Lone.fileDescriptors dropped)
             |> shouldEqual (FileDescriptorRegistry.fds (Lone.fileDescriptors acceptedThenClosed))
 
-            OpenFileTable.descriptions dropped.Machine.OpenFiles
-            |> shouldEqual (OpenFileTable.descriptions acceptedThenClosed.Machine.OpenFiles)
+            OpenFileTable.descriptions (UnixSystem.openFiles dropped)
+            |> shouldEqual (OpenFileTable.descriptions (UnixSystem.openFiles acceptedThenClosed))
 
             // The socket identity and the description identity the accept
             // minted are the only differences.
             (Lone.withFileDescriptors
                 ((Lone.fileDescriptors dropped))
-                { acceptedThenClosed with
-                    Machine =
-                        { acceptedThenClosed.Machine with
-                            NextSocketId = dropped.Machine.NextSocketId
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            NextSocketId = (Kernel.machine dropped).NextSocketId
                         }
-                })
+                    )
+                    acceptedThenClosed))
             |> shouldEqual dropped
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
@@ -473,15 +474,15 @@ module TestSocketAddressLength =
 
             let fileFd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors system)
 
             let createEventQueue =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin ->
                     FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId

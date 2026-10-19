@@ -71,21 +71,22 @@ module TestBind =
         =
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A fresh unbound TCP socket, and the descriptor onto it, in a process
@@ -118,7 +119,7 @@ module TestBind =
         | answer, _ -> failwith $"expected an IPv4 bind to succeed, got %A{answer}"
 
     let private bindingOf (socketId : SocketId) (system : UnixSystem<int, string>) : Ipv4Binding option =
-        (UnixMachineState.socket socketId system.Machine).Ipv4Binding
+        (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding
 
     // ------------------------------------------------------------------
     // The happy path
@@ -151,7 +152,7 @@ module TestBind =
         let fd, system = stream platform
         let where, system = bound fd (loopback 0us) system
 
-        let low, high = system.Machine.EphemeralPortRange
+        let low, high = UnixSystem.ephemeralPortRange system
         (where.Port >= low && where.Port <= high) |> shouldEqual true
         where.Address |> shouldEqual Ipv4Address.loopback
 
@@ -442,7 +443,7 @@ module TestBind =
                      | BindAnswer.Failed _ -> false)
                     |> shouldEqual succeeds
 
-                    (UnixMachineState.socket (SocketId 0L) after.Machine).ReuseAddress
+                    (UnixMachineState.socket (SocketId 0L) (Kernel.machine after)).ReuseAddress
                     |> shouldEqual reuse
                 | Error refusal -> failwith $"expected an answer, got a refusal: %s{BindRefusal.describe refusal}"
 
@@ -499,8 +500,8 @@ module TestBind =
             if blocking then
                 system
             else
-                Lone.UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
+                Lone.withFileDescriptors
+                    (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                     system
 
         let expected =
@@ -571,13 +572,14 @@ module TestBind =
 
         // One port in the range, and a socket already holding it.
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         EphemeralPortRange = (40000us, 40000us)
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                system
 
         let holder, system =
             withSocket (SocketId 1L) (socketOfKind SocketKind.Stream SocketPhase.Idle) system

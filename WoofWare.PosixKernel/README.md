@@ -55,7 +55,7 @@ The whole kernel is one value, a `UnixSystem<'Thread, 'Handler>`: the machine, a
 
 Those records are opaque outside the library.
 A query about one process, such as `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials` or `UnixSystem.fileDescriptors`, takes the process's ID first, and throws `InvalidOperationException` for a process the system does not hold; one about a thread, such as `UnixWait.satisfied`, `UnixScheduling.runningOn` or `UnixSignal.owesReturn`, takes a `Caller` naming the thread (see "Making a call").
-A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.processIds`, `UnixSystem.leader`, `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles`, `UnixSystem.delivered` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
+A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.processIds`, `UnixSystem.leader`, `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
 `UnixSystem.descriptorTarget` answers what a descriptor's description refers to, an `OpenFileTarget`, of which `OpenFileTarget.Fifo` (a FIFO's inode and an opaque `FifoAttachment`) is reserved: nothing opens a FIFO yet, `UnixSystem.checkInvariants` reports a description naming one as a defect, and the case exists so that a client's matches already handle it when FIFOs arrive.
 `OpenFileTarget.CharacterDevice` carries, besides the device and its node, an opaque `CharacterDeviceState`: the description's own state, which holds nothing in this version, because Linux keeps no position for a device and Darwin's devices, which keep one per description, are refused.
 
@@ -329,7 +329,7 @@ The parsers that throw rather than answer a `Result`, such as `DirectoryEntryNam
 From version 1.0, adding a case to any union whose cases are public is a breaking change, and comes only in a major version.
 F# code compiled against a union dispatches on its case numbers, so code built against an older version can silently run the wrong arm for a new case.
 The model will still grow: a refusal becomes an answer once its behaviour is measured, and each newly measured difference between Linux and Darwin adds a place that throws `UnmodelledException` (see "Answers, and what this library will not answer"), which needs no new case.
-Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `FinishedCall.Sleep`, `FinishedCall.FifoOpen`, `FinishedCall.Select`, `FinishedCall.SignalWait`, `FinishedCall.DatagramReceive`, `FinishedCall.DatagramSend`, `FinishedCall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`.
+Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `FinishedCall.Sleep`, `FinishedCall.FifoOpen`, `FinishedCall.Select`, `FinishedCall.SignalWait`, `FinishedCall.DatagramReceive`, `FinishedCall.DatagramSend`, `FinishedCall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending`, `WakePrimitive.AcceptQueueHasRoom` and `TerminalAttributesAnswer.Attributes`.
 So are the cases of the calls not modelled yet that `Syscall` and `SteppedCall` reserve, eleven in each (see "One entry point"), from `Syscall.Nanosleep` and `SteppedCall.Nanosleep` to `Syscall.SendMsg` and `SteppedCall.SendMsg`; and since `Syscall` has a case for every call a thread makes, a call this library comes to model, such as `fork`, is a new case of each.
 Removing a case, changing a case's fields, or changing the shape of any other type is breaking too.
 
@@ -364,11 +364,8 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread 
 | `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (caller : Caller) (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
 | `close(2)` | `UnixDescriptor.close (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
 | `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
-| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `UnixError` |
+| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `SyscallAnswer * UnixSystem` |
 | `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (caller : Caller) (fd : int)` | `TerminalAttributesAnswer` |
-| `geteuid(2)` | `UnixDescriptor.effectiveUserId (caller : Caller)` | `UserId` |
-| `getegid(2)` | `UnixDescriptor.effectiveGroupId (caller : Caller)` | `GroupId` |
-| `getgroups(2)` | `UnixDescriptor.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 
 #### Paths and their files
 
@@ -452,7 +449,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `pread(2)` | `UnixReadWrite.pread (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
 | `write(2)` | `UnixReadWrite.write (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (caller : Caller)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
-| `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome>` |
+| `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome> * Delivery option` |
 | `send(2)` | `UnixReadWrite.send (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `send(2)`, given the bytes | `UnixReadWrite.sendWithBytes (bytes : ImmutableArray<byte>) (paused : PausedSend)` | `ProcessFate<WriteOutcome>` |
 | `pwrite(2)` | `UnixReadWrite.pwrite (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
@@ -509,7 +506,7 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 | `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
 | `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
-| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
+| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
 
@@ -593,6 +590,9 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
 | `getpid(2)` | `UnixSystem.processId (caller : Caller)` | `ProcessId` |
 | `umask(2)` | `UnixSystem.umask (caller : Caller) (mask : int)` | `PermissionBits * UnixSystem` |
+| `geteuid(2)` | `UnixCredentials.geteuid (caller : Caller)` | `UserId` |
+| `getegid(2)` | `UnixCredentials.getegid (caller : Caller)` | `GroupId` |
+| `getgroups(2)` | `UnixCredentials.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 | `getresuid(2)` | `UnixCredentials.getresuid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
 | `getresgid(2)` | `UnixCredentials.getresgid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
 | `setresuid(3)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
@@ -619,7 +619,7 @@ These calls have no function, and a client should refuse them rather than guess:
 A real kernel copies an argument in from the caller's memory at a point in the call, and what happens before that point is observable: a bad descriptor is `EBADF` whatever the buffer holds.
 So a call that copies bytes in stops there.
 `UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`, and `UnixWait.finish` holds `finishWrite`'s in `FinishedCall.PipeWrite` and `FinishedCall.ConnectionWrite`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
-The paused call's `copyRange` says which bytes of the caller's buffer to copy, and its resume function (`UnixReadWrite.writeWithBytes`, `sendWithBytes`, `pwriteWithBytes`, `UnixSocket.bindWithAddress`, `UnixConnection.connectWithAddress`, `UnixSocket.setsockoptWithValue`) takes exactly those and finishes the call, answering the same type `CallProgress.Answered` carries.
+The paused call's `copyRange` says which bytes of the caller's buffer to copy, and its resume function (`UnixReadWrite.writeWithBytes`, `sendWithBytes`, `pwriteWithBytes`, `UnixSocket.bindWithAddress`, `UnixConnection.connectWithAddress`, `UnixSocket.setsockoptWithValue`) takes exactly those and finishes the call, answering the same type `CallProgress.Answered` carries; `writeWithBytes` answers beside it the bytes the write delivered out of the machine (see "The far end of a launched pipe").
 A `getsockopt` stops where the kernel reads the caller's length cell instead, and `UnixSocket.getsockoptWithLength` takes the `socklen_t` it holds.
 Nothing else can be done to the system in between, since the paused call holds it.
 
@@ -764,7 +764,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
 2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again, as `UnixWait.finish` does in `FinishedCall.PipeWrite` or `FinishedCall.ConnectionWrite`: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
 
-Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
+Every answer is a `ProcessFate<WriteOutcome>` (`writeWithBytes` answers a `Delivery option` beside it, as "The far end of a launched pipe" describes): the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
 * `WriteOutcome.Returns answer`: the call answers.
 * `WriteOutcome.ReturnsRaising (answer, signal)`: the call answers, and raised `signal`, which is now pending (or was discarded). The one signal a write raises is `SIGPIPE`, with `EPIPE`, for a write into a pipe with no reader, into a Linux stream socket with no peer, or to a connection that was reset.
@@ -884,7 +884,7 @@ let written =
         let range = PausedWrite.copyRange paused
 
         match UnixReadWrite.writeWithBytes (ImmutableArray.Create (payload, range.FirstByte, range.ByteCount)) paused with
-        | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed n), system) ->
+        | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed n), system), None ->
             printfn "thread 0 wrote %d bytes" n
             resume first system
         | outcome -> failwith $"unexpected write: %A{outcome}"
@@ -1336,7 +1336,8 @@ No `wait` is modelled, so nothing keeps the ended process for a parent to reap, 
 The pipe itself is the kernel's: its capacity, atomic writes and `EPIPE` are measured rules that the library holds and tests.
 So the client chooses only what its end does: supply bytes (`LaunchDescriptor.Supplied`), read every byte (`LaunchDescriptor.Drained`), or be closed already (`LaunchDescriptor.Gone`).
 
-**Where they meet.** The client reads what the process wrote from `UnixSystem.delivered`, a `DeliveryLog` (`DeliveryLog.toList`, or `DeliveryLog.since` a count it read before).
+**Where they meet.** The client reads what the process wrote as the process writes it: `UnixReadWrite.writeWithBytes` answers, beside the write's fate, the `Delivery` it made into a pipe the client drains, naming the client's end and holding the bytes (`SteppedCall.Write` carries it too).
+The kernel keeps no record of what it delivered, since those bytes have left the machine; a client that wants a process's whole output keeps the deliveries itself, in the order the writes answered.
 
 ## Flavours and divergence from host platforms
 

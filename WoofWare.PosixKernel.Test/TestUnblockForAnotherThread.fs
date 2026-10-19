@@ -244,15 +244,15 @@ module TestUnblockForAnotherThread =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -260,20 +260,21 @@ module TestUnblockForAnotherThread =
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 registry
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
 
         let system =
@@ -381,7 +382,7 @@ module TestUnblockForAnotherThread =
             | Ok _ -> None
             | Error refusal -> failwith $"the write was refused: %A{refusal}"
         | Sleep.EventPort ->
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
             | SimulatedUnixFlavour.Linux ->
                 UnixPoll.tryEpollWait (Callers.thread thread system) world.Port 8 UserBuffer.Mapped -1 system
                 |> parkedOrNot "the epoll_wait"
@@ -393,7 +394,7 @@ module TestUnblockForAnotherThread =
                     []
                     1
                     UserBuffer.Mapped
-                    KeventTimeout.Null
+                    TimespecArgument.Null
                     system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
@@ -563,7 +564,7 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
-                    (Lone.UnixSystemState.signalNumbering after)
+                    (Kernel.signalNumbering after)
                     (Lone.proc after).CoreDumps
                     (Lone.leader after)
                     threads

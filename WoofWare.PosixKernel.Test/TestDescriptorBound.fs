@@ -234,7 +234,7 @@ module TestDescriptorBound =
                     (SimulatedUnixPlatform.flavour run.Platform)
                     (FileDescriptorRegistry.fds (Lone.fileDescriptors system)
                      |> Map.add bound (Map.find 3 (FileDescriptorRegistry.fds (Lone.fileDescriptors system))))
-                    (OpenFileTable.descriptions system.Machine.OpenFiles)
+                    (OpenFileTable.descriptions (UnixSystem.openFiles system))
                     (OpenFileDescriptionId 1000L)
 
             let broken = Lone.withFileDescriptors registry system

@@ -117,7 +117,7 @@ type Credentials =
         /// `EffectiveGroup`.
         ///
         /// Not necessarily what `getgroups(2)` reports
-        /// (`UnixDescriptor.getgroups`): Linux reports these sorted, and Darwin
+        /// (`UnixCredentials.getgroups`): Linux reports these sorted, and Darwin
         /// reports the effective group and then these.
         SupplementaryGroups : GroupId list
     }

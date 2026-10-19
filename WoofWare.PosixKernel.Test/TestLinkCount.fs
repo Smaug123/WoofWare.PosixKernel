@@ -339,12 +339,13 @@ module TestLinkCount =
             let system = systemOn platform
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             let statOf (inode : InodeNumber) : FileStatus =
                 match Lone.UnixPathResolution.statOf inode system with
@@ -416,12 +417,13 @@ module TestLinkCount =
                 let system = systemOn platform
 
                 let system =
-                    { system with
-                        Machine =
-                            { system.Machine with
+                    Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
                                 CommittedFileSystem = CommittedFileSystem.initial vfs
                             }
-                    }
+                        )
+                        system
 
                 match Lone.UnixPathResolution.statOf directory system with
                 | Some (Ok status) -> status.LinkCount |> shouldEqual expected

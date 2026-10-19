@@ -84,7 +84,21 @@ module TestCloseRegistrationCost =
                 UserData = 0UL
             }
 
-        match UnixKqueue.kevent caller kq 1 [ change ] 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system with
+        match
+            UnixKqueue.kevent
+                caller
+                kq
+                1
+                [ change ]
+                0
+                UserBuffer.Mapped
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
+                system
+        with
         | KeventOutcome.Failed error, _ -> failwith $"expected kevent to register fd %d{fd}: %O{error}"
         | KeventOutcome.WouldBlock _, _ -> failwith "expected kevent with no room for events not to wait"
         | _, system -> resume caller system
@@ -262,7 +276,19 @@ module TestCloseRegistrationCost =
                 UserData = 0UL
             }
 
-        UnixKqueue.kevent caller kq 1 [ change ] 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+        UnixKqueue.kevent
+            caller
+            kq
+            1
+            [ change ]
+            0
+            UserBuffer.Mapped
+            (TimespecArgument.Readable
+                {
+                    Seconds = 0L
+                    Nanoseconds = 0L
+                })
+            system
 
     /// The fewest bytes one registration of a socket allocates, of several,
     /// in an epoll instance (Linux) or a kqueue (Darwin) that registers
@@ -315,7 +341,11 @@ module TestCloseRegistrationCost =
                         []
                         (count + 1)
                         UserBuffer.Mapped
-                        (KeventTimeout.Readable (0L, 0L))
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
                         system
                 with
                 | KeventOutcome.Failed error, _ -> failwith $"expected kevent to answer at once: %O{error}"

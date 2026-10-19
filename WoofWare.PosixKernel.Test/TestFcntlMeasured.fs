@@ -844,7 +844,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -1209,11 +1209,11 @@ module TestFcntlMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
             }
@@ -1225,7 +1225,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread

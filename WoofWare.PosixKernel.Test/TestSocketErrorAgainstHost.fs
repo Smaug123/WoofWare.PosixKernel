@@ -176,10 +176,10 @@ module TestSocketErrorAgainstHost =
         : (int * UnixSystem<int, string>) option
         =
         match
-            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopback port)) system
+            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopback port)) system
         with
         | Ok (SyscallAnswer.Completed _, system) -> Some (0, system)
-        | Ok (SyscallAnswer.Failed error, system) -> Some (errnoOf system.Machine.UnixPlatform error, system)
+        | Ok (SyscallAnswer.Failed error, system) -> Some (errnoOf (UnixSystem.platform system) error, system)
         | Error _ -> None
 
     /// A model holding a listener at `listenerPort` and a fresh TCP socket,
@@ -203,7 +203,7 @@ module TestSocketErrorAgainstHost =
                     listener
                     UserBuffer.Mapped
                     16u
-                    (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                    (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                     system
             with
             | Ok (BindAnswer.Bound _, system) -> system
@@ -289,7 +289,7 @@ module TestSocketErrorAgainstHost =
         (system : UnixSystem<int, string>)
         : Observed * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
         let lengthBuffer = userBuffer lengthCell

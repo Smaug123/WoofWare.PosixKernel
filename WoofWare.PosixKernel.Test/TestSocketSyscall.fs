@@ -79,7 +79,7 @@ module TestSocketSyscall =
             | Ok (Ok (fd, after)), MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
-                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId after.Machine
+                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine after)
                     | other -> failwith $"socket(%A{arguments}) made descriptor %d{fd} onto %A{other}"
 
                 if soType socket.Kind <> measuredType then
@@ -284,17 +284,18 @@ module TestSocketSyscall =
             | Ok (Ok (fd, after)) ->
                 fd |> shouldEqual hole
 
-                let socketId = before.Machine.NextSocketId
+                let socketId = (Kernel.machine before).NextSocketId
 
                 FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after)
                 |> shouldEqual (Some (OpenFileTarget.Socket socketId))
 
-                let socket = UnixMachineState.socket socketId after.Machine
+                let socket = UnixMachineState.socket socketId (Kernel.machine after)
                 socket.Ipv4Binding |> shouldEqual None
                 socket.Phase |> shouldEqual SocketPhase.Idle
                 socket.ReuseAddress |> shouldEqual false
 
-                Map.remove socketId after.Machine.Sockets |> shouldEqual before.Machine.Sockets
+                Map.remove socketId (Kernel.machine after).Sockets
+                |> shouldEqual (Kernel.machine before).Sockets
             | Ok (Error _)
             | Error _ -> ()
 

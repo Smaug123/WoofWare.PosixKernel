@@ -27,7 +27,7 @@ module TestFileSystemCommitCost =
         ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private flavourOf (system : UnixSystem<int, unit>) : SimulatedUnixFlavour =
-        SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
     /// `caller` opens `path` for reading and writing, creating it, and keeps
     /// the descriptor.

@@ -153,8 +153,13 @@ type SimulatedUnixPlatform =
             && this.Release = other.Release
         | _ -> false
 
+    // Folded by hand rather than with `HashCode.Combine` or the release's own
+    // `GetHashCode`, both of whose seeds differ from one process to the next.
     override this.GetHashCode () : int =
-        System.HashCode.Combine (this.Kernel, this.Architecture, this.PageSize, this.Release)
+        let fields =
+            ((hash this.Kernel * 31) + hash this.Architecture) * 31 + hash this.PageSize
+
+        this.Release |> Seq.fold (fun acc c -> acc * 31 + int c) fields
 
 /// What `getcwd(3)` answers when the current directory has been *removed* — so
 /// there is no path to report — and how small a buffer can still change that

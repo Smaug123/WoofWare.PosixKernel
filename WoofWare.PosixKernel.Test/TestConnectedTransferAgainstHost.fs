@@ -561,7 +561,7 @@ module TestConnectedTransferAgainstHost =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -687,7 +687,7 @@ module TestConnectedTransferAgainstHost =
         (system : UnixSystem<int, string>)
         : Readiness * string * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let revents, system =
@@ -732,7 +732,7 @@ module TestConnectedTransferAgainstHost =
                     | Some error -> UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
 
                 let render (name : string) (filter : KqueueFilter) : string =
-                    match DarwinReadiness.ofSocket filter socketId system.Machine with
+                    match DarwinReadiness.ofSocket filter socketId (Kernel.machine system) with
                     | None -> $"%s{name}(-)"
                     | Some (KqueueFilterReport.Ready data) -> $"%s{name}(data=%d{data} fflags=0)"
                     | Some (KqueueFilterReport.EndOfFile (data, error)) ->
@@ -768,7 +768,7 @@ module TestConnectedTransferAgainstHost =
 
         match operation with
         | Operation.Readiness ->
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
 
             let level = SimulatedUnixPlatform.socketOptionLevel platform
             let optionName = SimulatedUnixPlatform.socketErrorOption platform

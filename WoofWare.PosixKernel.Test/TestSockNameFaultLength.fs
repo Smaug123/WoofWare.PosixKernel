@@ -377,7 +377,7 @@ module TestSockNameFaultLengthAgainstHost =
         (system : UnixSystem<int, string>)
         : int * uint32
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         match UnixSocket.tryGetsockname (Callers.leader system) fd destination declared system with
         | Ok (GetSockNameAnswer.Reported (_, reported)) -> 0, uint32 reported

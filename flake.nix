@@ -95,7 +95,9 @@
           '';
         # Fails `nix flake check` when a test file outside a rule's allowlist names a kernel
         # internal that the test helpers hide: the thread table, which tests read through `Proc`
-        # and `Lone` and forge through `ForgedThread`. A test holding the representation must
+        # and `Lone` and forge through `ForgedThread`; the process table, views and
+        # `UnixSystemState`, behind `Proc` and `Lone`; and the `UnixSystem` record's machine and
+        # scheduling, behind `Kernel` and the public queries. A test holding the representation must
         # change whenever it does, though nothing the test asserts has. Runs the checker's own
         # contract first, so that a change to the checker cannot quietly retire it.
         test-boundaries =

@@ -139,7 +139,7 @@ module internal OpenFlagWords =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        OpenOutcomes.openPathIn pid path (encode system.Machine.UnixPlatform flags) mode system
+        OpenOutcomes.openPathIn pid path (encode (UnixSystem.platform system) flags) mode system
 
     /// `openPathIn` the only process on the machine.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

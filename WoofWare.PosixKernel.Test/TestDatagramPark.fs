@@ -101,8 +101,12 @@ module TestDatagramPark =
                 |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
                 // The park holds the description it names, once.
-                OpenFileTable.holdCount socket awake.Machine.OpenFiles |> shouldEqual (Some 0)
-                OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
+                OpenFileTable.holdCount socket (UnixSystem.openFiles awake)
+                |> shouldEqual (Some 0)
+
+                OpenFileTable.holdCount socket (UnixSystem.openFiles asleep)
+                |> shouldEqual (Some 1)
+
                 Lone.deadlines asleep |> shouldEqual []
 
                 UnixWait.satisfied (Callers.thread thread asleep) asleep

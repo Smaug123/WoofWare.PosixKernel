@@ -837,7 +837,7 @@ module TestNamespaceSequence =
     /// Every defect the system's, its descriptor table's and its
     /// filesystem's invariants find.
     let private defects (system : UnixSystem<int, string>) : string list =
-        let fileSystem = system.Machine.FileSystem
+        let fileSystem = UnixSystem.fileSystem system
 
         (UnixSystem.checkInvariants system |> List.map (sprintf "%A"))
         @ (FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors (Lone.pid system) system)
@@ -874,7 +874,7 @@ module TestNamespaceSequence =
             | Outcome.Unmodelled -> Some (Label.Unmodelled call)
             | Outcome.Skipped -> None
 
-        let fileSystem = after.Machine.FileSystem
+        let fileSystem = UnixSystem.fileSystem after
         let root = VirtualFileSystem.root fileSystem
 
         let state =
@@ -908,7 +908,7 @@ module TestNamespaceSequence =
             let survivors = VirtualFileSystem.inodes fileSystem
 
             if
-                VirtualFileSystem.inodes before.Machine.FileSystem
+                VirtualFileSystem.inodes (UnixSystem.fileSystem before)
                 |> Map.exists (fun inode _ -> not (Map.containsKey inode survivors))
             then
                 [ Label.Freed call ]
