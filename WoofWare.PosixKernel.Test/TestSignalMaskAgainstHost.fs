@@ -285,7 +285,7 @@ module TestSignalMaskAgainstHost =
 
                         let disagreement, system =
                             match UnixSignal.pthreadSigmask (Callers.thread 0 system) call.How modelSet system with
-                            | Ok (modelOld, after) ->
+                            | SignalMaskAnswer.Completed modelOld, after ->
                                 let modelOld = SignalMask.toWord modelOld
 
                                 if answer.Code <> 0 || answer.Old <> modelOld then
@@ -294,7 +294,9 @@ module TestSignalMaskAgainstHost =
                                     after
                                 else
                                     None, after
-                            | Error errno ->
+                            | SignalMaskAnswer.Failed errno, after ->
+                                after |> shouldEqual system
+
                                 let expected =
                                     UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno
 

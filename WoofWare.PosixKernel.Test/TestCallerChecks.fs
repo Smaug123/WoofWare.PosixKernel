@@ -425,10 +425,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixClock.gettimeofday caller system |> ignore<UnixTimestamp>)
             running
                 "UnixClock.clockGettime"
-                (fun caller system ->
-                    UnixClock.clockGettime caller 0 system
-                    |> ignore<Result<UnixTimestamp, UnixError>>
-                )
+                (fun caller system -> UnixClock.clockGettime caller 0 system |> ignore<ClockGettimeAnswer>)
             running
                 "UnixEntropy.getRandom"
                 (fun caller system -> UnixEntropy.getRandom caller UserBuffer.Mapped 8UL 0u system |> ignore)
@@ -740,7 +737,7 @@ module TestCallerChecks =
             // Out of the way of the descriptors the calls above name.
             let view =
                 match UnixDescriptor.dup2 leader listener listenerFd view with
-                | SyscallAnswer.Completed _, view -> UnixDescriptor.close leader listener view |> snd
+                | DescriptorAnswer.Returned _, view -> UnixDescriptor.close leader listener view |> snd
                 | other -> failwith $"dup2 of the listener: %A{other}"
 
             match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
@@ -760,13 +757,16 @@ module TestCallerChecks =
             match SimulatedUnixPlatform.flavour platform with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.epollCreate1 leader 0 view with
-                | Ok (epoll, view) ->
+                | DescriptorAnswer.Returned epoll, view ->
                     match UnixPoll.epollWait waiter epoll 1 UserBuffer.Mapped -1 view with
                     | EpollWaitOutcome.WouldBlock _, view -> view
                     | other -> failwith $"the epoll_wait: expected it to sleep, got %A{other}"
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
             | SimulatedUnixFlavour.Darwin ->
-                let kq, view = UnixKqueue.kqueue leader view
+                let kq, view =
+                    match UnixKqueue.kqueue leader view with
+                    | DescriptorAnswer.Returned kq, view -> kq, view
+                    | DescriptorAnswer.Failed error, _ -> failwith $"kqueue: %O{error}"
 
                 match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null view with
                 | KeventOutcome.WouldBlock _, view -> view
@@ -826,15 +826,15 @@ module TestCallerChecks =
 
             let send (sender : Caller<int>) (target : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadKill sender target usr1 view with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view)) -> view
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, view) -> view
                 | other -> failwith $"pthread_kill of %d{target}: %A{other}"
 
             let view =
                 match
                     UnixSignal.sigaction leader usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"sigaction: %O{error}"
+                | SigactionAnswer.Completed _, view -> view
+                | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
             let view =
                 let usr1Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
@@ -846,8 +846,8 @@ module TestCallerChecks =
                         (Some usr1Mask)
                         view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"pthread_sigmask: %O{error}"
+                | SignalMaskAnswer.Completed _, view -> view
+                | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
             let view =
                 send leader interruptedDebtor view

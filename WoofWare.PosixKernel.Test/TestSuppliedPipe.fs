@@ -442,7 +442,7 @@ module TestSuppliedPipe =
 
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (epoll, system)) -> epoll, system
+                | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
                 | other -> failwith $"%s{name}: epoll_create1 answered %A{other}"
 
             let system =
@@ -492,7 +492,7 @@ module TestSuppliedPipe =
 
             let duplicate, system =
                 match Answered.dup (Callers.leader system) 0 system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"dup(0) answered %A{other}"
 
             let closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

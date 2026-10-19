@@ -88,6 +88,7 @@ module TestDeviceDescriptorsAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -105,7 +106,7 @@ module TestDeviceDescriptorsAgainstHost =
                 0
                 system
         with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"the model's open(%s{path}): %A{other}"
 
     let private ofSyscall (answer : SyscallAnswer) : Answer =

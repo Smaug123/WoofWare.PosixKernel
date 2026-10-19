@@ -82,7 +82,7 @@ module TestSocketUid =
 
         let fd, system =
             match step pid (Syscall.Socket (domain, kind, protocol)) system with
-            | SteppedCall.Socket (Ok made) -> made
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket: %A{Stepped.view other}"
 
         if not reuse then

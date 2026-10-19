@@ -393,7 +393,7 @@ module TestConnectedTransfer =
         | SimulatedUnixFlavour.Linux ->
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid system)) 0 system with
-                | Ok (Ok created) -> created
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"epoll_create1: %A{other}"
 
             let events =
@@ -900,7 +900,7 @@ module TestConnectedTransfer =
             // it first, while its peer is still open.
             let c, system =
                 match UnixDescriptor.dup2 caller c 20 system with
-                | SyscallAnswer.Completed 20L, system ->
+                | DescriptorAnswer.Returned 20, system ->
                     match UnixDescriptor.close caller c system with
                     | SyscallAnswer.Completed 0L, system -> 20, system
                     | other -> failwith $"%s{row}: close: %A{other}"
@@ -945,12 +945,12 @@ module TestConnectedTransfer =
 
             let mask (block : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadSigmask caller (how block) (Some sigterm) system with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
 
             let unblocked =
                 match UnixSignal.pthreadKill caller 0 (signo Signal.SIGTERM) (mask true system) with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> mask false system
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> mask false system
                 | other -> failwith $"%s{row}: raising a blocked SIGTERM answered %A{other}"
 
             match UnixSignal.tryOnReturnToUser caller unblocked with
@@ -978,8 +978,8 @@ module TestConnectedTransfer =
                     match
                         UnixSignal.sigaction caller (signo Signal.SIGPIPE) (Some SignalDisposition.Default) system
                     with
-                    | Ok (_, system) -> system
-                    | Error errno -> failwith $"%s{row}: sigaction: %O{errno}"
+                    | SigactionAnswer.Completed _, system -> system
+                    | SigactionAnswer.Failed errno, _ -> failwith $"%s{row}: sigaction: %O{errno}"
 
                 match UnixPipe.pipe2 caller 0 UserBuffer.Mapped system with
                 | Pipe2Answer.Created (readFd, writeFd), system ->

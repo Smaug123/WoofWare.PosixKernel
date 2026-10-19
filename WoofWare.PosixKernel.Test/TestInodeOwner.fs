@@ -198,6 +198,7 @@ module TestInodeOwner =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -206,7 +207,7 @@ module TestInodeOwner =
     let private createBoth (system : UnixSystem<int, string>) : InodeOwner * InodeOwner =
         let system =
             match Answered.openPath (UnixPath.parseOrFail context "/p/file") creating 0o644 system with
-            | SyscallAnswer.Completed _, system -> system
+            | DescriptorAnswer.Returned _, system -> system
             | other -> failwith $"expected the file to be created, got %O{other}"
 
         let system =

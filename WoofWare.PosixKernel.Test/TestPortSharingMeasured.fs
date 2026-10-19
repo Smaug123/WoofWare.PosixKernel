@@ -161,7 +161,7 @@ module TestPortSharingMeasured =
 
         let fd, system =
             match step pid (Syscall.Socket (domain, kind, protocol)) system with
-            | Ok (SteppedCall.Socket (Ok created)) -> created
+            | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) -> fd, system
             | other -> failwith $"socket: %A{other}"
 
         if flags.Contains 'a' then

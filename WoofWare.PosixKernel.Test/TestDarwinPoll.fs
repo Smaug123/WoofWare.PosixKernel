@@ -98,6 +98,7 @@ module TestDarwinPoll =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = directory
         }
 
@@ -108,7 +109,7 @@ module TestDarwinPoll =
         : int * UnixSystem<int, string>
         =
         match Answered.openPath (UnixPath.parseOrFail "TestDarwinPoll" path) (openFlags directory) 0o644 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other, _ -> failwith $"opening %s{path}: %A{other}"
 
     /// What one filter of a descriptor reports, as `poll-darwin.c` observed it

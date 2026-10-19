@@ -188,7 +188,7 @@ module TestInotifyRemovedDirectoryMeasured =
                     0
                     system
             with
-            | Ok (SyscallAnswer.Completed byAt, s) -> int byAt, s
+            | Ok (DescriptorAnswer.Returned byAt, s) -> byAt, s
             | other -> failwith $"openat(%d{byName}, \".\"): %A{other}"
 
         system <- rowOf produced fd "openat-dot" "fd=ok errno=0: " s

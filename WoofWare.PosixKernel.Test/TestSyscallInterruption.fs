@@ -137,7 +137,7 @@ module TestSyscallInterruption =
 
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (fd, system)) -> fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"expected an epoll instance, got %A{other}"
 
             match
@@ -170,6 +170,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -179,6 +180,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -1032,7 +1034,7 @@ module TestSyscallInterruption =
 
             let system =
                 match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
             let woken, system = Lone.wake system

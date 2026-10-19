@@ -233,6 +233,7 @@ module TestUnixPathBytes =
                 CloseOnExec = false
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = false
             }
 
@@ -241,7 +242,7 @@ module TestUnixPathBytes =
             |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
 
             fst (Answered.openPath (pathOf name) creating 0o666 orphaned)
-            |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
+            |> shouldEqual (DescriptorAnswer.Failed UnixError.ENOENT)
 
             match Eager.tryRename (PathArg.ofBytes (text "/d/f")) (PathArg.ofBytes name) orphaned with
             | Ok (answer, _) -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)

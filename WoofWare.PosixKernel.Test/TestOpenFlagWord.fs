@@ -45,8 +45,8 @@ module TestOpenFlagWord =
         | SimulatedUnixFlavour.Darwin, SimulatedUnixArchitecture.Arm64 -> "darwin"
         | flavour, architecture -> failwith $"no probe output for %O{flavour} on %O{architecture}"
 
-    let private probeLines (platform : SimulatedUnixPlatform) : string list =
-        let resource = $"WoofWare.PosixKernel.Test.openFlags.%s{resourceFor platform}.txt"
+    /// The lines of the embedded output `resource`.
+    let private embeddedLines (resource : string) : string list =
 
         use stream =
             match Assembly.GetExecutingAssembly().GetManifestResourceStream resource with
@@ -57,6 +57,9 @@ module TestOpenFlagWord =
 
         reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
         |> Array.toList
+
+    let private probeLines (platform : SimulatedUnixPlatform) : string list =
+        embeddedLines $"WoofWare.PosixKernel.Test.openFlags.%s{resourceFor platform}.txt"
 
     /// One `FLAGS` row: its section, its word, and each column's cell.
     type private ProbeRow =
@@ -226,6 +229,7 @@ module TestOpenFlagWord =
                     match SimulatedUnixPlatform.flavour platform with
                     | SimulatedUnixFlavour.Linux -> has OpenFlagBit.Synchronous
                     | SimulatedUnixFlavour.Darwin -> has OpenFlagBit.DataSynchronous
+                NonBlocking = has OpenFlagBit.NonBlocking
                 Directory = has OpenFlagBit.Directory
             }
 
@@ -320,6 +324,7 @@ module TestOpenFlagWord =
                     name "f", SeedEntry.File (ImmutableArray.CreateRange "abc"B, bits 0o644, None)
                     name "d", SeedEntry.Directory (Map.empty, bits 0o755, None)
                     name "l", SeedEntry.Symlink (SymlinkTarget.parseOrFail context "f", None)
+                    name "ld", SeedEntry.Symlink (SymlinkTarget.parseOrFail context "d", None)
                     name "g", SeedEntry.File (ImmutableArray<byte>.Empty, bits 0o644, None)
                     name "h", SeedEntry.File (ImmutableArray<byte>.Empty, bits 0o644, None)
                 ]
@@ -356,7 +361,8 @@ module TestOpenFlagWord =
 
     /// The probe's directory, `/w/p` here: `f` holding "abc" (0644), `d`
     /// (0755), `l -> f`, and `g` and `h`, two links to one empty file on the
-    /// real kernels and two files here. Only `O_UNIQUE`, which the library
+    /// real kernels and two files here; and `ld -> d`, which is
+    /// `opendir-word.c`'s `l`. Only `O_UNIQUE`, which the library
     /// refuses, reads a link count.
     let private probeSystem (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         probeSystemAs (probeOwner platform) platform
@@ -421,12 +427,11 @@ module TestOpenFlagWord =
 
                                 let modelled =
                                     match OpenOutcomes.openPath (argument column) row.Word 0o644 system with
-                                    | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
-                                    | Ok (SyscallAnswer.Completed fd, after) ->
+                                    | Ok (DescriptorAnswer.Failed error, _) -> $"%A{error}"
+                                    | Ok (DescriptorAnswer.Returned fd, after) ->
                                         // F_GETFL (3) and F_GETFD (1), which
                                         // the probe printed as it closed the
                                         // descriptor.
-                                        let fd = int fd
 
                                         $"ok/%s{flagWord fd 3 after}/%s{flagWord fd 1 after}" + aftermath after
                                     | Error refusal -> $"refused (%s{OpenRefusal.describe refusal})"
@@ -441,6 +446,60 @@ module TestOpenFlagWord =
             // most of what the probe swept over the bits it models.
             replayed |> shouldBeGreaterThan 4000
 
+    /// The word `opendir(3)` passes, `O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC`,
+    /// which the probe above swept only a bit or two at a time, is answered
+    /// as `opendir-word.c` measured it: a directory opens with `O_NONBLOCK`
+    /// kept and `FD_CLOEXEC` set, through a symbolic link too, and anything
+    /// else fails.
+    [<Test>]
+    let ``the word opendir passes is answered as measured`` () : unit =
+        for platform, resource in
+            [
+                SimulatedUnixPlatform.linuxArm64, "linuxArm64"
+                SimulatedUnixPlatform.macOsArm64, "darwin"
+            ] do
+            let lines =
+                embeddedLines $"WoofWare.PosixKernel.Test.opendirWord.%s{resource}.txt"
+                |> List.map (fun line -> line.Split '\t' |> Array.toList)
+
+            let word =
+                lines
+                |> List.pick (fun fields ->
+                    match fields with
+                    | [ "WORD" ; word ] -> Some (Convert.ToUInt32 (word, 16) |> int)
+                    | _ -> None
+                )
+
+            word
+            |> shouldEqual (
+                OpenFlagWords.nonBlock platform
+                ||| OpenFlagWords.bitOf platform OpenFlagBit.Directory
+                ||| OpenFlagWords.closeOnExec platform
+            )
+
+            let system = probeSystem platform
+
+            let rows =
+                lines
+                |> List.choose (fun fields ->
+                    match fields with
+                    | [ "OPEN" ; path ; measured ] -> Some (path, measured)
+                    | _ -> None
+                )
+
+            rows.Length |> shouldEqual 4
+
+            for path, measured in rows do
+                let column = if path = "l" then "ld" else path
+
+                let modelled =
+                    match OpenOutcomes.openPath (argument column) word 0 system with
+                    | Ok (DescriptorAnswer.Failed error, _) -> $"%A{error}"
+                    | Ok (DescriptorAnswer.Returned fd, after) -> $"ok/%s{flagWord fd 3 after}/%s{flagWord fd 1 after}"
+                    | Error refusal -> $"refused (%s{OpenRefusal.describe refusal})"
+
+                (platform, path, modelled) |> shouldEqual (platform, path, measured)
+
     // ---------------------------------------------- against the parsed entry point
 
     /// Every request the parsed entry point took, on `platform`: Linux's
@@ -448,8 +507,8 @@ module TestOpenFlagWord =
     let private everyRequest (platform : SimulatedUnixPlatform) : OpenFlags list =
         let words =
             match SimulatedUnixPlatform.flavour platform with
-            | SimulatedUnixFlavour.Linux -> 127
-            | SimulatedUnixFlavour.Darwin -> 255
+            | SimulatedUnixFlavour.Linux -> 255
+            | SimulatedUnixFlavour.Darwin -> 511
 
         [
             for access in
@@ -462,7 +521,7 @@ module TestOpenFlagWord =
                     let set (i : int) = bits &&& (1 <<< i) <> 0
 
                     // Darwin's decoder admits O_DSYNC only beside O_SYNC.
-                    if not (set 7) || set 5 then
+                    if not (set 8) || set 5 then
                         yield
                             {
                                 Access = access
@@ -475,7 +534,8 @@ module TestOpenFlagWord =
                                 DataSynchronous =
                                     match SimulatedUnixPlatform.flavour platform with
                                     | SimulatedUnixFlavour.Linux -> set 5
-                                    | SimulatedUnixFlavour.Darwin -> set 7
+                                    | SimulatedUnixFlavour.Darwin -> set 8
+                                NonBlocking = set 7
                                 Directory = set 6
                             }
         ]
@@ -497,10 +557,10 @@ module TestOpenFlagWord =
         (flags : OpenFlags)
         (path : PathArgumentBytes)
         (system : UnixSystem<int, string>)
-        : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>
         =
         match Lone.UnixPathResolution.copyIn path system with
-        | Error error -> Ok (SyscallAnswer.Failed error, system)
+        | Error error -> Ok (DescriptorAnswer.Failed error, system)
         | Ok path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory path flags 0o644 system
 
     [<Test>]

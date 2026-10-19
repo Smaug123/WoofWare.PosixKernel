@@ -336,6 +336,7 @@ module TestUTimensAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -346,7 +347,7 @@ module TestUTimensAt =
         : int * UnixSystem<int, string>
         =
         match Answered.openPath (UnixPath.parseOrFail context path) flags 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -450,11 +451,12 @@ module TestUTimensAt =
             match flavourOf caller with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (fd, system)) -> fd, None, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, None, system
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
                 match UnixKqueue.tryKqueue (Callers.leader system) system with
-                | Ok (fd, system) -> fd, None, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, None, system
+                | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | "devnull" ->
             let fd, system = opened readOnly "/dev/null" system

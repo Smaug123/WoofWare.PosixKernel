@@ -53,7 +53,7 @@ module DualModeProbe =
 
     let private socket (libc : Libc) (domain : int) : int =
         match UnixSocket.trySocket (Callers.leader libc.System) domain sockStream ipProtoTcp libc.System with
-        | Ok (Ok (fd, system)) ->
+        | Ok (DescriptorAnswer.Returned fd, system) ->
             libc.System <- system
             fd
         | other -> failwith $"DualModeProbe: socket(%d{domain}) answered %A{other}"

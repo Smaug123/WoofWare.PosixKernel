@@ -147,8 +147,8 @@ module TestFutex =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (Caller.make pid 0) signo (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -166,7 +166,7 @@ module TestFutex =
         : UnixSystem<int, string>
         =
         match UnixSignal.pthreadKill (Caller.make pid sender) target signo system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
         | other -> failwith $"pthread_kill answered %A{other}"
 
     let private owed (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : OwedReturn option =
@@ -719,8 +719,8 @@ module TestFutex =
             let mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             match UnixSignal.pthreadSigmask (Caller.make pid 1) (MaskHow.block numbering) (Some mask) system with
-            | Ok (_, system) -> pid, usr1 system, system
-            | Error error -> failwith $"pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> pid, usr1 system, system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
         for make in [ ignored ; defaulted ; blocked ] do
             let pid, signo, system = make ()

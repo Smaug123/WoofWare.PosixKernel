@@ -402,9 +402,9 @@ module TestSocketAddress =
                         Syscall.Socket (domain, kind, protocol)
 
                     match stepped socket system with
-                    | Ok (SteppedCall.Socket (Error _))
+                    | Ok (SteppedCall.Socket (DescriptorAnswer.Failed _, _))
                     | Error _ -> fds, system
-                    | Ok (SteppedCall.Socket (Ok (fd, system))) ->
+                    | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) ->
                         let system =
                             match domain, v6Only with
                             | SocketDomain.Inet6, Some value ->

@@ -710,11 +710,11 @@ type SteppedSendMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
 [<NoEquality ; NoComparison>]
 type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// What `UnixDescriptor.dup` answers.
-    | Dup of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.dup2` answers.
-    | Dup2 of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup2 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.dup3` answers.
-    | Dup3 of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup3 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.fcntl` answers.
     | Fcntl of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.lseek` answers.
@@ -776,9 +776,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// `UnixPathResolution.accessWithPath` after it.
     | FAccessAt of answer : SyscallAnswer
     /// What `UnixNamespace.openPath` answers.
-    | Open of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    | Open of outcome : OpenOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixNamespace.openat` answers.
-    | OpenAt of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    | OpenAt of outcome : OpenOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixNamespace.readlink` answers.
     | ReadLink of answer : ReadLinkAnswer
     /// What `UnixNamespace.readlinkat` answers.
@@ -848,7 +848,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixPipe.pipe2` answers.
     | Pipe2 of answer : Pipe2Answer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSocket.socket` answers.
-    | Socket of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | Socket of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSocket.bind` answers, or `UnixSocket.bindWithAddress` after
     /// it.
     | Bind of answer : BindAnswer * system : UnixSystem<'Thread, 'Handler>
@@ -878,36 +878,36 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// A `pselect(2)`. Reserved: see `SteppedPSelect`.
     | PSelect of stepped : SteppedPSelect<'Thread, 'Handler>
     /// What `UnixPoll.epollCreate1` answers.
-    | EpollCreate1 of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | EpollCreate1 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixPoll.epollCtl` answers.
     | EpollCtl of answer : EpollCtlAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixPoll.epollWait` answers.
     | EpollWait of outcome : EpollWaitOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixKqueue.kqueue` answers.
-    | Kqueue of fd : int * system : UnixSystem<'Thread, 'Handler>
+    | Kqueue of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixKqueue.kevent` answers.
     | Kevent of outcome : KeventOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyInit1` answers.
-    | InotifyInit1 of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | InotifyInit1 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyAddWatch` answers, or
     /// `UnixInotify.inotifyAddWatchWithPath` after it.
     | InotifyAddWatch of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyRmWatch` answers.
     | InotifyRmWatch of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.kill` answers.
-    | Kill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | Kill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.pthreadKill` answers.
-    | PthreadKill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | PthreadKill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.sigaction` answers.
-    | SigAction of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigAction of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigactionSyscall` answers.
-    | SigActionSyscall of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigActionSyscall of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.pthreadSigmask` answers.
-    | PthreadSigMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | PthreadSigMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigprocmask` answers.
-    | SigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.rtSigprocmask` answers.
-    | RtSigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | RtSigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigpending` answers.
     | SigPending of pending : SignalMask
     /// What `UnixSignal.sigsuspend` answers.
@@ -925,7 +925,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// A `sigtimedwait(2)`. Reserved: see `SteppedSigTimedWait`.
     | SigTimedWait of stepped : SteppedSigTimedWait<'Thread, 'Handler>
     /// What `UnixClock.clockGettime` answers.
-    | ClockGetTime of result : Result<UnixTimestamp, UnixError>
+    | ClockGetTime of answer : ClockGettimeAnswer
     /// What `UnixClock.gettimeofday` answers.
     | GetTimeOfDay of time : UnixTimestamp
     /// A `nanosleep(2)`. Reserved: see `SteppedNanosleep`.
@@ -984,14 +984,6 @@ module SteppedCall =
             | ProcessFate.Continues (_, system)
             | ProcessFate.ProcessEnded (_, system) -> system
 
-        let ofResult
-            (result : Result<'Answer * UnixSystem<'Thread, 'Handler>, UnixError>)
-            : UnixSystem<'Thread, 'Handler>
-            =
-            match result with
-            | Ok (_, system) -> system
-            | Error _ -> madeIn
-
         let reserved (name : string) : UnixSystem<'Thread, 'Handler> =
             failwith
                 $"SteppedCall.system: SteppedCall.%s{name} is reserved, and nothing in this version makes one (this is a bug in this library)."
@@ -1027,6 +1019,7 @@ module SteppedCall =
         | SteppedCall.Rename (_, system)
         | SteppedCall.RenameAt (_, system)
         | SteppedCall.CloneFile (_, system)
+        | SteppedCall.FileClone (_, system)
         | SteppedCall.Symlink (_, system)
         | SteppedCall.SymlinkAt (_, system)
         | SteppedCall.Link (_, system)
@@ -1047,13 +1040,21 @@ module SteppedCall =
         | SteppedCall.Poll (_, system)
         | SteppedCall.EpollCtl (_, system)
         | SteppedCall.EpollWait (_, system)
+        | SteppedCall.Socket (_, system)
+        | SteppedCall.EpollCreate1 (_, system)
         | SteppedCall.Kqueue (_, system)
         | SteppedCall.Kevent (_, system)
+        | SteppedCall.InotifyInit1 (_, system)
         | SteppedCall.InotifyAddWatch (_, system)
         | SteppedCall.InotifyRmWatch (_, system)
         | SteppedCall.SigSuspend (_, system)
         | SteppedCall.RtSigSuspend (_, system)
         | SteppedCall.Pause (_, system)
+        | SteppedCall.SigAction (_, system)
+        | SteppedCall.SigActionSyscall (_, system)
+        | SteppedCall.PthreadSigMask (_, system)
+        | SteppedCall.SigProcMask (_, system)
+        | SteppedCall.RtSigProcMask (_, system)
         | SteppedCall.GetRandom (_, system)
         | SteppedCall.GetEntropy (_, system)
         | SteppedCall.UMask (_, system)
@@ -1067,22 +1068,10 @@ module SteppedCall =
         | SteppedCall.Write (fate, _)
         | SteppedCall.Send fate -> ofFate fate
         | SteppedCall.ExitThread fate -> ofFate fate
-        | SteppedCall.Kill result
-        | SteppedCall.PthreadKill result ->
-            match result with
-            | Ok fate -> ofFate fate
-            | Error _ -> madeIn
-        | SteppedCall.Socket result
-        | SteppedCall.EpollCreate1 result
-        | SteppedCall.InotifyInit1 result -> ofResult result
-        | SteppedCall.SigAction result
-        | SteppedCall.SigActionSyscall result -> ofResult result
-        | SteppedCall.PthreadSigMask result
-        | SteppedCall.SigProcMask result
-        | SteppedCall.RtSigProcMask result -> ofResult result
+        | SteppedCall.Kill fate
+        | SteppedCall.PthreadKill fate -> ofFate fate
         | SteppedCall.PosixFAdvise _
         | SteppedCall.BytesAvailable _
-        | SteppedCall.FileClone _
         | SteppedCall.TerminalAttributes _
         | SteppedCall.GetEffectiveUserId _
         | SteppedCall.GetEffectiveGroupId _

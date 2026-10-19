@@ -17,6 +17,10 @@ type OpenFlagBit =
     /// `O_DSYNC`: part of `O_SYNC` when `Synchronous` is beside it, and
     /// otherwise a flag the library does not model.
     | DataSynchronous
+    | NonBlocking
+    /// `O_NOCTTY`, which does nothing on a file that is not a terminal, and
+    /// so nothing to any file the library opens.
+    | NoControllingTerminal
     | Unmodelled of UnmodelledOpenFlag
 
 /// Each platform's `open(2)` numbering, transcribed from the probe's output
@@ -41,10 +45,10 @@ module internal OpenFlagWords =
             [
                 0x40, "O_CREAT", OpenFlagBit.Create
                 0x80, "O_EXCL", OpenFlagBit.Exclusive
-                0x100, "O_NOCTTY", OpenFlagBit.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+                0x100, "O_NOCTTY", OpenFlagBit.NoControllingTerminal
                 0x200, "O_TRUNC", OpenFlagBit.Truncate
                 0x400, "O_APPEND", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Append
-                0x800, "O_NONBLOCK", OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking
+                0x800, "O_NONBLOCK", OpenFlagBit.NonBlocking
                 0x1000, "O_DSYNC", OpenFlagBit.DataSynchronous
                 0x2000, "O_ASYNC", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Asynchronous
                 direct, "O_DIRECT", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Direct
@@ -60,7 +64,7 @@ module internal OpenFlagWords =
             |> List.sortBy (fun (bit, _, _) -> bit)
         | SimulatedUnixFlavour.Darwin ->
             [
-                0x4, "O_NONBLOCK", OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking
+                0x4, "O_NONBLOCK", OpenFlagBit.NonBlocking
                 0x8, "O_APPEND", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Append
                 0x10, "O_SHLOCK", OpenFlagBit.Unmodelled UnmodelledOpenFlag.SharedLock
                 0x20, "O_EXLOCK", OpenFlagBit.Unmodelled UnmodelledOpenFlag.ExclusiveLock
@@ -73,7 +77,7 @@ module internal OpenFlagWords =
                 0x1000, "O_RESOLVE_BENEATH", OpenFlagBit.Unmodelled UnmodelledOpenFlag.ResolveBeneath
                 0x2000, "O_UNIQUE", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Unique
                 0x8000, "O_EVTONLY", OpenFlagBit.Unmodelled UnmodelledOpenFlag.EventOnly
-                0x20000, "O_NOCTTY", OpenFlagBit.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+                0x20000, "O_NOCTTY", OpenFlagBit.NoControllingTerminal
                 0x100000, "O_DIRECTORY", OpenFlagBit.Directory
                 0x200000, "O_SYMLINK", OpenFlagBit.Unmodelled UnmodelledOpenFlag.Symlink
                 0x400000, "O_DSYNC", OpenFlagBit.DataSynchronous
@@ -91,8 +95,7 @@ module internal OpenFlagWords =
         | other -> failwith $"OpenFlagWords.bitOf: %A{meaning} is numbered %d{other.Length} times on %O{platform}"
 
     /// `O_NONBLOCK` on `platform`.
-    let nonBlock (platform : SimulatedUnixPlatform) : int =
-        bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking)
+    let nonBlock (platform : SimulatedUnixPlatform) : int = bitOf platform OpenFlagBit.NonBlocking
 
     /// `O_CLOEXEC` on `platform`.
     let closeOnExec (platform : SimulatedUnixPlatform) : int = bitOf platform OpenFlagBit.CloseOnExec
@@ -125,6 +128,7 @@ module internal OpenFlagWords =
         ||| bit flags.Truncate OpenFlagBit.Truncate
         ||| bit flags.NoFollow OpenFlagBit.NoFollow
         ||| bit flags.CloseOnExec OpenFlagBit.CloseOnExec
+        ||| bit flags.NonBlocking OpenFlagBit.NonBlocking
         ||| bit flags.Directory OpenFlagBit.Directory
         ||| synchronous
 
@@ -137,7 +141,7 @@ module internal OpenFlagWords =
         (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         OpenOutcomes.openPathIn pid path (encode (UnixSystem.platform system) flags) mode system
 
@@ -147,6 +151,6 @@ module internal OpenFlagWords =
         (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         openPathIn (Lone.pid system) path flags mode system

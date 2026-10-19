@@ -125,7 +125,7 @@ module TestFcntlReference =
             | Kind.PipeWrite -> false
 
         d.Access
-        ||| flag d.NonBlocking (OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking)
+        ||| flag d.NonBlocking OpenFlagBit.NonBlocking
         ||| flag d.Synchronous OpenFlagBit.Synchronous
         ||| flag d.DataSynchronous OpenFlagBit.DataSynchronous
         ||| flag (not r.Darwin && madeByOpen) (OpenFlagBit.Unmodelled UnmodelledOpenFlag.LargeFile)
@@ -556,6 +556,11 @@ module TestFcntlReference =
         | WriteAnswer.Completed written -> SyscallAnswer.Completed written
         | WriteAnswer.Failed error -> SyscallAnswer.Failed error
 
+    let private ofDescriptor (answer : DescriptorAnswer) : SyscallAnswer =
+        match answer with
+        | DescriptorAnswer.Returned fd -> SyscallAnswer.Completed (int64 fd)
+        | DescriptorAnswer.Failed error -> SyscallAnswer.Failed error
+
     /// The library's answer to `call`, made by the process's leader through
     /// `UnixSystem.tryStep`.
     let private library
@@ -564,11 +569,11 @@ module TestFcntlReference =
         : Outcome * UnixSystem<int, string>
         =
         match UnixSystem.tryStep (Callers.leader system) call system with
-        | Ok (SteppedCall.Open (SyscallOutcome.Answered answer, after))
+        | Ok (SteppedCall.Open (OpenOutcome.Answered answer, after))
         | Ok (SteppedCall.Dup (answer, after))
-        | Ok (SteppedCall.Fcntl (answer, after))
         | Ok (SteppedCall.Dup2 (answer, after))
-        | Ok (SteppedCall.Dup3 (answer, after))
+        | Ok (SteppedCall.Dup3 (answer, after)) -> Outcome.Answered (ofDescriptor answer), after
+        | Ok (SteppedCall.Fcntl (answer, after))
         | Ok (SteppedCall.FTruncate (answer, after))
         | Ok (SteppedCall.FLock (SyscallOutcome.Answered answer, after))
         | Ok (SteppedCall.Close (answer, after)) -> Outcome.Answered answer, after

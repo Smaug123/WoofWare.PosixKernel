@@ -146,8 +146,8 @@ module TestCallProgress =
 
         // AF_INET and SOCK_STREAM are 2 and 1 under both flavours.
         match UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system with
-        | Ok (fd, system) -> fd, system
-        | Error error -> failwith $"socket failed with %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
     [<Test>]
     let ``a bind that copies no bytes of its sockaddr answers without stopping`` () : unit =

@@ -745,11 +745,11 @@ module TestPipe =
                         | Error refusal -> failwith $"%s{where ()}: refused: %s{SyscallRefusal.describe refusal}"
 
                     match Map.tryFind fd reference.Fds, answer with
-                    | None, SyscallAnswer.Failed UnixError.EBADF -> ()
-                    | Some shared, SyscallAnswer.Completed newFd ->
+                    | None, DescriptorAnswer.Failed UnixError.EBADF -> ()
+                    | Some shared, DescriptorAnswer.Returned newFd ->
                         reference <-
                             { reference with
-                                Fds = Map.add (int newFd) shared reference.Fds
+                                Fds = Map.add newFd shared reference.Fds
                             }
                     | other -> failwith $"%s{where ()}: %A{other}"
 
@@ -1424,7 +1424,7 @@ module TestPipe =
 
             let socket domain kind system =
                 match UnixSocket.trySocket (Callers.leader system) domain kind 0 system with
-                | Ok (Ok (fd, system)) -> fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"%A{other}"
 
             let inet = SimulatedUnixPlatform.internetAddressFamily
@@ -1476,7 +1476,7 @@ module TestPipe =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (epoll, system)) -> epoll, system
+            | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.EdgeTriggered
@@ -1514,7 +1514,7 @@ module TestPipe =
 
             let dupped, system =
                 match Answered.dup (Callers.leader system) w system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%A{other}"
 
             let system = closeOrFail w system

@@ -464,9 +464,15 @@ module internal InotifyDeliveryOps =
         | SteppedCall.FTruncate (answer, after)
         | SteppedCall.FChMod (answer, after)
         | SteppedCall.Close (answer, after) -> answer, after
-        | SteppedCall.Open (SyscallOutcome.Answered answer, after) -> answer, after
+        | SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Returned fd), after) ->
+            SyscallAnswer.Completed (int64 fd), after
+        | SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Failed error), after) ->
+            SyscallAnswer.Failed error, after
         | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
-        | SteppedCall.OpenAt (SyscallOutcome.Answered answer, after) -> answer, after
+        | SteppedCall.OpenAt (OpenOutcome.Answered (DescriptorAnswer.Returned fd), after) ->
+            SyscallAnswer.Completed (int64 fd), after
+        | SteppedCall.OpenAt (OpenOutcome.Answered (DescriptorAnswer.Failed error), after) ->
+            SyscallAnswer.Failed error, after
         | SteppedCall.OpenAt (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
         | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after), _) ->
             SyscallAnswer.Completed written, after

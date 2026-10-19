@@ -2336,8 +2336,8 @@ module TestBlockingConnection =
                         (Some usr1)
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
             let client, server, system = pair (systemOn platform false)
             let system = system |> blocking 1 |> blocking 2
@@ -3337,7 +3337,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
@@ -3396,7 +3396,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         // Registered while the socket is not writable, so with no edge of
@@ -3476,7 +3476,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
