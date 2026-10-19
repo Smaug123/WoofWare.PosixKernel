@@ -174,6 +174,13 @@ type VirtualFileSystem =
             /// Which entry a name looked up in one of this filesystem's
             /// directories reaches. Fixed when the filesystem is made.
             NameMatching : EntryNameMatching
+            /// The name each directory whose last name has gone had when it
+            /// went, in the directory its `Parent` records (Linux's dentry,
+            /// which keeps its name once unhashed), holding exactly the
+            /// directories `isOrphanedDirectory` answers true of; a directory
+            /// absent from the map is named in its parent, or is the root.
+            /// `checkInvariants` holds it to the graph.
+            RemovedDirectoryNames : Map<InodeNumber, DirectoryEntryName>
         }
 
 /// A way in which a `VirtualFileSystem` fails to describe a filesystem any
@@ -267,6 +274,10 @@ type VirtualFileSystemDefect =
     /// name in one directory, and this library cannot tell whether these are
     /// two.
     | PossiblyEquivalentNames of directory : InodeNumber * first : DirectoryEntryName * second : DirectoryEntryName
+    /// The graph records a name its last name had for `directory`
+    /// (`recorded`) where the directory is still named, or is not a directory
+    /// whose last name has gone; or records none where it is one.
+    | RemovedDirectoryNameMismatch of directory : InodeNumber * recorded : DirectoryEntryName option
 
 [<RequireQualifiedAccess>]
 module VirtualFileSystemDefect =
@@ -568,6 +579,7 @@ module VirtualFileSystem =
             Mounts = Map.empty
             MountMembers = Map.empty
             NameMatching = nameMatching
+            RemovedDirectoryNames = Map.empty
         }
 
     let root (vfs : VirtualFileSystem) : InodeNumber = vfs.Root
@@ -1430,6 +1442,12 @@ module VirtualFileSystem =
                         adjustSubdirectoryCount directory -1 vfs.SubdirectoryCounts
                     else
                         vfs.SubdirectoryCounts
+                // A directory has one name, so this was its last.
+                RemovedDirectoryNames =
+                    if targetIsDirectory then
+                        Map.add target name vfs.RemovedDirectoryNames
+                    else
+                        vfs.RemovedDirectoryNames
             }
 
         // A non-directory losing a name has lost a hard link, whatever
@@ -1520,6 +1538,14 @@ module VirtualFileSystem =
                    Content = InodeContent.Symlink _
                }
         | None -> false
+
+    /// The name the directory `inode` had when its last name went, in the
+    /// directory its `DirectoryContent.Parent` records: the name it was
+    /// removed under by `rmdir`, or displaced from by `rename`, whatever it was
+    /// called before. `None` for anything that is not a directory whose last
+    /// name has gone (`isOrphanedDirectory`).
+    let internal removedDirectoryName (inode : InodeNumber) (vfs : VirtualFileSystem) : DirectoryEntryName option =
+        Map.tryFind inode vfs.RemovedDirectoryNames
 
     /// Whether `candidate` is `root` itself, or a directory somewhere beneath
     /// it, by climbing `DirectoryContent.Parent`.
@@ -1819,6 +1845,14 @@ module VirtualFileSystem =
             | Some _
             | None -> afterMove
 
+        // A displaced directory has lost its one name, which it keeps.
+        let removedDirectoryNames =
+            match displaced with
+            | Some displaced when isDirectoryIn inodes displaced ->
+                Map.add displaced destinationName vfs.RemovedDirectoryNames
+            | Some _
+            | None -> vfs.RemovedDirectoryNames
+
         Ok (
             {
                 Displaced = displaced
@@ -1830,6 +1864,7 @@ module VirtualFileSystem =
                     BindingCounts = counts
                     SortedNames = sortedNames
                     SubdirectoryCounts = subdirectoryCounts
+                    RemovedDirectoryNames = removedDirectoryNames
                 }
                 [
                     FsChange.EntryMoved (
@@ -1966,6 +2001,7 @@ module VirtualFileSystem =
                 vfs
                 { vfs with
                     Inodes = Map.remove inode vfs.Inodes
+                    RemovedDirectoryNames = Map.remove inode vfs.RemovedDirectoryNames
                 }
                 [ FsChange.InodeForgotten inode ]
         | count ->
@@ -2949,6 +2985,23 @@ module VirtualFileSystem =
                     | InodeContent.Symlink _ -> None
                 )
 
+        let removedDirectoryNames =
+            Set.union
+                (vfs.Inodes
+                 |> Map.keys
+                 |> Seq.filter (fun inode -> isOrphanedDirectory inode vfs)
+                 |> Set.ofSeq)
+                (Map.keys vfs.RemovedDirectoryNames |> Set.ofSeq)
+            |> Set.toList
+            |> List.choose (fun inode ->
+                let recorded = Map.tryFind inode vfs.RemovedDirectoryNames
+
+                if recorded.IsSome = isOrphanedDirectory inode vfs then
+                    None
+                else
+                    Some (VirtualFileSystemDefect.RemovedDirectoryNameMismatch (inode, recorded))
+            )
+
         rootDefects
         @ rootLinks
         @ danglingEntries
@@ -2961,6 +3014,7 @@ module VirtualFileSystem =
         @ subdirectoryCounts
         @ mountDefects
         @ equivalentNames
+        @ removedDirectoryNames
 
     /// Fail loudly if `vfs` is not sound, naming `context`. For the operations
     /// that build a filesystem from host configuration, where a defect is a
@@ -3086,6 +3140,7 @@ module VirtualFileSystem =
                     Mounts = Map.empty
                     MountMembers = Map.empty
                     NameMatching = nameMatching
+                    RemovedDirectoryNames = Map.empty
                 }
 
             let bindings = allBindings vfs

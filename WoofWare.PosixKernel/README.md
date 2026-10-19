@@ -528,8 +528,7 @@ A watched inode goes, for inotify, when a name of it goes while it has no link l
 an unlink, `rmdir` or rename over a name no description was opened through, or the close of the last description opened through a name since unlinked (a name linked again is another name).
 Its watches then queue `IN_DELETE_SELF` if they ask for it, and `IN_IGNORED`, and end, before the `IN_DELETE` of the name at its directory; afterwards `inotify_rm_watch` of one answers `EINVAL`.
 So a file opened through one name and unlinked through another goes at that unlink, though the descriptor still reads it; a directory, having one name, goes when nothing holds it, a process standing in it included.
-One change is reported by Linux through a name this kernel does not keep, and throws `UnmodelledException`, naming that name, wherever a watch could hear of it; where none could, it goes through:
-a change to a directory `rmdir` removed, reached by "." (as the current directory), or through a descriptor opened that way, which Linux reports at its old parent under its old name, is refused under a watch on that parent asking for an event it raises.
+A change to a directory whose last name has gone (by `rmdir`, or a rename over it), reached by "." or ".." (from the current directory, say) or through a descriptor opened that way, is reported as one through a name since unlinked: at the watch on the directory it was last named in, under the name it had when that name went, and then at its own.
 A watch asking for an event this kernel does not raise, `IN_ACCESS`, `IN_OPEN`, `IN_CLOSE_WRITE`, `IN_CLOSE_NOWRITE` or `IN_UNMOUNT`, or carrying `IN_ONESHOT`, is refused.
 Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
@@ -635,6 +634,7 @@ A client that holds every argument already, such as a replayer, makes the call t
 `UnixSystem.step (caller : Caller) (call : Syscall)` makes any call a thread makes through one function, for a client that wants to log, replay or generate calls, and answers a `SteppedCall`.
 `Syscall` has a case for each function in the tables above that a thread calls as a syscall, named for the call (`Syscall.MkDirAt` for `UnixNamespace.mkdirat`, `Syscall.Open` for `UnixNamespace.openPath`) and holding its arguments in the order the call's C prototype takes them.
 `step` makes the call through that function, and answers the `SteppedCall` case of the same name, which holds exactly what the function answers: `SteppedCall.MkDirAt` holds a `SyscallAnswer` and the system, and `SteppedCall.GetEffectiveUserId` a `UserId` alone, since `geteuid` changes nothing.
+`SteppedCall.system madeIn stepped` is the system after the call, whatever its case: the one `stepped` holds, or `madeIn`, the system `step` made the call in, where `stepped` holds none.
 An argument the call copies in from the caller's memory is what that memory held: a pathname is its bytes, and a buffer the call reads, such as `write`'s, is a `CopiedArgument`, which holds the bytes (`CopiedArgument.Readable`) or why there are none, as `UserBuffer`'s cases say.
 `step` hands the function's resumptions what each copy reads, and so never stops at a copy: `SteppedCall.FAccessAt` holds what `UnixPathResolution.accessWithPath` answers.
 A buffer's copy is the bytes of `CopiedArgument.Readable` that the paused call's `copyRange` names, so the contents hold at least as many bytes as the call copies, and may hold more, which it does not read; `step` throws `InvalidOperationException` for contents that end before the bytes it copies.

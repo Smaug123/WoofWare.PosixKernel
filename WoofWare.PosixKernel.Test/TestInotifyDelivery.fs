@@ -15,9 +15,10 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 /// Random sequences (`InotifyDeliveryOps`) of path syscalls (creating,
 /// truncating, linking, unlinking, renaming, changing modes, owners and times,
 /// through plain paths, "/." and "/", symbolic links and hard links), of
-/// descriptors opened, written through, truncated, `fchmod`ed and closed, and
-/// of watches added and removed, some with `IN_EXCL_UNLINK` or
-/// `IN_DONT_FOLLOW`, on two instances, run against the model; after each,
+/// descriptors opened (by path, and onto a directory by "." from another),
+/// written through, truncated, `fchmod`ed and closed, and of watches added
+/// and removed, some with `IN_EXCL_UNLINK` or `IN_DONT_FOLLOW`, on two
+/// instances, run against the model; after each,
 /// both instances are drained, and their records must be those the reference
 /// expects, cookies compared by which records share one.
 /// The reference keeps its own tree of paths, and the name each descriptor
@@ -55,6 +56,10 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 ///   it, leaves in place, unlinked; a watch with `IN_EXCL_UNLINK` hears nothing
 ///   of a write through an unlinked name, at the directory or the inode
 ///   itself, and hears its `ftruncate` and `fchmod`;
+/// - a directory opened by "." from a kept descriptor onto it holds the name
+///   that descriptor holds, unlinked if the directory has been removed since:
+///   a change through it is reported there, under the name the directory had
+///   when its last name went;
 /// - a record carries every event of its change, whichever the watch asked
 ///   for;
 /// - `IN_ISDIR` when the inode is a directory, but on `IN_MOVE_SELF` and
@@ -95,6 +100,9 @@ module TestInotifyDelivery =
         /// A record of a change through a kept descriptor whose name a rename
         /// moved.
         | ThroughMoved
+        /// A record of a change through a descriptor opened by "." onto a
+        /// directory whose last name had gone.
+        | ThroughRemovedDirectoryByDot
         /// A watched inode's going.
         | Gone
         /// A watched file's going while a descriptor still holds it, through
@@ -157,6 +165,8 @@ module TestInotifyDelivery =
             Node : Node
             ReadOnly : bool
             Through : OpenedThrough option
+            /// Opened by "." from another kept descriptor.
+            ByDot : bool
         }
 
     type private Reference =
@@ -740,11 +750,34 @@ module TestInotifyDelivery =
                                 Node = node
                                 ReadOnly = readOnly
                                 Through = through
+                                ByDot = false
                             }
                         ]
                 },
                 None
             | other -> failwith $"open of %s{named path} succeeded on %A{other}"
+        // The directory the descriptor is onto, through the name it holds:
+        // the one the descriptor was opened through, moved by a rename and
+        // left in place, unlinked, by a removal (Linux's dentry).
+        | Op.OpenDotAt slot ->
+            match keptAt slot reference with
+            | Some (_,
+                    (({
+                          Node = Node.Directory _
+                      }) as from)) ->
+                { reference with
+                    Kept =
+                        reference.Kept
+                        @ [
+                            { from with
+                                ReadOnly = true
+                                ByDot = true
+                            }
+                        ]
+                },
+                None
+            | Some (_, other) -> failwith $"openat(\".\") through slot %d{slot} succeeded on %A{other.Node}"
+            | None -> failwith $"openat(\".\") through slot %d{slot} succeeded, but the reference keeps no descriptor"
         | Op.Write (slot, count) ->
             match keptAt slot reference with
             | Some (_, kept) when count > 0 -> notifyKept kept modify true reference, None
@@ -854,7 +887,8 @@ module TestInotifyDelivery =
 
                     let kept =
                         match op with
-                        | Op.Open _ -> kept @ [ int answered ]
+                        | Op.Open _
+                        | Op.OpenDotAt _ -> kept @ [ int answered ]
                         | Op.Close slot -> kept |> List.removeAt (slotIndex slot kept.Length)
                         | _ -> kept
 
@@ -866,6 +900,11 @@ module TestInotifyDelivery =
                             match through.Through with
                             | Some name when name.Unlinked -> cover Label.ThroughUnlinked
                             | Some name when name.Moved -> cover Label.ThroughMoved
+                            | _ -> ()
+
+                            match through.Node, through.Through with
+                            | Node.Directory _, Some name when name.Unlinked && through.ByDot ->
+                                cover Label.ThroughRemovedDirectoryByDot
                             | _ -> ()
 
                         // A watch that would have heard of the write but for
@@ -936,6 +975,7 @@ module TestInotifyDelivery =
         coverage.Count Label.ThroughDescriptor |> shouldBeGreaterThan 300
         coverage.Count Label.ThroughUnlinked |> shouldBeGreaterThan 100
         coverage.Count Label.ThroughMoved |> shouldBeGreaterThan 30
+        coverage.Count Label.ThroughRemovedDirectoryByDot |> shouldBeGreaterThan 20
         coverage.Count Label.ExcludedUnlinked |> shouldBeGreaterThan 20
         coverage.Count (Label.Record RecordLabel.DeleteSelf) |> shouldBeGreaterThan 20
         coverage.Count (Label.Record RecordLabel.MoveSelf) |> shouldBeGreaterThan 20

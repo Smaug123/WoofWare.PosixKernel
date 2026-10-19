@@ -13,13 +13,8 @@ open WoofWare.PosixKernel.Test.InotifyReplay
 /// Each test makes the probe's calls on the model, renders each row as the
 /// probe printed it, and compares the rows with the recorded ones.
 ///
-/// Rows are skipped, each named, where the model cannot make the call or
-/// refuses it:
-/// - `truncate(2)`, which the model does not have;
-/// - a change through the current directory after `rmdir` removed it, which
-///   Linux reports to the old parent under the old name, a name the model does
-///   not keep, and so refuses the change where that parent's watch would hear
-///   of it.
+/// Rows are skipped, each named, where the model cannot make the call:
+/// `truncate(2)`, which the model does not have.
 ///
 /// A watch the probe gave `IN_ALL_EVENTS` asks here for the events the model
 /// raises, and the rows lose the records of the events it does not
@@ -800,15 +795,11 @@ module TestInotifyDeliveryMeasured =
         let drained, s = drain gone system
         system <- s
         produced.Add ("rmdir-of-current", $"p=%d{wpg} gone=%d{wg}: %s{drained}")
-        chmodRefusal "." 0o700 system |> throughRemovedDirectory
-        let drained, s = drain gone system
+        let drained, s = chmod "." 0o700 system |> drain gone
         system <- s
         produced.Add ("chmod-removed-current", $"chmod=0: %s{drained}")
         system <- system |> chdir "/" |> close gone
-        // Linux reports the change to the removed directory's old parent, under
-        // its old name, which the model does not keep.
-        let skipped = [ "chmod-removed-current" ]
-        actual skipped produced |> shouldEqual (expected deliveryProbe "P" skipped)
+        actual [] produced |> shouldEqual (expected deliveryProbe "P" [])
 
     [<Test>]
     let ``delivery section T: open's O_CREAT and O_TRUNC`` () : unit =
