@@ -78,7 +78,7 @@ module TestEpollCreate1 =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
                 (Lone.fileDescriptors linux)
 
         let _, withTwo =
@@ -99,7 +99,7 @@ module TestEpollCreate1 =
 
                 let expectedFd, expectedRegistry =
                     FileDescriptorRegistry.createEpoll
-                        (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
                         (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
@@ -110,7 +110,7 @@ module TestEpollCreate1 =
                     FileDescriptorRegistry.setFlags
                         fd
                         (DescriptorFlags.closingOnExec
-                            (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
                             (flags = cloExec))
                         expectedRegistry
 

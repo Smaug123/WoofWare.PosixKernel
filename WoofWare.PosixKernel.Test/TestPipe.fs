@@ -42,7 +42,7 @@ module TestPipe =
         imageOn platform |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
 
     let private flavourOf (system : UnixSystem<int, string>) : SimulatedUnixFlavour =
-        SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
     let private pipeOrFail (flags : int) (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
         match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
@@ -51,7 +51,7 @@ module TestPipe =
 
     /// The pipes the process made, leaving out the ones it was launched with.
     let private madePipes (system : UnixSystem<int, string>) : Map<PipeId, PipeState> =
-        system.Machine.Pipes
+        UnixSystem.pipes system
         |> Map.filter (fun _ pipe ->
             match pipe.Origin with
             | PipeOrigin.Made _ -> true
@@ -260,11 +260,7 @@ module TestPipe =
         |> Lone.mapProc (fun proc ->
             { proc with
                 Signals =
-                    SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
-                        Signal.SIGPIPE
-                        disposition
-                        proc.Signals
+                    SignalState.setDisposition (Kernel.signalNumbering system) Signal.SIGPIPE disposition proc.Signals
             }
         )
 
@@ -416,7 +412,7 @@ module TestPipe =
                 |> withSigPipe sigPipe
 
             let (readFd, writeFd), system = pipeOrFail flags bare
-            let created = UnixMachineState.realtime system.Scheduling system.Machine
+            let created = UnixSystem.realtime system
             let mutable system = system
             let mutable nextGroup = 2
             // Set once a write's SIGPIPE has ended the process, after which
@@ -438,12 +434,9 @@ module TestPipe =
             for i, op in List.indexed ops |> Seq.takeWhile (fun _ -> not ended) do
                 // Each call at its own instant, so that a timestamp that moves is
                 // seen to.
-                system <-
-                    { system with
-                        Scheduling = UnixSchedulingState.advanceClock 1000L system.Scheduling
-                    }
+                system <- UnixSystem.advanceClock 1000L system
 
-                let now = UnixMachineState.realtime system.Scheduling system.Machine
+                let now = UnixSystem.realtime system
                 let where () : string = $"%O{platform}, call %d{i} (%A{op})"
 
                 let nonBlockingOf (fd : int) =
@@ -484,7 +477,7 @@ module TestPipe =
                         stepAs
                             (fun stepped ->
                                 match stepped with
-                                | SteppedCall.Write fate -> Some fate
+                                | SteppedCall.Write (fate, None) -> Some fate
                                 | _ -> None
                             )
                             (Syscall.Write (fd, holdingOnly copies buffer, uint64 count))
@@ -590,7 +583,7 @@ module TestPipe =
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeWrite parked))
 
-                        let pipe = UnixMachineState.pipe (pipeOf fd system) after.Machine
+                        let pipe = UnixMachineState.pipe (pipeOf fd system) (Kernel.machine after)
                         PipeBuffer.held pipe.Buffer |> shouldEqual (modelHeld reference.Buffer + takes)
                         // A write that sleeps reads only the bytes it puts in,
                         // and the rest only once it can put them in.
@@ -694,7 +687,7 @@ module TestPipe =
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeRead parked))
 
-                        let pipe = UnixMachineState.pipe (pipeOf fd system) after.Machine
+                        let pipe = UnixMachineState.pipe (pipeOf fd system) (Kernel.machine after)
                         PipeBuffer.held pipe.Buffer |> shouldEqual 0
                     | Ok (ReadAnswer.Completed expectedBytes),
                       Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
@@ -1022,10 +1015,7 @@ module TestPipe =
         let (r, w), system = pipeOrFail 0 system
         let (r2, w2), system = pipeOrFail 0 system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock 5_000_000L system.Scheduling
-            }
+        let system = UnixSystem.advanceClock 5_000_000L system
 
         let _, system = writeOrFail w (payload 0 10) system
         let _, system = readOrFail r 3 system
@@ -1058,12 +1048,7 @@ module TestPipe =
         // would not read as the epoch.
         let booted = systemOn SimulatedUnixPlatform.macOsArm64
 
-        let (r, w), system =
-            pipeOrFail
-                0
-                { booted with
-                    Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L booted.Scheduling
-                }
+        let (r, w), system = pipeOrFail 0 (UnixSystem.advanceClock 1_000_000_000L booted)
 
         let _, system = writeOrFail w (payload 0 10) system
         let _, system = readOrFail r 3 system
@@ -1091,19 +1076,17 @@ module TestPipe =
         let (r, w), system = pipeOrFail 0 (systemOn SimulatedUnixPlatform.macOsArm64)
 
         let tick (system : UnixSystem<int, string>) =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000L system.Scheduling
-            }
+            UnixSystem.advanceClock 1_000_000L system
 
         let times fd system =
             let status = fstatOrFail fd system
             status.AccessTime, status.ModificationTime, status.StatusChangeTime
 
-        let start = UnixMachineState.realtime system.Scheduling system.Machine
+        let start = UnixSystem.realtime system
 
         // A blocking read of 0 bytes: answered 0, and the read end's atime moves.
         let system = tick system
-        let t1 = UnixMachineState.realtime system.Scheduling system.Machine
+        let t1 = UnixSystem.realtime system
         let answer, system = readOrFail r 0 system
         answer |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
         times r system |> shouldEqual (t1, start, start)
@@ -1111,7 +1094,7 @@ module TestPipe =
 
         // A write of 0 bytes moves both ends' mtime and ctime.
         let system = tick system
-        let t2 = UnixMachineState.realtime system.Scheduling system.Machine
+        let t2 = UnixSystem.realtime system
         let answer, system = writeOrFail w ImmutableArray.Empty system
         answer |> shouldEqual (WriteAnswer.Completed 0L)
         times r system |> shouldEqual (t1, t2, t2)
@@ -1119,7 +1102,7 @@ module TestPipe =
 
         // An EFAULT write moves them too, and changes nothing else.
         let system = tick system
-        let t3 = UnixMachineState.realtime system.Scheduling system.Machine
+        let t3 = UnixSystem.realtime system
 
         match WriteOutcomes.admitWrite w (UserBuffer.Unmapped 8UL) 5UL system with
         | Ok (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT), after) ->
@@ -1136,10 +1119,7 @@ module TestPipe =
 
         let before = fstatOrFail r system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000L system.Scheduling
-            }
+        let system = UnixSystem.advanceClock 1_000_000L system
 
         let _, system = readOrFail r 5 system
         let _, system = writeOrFail w (payload 0 10) system
@@ -1201,10 +1181,7 @@ module TestPipe =
                                     | Ok (_, system) -> system
                                     | Error refusal -> failwith $"%A{refusal}"
                                     |> withSigPipe disposition
-                                    |> fun system ->
-                                        { system with
-                                            Scheduling = UnixSchedulingState.advanceClock 1000L system.Scheduling
-                                        }
+                                    |> fun system -> UnixSystem.advanceClock 1000L system
 
                                 let actual =
                                     WriteOutcomes.admitThenWrite (Lone.leader system) w buffer (payload 0 count) system
@@ -1438,6 +1415,7 @@ module TestPipe =
             let answer fd system =
                 match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
                 | TerminalAttributesAnswer.NotATerminal error -> error
+                | TerminalAttributesAnswer.Attributes _ -> failwith $"fd %d{fd} is a terminal"
 
             for fd in [ 0 ; 1 ; 2 ; r ; w ] do
                 answer fd system |> shouldEqual UnixError.ENOTTY
@@ -1595,12 +1573,13 @@ module TestPipe =
         UnixSystem.checkInvariants system
 
     let private mapPipe (pipeId : PipeId) (f : PipeState -> PipeState) (system : UnixSystem<int, string>) =
-        { system with
-            Machine =
-                { system.Machine with
-                    Pipes = Map.add pipeId (f system.Machine.Pipes.[pipeId]) system.Machine.Pipes
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Pipes = Map.add pipeId (f machine.Pipes.[pipeId]) machine.Pipes
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``a system holding a pipe is sound`` () : unit =
@@ -1612,12 +1591,13 @@ module TestPipe =
         let system, pipeId = withPipe SimulatedUnixPlatform.linuxX64
 
         let forged =
-            { system with
-                Machine =
-                    { system.Machine with
-                        Pipes = Map.remove pipeId system.Machine.Pipes
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Pipes = Map.remove pipeId machine.Pipes
                     }
-            }
+                )
+                system
 
         let defects = defectsOf forged
         defects |> List.length |> shouldEqual 2
@@ -1635,14 +1615,15 @@ module TestPipe =
         let system, pipeId = withPipe SimulatedUnixPlatform.linuxX64
 
         let forged =
-            { system with
-                Machine =
-                    { system.Machine with
-                        Pipes = Map.add (PipeId 7L) system.Machine.Pipes.[pipeId] system.Machine.Pipes
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Pipes = Map.add (PipeId 7L) machine.Pipes.[pipeId] machine.Pipes
                         NextPipeId = PipeId 8L
                         NextPipeInode = InodeNumber 100L
                     }
-            }
+                )
+                system
             |> mapPipe (PipeId 7L) (withInodes (PipeInodes.Shared (InodeNumber 50L)))
 
         defectsOf forged
@@ -1653,12 +1634,13 @@ module TestPipe =
         let system, pipeId = withPipe SimulatedUnixPlatform.linuxX64
 
         let forged =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextPipeId = pipeId
                     }
-            }
+                )
+                system
 
         defectsOf forged
         |> shouldEqual [ UnixSystemDefect.NextPipeIdNotFresh (pipeId, pipeId) ]
@@ -1669,12 +1651,13 @@ module TestPipe =
         let inode = InodeNumber 1L
 
         let atNext =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextPipeInode = inode
                     }
-            }
+                )
+                system
 
         defectsOf atNext
         |> shouldEqual [ UnixSystemDefect.PipeInodeNotFresh (inode, pipeId, inode) ]
@@ -1697,12 +1680,13 @@ module TestPipe =
             |> mapPipe pipeId (withInodes (PipeInodes.PerEnd (InodeNumber 1L, InodeNumber 2L)))
 
         let perEnd =
-            { perEnd with
-                Machine =
-                    { perEnd.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextPipeInode = InodeNumber 3L
                     }
-            }
+                )
+                perEnd
 
         defectsOf perEnd
         |> shouldEqual [ UnixSystemDefect.PipeNotOfPlatform (pipeId, SimulatedUnixPlatform.linuxX64) ]
@@ -1713,7 +1697,7 @@ module TestPipe =
                 pipeId
                 (fun pipe ->
                     { pipe with
-                        Buffer = darwin.Machine.Pipes.[pipeId].Buffer
+                        Buffer = (UnixSystem.pipes darwin).[pipeId].Buffer
                     }
                 )
 
@@ -1726,12 +1710,13 @@ module TestPipe =
         let darwin, _ = withPipe SimulatedUnixPlatform.macOsArm64
 
         let forged =
-            { darwin with
-                Machine =
-                    { darwin.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         PipeDevice = 5L
                     }
-            }
+                )
+                darwin
 
         defectsOf forged
         |> shouldEqual [ UnixSystemDefect.PipeDeviceNotOfFlavour (5L, SimulatedUnixFlavour.Darwin) ]
@@ -1744,8 +1729,9 @@ module TestPipe =
             (imageOn SimulatedUnixPlatform.linuxX64
              |> UnixBootImage.tryWithPipeDevice device
              |> Configured.expectOk PipeDeviceRefusal.describe
-             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-                .Machine.PipeDevice
+             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+             |> Kernel.machine)
+                .PipeDevice
 
         pipeDeviceBootedWith (Some 42L) |> shouldEqual 42L
         pipeDeviceBootedWith None |> shouldEqual 0xcL
@@ -1753,12 +1739,13 @@ module TestPipe =
         let linux, _ = withPipe SimulatedUnixPlatform.linuxX64
 
         let negative =
-            { linux with
-                Machine =
-                    { linux.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         PipeDevice = -1L
                     }
-            }
+                )
+                linux
 
         defectsOf negative
         |> shouldEqual [ UnixSystemDefect.PipeDeviceNotOfFlavour (-1L, SimulatedUnixFlavour.Linux) ]
@@ -1839,7 +1826,7 @@ module TestPipe =
                 | other -> failwith $"%A{other}"
             )
 
-        PipeBuffer.writable system.Machine.Pipes.[pipeOf w system].Buffer
+        PipeBuffer.writable (UnixSystem.pipes system).[pipeOf w system].Buffer
 
     [<Test>]
     let ``on Darwin a faulting write grows the buffer as measured, and on Linux it changes nothing`` () : unit =

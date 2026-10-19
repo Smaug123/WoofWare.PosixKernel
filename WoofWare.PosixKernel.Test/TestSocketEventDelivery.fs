@@ -81,7 +81,7 @@ module TestSocketEventDelivery =
     let private addEpoll (kernel : UnixSystem<int, string>) : int * OpenFileDescriptionId * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
                 (Lone.fileDescriptors kernel)
 
         let queueId =
@@ -114,14 +114,14 @@ module TestSocketEventDelivery =
         let fd, socketId, kernel = addStream kernel
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            kernel.Machine.Sockets
+                            machine.Sockets
                             |> Map.add
                                 socketId
-                                { UnixMachineState.socket socketId kernel.Machine with
+                                { UnixMachineState.socket socketId machine with
                                     Addressing =
                                         SocketAddressing.replaceBinding
                                             (Some
@@ -131,7 +131,7 @@ module TestSocketEventDelivery =
                                                     LockedPort = false
                                                     PortHold = PortHold.Reserved
                                                 })
-                                            (UnixMachineState.socket socketId kernel.Machine).Addressing
+                                            (UnixMachineState.socket socketId machine).Addressing
                                     Phase =
                                         SocketPhase.Listening
                                             {
@@ -141,7 +141,8 @@ module TestSocketEventDelivery =
                                             }
                                 }
                     }
-            }
+                )
+                kernel
 
         fd, socketId, kernel
 
@@ -192,7 +193,7 @@ module TestSocketEventDelivery =
         (kernel : UnixSystem<int, string>)
         : (int * OpenFileDescriptionId) list
         =
-        match Map.tryFind queueId (OpenFileTable.descriptions kernel.Machine.OpenFiles) with
+        match Map.tryFind queueId (OpenFileTable.descriptions (UnixSystem.openFiles kernel)) with
         | Some description ->
             match description.Target with
             | OpenFileTarget.Epoll queueState -> queueState.Ready
@@ -410,7 +411,7 @@ module TestSocketEventDelivery =
             let dupFd, kernel =
                 match
                     FileDescriptorRegistry.dup
-                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
                         listenerFd
                         (Lone.fileDescriptors kernel)
                 with
@@ -544,7 +545,7 @@ module TestSocketEventDelivery =
 
     /// `getsockopt(SO_ERROR)` through real buffers, answering the value read.
     let private readSocketError (fd : int) (kernel : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let platform = kernel.Machine.UnixPlatform
+        let platform = UnixSystem.platform kernel
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
@@ -665,7 +666,7 @@ module TestSocketEventDelivery =
         let queueFd, _, kernel = addEpoll initialSystem
         let listenerFd, _, kernel = addListener 5000us kernel
         let kernel = register queueFd listenerFd 7UL kernel
-        let before = kernel.Machine.NextEventRegistrationOrdinal
+        let before = (Kernel.machine kernel).NextEventRegistrationOrdinal
 
         match
             UnixPoll.tryEpollCtl
@@ -680,7 +681,7 @@ module TestSocketEventDelivery =
         | Ok (EpollCtlAnswer.Failed reason, _) -> reason |> shouldEqual EpollCtlError.AlreadyRegistered
         | Error refusal -> failwith (EpollCtlRefusal.describe refusal)
 
-        before |> shouldEqual kernel.Machine.NextEventRegistrationOrdinal
+        before |> shouldEqual (Kernel.machine kernel).NextEventRegistrationOrdinal
 
     // --- the peer-close edge ---
 
@@ -1065,7 +1066,7 @@ module TestSocketEventDelivery =
         let dupFd, kernel =
             match
                 FileDescriptorRegistry.dup
-                    (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
                     listenerFd
                     (Lone.fileDescriptors kernel)
             with
@@ -1108,7 +1109,7 @@ module TestSocketEventDelivery =
             let dupFd, kernel =
                 match
                     FileDescriptorRegistry.dup
-                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
                         queueFd
                         (Lone.fileDescriptors kernel)
                 with
@@ -1141,7 +1142,7 @@ module TestSocketEventDelivery =
         // ...and so does the last one, leaving the epoll instance to the wait.
         match UnixDescriptor.tryClose (Callers.leader kernel) queueFd kernel with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.containsKey (
                 match Lone.parkedIn 1 closed with
                 | Some (ParkedSyscall.EpollWait wait) -> wait.Epoll
@@ -1166,7 +1167,7 @@ module TestSocketEventDelivery =
         assertSound kernel
 
         let withOrdinals (first : int64) (second : int64) (counter : int64) : UnixSystem<int, string> =
-            let descriptions = OpenFileTable.descriptions kernel.Machine.OpenFiles
+            let descriptions = OpenFileTable.descriptions (UnixSystem.openFiles kernel)
 
             let queueState =
                 match (Map.find queueId descriptions).Target with
@@ -1200,12 +1201,13 @@ module TestSocketEventDelivery =
                         }
                     )
                     (Lone.fileDescriptors kernel))
-                { kernel with
-                    Machine =
-                        { kernel.Machine with
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             NextEventRegistrationOrdinal = counter
                         }
-                })
+                    )
+                    kernel))
 
         UnixSystem.checkInvariants (withOrdinals 0L 5L 2L)
         |> shouldEqual [ UnixSystemDefect.EventRegistrationOrdinalNotFresh (2L, queueId, 5L) ]

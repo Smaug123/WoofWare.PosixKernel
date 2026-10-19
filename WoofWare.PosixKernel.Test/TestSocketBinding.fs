@@ -44,8 +44,8 @@ module TestSocketBinding =
         (initialImage
          |> UnixBootImage.tryWithEphemeralPortRange range
          |> Configured.expectOk EphemeralPortRangeRefusal.describe
-         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-            .Machine
+         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+         |> Kernel.machine)
 
     let private endpoint (address : Ipv4Address) (port : uint16) : Ipv4Endpoint = Ipv4Endpoint.ofParts address port
 
@@ -469,7 +469,7 @@ module TestSocketBinding =
                     requester
                     unboundStream
                     (fun _ -> binding wildcard 1us)
-                    initialSystem.Machine
+                    (Kernel.machine initialSystem)
                 |> ignore<Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>>
             )
 

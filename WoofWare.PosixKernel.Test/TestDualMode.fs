@@ -32,7 +32,7 @@ module TestDualMode =
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     let private ipv6Only (system : UnixSystem<int, string>) (fd : int) (value : int) : UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.ipv6OptionLevel platform
         let name = SimulatedUnixPlatform.ipv6OnlyOption platform
 
@@ -100,7 +100,7 @@ module TestDualMode =
 
             SocketAddress.toString address |> shouldEqual "[::ffff:127.0.0.1]:5000"
 
-            (UnixMachineState.socket (socketIdOf fd system) system.Machine).Ipv4Binding
+            (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
             |> shouldEqual (Some (loopback 5000us))
         | other -> failwith $"bind answered %A{other}"
@@ -122,13 +122,13 @@ module TestDualMode =
 
         match viaSocket with
         | Ok (SyscallAnswer.Completed 0L, system) ->
-            let socket = UnixMachineState.socket socketId system.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Addressing, socket.Phase with
             | SocketAddressing.Inet6DualMode (Some (DualModeBinding.Mapped binding)),
               SocketPhase.Established (connection, ConnectionEnd.Client) ->
                 binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
-                let connection = UnixMachineState.connection connection system.Machine
+                let connection = UnixMachineState.connection connection (Kernel.machine system)
                 connection.ServerAddress |> shouldEqual (loopback port)
                 connection.ClientAddress |> shouldEqual binding.Endpoint
             | other -> failwith $"the client is %A{other}"
@@ -150,9 +150,9 @@ module TestDualMode =
 
             let system = connect port client system
 
-            match (UnixMachineState.socket (socketIdOf client system) system.Machine).Phase with
+            match (UnixMachineState.socket (socketIdOf client system) (Kernel.machine system)).Phase with
             | SocketPhase.Established (connection, _) ->
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
             | other -> failwith $"the client is %A{other}"
 
         let connectWith (blob : uint16 -> byte[]) (length : uint32) (port : uint16) (fd : int) system =

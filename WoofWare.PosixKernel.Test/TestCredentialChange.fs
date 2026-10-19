@@ -888,7 +888,7 @@ module TestCredentialChange =
             }
 
         let system =
-            match OpenFlagWords.openPath creating (PathArg.ofText "/tmp/owned") 0o600 system with
+            match OpenFlagWords.openPath (PathArg.ofText "/tmp/owned") creating 0o600 system with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | other -> failwith $"open: %A{other}"
 

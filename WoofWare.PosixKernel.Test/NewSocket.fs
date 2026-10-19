@@ -47,7 +47,7 @@ module NewSocket =
         : int * UnixSystem<'Thread, 'Handler>
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
         match UnixSocket.trySocket caller rawDomain rawKind rawProtocol system with
         | Ok (Ok created) -> created
@@ -88,7 +88,7 @@ module NewSocket =
         : (int * UnixSystem<'Thread, 'Handler>) option
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
         match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
         | Ok (Ok created) -> Some created

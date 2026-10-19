@@ -107,7 +107,7 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match Answered.openPath (openFlags directory) (UnixPath.parseOrFail "TestDarwinPoll" path) 0o644 system with
+        match Answered.openPath (UnixPath.parseOrFail "TestDarwinPoll" path) (openFlags directory) 0o644 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other, _ -> failwith $"opening %s{path}: %A{other}"
 
@@ -616,12 +616,13 @@ module TestDarwinPoll =
         | other -> failwith $"the finish did not answer: %A{other}"
 
     let private advanceTo (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling =
-                { system.Scheduling with
+        Kernel.mapScheduling
+            (fun scheduling ->
+                { scheduling with
                     NanosecondsSinceBoot = nanoseconds
                 }
-        }
+            )
+            system
 
     let private deadlineOf (condition : WakeCondition) : int64 =
         match WakeCondition.deadlines condition with
@@ -759,7 +760,7 @@ module TestDarwinPoll =
 
         match Lone.parkedIn poller closed with
         | Some (ParkedSyscall.KqueuePoll poll) ->
-            (UnixMachineState.pollQueue poll.Queue closed.Machine).Registrations
+            (UnixMachineState.pollQueue poll.Queue (Kernel.machine closed)).Registrations
             |> shouldEqual Map.empty
         | other -> failwith $"expected a Darwin poll, got %A{other}"
 
@@ -786,7 +787,7 @@ module TestDarwinPoll =
         let closed = KeventWorld.close accepted parked
         sound closed
 
-        OpenFileTable.descriptions closed.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles closed)
         |> Map.containsKey acceptedId
         |> shouldEqual false
 
@@ -813,7 +814,7 @@ module TestDarwinPoll =
     [<Test>]
     let ``a deadline is milliseconds from now, and a signal ends the sleep with EINTR`` () : unit =
         let listener, system = KeventWorld.listenerAt 5106us KeventWorld.darwin
-        let now = system.Scheduling.NanosecondsSinceBoot
+        let now = UnixSystem.nanosecondsSinceBoot system
         let condition, parked = parks [ entry listener pollIn ] 7 system
         deadlineOf condition |> shouldEqual (now + 7_000_000L)
         let early = advanceTo (now + 6_999_999L) parked
@@ -900,9 +901,9 @@ module TestDarwinPoll =
 
         // Undo the activation the connection made.
         let machine =
-            { connected.Machine with
+            { (Kernel.machine connected) with
                 PollQueues =
-                    connected.Machine.PollQueues
+                    (Kernel.machine connected).PollQueues
                     |> PollQueueTable.map (fun queue ->
                         { queue with
                             Active = []
@@ -910,10 +911,7 @@ module TestDarwinPoll =
                     )
             }
 
-        UnixSystem.checkInvariants
-            { connected with
-                Machine = machine
-            }
+        UnixSystem.checkInvariants (Kernel.withMachine machine connected)
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKqueuePollActivationMissed (
@@ -930,7 +928,8 @@ module TestDarwinPoll =
 
         let queueId, queue =
             match Lone.parkedIn poller parked with
-            | Some (ParkedSyscall.KqueuePoll poll) -> poll.Queue, UnixMachineState.pollQueue poll.Queue parked.Machine
+            | Some (ParkedSyscall.KqueuePoll poll) ->
+                poll.Queue, UnixMachineState.pollQueue poll.Queue (Kernel.machine parked)
             | other -> failwith $"expected a Darwin poll, got %A{other}"
 
         let socket =
@@ -944,15 +943,16 @@ module TestDarwinPoll =
         |> shouldEqual [ (listener, KqueueFilter.Read), Some socket ]
 
         let withQueues (queues : PollQueueTable) (next : PollQueueId) =
-            { parked with
-                Machine =
-                    { parked.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         PollQueues = queues
                         NextPollQueueId = next
                     }
-            }
+                )
+                parked
 
-        let next = parked.Machine.NextPollQueueId
+        let next = (Kernel.machine parked).NextPollQueueId
 
         // Gone from the machine while the park names it.
         UnixSystem.checkInvariants (withQueues PollQueueTable.empty next)
@@ -962,12 +962,12 @@ module TestDarwinPoll =
         let (PollQueueId n) = next
 
         UnixSystem.checkInvariants (
-            withQueues (PollQueueTable.add next queue parked.Machine.PollQueues) (PollQueueId (n + 1L))
+            withQueues (PollQueueTable.add next queue (Kernel.machine parked).PollQueues) (PollQueueId (n + 1L))
         )
         |> shouldEqual [ UnixSystemDefect.PollQueueNotHeldOnce (next, 0) ]
 
         // Not below the counter.
-        UnixSystem.checkInvariants (withQueues parked.Machine.PollQueues queueId)
+        UnixSystem.checkInvariants (withQueues (Kernel.machine parked).PollQueues queueId)
         |> shouldEqual [ UnixSystemDefect.PollQueueIdNotFresh (queueId, queueId) ]
 
         // Another process's.
@@ -980,7 +980,7 @@ module TestDarwinPoll =
                     { queue with
                         Owner = other
                     }
-                    parked.Machine.PollQueues)
+                    (Kernel.machine parked).PollQueues)
                 next
         )
         |> shouldEqual
@@ -1000,7 +1000,9 @@ module TestDarwinPoll =
                     )
             }
 
-        UnixSystem.checkInvariants (withQueues (PollQueueTable.set queueId detached parked.Machine.PollQueues) next)
+        UnixSystem.checkInvariants (
+            withQueues (PollQueueTable.set queueId detached (Kernel.machine parked).PollQueues) next
+        )
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
@@ -1013,5 +1015,5 @@ module TestDarwinPoll =
 
         // ...and the park's end lets it go.
         let finished = Lone.UnixParkState.unpark poller parked
-        PollQueueTable.all finished.Machine.PollQueues |> shouldEqual Map.empty
+        PollQueueTable.all (Kernel.machine finished).PollQueues |> shouldEqual Map.empty
         sound finished

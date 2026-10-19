@@ -160,7 +160,10 @@ module UnixFutex =
         match timeout with
         | TimespecArgument.Null -> Ok None
         | TimespecArgument.Unreadable -> Error UnixError.EFAULT
-        | TimespecArgument.Readable (seconds, nanoseconds) ->
+        | TimespecArgument.Readable {
+                                        Seconds = seconds
+                                        Nanoseconds = nanoseconds
+                                    } ->
             if seconds < 0L || nanoseconds < 0L || nanoseconds >= nanosecondsPerSecond then
                 Error UnixError.EINVAL
             else

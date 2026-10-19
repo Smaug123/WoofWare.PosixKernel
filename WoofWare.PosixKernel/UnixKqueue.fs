@@ -63,19 +63,6 @@ module KeventFlags =
     [<Literal>]
     let Eof : uint16 = 0x8000us
 
-/// The `timeout` argument of `kevent(2)`, as the kernel's copy-in finds it.
-///
-/// The caller classifies it, because only the caller knows what its memory
-/// holds.
-[<RequireQualifiedAccess>]
-type KeventTimeout =
-    /// A null pointer: the call waits for as long as it takes.
-    | Null
-    /// The pointer names a readable `struct timespec` holding these.
-    | Readable of seconds : int64 * nanoseconds : int64
-    /// The pointer is not null, and names no readable `struct timespec`.
-    | Unreadable
-
 /// Why this kernel will not answer a `kqueue(2)`.
 [<RequireQualifiedAccess>]
 type internal KqueueRefusal =
@@ -593,7 +580,7 @@ module UnixKqueue =
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
@@ -614,16 +601,16 @@ module UnixKqueue =
         // nevents, then the kqueue itself.
         let timeout =
             match timeout with
-            | KeventTimeout.Unreadable -> Error UnixError.EFAULT
-            | KeventTimeout.Readable (seconds, nanoseconds) when
-                seconds < 0L
-                || seconds > int64 System.Int32.MaxValue
-                || nanoseconds < 0L
-                || nanoseconds > UnixTimestamp.nanosecondsPerSecond
+            | TimespecArgument.Unreadable -> Error UnixError.EFAULT
+            | TimespecArgument.Readable fields when
+                fields.Seconds < 0L
+                || fields.Seconds > int64 System.Int32.MaxValue
+                || fields.Nanoseconds < 0L
+                || fields.Nanoseconds > UnixTimestamp.nanosecondsPerSecond
                 ->
                 Error UnixError.EINVAL
-            | KeventTimeout.Readable (seconds, nanoseconds) -> Ok (Some (seconds, nanoseconds))
-            | KeventTimeout.Null -> Ok None
+            | TimespecArgument.Readable fields -> Ok (Some (fields.Seconds, fields.Nanoseconds))
+            | TimespecArgument.Null -> Ok None
 
         match timeout with
         | Error error -> Ok (KeventOutcome.Failed error, system)
@@ -705,7 +692,7 @@ module UnixKqueue =
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
@@ -776,7 +763,7 @@ module UnixKqueue =
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =

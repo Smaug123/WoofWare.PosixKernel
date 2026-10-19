@@ -28,14 +28,14 @@ module internal ForgedConnection =
         : UnixSystem<'Thread, 'Handler>
         =
         let transfer =
-            (TcpBufferSizing.newTransfer domain system.Machine, closed)
+            (TcpBufferSizing.newTransfer domain (Kernel.machine system), closed)
             ||> List.fold (fun transfer closer ->
                 TcpTransfer.close closer false (portHold closer) UserId.root transfer |> snd
             )
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections =
                         Map.add
                             connection
@@ -45,9 +45,10 @@ module internal ForgedConnection =
                                 ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                 Transfer = transfer
                             }
-                            system.Machine.Connections
+                            machine.Connections
                 }
-        }
+            )
+            system
 
     /// `connection` as an accept queue holds it, completed on a listener whose
     /// options were all as `socket(2)` leaves them.

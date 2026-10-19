@@ -114,12 +114,10 @@ module TestStepOracle =
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.TerminalAttributes fd ->
             Ok (SteppedCall.TerminalAttributes (UnixDescriptor.terminalAttributes caller fd system))
-        | Syscall.GetEffectiveUserId ->
-            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId caller system))
-        | Syscall.GetEffectiveGroupId ->
-            Ok (SteppedCall.GetEffectiveGroupId (UnixDescriptor.effectiveGroupId caller system))
+        | Syscall.GetEffectiveUserId -> Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid caller system))
+        | Syscall.GetEffectiveGroupId -> Ok (SteppedCall.GetEffectiveGroupId (UnixCredentials.getegid caller system))
         | Syscall.GetGroups (size, destination) ->
-            UnixDescriptor.tryGetgroups caller destination size system
+            UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
         | Syscall.Stat (policy, path) ->
@@ -190,7 +188,7 @@ module TestStepOracle =
             |> Result.map SteppedCall.FAccessAt
             |> Result.mapError SyscallRefusal.FAccessAt
         | Syscall.Open (path, flags, mode) ->
-            UnixNamespace.tryOpenPath caller flags path mode system
+            UnixNamespace.tryOpenPath caller path flags mode system
             |> Result.map SteppedCall.Open
             |> Result.mapError SyscallRefusal.Open
         | Syscall.OpenAt (dirfd, path, flags, mode) ->
@@ -289,6 +287,8 @@ module TestStepOracle =
             |> Result.mapError SyscallRefusal.PRead
         | Syscall.Write (fd, buffer, count) ->
             UnixReadWrite.tryWrite caller fd (bufferOf buffer) count system
+            // A write answered before its copy delivers nothing.
+            |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
             |> CallProgress.resumeWith (fun paused ->
                 UnixReadWrite.tryWriteWithBytes (copied buffer (PausedWrite.copyRange paused)) paused
             )
@@ -689,7 +689,19 @@ module TestStepOracle =
                 let changes = [ change 10 KeventFilter.Read ; change 11 KeventFilter.Write ]
 
                 match
-                    UnixKqueue.kevent leader 13 2 changes 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        leader
+                        13
+                        2
+                        changes
+                        0
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                 with
                 | KeventOutcome.Answered [], system -> system
                 | other -> failwith $"setting up, kevent: %A{other}"
@@ -780,7 +792,7 @@ module TestStepOracle =
                 ordinary
 
         let opened (path : string) (flags : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixNamespace.openPath (Callers.leader system) flags (PathArg.ofText path) 0 system with
+            match UnixNamespace.openPath (Callers.leader system) (PathArg.ofText path) flags 0 system with
             | SyscallOutcome.Answered (SyscallAnswer.Completed _), system -> system
             | other -> failwith $"setting up, open(%s{path}): %A{other}"
 
@@ -1665,12 +1677,28 @@ module TestStepOracle =
                 let! timeout =
                     Gen.elements
                         [
-                            KeventTimeout.Null
-                            KeventTimeout.Readable (0L, 0L)
-                            KeventTimeout.Readable (1L, 0L)
-                            KeventTimeout.Readable (-1L, 0L)
-                            KeventTimeout.Readable (0L, 1_000_000_001L)
-                            KeventTimeout.Unreadable
+                            TimespecArgument.Null
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = -1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_001L
+                                }
+                            TimespecArgument.Unreadable
                         ]
 
                 return kq, changes, nchanges, eventlist, nevents, timeout
@@ -1794,9 +1822,21 @@ module TestStepOracle =
                         [
                             TimespecArgument.Null
                             TimespecArgument.Null
-                            TimespecArgument.Readable (0L, 0L)
-                            TimespecArgument.Readable (0L, 10_000_000L)
-                            TimespecArgument.Readable (0L, 1_000_000_000L)
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 10_000_000L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_000L
+                                }
                             TimespecArgument.Unreadable
                         ]
 
@@ -2096,8 +2136,8 @@ module TestStepOracle =
             // first bytes of each buffer, and no others.
             let afterWrite =
                 match UnixSystem.step leader calls.[0] system with
-                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system)) ->
-                    system
+                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system),
+                                     None) -> system
                 | other -> failwith $"write: %A{Stepped.view other}"
 
             let afterPWrite =
@@ -2194,7 +2234,7 @@ module TestStepOracle =
                         fun () ->
                             UnixReadWrite.tryWrite leader 3 unmapped 3UL system
                             |> answered
-                            |> Result.map SteppedCall.Write
+                            |> Result.map (fun fate -> SteppedCall.Write (fate, None))
                             |> Result.mapError SyscallRefusal.Write
                         Syscall.Send (10, CopiedArgument.Unmapped address, 4UL, 0),
                         fun () ->
@@ -2241,6 +2281,7 @@ module TestStepOracle =
                 // did before the copy is `TestFaultingFileWrite`'s.
                 match UnixSystem.tryStep leader (fst calls.[0]) system with
                 | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EFAULT),
-                                                                _))) -> ()
+                                                                _),
+                                         None)) -> ()
                 | Ok other -> failwith $"write through %O{unmapped}: %A{Stepped.view other}"
                 | Error refusal -> failwith $"write through %O{unmapped} was refused: %A{refusal}"

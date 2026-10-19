@@ -161,15 +161,15 @@ module TestSyscallInterruption =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -177,20 +177,21 @@ module TestSyscallInterruption =
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 registry
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> withRegistry registry
 
         let system =
@@ -405,7 +406,7 @@ module TestSyscallInterruption =
     /// `sent`, installed and then generated for `thread` alone: the system's
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
 
         let signals =
             ((Lone.proc system).Signals, sent)
@@ -623,11 +624,7 @@ module TestSyscallInterruption =
 
             let system =
                 match timeoutOf sleep with
-                | Some ms when pastDeadline ->
-                    { system with
-                        Scheduling =
-                            UnixSchedulingState.advanceClock (int64 ms * nanosecondsPerMillisecond) system.Scheduling
-                    }
+                | Some ms when pastDeadline -> UnixSystem.advanceClock (int64 ms * nanosecondsPerMillisecond) system
                 | _ -> system
 
             let expected = oracle flavour sleep sent ready pastDeadline
@@ -667,7 +664,7 @@ module TestSyscallInterruption =
                 if closedUnder then
                     seen <- Set.add $"closed under, then %A{ending}" seen
 
-                OpenFileTable.descriptions after.Machine.OpenFiles
+                OpenFileTable.descriptions (UnixSystem.openFiles after)
                 |> Map.containsKey held
                 |> shouldEqual survives
 
@@ -1021,7 +1018,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1069,7 +1066,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.enqueue
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 {
                                     Signal = Signal.SIGCONT
                                     Target = ValueSome 1

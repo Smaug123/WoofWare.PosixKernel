@@ -27,7 +27,8 @@ module TestClock =
 
     /// How long a freshly booted machine of `flavour` has been up, and what its
     /// processors run.
-    let private schedulingOn (flavour : SimulatedUnixFlavour) : UnixSchedulingState = (systemOn flavour).Scheduling
+    let private schedulingOn (flavour : SimulatedUnixFlavour) : UnixSchedulingState =
+        Kernel.scheduling (systemOn flavour)
 
     /// A value in `[low, high]`, weighted towards both ends as well as spread across
     /// the whole range: the ends are where the arithmetic can overflow, and a uniform
@@ -102,11 +103,10 @@ module TestClock =
     let ``a fresh machine has been up for no time and booted at the epoch`` () : unit =
         for flavour in flavours do
             let system = systemOn flavour
-            system.Scheduling.NanosecondsSinceBoot |> shouldEqual 0L
-            system.Machine.BootTime |> shouldEqual UnixTimestamp.epoch
+            UnixSystem.nanosecondsSinceBoot system |> shouldEqual 0L
+            (Kernel.machine system).BootTime |> shouldEqual UnixTimestamp.epoch
 
-            UnixMachineState.realtime system.Scheduling system.Machine
-            |> shouldEqual UnixTimestamp.epoch
+            UnixSystem.realtime system |> shouldEqual UnixTimestamp.epoch
 
     [<Test>]
     let ``advancing twice adds both amounts`` () : unit =
@@ -133,16 +133,19 @@ module TestClock =
         let advanced = UnixSystem.advanceClock 12_345L system
 
         advanced
-        |> shouldEqual
-            { system with
-                Scheduling =
-                    { system.Scheduling with
+        |> shouldEqual (
+            Kernel.mapScheduling
+                (fun scheduling ->
+                    { scheduling with
                         NanosecondsSinceBoot = 12_345L
                     }
-            }
+                )
+                system
+        )
 
         // The machine every process shares is the same value, not merely an equal one.
-        obj.ReferenceEquals (advanced.Machine, system.Machine) |> shouldEqual true
+        obj.ReferenceEquals (Kernel.machine advanced, Kernel.machine system)
+        |> shouldEqual true
 
         UnixSystem.advanceClock 0L advanced |> shouldEqual advanced
 
@@ -263,7 +266,7 @@ module TestClock =
                 | Ok image ->
                     expected |> shouldEqual (Ok ())
 
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.BootTime
+                    (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).BootTime
                     |> shouldEqual timestamp
                 | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -314,7 +317,7 @@ module TestClock =
             let outcome (flavour : SimulatedUnixFlavour) : Result<UnixTimestamp, BootTimeRefusal> =
                 UnixBootImage.tryWithBootTime timestamp (imageOn flavour)
                 |> Result.map (fun image ->
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.BootTime
+                    (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).BootTime
                 )
 
             outcome SimulatedUnixFlavour.Linux |> shouldEqual (Ok timestamp)
@@ -333,7 +336,7 @@ module TestClock =
     let ``realtime is the boot instant plus the uptime, on every reachable machine`` () : unit =
         let property (flavour : SimulatedUnixFlavour, bootTime : UnixTimestamp, up : int64) : bool =
             let system = systemWith flavour bootTime up
-            let reading = UnixMachineState.realtime system.Scheduling system.Machine
+            let reading = UnixSystem.realtime system
 
             exactNanoseconds reading = exactNanoseconds bootTime + bigint up
 
@@ -415,11 +418,7 @@ module TestClock =
         | Ok (Ok reading) ->
             if UnixTimestamp.seconds reading = UnixSystem.nanosecondsSinceBoot system / 1_000_000_000L then
                 Outcome.Monotonic
-            elif
-                UnixTimestamp.seconds reading = UnixTimestamp.seconds (
-                    UnixMachineState.realtime system.Scheduling system.Machine
-                )
-            then
+            elif UnixTimestamp.seconds reading = UnixTimestamp.seconds (UnixSystem.realtime system) then
                 Outcome.Realtime
             else
                 failwith $"clock id %d{clockId} read %O{reading}, which is neither clock"

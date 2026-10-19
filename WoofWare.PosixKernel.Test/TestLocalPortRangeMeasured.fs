@@ -217,7 +217,7 @@ module TestLocalPortRangeMeasured =
         let fd, system =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let system =
             match
@@ -244,7 +244,7 @@ module TestLocalPortRangeMeasured =
     let private portOf (fd : int) (system : UnixSystem<int, string>) : uint16 =
         match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> endpoint.Port
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -258,7 +258,7 @@ module TestLocalPortRangeMeasured =
     /// socket then reports, as the probe prints them; and the system after
     /// it, with the socket closed.
     let private handout (call : string) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let m = Regex.Match (call, @"^(tcp|udp) (bind|connect) (\S+):(\S+)$")
 
         if not m.Success then

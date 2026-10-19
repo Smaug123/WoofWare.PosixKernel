@@ -158,9 +158,9 @@ module TestConnectDestinationMeasured =
         match socket.Phase with
         | SocketPhase.Established (connection, ConnectionEnd.Client)
         | SocketPhase.EstablishedPendingReport connection ->
-            Some (UnixMachineState.connection connection system.Machine).ServerAddress
+            Some (UnixMachineState.connection connection (Kernel.machine system)).ServerAddress
         | SocketPhase.Established (connection, ConnectionEnd.Server) ->
-            Some (UnixMachineState.connection connection system.Machine).ClientAddress
+            Some (UnixMachineState.connection connection (Kernel.machine system)).ClientAddress
         | SocketPhase.DatagramPeer (SocketAddress.Inet endpoint) when endpoint.Port <> 0us -> Some endpoint
         | _ -> None
 
@@ -402,7 +402,7 @@ module TestConnectDestinationMeasured =
                 let peerName =
                     match socket.Phase with
                     | SocketPhase.Established (connection, ConnectionEnd.Client) ->
-                        name (UnixMachineState.connection connection after.Machine).ServerAddress.Address
+                        name (UnixMachineState.connection connection (Kernel.machine after)).ServerAddress.Address
                     | SocketPhase.DatagramPeer (SocketAddress.Inet endpoint) -> name endpoint.Address
                     | _ -> "none"
 

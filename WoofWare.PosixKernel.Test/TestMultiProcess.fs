@@ -291,6 +291,7 @@ module TestMultiProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/shared")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -302,7 +303,6 @@ module TestMultiProcess =
                             DataSynchronous = false
                             Directory = false
                         }
-                        (PathArg.ofText "/shared")
                         0o644
                         view
                 with
@@ -322,22 +322,22 @@ module TestMultiProcess =
 
             let write (pid : ProcessId) (text : string) (view : UnixSystem<int, string>) =
                 match
-                    WriteOutcomes.writeBytesAs
+                    WriteOutcomes.admitThenWriteDeliveringAs
                         (Caller.make pid 0)
                         1
+                        UserBuffer.Mapped
                         (ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text))
                         view
                 with
-                | Ok (WriteStep.Returns (_, view)) -> (), view
+                | Ok (WriteStep.Returns (_, view), Some delivery) -> delivery, view
                 | other -> failwith $"write: %A{other}"
 
-            let (), machine = inProcess pids.[0] (write pids.[0] "first") machine
-            let (), machine = inProcess pids.[1] (write pids.[1] "second") machine
-            let (), machine = inProcess pids.[0] (write pids.[0] "again") machine
+            let first, machine = inProcess pids.[0] (write pids.[0] "first") machine
+            let second, machine = inProcess pids.[1] (write pids.[1] "second") machine
+            let again, machine = inProcess pids.[0] (write pids.[0] "again") machine
 
-            UnixSystem.delivered (viewOf pids.[0] machine)
-            |> DeliveryLog.toList
-            |> List.map (fun delivery ->
+            [ first ; second ; again ]
+            |> List.map (fun (delivery : Delivery) ->
                 delivery.Endpoint, System.Text.Encoding.ASCII.GetString (delivery.Bytes.AsSpan ())
             )
             |> shouldEqual
@@ -389,7 +389,7 @@ module TestMultiProcess =
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
 
             // No name reaches it, and it is still there: a stands in it.
-            VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
+            VirtualFileSystem.tryGet standing (UnixSystem.fileSystem (viewOf b machine))
             |> Option.isSome
             |> shouldEqual true
 
@@ -398,7 +398,7 @@ module TestMultiProcess =
             // Stepping out lets it go.
             let _, machine = inProcess a (chdir a "/") machine
 
-            VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
+            VirtualFileSystem.tryGet standing (UnixSystem.fileSystem (viewOf b machine))
             |> shouldEqual None
 
             assertClean machine
@@ -431,12 +431,12 @@ module TestMultiProcess =
         let ghost = ProcessId.parseOrFail context 77
 
         let forged =
-            { machine with
-                Machine =
-                    { machine.Machine with
-                        ProcessIds = ProcessIdTable.add ghost machine.Machine.ProcessIds
-                    }
-            }
+            machine
+            |> Kernel.mapMachine (fun kernel ->
+                { kernel with
+                    ProcessIds = ProcessIdTable.add ghost kernel.ProcessIds
+                }
+            )
 
         Machines.checkInvariants forged
         |> shouldEqual [ UnixSystemDefect.LiveProcessIdsMismatch (Set.singleton ghost, Set.empty) ]
@@ -446,12 +446,11 @@ module TestMultiProcess =
         let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
         let root = (Proc.state pids.[0] (viewOf pids.[0] machine)).CurrentDirectoryInode
 
-        machine.Machine.CurrentDirectories |> shouldEqual (Map.ofList [ root, 2 ])
+        (Kernel.machine machine).CurrentDirectories
+        |> shouldEqual (Map.ofList [ root, 2 ])
 
         let short =
-            { machine with
-                Machine = UnixMachineState.releaseCurrentDirectory root machine.Machine
-            }
+            Kernel.mapMachine (UnixMachineState.releaseCurrentDirectory root) machine
 
         Machines.checkInvariants short
         |> shouldEqual [ UnixSystemDefect.CurrentDirectoryHoldMismatch (root, 1, 2) ]

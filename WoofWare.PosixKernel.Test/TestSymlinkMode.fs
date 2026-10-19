@@ -123,12 +123,13 @@ module TestSymlinkMode =
             | Ok (_, vfs) -> vfs
             | Error error -> failwith $"%s{context}: could not create l: %O{error}"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = root
@@ -245,7 +246,7 @@ module TestSymlinkMode =
                                     (Lone.proc system).CurrentDirectoryInode
                                     SymlinkPolicy.NoFollowFinal
                                     (UnixPath.parseOrFail context "/l")
-                                    system.Machine.FileSystem
+                                    (UnixSystem.fileSystem system)
                             with
                             | Ok inode -> inode
                             | Error failure -> failwith $"%s{context}: /l does not resolve: %A{failure}"

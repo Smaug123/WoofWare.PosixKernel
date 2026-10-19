@@ -260,7 +260,7 @@ module TestDeviceFileSystem =
         Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
     let private timesOf (inode : InodeNumber) (system : UnixSystem<int, string>) : InodeTimes =
-        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system) with
         | Some inode -> inode.Times
         | None -> failwith $"inode %O{inode} is not in the filesystem"
 
@@ -331,7 +331,7 @@ module TestDeviceFileSystem =
             status.ModificationTime |> shouldEqual expected
             status.StatusChangeTime |> shouldEqual expected
 
-            timesOf (VirtualFileSystem.root system.Machine.FileSystem) system
+            timesOf (VirtualFileSystem.root (UnixSystem.fileSystem system)) system
             |> shouldEqual
                 {
                     Access = expected
@@ -439,7 +439,7 @@ module TestDeviceFileSystem =
                     refused |> shouldEqual (name unknown)
                 | other -> failwith $"stat %s{path}: expected a refusal, got %A{other}"
 
-            match OpenFlagWords.openPath creating (PathArg.ofText $"/dev/%s{unknown}") 0o644 system with
+            match OpenFlagWords.openPath (PathArg.ofText $"/dev/%s{unknown}") creating 0o644 system with
             | Error (OpenRefusal.Path (PathRefusal.UnmodelledDeviceName _)) -> ()
             | other -> failwith $"open(O_CREAT) /dev/%s{unknown}: expected a refusal, got %A{other}"
 
@@ -512,7 +512,7 @@ module TestDeviceFileSystem =
             |> shouldEqual expected
 
         let fd, system =
-            match Answered.openPath DirectoryReading.flags (UnixPath.parseOrFail context "/dev") 0 system with
+            match Answered.openPath (UnixPath.parseOrFail context "/dev") DirectoryReading.flags 0 system with
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"opening /dev: %A{other}"
 
@@ -561,7 +561,7 @@ module TestDeviceFileSystem =
         // Read from the inode graph, since a listing of `/dev` is refused on
         // both flavours.
         for platform, expected in [ linux, CharacterDevice.all ; darwin, [] ] do
-            let vfs = (booted platform).Machine.FileSystem
+            let vfs = UnixSystem.fileSystem (booted platform)
 
             let mountedRoot =
                 match VirtualFileSystem.tryGetContent (VirtualFileSystem.root vfs) vfs with
@@ -775,10 +775,10 @@ module TestDeviceFileSystem =
         // A device's name is taken.
         match
             OpenFlagWords.openPath
+                (PathArg.ofText "/dev/null")
                 { creating with
                     Exclusive = true
                 }
-                (PathArg.ofText "/dev/null")
                 0o644
                 root
         with
@@ -805,10 +805,10 @@ module TestDeviceFileSystem =
         let file, system =
             match
                 Answered.openPath
+                    (UnixPath.parseOrFail context "/f")
                     { reading with
                         Access = FileAccessMode.ReadWrite
                     }
-                    (UnixPath.parseOrFail context "/f")
                     0
                     system
             with
@@ -816,13 +816,13 @@ module TestDeviceFileSystem =
             | other -> failwith $"opening /f: %A{other}"
 
         UnixDescriptor.tryFileClone (Callers.leader system) file dev system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) dev file system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
         // On one filesystem, the directory is what answers.
         UnixDescriptor.tryFileClone (Callers.leader system) file directory system
-        |> shouldEqual (Ok UnixError.EISDIR)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EISDIR, system))
 
     // ------------------------------------------------------- the node itself
 
@@ -832,10 +832,10 @@ module TestDeviceFileSystem =
 
         match
             OpenFlagWords.openPath
+                (PathArg.ofText "/dev/null")
                 { reading with
                     Directory = true
                 }
-                (PathArg.ofText "/dev/null")
                 0
                 system
         with
@@ -906,7 +906,7 @@ module TestDeviceFileSystem =
     [<Test>]
     let ``checkInvariants reports each forged mount defect`` () : unit =
         let system = booted linux
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let mountedRoot =
             match stat "/dev" system with

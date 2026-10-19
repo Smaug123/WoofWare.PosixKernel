@@ -31,7 +31,12 @@ module TestFutex =
         | [ pid ], system -> pid, system
         | pids, _ -> failwith $"expected one process, got %A{pids}"
 
-    let private seconds (s : int64) (ns : int64) : TimespecArgument = TimespecArgument.Readable (s, ns)
+    let private seconds (s : int64) (ns : int64) : TimespecArgument =
+        TimespecArgument.Readable
+            {
+                Seconds = s
+                Nanoseconds = ns
+            }
 
     /// What `Syscall.Futex` answers for `thread` of `pid`, with the sixth
     /// argument `val3`.

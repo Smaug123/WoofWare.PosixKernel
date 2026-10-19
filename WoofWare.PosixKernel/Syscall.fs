@@ -270,11 +270,11 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | FileClone of destination : int * source : int
     /// `tcgetattr(3)`, as `UnixDescriptor.terminalAttributes` makes it.
     | TerminalAttributes of fd : int
-    /// `geteuid(2)`, as `UnixDescriptor.effectiveUserId` makes it.
+    /// `geteuid(2)`, as `UnixCredentials.geteuid` makes it.
     | GetEffectiveUserId
-    /// `getegid(2)`, as `UnixDescriptor.effectiveGroupId` makes it.
+    /// `getegid(2)`, as `UnixCredentials.getegid` makes it.
     | GetEffectiveGroupId
-    /// `getgroups(2)`, as `UnixDescriptor.getgroups` makes it.
+    /// `getgroups(2)`, as `UnixCredentials.getgroups` makes it.
     | GetGroups of size : int * destination : UserBuffer
     /// `stat(2)` or `lstat(2)`, as `UnixPathResolution.stat` makes it:
     /// `policy` says which.
@@ -469,7 +469,7 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
         nchanges : int *
         eventlist : UserBuffer *
         nevents : int *
-        timeout : KeventTimeout
+        timeout : TimespecArgument
     /// `inotify_init1(2)`, as `UnixInotify.inotifyInit1` makes it. `flags` is
     /// raw, in Linux's numbering.
     | InotifyInit1 of flags : int
@@ -730,14 +730,14 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixDescriptor.bytesAvailable` answers.
     | BytesAvailable of answer : BytesAvailableAnswer
     /// What `UnixDescriptor.fileClone` answers.
-    | FileClone of error : UnixError
+    | FileClone of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.terminalAttributes` answers.
     | TerminalAttributes of answer : TerminalAttributesAnswer
-    /// What `UnixDescriptor.effectiveUserId` answers.
+    /// What `UnixCredentials.geteuid` answers.
     | GetEffectiveUserId of user : UserId
-    /// What `UnixDescriptor.effectiveGroupId` answers.
+    /// What `UnixCredentials.getegid` answers.
     | GetEffectiveGroupId of group : GroupId
-    /// What `UnixDescriptor.getgroups` answers.
+    /// What `UnixCredentials.getgroups` answers.
     | GetGroups of answer : GetGroupsAnswer
     /// What `UnixPathResolution.stat` answers.
     | Stat of answer : FileStatusAnswer
@@ -830,9 +830,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | RecvMsg of stepped : SteppedRecvMsg<'Thread, 'Handler>
     /// What `UnixReadWrite.pread` answers.
     | PRead of answer : ReadAnswer * system : UnixSystem<'Thread, 'Handler>
-    /// What `UnixReadWrite.write` answers, or
-    /// `UnixReadWrite.writeWithBytes` after it.
-    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+    /// What `UnixReadWrite.writeWithBytes` answers after `UnixReadWrite.write`,
+    /// or what `write` answers, beside no delivery, if it ended before its copy.
+    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * delivered : Delivery option
     /// What `UnixReadWrite.send` answers, or `UnixReadWrite.sendWithBytes`
     /// after it.
     | Send of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>

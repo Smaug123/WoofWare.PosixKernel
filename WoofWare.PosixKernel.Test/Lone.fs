@@ -168,12 +168,13 @@ module internal Lone =
         =
         only "mapOpenFiles" system |> ignore
 
-        { system with
-            Machine =
-                { system.Machine with
-                    OpenFiles = f system.Machine.OpenFiles
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    OpenFiles = f machine.OpenFiles
                 }
-        }
+            )
+            system
 
     /// `UnixWait.wake` of the only process's threads, each woken thread
     /// answered by its name, and the system with them woken.
@@ -243,43 +244,19 @@ module internal Lone =
         =
         let standing = (Proc.state (only "restand" system) system).CurrentDirectoryInode
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CurrentDirectories = Map.ofList [ standing, 1 ]
                 }
-        }
+            )
+            system
 
     // The library's functions that work on one process's view, which tests
     // call directly, each made in the view of the only process: they take the
     // system, focus it (`view`), and put back each view they answer
     // (`unview`). A test of a system holding several processes focuses one
     // through `Proc.view`.
-
-    /// `WoofWare.PosixKernel.UnixSystemState`'s readers and writers, made in
-    /// the view of the only process.
-    [<RequireQualifiedAccess>]
-    module UnixSystemState =
-        /// The numbering the system's signals are read under: its machine's
-        /// platform's, whichever process asks.
-        let signalNumbering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-            (system : UnixSystem<'Thread, 'Handler>)
-            : SignalNumbering
-            =
-            SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
-
-        let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-            (system : UnixSystem<'Thread, 'Handler>)
-            : FileDescriptorRegistry
-            =
-            fileDescriptors system
-
-        let withFileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-            (registry : FileDescriptorRegistry)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : UnixSystem<'Thread, 'Handler>
-            =
-            withFileDescriptors registry system
 
     /// `WoofWare.PosixKernel.Parking`'s parks, made in the view of the only
     /// process.
@@ -472,13 +449,13 @@ module internal Lone =
 
         let openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (directory : AtDirectory)
-            (flags : OpenFlags)
             (path : UnixPath)
+            (flags : OpenFlags)
             (mode : int)
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
-            WoofWare.PosixKernel.UnixNamespace.openPathParsed directory flags path mode (view system)
+            WoofWare.PosixKernel.UnixNamespace.openPathParsed directory path flags mode (view system)
             |> unviewed
 
         let readlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -704,19 +681,21 @@ module internal Lone =
             |> unviewedStep
 
         /// `tryApplyWrite` of a `write` through `fd`, marked as a `write`
-        /// is (`UnixReadWrite.markedThrough`).
+        /// is (`UnixReadWrite.markedThrough`), and beside it the delivery it
+        /// made.
         let tryApplyWriteThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (fd : int)
             (into : WriteInto)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
             =
             let before = view system
 
             WoofWare.PosixKernel.UnixReadWrite.tryApplyWrite into bytes before
-            |> Result.map (WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before)
-            |> unviewedStep
+            |> Result.map (fun (step, delivery) ->
+                WriteStep.map unfocus (WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before step), delivery
+            )
 
         /// `applyWriteThenSleep` of a `write` through `fd`, marked as a
         /// `write` is (`UnixReadWrite.markedThrough`).

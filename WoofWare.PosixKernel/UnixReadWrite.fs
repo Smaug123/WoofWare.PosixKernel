@@ -3436,14 +3436,19 @@ module UnixReadWrite =
     /// transfer (`WriteAdmission.Transfer`): `bytes`, exactly the ones it
     /// named, go into `into`, and the call returns their count. `system` must
     /// be the one the admission answered with.
+    ///
+    /// Beside the step, the `Delivery` the bytes made if `into` is a pipe a
+    /// client drains, which read them as they went in; `None` for any other.
     let internal tryApplyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
         =
-        let returns (system : ProcessView<'Thread, 'Handler>) =
-            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system))
+        let returnsDelivering (delivery : Delivery option) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system), delivery)
+
+        let returns (system : ProcessView<'Thread, 'Handler>) = returnsDelivering None system
 
         match into with
         // Both devices take every byte they are given and keep none of it.
@@ -3484,17 +3489,16 @@ module UnixReadWrite =
                                         Buffer = buffer
                                     }
                                     system.Machine.Pipes
-                            Delivered =
-                                DeliveryLog.append
-                                    {
-                                        Endpoint = endpoint
-                                        Bytes = bytes
-                                    }
-                                    system.Machine.Delivered
                         }
                 }
                 |> touchedByWrite pipeId
-                |> returns
+                |> returnsDelivering (
+                    Some
+                        {
+                            Endpoint = endpoint
+                            Bytes = bytes
+                        }
+                )
             | None ->
 
             let written, buffer = PipeBuffer.write bytes pipe.Buffer
@@ -4215,7 +4219,12 @@ module UnixReadWrite =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
-        tryApplyWrite into bytes system |> Result.mapError sendRefusalOf
+        match tryApplyWrite into bytes system with
+        | Error refusal -> Error (sendRefusalOf refusal)
+        | Ok (step, None) -> Ok step
+        | Ok (_, Some delivery) ->
+            failwith
+                $"UnixReadWrite: a send delivered %d{delivery.Bytes.Length} bytes to %O{delivery.Endpoint}, but a send's admission names only a connected socket, never a pipe (this is a bug in this library)."
 
     /// The connected socket a `send` through `fd` writes to, past the flag
     /// word and the descriptor: the description, whether the call is
@@ -4700,8 +4709,8 @@ module UnixReadWrite =
     /// Otherwise a write is short only when it is non-blocking, into a pipe or
     /// to a connected socket with room for part of it: this kernel's
     /// filesystem cannot run out of space. A write into a pipe the client
-    /// drains is read by the client as it is written, and recorded in
-    /// `UnixSystem.delivered`.
+    /// drains is read by the client as it is written, and `writeWithBytes`
+    /// answers what it read.
     ///
     /// A socket with no peer (fresh from `socket(2)`, bound, or listening)
     /// answers without the buffer, as its flavour does for its domain and
@@ -4858,34 +4867,41 @@ module UnixReadWrite =
     let private tryWriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, WriteRefusal>
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>> * Delivery option, WriteRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.writeWithBytes" "UnixReadWrite.write or finishWrite" paused
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
+        // Only a `PausedWriteCall.Write` can deliver: a blocking write into a
+        // pipe a client drains never sleeps, so neither a write that sleeps
+        // for its rest nor a woken one is ever into such a pipe.
         match paused.Call with
         | PausedWriteCall.Write (fd, into) ->
             tryApplyWrite into bytes paused.System
-            |> Result.map (markedThrough fd paused.System)
+            |> Result.map (fun (step, delivery) -> markedThrough fd paused.System step, delivery)
         | PausedWriteCall.WriteThenSleep (total, into) ->
             let fd =
                 match into with
                 | WriteIntoThenSleep.Pipe (_, _, fd)
                 | WriteIntoThenSleep.Connection (_, _, _, _, fd) -> fd
 
-            applyWriteThenSleep paused.Thread total into bytes paused.System
-            |> markedThrough fd paused.System
-            |> Ok
-        | PausedWriteCall.Finish into -> tryApplyResumedWrite paused.Thread into bytes paused.System
-        |> Result.map fateOf
+            Ok (
+                applyWriteThenSleep paused.Thread total into bytes paused.System
+                |> markedThrough fd paused.System,
+                None
+            )
+        | PausedWriteCall.Finish into ->
+            tryApplyResumedWrite paused.Thread into bytes paused.System
+            |> Result.map (fun step -> step, None)
+        |> Result.map (fun (step, delivery) -> fateOf step, delivery)
 
     /// `writeWithBytes`, with a refusal answered as the `Error` rather than raised.
     let internal tryWriteWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * Delivery option, WriteRefusal>
         =
-        Entry.resume (Shape.result Shape.fate) (tryWriteWithBytesIn bytes paused)
+        Entry.resume (Shape.result (Shape.beside Shape.fate)) (tryWriteWithBytesIn bytes paused)
 
     /// <summary>
     /// The rest of the write `paused` stopped: `bytes`, exactly the ones
@@ -4910,6 +4926,11 @@ module UnixReadWrite =
     /// connection, when it returns the count it has put in by now. A signal
     /// never reaches it here, `finishWrite` having answered one first.
     ///
+    /// Beside the fate is the `Delivery` the write made if it went into a pipe
+    /// that a client drains (`LaunchDescriptor.Drained`): the bytes the client
+    /// read, which have left the machine, so that no later system holds them.
+    /// It is `None` for a write into anything else.
+    ///
     /// Resuming the same paused call twice resumes it twice from the same
     /// system, which is what a value is.
     /// </remarks>
@@ -4917,7 +4938,7 @@ module UnixReadWrite =
     let writeWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * Delivery option
         =
         tryWriteWithBytes bytes paused
         |> Refusal.orRaise "UnixReadWrite.writeWithBytes" WriteRefusal.kind WriteRefusal.describe

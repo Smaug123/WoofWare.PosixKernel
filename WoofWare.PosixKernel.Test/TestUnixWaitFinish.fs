@@ -380,9 +380,13 @@ module TestUnixWaitFinish =
 
             let timeout =
                 if case.Timed then
-                    KeventTimeout.Readable (0L, 5_000_000L)
+                    TimespecArgument.Readable
+                        {
+                            Seconds = 0L
+                            Nanoseconds = 5_000_000L
+                        }
                 else
-                    KeventTimeout.Null
+                    TimespecArgument.Null
 
             UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps
@@ -398,7 +402,7 @@ module TestUnixWaitFinish =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
                 | Ok (SyscallAnswer.Completed fd, system) -> int fd, returned system
                 | other -> failwith $"open: %A{other}"
 
@@ -544,6 +548,11 @@ module TestUnixWaitFinish =
                     UnixReadWrite.tryWriteWithBytes
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
+                    |> Result.map (fun (fate, delivery) ->
+                        match delivery with
+                        | None -> fate
+                        | Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
+                    )
 
             match fate with
             | Ok (ProcessFate.Continues (WriteOutcome.WouldBlock _, system)) -> Some system

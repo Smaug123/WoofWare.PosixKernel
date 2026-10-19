@@ -13,9 +13,11 @@ open System.Collections.Immutable
 ///
 /// Resuming a `'Paused` with what it asks for answers `'Answer`, the same type
 /// `Answered` carries, or, where the call copies again after that, another
-/// `CallProgress` with the same `'Answer`. Each paused type says what to copy:
-/// one that copies bytes has a `copyRange`, and its module the function that
-/// resumes it.
+/// `CallProgress` with the same `'Answer`. The one exception is a write's:
+/// `UnixReadWrite.writeWithBytes` answers beside the `'Answer` the bytes the
+/// write delivered out of the machine, which a write answered before its copy
+/// has none of. Each paused type says what to copy: one that copies bytes has
+/// a `copyRange`, and its module the function that resumes it.
 [<RequireQualifiedAccess>]
 type CallProgress<'Paused, 'Answer> =
     /// The call is over, without reading (any more of) the caller's memory.
@@ -39,6 +41,17 @@ module internal CallProgress =
         | Error refusal -> Error refusal
         | Ok (CallProgress.Answered answer) -> Ok answer
         | Ok (CallProgress.NeedsCopyIn paused) -> resume paused
+
+    /// `progress` with its answer made `f` of what it was, if the call is over;
+    /// a paused call is left as it is.
+    let mapAnswered<'Paused, 'Answer, 'Mapped>
+        (f : 'Answer -> 'Mapped)
+        (progress : CallProgress<'Paused, 'Answer>)
+        : CallProgress<'Paused, 'Mapped>
+        =
+        match progress with
+        | CallProgress.Answered answer -> CallProgress.Answered (f answer)
+        | CallProgress.NeedsCopyIn paused -> CallProgress.NeedsCopyIn paused
 
     /// Throws `ArgumentNullException`, naming the parameter `paused`, if
     /// `paused` is null, as only `Unchecked.defaultof` or C# `default` can make

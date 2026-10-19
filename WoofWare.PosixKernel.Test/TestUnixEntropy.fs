@@ -66,12 +66,13 @@ module TestUnixEntropy =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Machine =
-                { system.Machine with
-                    EntropyPool = reference.Machine.EntropyPool
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    EntropyPool = UnixSystem.entropyPool reference
                 }
-        }
+            )
+            system
 
     // ------------------------------------------------------------------
     // getrandom
@@ -149,7 +150,7 @@ module TestUnixEntropy =
     let ``every valid flag combination draws from the one pool`` () : unit =
         let property (count : byte) : unit =
             let system = linux ()
-            let expected, pool = EntropyPool.draw (int count) system.Machine.EntropyPool
+            let expected, pool = EntropyPool.draw (int count) (UnixSystem.entropyPool system)
 
             for flags in validFlags do
                 match
@@ -157,7 +158,7 @@ module TestUnixEntropy =
                 with
                 | Ok (GetRandomAnswer.Completed draw, after) ->
                     Seq.toArray (EntropyDraw.bytes draw) |> shouldEqual (Seq.toArray expected)
-                    after.Machine.EntropyPool |> shouldEqual pool
+                    UnixSystem.entropyPool after |> shouldEqual pool
                     withPoolOf system after |> shouldEqual system
                 | other -> failwith $"flags 0x%x{flags}, count %d{count}: expected bytes, got %O{other}"
 
@@ -214,12 +215,14 @@ module TestUnixEntropy =
 
         for count in [ maxTransfer + 1UL ; 1UL <<< 31 ; 1UL <<< 40 ; UInt64.MaxValue ] do
             let system = linux ()
-            let pool = system.Machine.EntropyPool
+            let pool = UnixSystem.entropyPool system
 
             match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped count 0u system with
             | Ok (GetRandomAnswer.Completed draw, after) ->
                 EntropyDraw.count draw |> shouldEqual limit
-                after.Machine.EntropyPool |> shouldEqual (snd (EntropyPool.take limit pool))
+
+                (UnixSystem.entropyPool after)
+                |> shouldEqual (snd (EntropyPool.take limit pool))
 
                 // The draw's last bytes are the stream's bytes at that point.
                 let tailStart = limit - 16
@@ -304,12 +307,12 @@ module TestUnixEntropy =
     let ``getentropy fills exactly the buffer asked for`` () : unit =
         let property (length : byte) : unit =
             let system = darwin ()
-            let expected, pool = EntropyPool.draw (int length) system.Machine.EntropyPool
+            let expected, pool = EntropyPool.draw (int length) (UnixSystem.entropyPool system)
 
             match UnixEntropy.tryGetEntropy (Callers.leader system) UserBuffer.Mapped (uint64 length) system with
             | Ok (GetEntropyAnswer.Completed draw, after) ->
                 Seq.toArray (EntropyDraw.bytes draw) |> shouldEqual (Seq.toArray expected)
-                after.Machine.EntropyPool |> shouldEqual pool
+                UnixSystem.entropyPool after |> shouldEqual pool
                 withPoolOf system after |> shouldEqual system
             | other -> failwith $"length %d{length}: expected bytes, got %O{other}"
 
@@ -401,7 +404,7 @@ module TestUnixEntropy =
     let ``consecutive draws continue the stream`` () : unit =
         let property (first : byte, second : byte) : unit =
             let system = linux ()
-            let whole, _ = EntropyPool.draw 1000 system.Machine.EntropyPool
+            let whole, _ = EntropyPool.draw 1000 (UnixSystem.entropyPool system)
             let firstRounded = (int first + 7) / 8 * 8
 
             match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped (uint64 first) 0u system with

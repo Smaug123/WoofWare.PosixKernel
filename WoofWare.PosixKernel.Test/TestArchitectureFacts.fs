@@ -348,7 +348,7 @@ module TestArchitectureFacts =
                 UnixSystem.initial<int, string> platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-            UnixMachineState.userBufferCheck system.Machine |> shouldEqual expected
+            UnixMachineState.userBufferCheck (Kernel.machine system) |> shouldEqual expected
             UnixSystem.checkInvariants system |> shouldEqual []
 
         let limitGen =
@@ -385,8 +385,9 @@ module TestArchitectureFacts =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                UnixMachineState.userBufferCheck
-                    (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)).Machine
+                UnixMachineState.userBufferCheck (
+                    Kernel.machine (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                )
                 |> shouldEqual (UserBufferCheck.BeforeOperation limit)
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -414,12 +415,13 @@ module TestArchitectureFacts =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let forged =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             UserBufferCheck = check
                         }
-                }
+                    )
+                    system
 
             let sound =
                 match SimulatedUnixPlatform.flavour platform, check with

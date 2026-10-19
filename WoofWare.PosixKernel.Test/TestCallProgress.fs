@@ -124,8 +124,10 @@ module TestCallProgress =
                 let second = UnixReadWrite.writeWithBytes bytes paused
 
                 match first, second with
-                | ProcessFate.Continues (outcome, after), ProcessFate.Continues (outcome', after') ->
+                | (ProcessFate.Continues (outcome, after), delivery),
+                  (ProcessFate.Continues (outcome', after'), delivery') ->
                     outcome' |> shouldEqual outcome
+                    delivery' |> shouldEqual delivery
                     (after' = after) |> shouldEqual true
                 | first, second -> failwith $"a write into a pipe ended the process: %A{first}, %A{second}"
 
@@ -219,7 +221,7 @@ module TestCallProgress =
             "UnixReadWrite.writeWithBytes",
             fun () ->
                 UnixReadWrite.writeWithBytes bytes Unchecked.defaultof<PausedWrite<int, string>>
-                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string> * Delivery option>
             "UnixReadWrite.sendWithBytes",
             fun () ->
                 UnixReadWrite.sendWithBytes bytes Unchecked.defaultof<PausedSend<int, string>>

@@ -52,12 +52,13 @@ module TestKqueueOwner =
         let system =
             Lone.mapOpenFiles (OpenFileTable.setKqueueState id state) system
             |> fun system ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             NextEventRegistrationOrdinal = 1L
                         }
-                }
+                    )
+                    system
 
         listener, kqueue, system
 
@@ -112,7 +113,7 @@ module TestKqueueOwner =
             let id = KeventWorld.idOf kqueue connected
 
             let withActive (active : (int * KqueueFilter) list) (system : UnixSystem<int, string>) =
-                match OpenFileTable.tryFind id system.Machine.OpenFiles with
+                match OpenFileTable.tryFind id (UnixSystem.openFiles system) with
                 | Some {
                            Target = OpenFileTarget.Kqueue state
                        } ->
@@ -126,7 +127,9 @@ module TestKqueueOwner =
                 | other -> failwith $"%O{id} is %A{other}"
 
             let idle = withActive [] connected
-            let activated = KqueueQueue.activate socket [ KqueueFilter.Read ] idle.Machine
+
+            let activated =
+                KqueueQueue.activate socket [ KqueueFilter.Read ] (Kernel.machine idle)
 
             match OpenFileTable.tryFind id activated.OpenFiles with
             | Some {
@@ -136,8 +139,8 @@ module TestKqueueOwner =
 
             // An event on the client's socket reaches nothing: the
             // registration is attached to the listener's.
-            KqueueQueue.activate (socketOf client connected) [ KqueueFilter.Read ] idle.Machine
-            |> shouldEqual idle.Machine
+            KqueueQueue.activate (socketOf client connected) [ KqueueFilter.Read ] (Kernel.machine idle)
+            |> shouldEqual (Kernel.machine idle)
 
     [<Test>]
     let ``a descriptor naming another process's kqueue is a defect`` () : unit =

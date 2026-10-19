@@ -774,11 +774,11 @@ module TestBlockingPipe =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering bare)
+                                (Kernel.signalNumbering bare)
                                 Signal.SIGPIPE
                                 SignalDisposition.Ignore
                             |> SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering bare)
+                                (Kernel.signalNumbering bare)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1137,7 +1137,7 @@ module TestBlockingPipe =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (Lone.UnixSystemState.signalNumbering system)
+                                        (Kernel.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1287,7 +1287,7 @@ module TestBlockingPipe =
                         |> Set.ofSeq
 
                     let actualDescriptions =
-                        OpenFileTable.descriptions system.Machine.OpenFiles
+                        OpenFileTable.descriptions (UnixSystem.openFiles system)
                         |> Map.filter (fun _ description ->
                             match description.Target with
                             | OpenFileTarget.Pipe (p, _) -> p = pipeId
@@ -1310,14 +1310,15 @@ module TestBlockingPipe =
                             |> Map.count
 
                         let recorded =
-                            OpenFileTable.holdCount id system.Machine.OpenFiles |> Option.defaultValue 0
+                            OpenFileTable.holdCount id (UnixSystem.openFiles system)
+                            |> Option.defaultValue 0
 
                         if recorded <> expected then
                             failwith
                                 $"%s{where ()}: description %d{description} records %d{recorded} holds, expected %d{expected}"
 
                     // Gone once nothing references either end.
-                    match Map.tryFind pipeId system.Machine.Pipes with
+                    match Map.tryFind pipeId (UnixSystem.pipes system) with
                     | Some pipe -> PipeBuffer.held pipe.Buffer |> shouldEqual (held reference.Buffer)
                     | None -> Map.isEmpty (liveDescriptions reference) |> shouldEqual true
 
@@ -1414,11 +1415,11 @@ module TestBlockingPipe =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch
                                 { SignalCatch.ofHandler "h" with
@@ -1492,7 +1493,7 @@ module TestBlockingPipe =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome sleeper
@@ -1789,7 +1790,7 @@ module TestBlockingPipe =
 
             match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) (Woken.thread sleeper system) with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EFAULT), system) ->
-                PipeBuffer.held (UnixMachineState.pipe (PipeId 3L) system.Machine).Buffer
+                PipeBuffer.held (UnixMachineState.pipe (PipeId 3L) (Kernel.machine system)).Buffer
                 |> shouldEqual 3
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1802,7 +1803,7 @@ module TestBlockingPipe =
 
             match Lone.UnixReadWrite.tryAdmitFinishWrite sleeper system with
             | Ok (WriteStep.Returns (WriteResumption.Answered (WriteAnswer.Failed UnixError.EFAULT), system)) ->
-                PipeBuffer.held (UnixMachineState.pipe (PipeId 3L) system.Machine).Buffer
+                PipeBuffer.held (UnixMachineState.pipe (PipeId 3L) (Kernel.machine system)).Buffer
                 |> shouldEqual 61440
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1822,7 +1823,7 @@ module TestBlockingPipe =
         | other -> failwith $"expected the write to return, got %A{other}"
 
     let private descriptionExists (description : OpenFileDescriptionId) (system : UnixSystem<int, string>) : bool =
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey description
 
     /// `open-file-references.c` section B on Linux: the last close of the read
@@ -2019,7 +2020,7 @@ module TestBlockingPipe =
 
                 let pipe =
                     match FileDescriptorRegistry.tryFindTarget 3 (Lone.fileDescriptors system) with
-                    | Some (OpenFileTarget.Pipe (pipeId, _)) -> UnixMachineState.pipe pipeId system.Machine
+                    | Some (OpenFileTarget.Pipe (pipeId, _)) -> UnixMachineState.pipe pipeId (Kernel.machine system)
                     | other -> failwith $"%A{other}"
 
                 PipeBuffer.held pipe.Buffer |> shouldEqual 65536
@@ -2229,7 +2230,7 @@ module TestBlockingPipe =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             disposition
                             proc.Signals
@@ -2272,9 +2273,7 @@ module TestBlockingPipe =
     [<Test>]
     let ``Darwin: the close moves the timestamps of the transfer it ends`` () : unit =
         let later (system : UnixSystem<int, string>) =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L system.Scheduling
-            }
+            UnixSystem.advanceClock 1_000_000_000L system
 
         let times (fd : int) (system : UnixSystem<int, string>) =
             match UnixPathResolution.tryFstat (Callers.leader system) fd system with
@@ -2288,7 +2287,7 @@ module TestBlockingPipe =
         let system = pipeHolding platform false 0 |> later |> readerAsleep |> later
         let duplicate, system = dupped 3 system
         let system = closed 3 system
-        let closedAt = UnixMachineState.realtime system.Scheduling system.Machine
+        let closedAt = UnixSystem.realtime system
         let access, _, _ = times duplicate system
         access |> shouldEqual closedAt
 
@@ -2302,7 +2301,7 @@ module TestBlockingPipe =
         let system = pipeHolding platform false 65536 |> later |> writerAsleep 1 |> later
         let duplicate, system = dupped 4 system
         let system = closed 4 system
-        let closedAt = UnixMachineState.realtime system.Scheduling system.Machine
+        let closedAt = UnixSystem.realtime system
         let _, modification, change = times duplicate system
         (modification, change) |> shouldEqual (closedAt, closedAt)
 
@@ -2316,9 +2315,7 @@ module TestBlockingPipe =
         // atime, stay put while the call sleeps, even once a write has put
         // bytes in, and are the moment the call ends, however it ends.
         let later (system : UnixSystem<int, string>) =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L system.Scheduling
-            }
+            UnixSystem.advanceClock 1_000_000_000L system
 
         let times (fd : int) (system : UnixSystem<int, string>) =
             match UnixPathResolution.tryFstat (Callers.leader system) fd system with
@@ -2362,7 +2359,7 @@ module TestBlockingPipe =
             // Nothing moved while it slept.
             times fd asleep |> shouldEqual atStart
             let ended = ending asleep |> later
-            let now = UnixMachineState.realtime ended.Scheduling ended.Machine
+            let now = UnixSystem.realtime ended
 
             let after =
                 match writing with
@@ -2421,11 +2418,11 @@ module TestBlockingPipe =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR2
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h2"))
                         |> SignalState.enqueue
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR2
                                 Target = ValueSome sleeper

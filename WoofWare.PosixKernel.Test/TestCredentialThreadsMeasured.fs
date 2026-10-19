@@ -289,7 +289,7 @@ module TestCredentialThreadsMeasured =
             | other -> failwith $"getresgid answered %A{other}"
 
         let supplementary =
-            match UnixDescriptor.getgroups caller UserBuffer.Mapped 8 system with
+            match UnixCredentials.getgroups caller UserBuffer.Mapped 8 system with
             | GetGroupsAnswer.Copied groups -> groups |> List.map GroupId.toUInt32
             | other -> failwith $"getgroups answered %A{other}"
 

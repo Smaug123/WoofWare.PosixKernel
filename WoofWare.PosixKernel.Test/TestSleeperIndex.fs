@@ -241,8 +241,9 @@ module TestSleeperIndex =
                 | CallProgress.Answered (ProcessFate.ProcessEnded (_, system)) -> Map.remove pid pipes, system
                 | CallProgress.NeedsCopyIn paused ->
                     match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 1uy) paused with
-                    | ProcessFate.Continues (_, system) -> pipes, system
-                    | ProcessFate.ProcessEnded (_, system) -> Map.remove pid pipes, system
+                    | ProcessFate.Continues (_, system), None -> pipes, system
+                    | ProcessFate.ProcessEnded (_, system), None -> Map.remove pid pipes, system
+                    | _, Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
         | 9 when running pid thread system ->
             match pick () with
             | None -> pipes, system
