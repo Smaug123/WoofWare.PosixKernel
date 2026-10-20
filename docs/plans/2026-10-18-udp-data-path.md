@@ -152,32 +152,46 @@ directly: Linux's through `SO_MEMINFO`, and Darwin's through the
 `net.inet.udp.pcblist_n` sysctl, which `netstat` reads. Every rule below
 predicted every admission in its probe.
 
-**Linux** charges each queued datagram a fixed *truesize* by its length:
+**Linux** charges each queued datagram a fixed *truesize* by its length. The
+smallest buffer's charge, *s*, depends on how the kernel was built
+(`LinuxKernelBuild`): 832 on Apple's container kernel 6.18.5 (aarch64), and 960
+on every Azure kernel of GitHub's `ubuntu-24.04` runners, 6.17.0-1022 and
+7.0.0-1017, on x86-64 and aarch64 alike (`runners/`). Neither the version nor
+the architecture decides it. The rest of the table is the same on every kernel:
 
 | length | charge |
 |---|---|
-| 0–197 | 832 |
-| 198–645 | 1280 |
+| 0 to *s* − 635 (197, or 325) | *s* |
+| to 645 | 1280 |
 | 646–1669 | 2304 |
 | 1670–3717 | 4352 |
 | 3718–7813 | 8448 |
 | 7814–16004 | 16640 |
-| 16005–65507 | length + 832 (sampled at 512 sizes, no exception) |
+| 16005–65507 | length + *s* (sampled at 512 sizes, no exception) |
 
-The table is of slab sizes, measured on aarch64. x86-64's may differ, and
-CI's host test (section 4, U1) is what will show it.
+- **Admission** is measured against the charge already held, which includes
+  what was taken and not yet given back, and changed with Linux 6.18 (commit
+  9aaec660b5be, "udp: refine __udp_enqueue_schedule_skb() test"):
+  - **6.18 and later** (6.18.5, 7.0.0): a datagram is admitted exactly when
+    that charge plus its own is at most `SO_RCVBUF`. That held for every
+    admission in nine single-size fills and five mixed-size trials of 600
+    sends on each kernel.
+  - **6.17** (6.17.0-1022, both architectures): a datagram is admitted while
+    that charge is at most `SO_RCVBUF`, so the last one admitted takes the
+    charge past it. Every fill that reached the buffer admitted exactly one
+    datagram more than the strict rule.
 
-- **Admission.** A datagram is admitted exactly when the charge already held
-  plus its own is at most `SO_RCVBUF` (212992). That held for every admission in
-  nine single-size fills and in five mixed-size trials of 600 sends. Charges
-  add exactly. So an unread receiver holds 256 datagrams of 0–197 bytes, 166 of
-  198–645, 92 of 646–1669, and 3 of 65507.
+  Charges add exactly. So at 212992, an unread 6.18.5 container receiver holds
+  256 datagrams of 0–197 bytes, 166 of 198–645, 92 of 646–1669, and 3 of 65507,
+  and a 6.17 Azure one 222 of 0–325 and 4 of 65507.
+- **`SO_RCVBUF`** is `net.core.rmem_default`, which is configuration: 212992
+  is the kernel's default, and GitHub's runners set 1048576.
 - **Release.** Taking a datagram does not give its charge back at once. The
   charge of the datagrams taken accumulates, and is given back together once it
   reaches a quarter of `SO_RCVBUF` (53248), or once the reader queue is empty.
   After 92 datagrams of 1000 bytes, the charge stood at 211968 through 23 takes
-  and fell by 24 × 2304 at the 24th. A full receiver with 22 datagrams taken
-  admitted nothing more; with 29 taken, 24 more.
+  and fell by 24 × 2304 at the 24th. A full 6.18.5 receiver with 22 datagrams
+  taken admitted nothing more; with 29 taken, 24 more (6.17: one, then 25).
 
   This is `udp_rmem_release`'s forward deficit. Linux keeps two queues: the
   arrivals, and a reader queue that a receive refills with every arrival at
@@ -812,5 +826,16 @@ Patrick, 2026-10-18:
 
 Not put to Patrick, so the recommendation stands until he says otherwise:
 3.8's (b), Linux's earliest-parked wake (the draft recommended (a), which S3
-showed wrong for Linux); and 3.2's sysctls as
-machine settings without setters.
+showed wrong for Linux).
+
+Patrick, 2026-10-20, after U1b's host test failed on GitHub's runners, whose
+kernels and configuration differ from the container's (2.4):
+
+- The UDP receive space gets a boot setter,
+  `UnixBootImage.withUdpReceiveSpace`, and a host test boots the model with the
+  host's own.
+- The per-datagram charge follows a platform fact, `LinuxKernelBuild`, which
+  the Linux kernel case carries beside its version and which accepts only
+  measured builds.
+- Admission follows the kernel version, cut at 6.18.0.
+- These come in their own pull request, ahead of U1b.

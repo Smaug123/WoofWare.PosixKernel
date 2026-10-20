@@ -298,11 +298,21 @@ static void section_a(void)
         int s = variant == 0 ? udp() : variant == 1 ? bound_any() : bound();
         printf("A2 sender %s: before sendto getsockname=%s", variant == 0 ? "unbound" : variant == 1 ? "bound 0.0.0.0:0" : "bound 127.0.0.1:0", nameof(s));
         ssize_t sent = send_to(s, "hello", 5, portof(r));
+        int sentErrno = errno;
         struct sockaddr_in from;
         memset(&from, 0, sizeof from);
         socklen_t len = sizeof from;
         ssize_t got = recvfrom(r, buf, sizeof buf, 0, (struct sockaddr *)&from, &len);
-        printf(" sendto=%s after getsockname=%s; recvfrom=%s from=%s:%u len=%u\n", res(sent, errno), nameof(s), res(got, errno), inet_ntoa(from.sin_addr), ntohs(from.sin_port), (unsigned)len);
+        // Each formatted on its own line: nameof and inet_ntoa share
+        // inet_ntoa's one static buffer, and errno is read before either
+        // call can change it.
+        int receiveErrno = errno;
+        char sentText[64], gotText[64], fromText[32];
+        snprintf(sentText, sizeof sentText, "%s", res(sent, sentErrno));
+        snprintf(gotText, sizeof gotText, "%s", res(got, receiveErrno));
+        snprintf(fromText, sizeof fromText, "%s", inet_ntoa(from.sin_addr));
+        const char *after = nameof(s);
+        printf(" sendto=%s after getsockname=%s; recvfrom=%s from=%s:%u len=%u\n", sentText, after, gotText, fromText, ntohs(from.sin_port), (unsigned)len);
         close(r); close(s);
     }
 

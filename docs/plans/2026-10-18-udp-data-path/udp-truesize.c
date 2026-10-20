@@ -102,13 +102,15 @@ static void steps(int lo, long clo, int hi, long chi)
     steps(mid, cmid, hi, chi);
 }
 
+// A fresh receiver's SO_RCVBUF, which every admission is predicted against.
+static int rcv = 0;
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
     memset(payload, 't', sizeof payload);
     {
         struct pair p = fresh();
-        int rcv = 0;
         socklen_t l = sizeof rcv;
         getsockopt(p.r, SOL_SOCKET, SO_RCVBUF, &rcv, &l);
         printf("SO_RCVBUF %d; an empty receiver's charge %ld\n", rcv, rmem(p.r));
@@ -126,7 +128,7 @@ int main(void)
         for (int k = 0; k < 400; k++) {
             int took = send1(p, sizes[i]);
             long after = rmem(p.r);
-            int predicted = before + one <= 212992;
+            int predicted = before + one <= rcv;
             if (took != predicted) ruleBroken++;
             if (took) {
                 admitted++;
@@ -154,7 +156,7 @@ int main(void)
             long alone = charge(size);
             int took = send1(p, size);
             long after = rmem(p.r);
-            int predicted = before + alone <= 212992;
+            int predicted = before + alone <= rcv;
             if (took != predicted) ruleBroken++;
             if (took) {
                 admitted++;

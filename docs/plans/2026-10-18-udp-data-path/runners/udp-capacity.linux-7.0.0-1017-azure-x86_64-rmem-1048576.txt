@@ -1,0 +1,64 @@
+SO_RCVBUF 1048576
+size 0: unpaced 1092, 1092; paced 1092; primed 1092
+size 1: unpaced 1092, 1092; paced 1092; primed 1092
+size 16: unpaced 1092, 1092; paced 1092; primed 1092
+size 100: unpaced 1092, 1092; paced 1092; primed 1092
+size 200: unpaced 1092, 1092; paced 1092; primed 1092
+size 500: unpaced 819, 819; paced 819; primed 819
+size 1000: unpaced 455, 455; paced 455; primed 455
+size 2000: unpaced 240, 240; paced 240; primed 240
+size 4096: unpaced 124, 124; paced 124; primed 124
+size 9216: unpaced 63, 63; paced 63; primed 63
+size 65507: unpaced 15, 15; paced 15; primed 15
+size 325 holds 1092; size 326 holds 819
+size 645 holds 819; size 646 holds 455
+size 1669 holds 455; size 1670 holds 240
+size 3717 holds 240; size 3718 holds 124
+size 7813 holds 124; size 7814 holds 63
+size 16004 holds 63; size 16005 holds 61
+size 16229 holds 61; size 16230 holds 60
+size 16516 holds 60; size 16517 holds 59
+size 16812 holds 59; size 16813 holds 58
+size 17118 holds 58; size 17119 holds 57
+size 17436 holds 57; size 17437 holds 56
+size 17764 holds 56; size 17765 holds 55
+size 18105 holds 55; size 18106 holds 54
+size 18458 holds 54; size 18459 holds 53
+size 18824 holds 53; size 18825 holds 52
+size 19204 holds 52; size 19205 holds 51
+size 19600 holds 51; size 19601 holds 50
+size 20011 holds 50; size 20012 holds 49
+size 20439 holds 49; size 20440 holds 48
+size 20885 holds 48; size 20886 holds 47
+size 21350 holds 47; size 21351 holds 46
+size 21835 holds 46; size 21836 holds 45
+size 22341 holds 45; size 22342 holds 44
+size 22871 holds 44; size 22872 holds 43
+size 23425 holds 43; size 23426 holds 42
+size 24006 holds 42; size 24007 holds 41
+size 24615 holds 41; size 24616 holds 40
+size 25254 holds 40; size 25255 holds 39
+size 25926 holds 39; size 25927 holds 38
+size 26634 holds 38; size 26635 holds 37
+size 27379 holds 37; size 27380 holds 36
+size 28167 holds 36; size 28168 holds 35
+size 28999 holds 35; size 29000 holds 34
+size 29880 holds 34; size 29881 holds 33
+size 30815 holds 33; size 30816 holds 32
+size 31808 holds 32; size 31809 holds 31
+size 32865 holds 31; size 32866 holds 30
+size 33992 holds 30; size 33993 holds 29
+size 35197 holds 29; size 35198 holds 28
+size 36489 holds 28; size 36490 holds 27
+size 37876 holds 27; size 37877 holds 26
+size 39369 holds 26; size 39370 holds 25
+size 40983 holds 25; size 40984 holds 24
+size 42730 holds 24; size 42731 holds 23
+size 44630 holds 23; size 44631 holds 22
+size 46702 holds 22; size 46703 holds 21
+size 48972 holds 21; size 48973 holds 20
+size 51468 holds 20; size 51469 holds 19
+size 54228 holds 19; size 54229 holds 18
+size 57294 holds 18; size 57295 holds 17
+size 60720 holds 17; size 60721 holds 16
+size 64576 holds 16; size 64577 holds 15

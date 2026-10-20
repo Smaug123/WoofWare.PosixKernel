@@ -1,0 +1,16 @@
+Darwin 27.0.0 arm64
+sender unbound, to 127.0.0.1, receiver unconnected: took 20 of 20 (timed out 0); sources seen: 127.0.0.1 
+sender unbound, to 127.0.0.2, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender unbound, to 0.0.0.0, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender 0.0.0.0, to 127.0.0.1, receiver unconnected: took 20 of 20 (timed out 0); sources seen: 127.0.0.1 
+sender 0.0.0.0, to 127.0.0.1, receiver connected to 127.0.0.1:sender: took 20 of 20 (timed out 0); sources seen: 127.0.0.1 
+sender 0.0.0.0, to 127.0.0.2, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender 0.0.0.0, to 127.0.0.2, receiver connected to 127.0.0.1:sender: took 0 of 20 (timed out 20); sources seen: -
+sender 0.0.0.0, to 0.0.0.0, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender 0.0.0.0, to 0.0.0.0, receiver connected to 127.0.0.1:sender: took 0 of 20 (timed out 20); sources seen: -
+sender 127.0.0.1, to 127.0.0.1, receiver unconnected: took 20 of 20 (timed out 0); sources seen: 127.0.0.1 
+sender 127.0.0.1, to 127.0.0.1, receiver connected to 127.0.0.1:sender: took 20 of 20 (timed out 0); sources seen: 127.0.0.1 
+sender 127.0.0.1, to 127.0.0.2, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender 127.0.0.1, to 127.0.0.2, receiver connected to 127.0.0.1:sender: took 0 of 20 (timed out 20); sources seen: -
+sender 127.0.0.1, to 0.0.0.0, receiver unconnected: took 0 of 20 (timed out 20); sources seen: -
+sender 127.0.0.1, to 0.0.0.0, receiver connected to 127.0.0.1:sender: took 0 of 20 (timed out 20); sources seen: -
