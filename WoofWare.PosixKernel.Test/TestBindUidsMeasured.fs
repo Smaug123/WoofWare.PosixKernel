@@ -156,7 +156,7 @@ module TestBindUidsMeasured =
 
         let fd, system =
             match step pid (Syscall.Socket (domain, rawKind, rawProtocol)) system with
-            | SteppedCall.Socket (Ok made) -> made
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket by %O{pid}: %A{Stepped.view other}"
 
         if not reuse then

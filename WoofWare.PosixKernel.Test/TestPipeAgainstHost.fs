@@ -421,7 +421,7 @@ module TestPipeAgainstHost =
                                     failwith $"%s{where ()}: host dup failed"
 
                                 match Answered.dup (Callers.leader system) modelFd system with
-                                | SyscallAnswer.Completed modelNew, after ->
+                                | DescriptorAnswer.Returned modelNew, after ->
                                     slots <- slots @ [ int modelNew, hostNew, pipeEnd, group ]
                                     system <- after
                                 | other -> failwith $"%s{where ()}: model dup %A{other}"

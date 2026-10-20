@@ -1164,6 +1164,7 @@ module TestOwnerChange =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
                 (inodeAt (UnixSystem.fileSystem system) p)
                 access
@@ -1176,6 +1177,7 @@ module TestOwnerChange =
             FileDescriptorRegistry.openDirectory
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
                 (inodeAt (UnixSystem.fileSystem system) p)
                 (Lone.fileDescriptors system)

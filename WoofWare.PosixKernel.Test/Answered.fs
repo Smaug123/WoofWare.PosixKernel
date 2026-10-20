@@ -13,7 +13,7 @@ module internal Answered =
         (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         match OpenFlagWords.openPath (PathArg.ofPath path) flags mode system with
         | Ok answer -> answer
@@ -97,7 +97,7 @@ module internal Answered =
         (caller : Caller<'Thread>)
         (fd : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixDescriptor.tryDup caller fd system with
         | Ok answer -> answer

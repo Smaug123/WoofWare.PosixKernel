@@ -197,6 +197,7 @@ module TestDirectoryReadAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -214,6 +215,15 @@ module TestDirectoryReadAgainstHost =
         match answer with
         | SyscallAnswer.Completed value -> value, system
         | SyscallAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
+
+    let private returned
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
 
     let private modelInode (path : string) (system : UnixSystem<int, string>) : InodeNumber =
         match
@@ -313,9 +323,9 @@ module TestDirectoryReadAgainstHost =
 
                                 let fd, system =
                                     Answered.openPath (rooted $"d/%s{name}") creating 0o644 system
-                                    |> completed $"creat %s{name}"
+                                    |> returned $"creat %s{name}"
 
-                                match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
+                                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                                 | Ok (SyscallAnswer.Completed _, system) -> system
                                 | other -> failwith $"model close: %A{other}"
                         )
@@ -362,14 +372,14 @@ module TestDirectoryReadAgainstHost =
                         hostSucceeded "open d" hostFd
 
                         let modelFd, system =
-                            Answered.openPath (rooted "d") reading 0 system |> completed "open d"
+                            Answered.openPath (rooted "d") reading 0 system |> returned "open d"
 
                         live <-
                             live
                             @ [
                                 {
                                     HostFd = hostFd
-                                    ModelFd = int modelFd
+                                    ModelFd = modelFd
                                     Description = nextDescription
                                 }
                             ]
@@ -392,14 +402,14 @@ module TestDirectoryReadAgainstHost =
                                     hostSucceeded "dup" hostFd
 
                                     let modelFd, system =
-                                        Answered.dup (Callers.leader system) target.ModelFd system |> completed "dup"
+                                        Answered.dup (Callers.leader system) target.ModelFd system |> returned "dup"
 
                                     live <-
                                         live
                                         @ [
                                             { target with
                                                 HostFd = hostFd
-                                                ModelFd = int modelFd
+                                                ModelFd = modelFd
                                             }
                                         ]
 
@@ -596,15 +606,15 @@ module TestDirectoryReadAgainstHost =
                     |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                 let fd, system =
-                    Answered.openPath (rooted "f") creating 0o644 system |> completed "creat f"
+                    Answered.openPath (rooted "f") creating 0o644 system |> returned "creat f"
 
                 let system =
-                    match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"%A{refusal}"
 
                 let readable, system =
-                    Answered.openPath (rooted "f") reading 0 system |> completed "open f"
+                    Answered.openPath (rooted "f") reading 0 system |> returned "open f"
 
                 let writeOnly, system =
                     Answered.openPath
@@ -614,7 +624,7 @@ module TestDirectoryReadAgainstHost =
                         }
                         0
                         system
-                    |> completed "open f"
+                    |> returned "open f"
 
                 let socket, system =
                     NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system
@@ -635,8 +645,8 @@ module TestDirectoryReadAgainstHost =
                 // can; docs/probes/closed-descriptor measured that both flavours
                 // answer it as they do a freed slot.
                 [
-                    "a readable regular file", hostReadable, int readable
-                    "a write-only regular file", hostWriteOnly, int writeOnly
+                    "a readable regular file", hostReadable, readable
+                    "a write-only regular file", hostWriteOnly, writeOnly
                     "a pipe's read end", hostPipe.[0], 0
                     "a pipe's write end", hostPipe.[1], 1
                     "a socket", hostSocket, socket

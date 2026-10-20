@@ -458,7 +458,7 @@ module TestEphemeralPorts =
     let private describe (stepped : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : string =
         match stepped with
         | Error refusal -> $"a refusal: %s{SyscallRefusal.describe refusal}"
-        | Ok (SteppedCall.Socket result) -> $"%A{Result.map fst result}"
+        | Ok (SteppedCall.Socket (answer, _)) -> $"%A{answer}"
         | Ok (SteppedCall.Bind (answer, _)) -> $"%A{answer}"
         | Ok (SteppedCall.Listen (answer, _)) -> $"%A{answer}"
         | Ok (SteppedCall.Connect (outcome, _)) -> $"%A{outcome}"
@@ -540,7 +540,7 @@ module TestEphemeralPorts =
         match call with
         | Syscall.Socket _ ->
             match stepped with
-            | Ok (SteppedCall.Socket (Ok (fd, system))) ->
+            | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) ->
                 { run with
                     System = system
                     Sockets = run.Sockets @ [ fd ]

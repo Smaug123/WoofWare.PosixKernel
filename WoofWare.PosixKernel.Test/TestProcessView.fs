@@ -270,7 +270,7 @@ module TestProcessView =
                 // A call that does change something answers a new kernel, in
                 // which only the caller's process has moved.
                 match UnixDescriptor.tryDup (Caller.make pid 0) 1 system with
-                | Ok (SyscallAnswer.Completed _, after) ->
+                | Ok (DescriptorAnswer.Returned _, after) ->
                     obj.ReferenceEquals (after, system) |> shouldEqual false
 
                     for other in pids do

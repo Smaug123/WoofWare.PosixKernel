@@ -568,3 +568,16 @@ type SyscallOutcome =
     ///
     /// Only a finishing call answers this, never the call as first made.
     | Interrupted
+
+/// What became of an `open(2)` or `openat(2)` this kernel could answer.
+[<RequireQualifiedAccess>]
+type OpenOutcome =
+    /// The entry point returned.
+    | Answered of DescriptorAnswer
+    /// The entry point did not return: a blocking open of one end of a FIFO
+    /// waits until the other end is opened. The calling thread sleeps as
+    /// `SyscallOutcome.WouldBlock` describes, and `UnixWait.finish` finishes
+    /// the call (`FinishedCall.FifoOpen`).
+    ///
+    /// Reserved: nothing in this version makes a FIFO, so no open answers it.
+    | WouldBlock of WakeCondition

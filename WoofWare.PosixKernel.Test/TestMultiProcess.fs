@@ -301,12 +301,13 @@ module TestMultiProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
                         view
                 with
-                | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                 | other -> failwith $"open: %A{other}"
 
             let fds, machine =

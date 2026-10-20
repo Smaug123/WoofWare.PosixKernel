@@ -1135,7 +1135,7 @@ module UnixSocket =
         (socketType : int)
         (protocol : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, SocketRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, SocketRefusal>
         =
         // Measured (`fcntl-dup.c`, LIMIT rows): with no descriptor left below
         // the limit, Darwin answers EMFILE ahead of every screen of the three
@@ -1159,7 +1159,7 @@ module UnixSocket =
 
         match decoding with
         | SocketDecoding.Refused refusal -> Error refusal
-        | SocketDecoding.Fails error -> Ok (Error error)
+        | SocketDecoding.Fails error -> Ok (DescriptorAnswer.Failed error, system)
         | SocketDecoding.Creates (socketDomain, kind, socketProtocol, nonBlocking) ->
             match room with
             | Error refusal -> Error (SocketRefusal.DescriptorLimit refusal)
@@ -1181,9 +1181,9 @@ module UnixSocket =
                         (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) true)
                         (UnixSystemState.fileDescriptors system)
 
-                Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+                Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
             else
-                Ok (Ok (fd, system))
+                Ok (DescriptorAnswer.Returned fd, system)
 
     /// `socket`, with a refusal answered as the `Error` rather than raised.
     let internal trySocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1192,13 +1192,13 @@ module UnixSocket =
         (socketType : int)
         (protocol : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, SocketRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, SocketRefusal>
         =
         Entry.call
             "UnixSocket.socket"
             CallerRequirement.Running
             caller
-            (Shape.result (Shape.result Shape.withSystem))
+            (Shape.result Shape.withSystem)
             (trySocketIn domain socketType protocol)
             system
 
@@ -1224,7 +1224,7 @@ module UnixSocket =
         (socketType : int)
         (protocol : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySocket caller domain socketType protocol system
         |> Refusal.orRaise "UnixSocket.socket" SocketRefusal.kind SocketRefusal.describe

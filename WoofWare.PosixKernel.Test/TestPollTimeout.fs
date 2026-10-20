@@ -441,6 +441,7 @@ module TestPollTimeout =
             FileDescriptorRegistry.openDirectory
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                false
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -485,6 +486,7 @@ module TestPollTimeout =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly

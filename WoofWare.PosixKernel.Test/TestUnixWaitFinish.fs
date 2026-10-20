@@ -177,8 +177,8 @@ module TestUnixWaitFinish =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (UnixSystem.platform system)) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some disposition) system with
-        | Ok (_, system) -> returned system
-        | Error error -> failwith $"sigaction of %O{signal}: %O{error}"
+        | SigactionAnswer.Completed _, system -> returned system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction of %O{signal}: %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -343,8 +343,8 @@ module TestUnixWaitFinish =
 
             let epoll, system =
                 match UnixPoll.epollCreate1 leader 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
 
             let system =
                 match
@@ -403,7 +403,7 @@ module TestUnixWaitFinish =
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
                 match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, returned system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, returned system
                 | other -> failwith $"open: %A{other}"
 
             let holder, system = opened system
@@ -464,8 +464,8 @@ module TestUnixWaitFinish =
         | Sleep.InotifyRead ->
             let fd, system =
                 match UnixInotify.inotifyInit1 (Callers.leader system) 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"inotify_init1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"inotify_init1: %O{error}"
 
             let system =
                 match Eager.tryInotifyAddWatch fd (PathArg.ofText "/") 0x100u system with
@@ -595,9 +595,9 @@ module TestUnixWaitFinish =
 
         let signal (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
             match UnixSignal.pthreadKill leader sleeper (usr1 system) system with
-            | Ok (ProcessFate.Continues (_, system)) -> Some (returned system)
-            | Ok (ProcessFate.ProcessEnded _) -> None
-            | Error error -> failwith $"pthread_kill: %O{error}"
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> Some (returned system)
+            | ProcessFate.ProcessEnded _ -> None
+            | ProcessFate.Continues (KillAnswer.Failed error, _) -> failwith $"pthread_kill: %O{error}"
 
         let withSystem (system : UnixSystem<int, string>) : World option =
             Some

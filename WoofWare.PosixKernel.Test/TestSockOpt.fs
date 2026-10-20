@@ -487,11 +487,11 @@ module TestSockOpt =
                             NewSocket.arguments platform domain kind protocol
 
                         match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
-                        | Ok (Ok (fd, system)) ->
+                        | Ok (DescriptorAnswer.Returned fd, system) ->
                             created <- created + 1
                             let system = ReuseAddress.set true fd system
                             reuseFlag system |> shouldEqual true
-                        | Ok (Error _)
+                        | Ok (DescriptorAnswer.Failed _, _)
                         | Error _ -> ()
 
         // Linux's ten and its seqpacket socket, and Darwin's ten.

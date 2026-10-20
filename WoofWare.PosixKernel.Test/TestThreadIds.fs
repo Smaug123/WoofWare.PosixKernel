@@ -273,7 +273,8 @@ module TestThreadIds =
             UnixSystem.checkInvariants written |> shouldEqual []
 
             match UnixSignal.tryKill (Callers.leader written) 5000 0 written with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> after |> shouldEqual written
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) ->
+                after |> shouldEqual written
             | other -> failwith $"kill(5000, 0) at pid_max %d{pidMax}: %A{other}"
 
             let joined, after =
@@ -461,8 +462,8 @@ module TestThreadIds =
                         (Some (SignalMask.ofSignals numbering (Set.ofList signals)))
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"pthread_sigmask failed with %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask failed with %O{errno}"
 
             let cases =
                 [
@@ -484,7 +485,7 @@ module TestThreadIds =
                                 (Signal.toRawSignoUnder numbering Signal.SIGUSR2)
                                 creator
                         with
-                        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                         | other -> failwith $"pthread_kill answered %A{other}"
                     else
                         creator
@@ -525,12 +526,12 @@ module TestThreadIds =
                         (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
                         system
                 with
-                | Ok (_, system) -> system
-                | Error error -> failwith $"sigaction failed with %O{error}"
+                | SigactionAnswer.Completed _, system -> system
+                | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
             let system =
                 match UnixSignal.tryPthreadKill (Callers.leader system) 0 usr1 system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"pthread_kill answered %A{other}"
 
             let frame, inHandler =

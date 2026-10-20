@@ -98,6 +98,7 @@ module TestInodeLifetime =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                    false
                     (ForgedName.ofInode kernel inode)
                     inode
                     (Lone.fileDescriptors kernel)
@@ -105,6 +106,7 @@ module TestInodeLifetime =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                    false
                     (ForgedName.ofInode kernel inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -485,11 +487,12 @@ module TestInodeLifetime =
                 CloseOnExec = true
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = true
             }
 
         match Answered.openPath (UnixPath.parseOrFail "test" "/outer/inner") flags 0 kernel with
-        | SyscallAnswer.Completed fd, system -> int fd, inner, system
+        | DescriptorAnswer.Returned fd, system -> fd, inner, system
         | other -> failwith $"could not open the directory: %O{other}"
 
     [<Test>]

@@ -85,7 +85,7 @@ module TestCrossProcess =
                     let fd, _ = fds.[fd % fds.Length]
 
                     match UnixDescriptor.tryDup (Caller.make pid thread) fd system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system, asleep
+                    | Ok (DescriptorAnswer.Returned _, system) -> system, asleep
                     | other -> failwith $"dup of %d{fd} in %O{pid}: %A{other}"
             | CountStep.Read (proc, thread, fd) ->
                 let caller = Caller.make (pidAt proc) (thread % countThreads)
@@ -533,7 +533,7 @@ module TestCrossProcess =
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                        | Ok (Ok created) -> created
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
@@ -607,7 +607,7 @@ module TestCrossProcess =
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                        | Ok (Ok created) -> created
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
@@ -735,12 +735,13 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
                         view
                 with
-                | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                 | other -> failwith $"open: %A{other}"
 
             let flock (pid : ProcessId) (thread : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
@@ -901,25 +902,25 @@ module TestCrossProcess =
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             match UnixSignal.pthreadSigmask caller (MaskHow.number numbering how) (Some set) machine with
-            | Ok (_, machine) -> machine
-            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, machine -> machine
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
 
         match ending with
         | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
         | Ending.Kill ->
             match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
-            | Ok fate -> ended "kill" fate
-            | Error errno -> failwith $"kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill: %O{errno}"
+            | fate -> ended "kill" fate
         | Ending.Raise ->
             match UnixSignal.pthreadKill caller 0 sigterm machine with
-            | Ok fate -> ended "pthread_kill" fate
-            | Error errno -> failwith $"pthread_kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"pthread_kill: %O{errno}"
+            | fate -> ended "pthread_kill" fate
         | Ending.ReturnToUser ->
             let machine = machine |> mask SignalMaskChange.Block |> returned
 
             let machine =
                 match UnixSignal.pthreadKill caller 0 sigterm machine with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, machine) -> returned machine
                 | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
 
             machine
@@ -966,7 +967,7 @@ module TestCrossProcess =
         : UnixSystem<int, string>
         =
         match UnixDescriptor.tryDup2 (Caller.make pid (Proc.leader pid view)) oldFd newFd view with
-        | Ok (SyscallAnswer.Completed fd, view) when int fd = newFd -> KeventWorld.closeIn pid oldFd view
+        | Ok (DescriptorAnswer.Returned fd, view) when fd = newFd -> KeventWorld.closeIn pid oldFd view
         | other -> failwith $"dup2 %d{oldFd} %d{newFd}: %A{other}"
 
     [<Test>]
@@ -1104,7 +1105,7 @@ module TestCrossProcess =
                                 match
                                     UnixDescriptor.tryDup2 (Caller.make a (Proc.leader a view)) layout.[0] alias view
                                 with
-                                | Ok (SyscallAnswer.Completed _, view) -> view
+                                | Ok (DescriptorAnswer.Returned _, view) -> view
                                 | other -> failwith $"dup2: %A{other}"
                             )
                             machine
@@ -1120,7 +1121,7 @@ module TestCrossProcess =
                                 (fun view ->
                                     let epoll, view =
                                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                                        | Ok (Ok created) -> created
+                                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                         | other -> failwith $"epoll_create1: %A{other}"
 
                                     let view =
@@ -1214,12 +1215,13 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
                         view
                 with
-                | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                 | other -> failwith $"open: %A{other}"
 
             let held, machine = Machines.inProcess a (openLocked a) machine
@@ -1247,7 +1249,7 @@ module TestCrossProcess =
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
                             match UnixPoll.tryEpollCreate1 (Caller.make a (Proc.leader a view)) 0 view with
-                            | Ok (Ok (_, view)) -> view
+                            | Ok (DescriptorAnswer.Returned _, view) -> view
                             | other -> failwith $"epoll_create1: %A{other}"
                         | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueueIn a view |> snd
                     )
@@ -1330,7 +1332,7 @@ module TestCrossProcess =
                         | SimulatedUnixFlavour.Linux ->
                             let epoll, view =
                                 match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                                | Ok (Ok created) -> created
+                                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                 | other -> failwith $"epoll_create1: %A{other}"
 
                             let interest =
@@ -1515,7 +1517,7 @@ module TestCrossProcess =
                                     match
                                         UnixPoll.tryEpollCreate1 (Caller.make parent (Proc.leader parent view)) 0 view
                                     with
-                                    | Ok (Ok created) -> created
+                                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                     | other -> failwith $"epoll_create1: %A{other}"
 
                                 let interest =
@@ -1798,12 +1800,13 @@ module TestCrossProcess =
                                     CloseOnExec = false
                                     Synchronous = false
                                     DataSynchronous = false
+                                    NonBlocking = false
                                     Directory = false
                                 }
                                 0o644
                                 view
                         with
-                        | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                        | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                         | other -> failwith $"open: %A{other}"
                     )
                     machine
@@ -1928,7 +1931,7 @@ module TestCrossProcess =
         =
         let fd, view =
             match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) flags view with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"inotify_init1: %A{other}"
 
         match
@@ -1961,12 +1964,13 @@ module TestCrossProcess =
                     CloseOnExec = false
                     Synchronous = false
                     DataSynchronous = false
+                    NonBlocking = false
                     Directory = false
                 }
                 0o644
                 view
         with
-        | Ok (SyscallAnswer.Completed fd, view) -> KeventWorld.closeIn pid (int fd) view
+        | Ok (DescriptorAnswer.Returned fd, view) -> KeventWorld.closeIn pid fd view
         | other -> failwith $"open(%s{path}): %A{other}"
 
     let private inCreate : uint32 = 0x100u

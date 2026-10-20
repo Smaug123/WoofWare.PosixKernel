@@ -98,8 +98,8 @@ module TestWakeMemo =
                                 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
                                 view
                         with
-                        | Ok (_, view) -> view
-                        | Error error -> failwith $"sigaction: %O{error}"
+                        | SigactionAnswer.Completed _, view -> view
+                        | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
                     KeventWorld.listenerAt 8080us view
                 )
@@ -117,7 +117,7 @@ module TestWakeMemo =
                 pid
                 (fun view ->
                     match UnixSignal.tryPthreadKill (Callers.leader view) 1 10 view with
-                    | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view))) -> view
+                    | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, view)) -> view
                     | other -> failwith $"pthread_kill: %A{other}"
                 )
                 swept

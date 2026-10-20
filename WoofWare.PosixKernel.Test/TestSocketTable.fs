@@ -451,6 +451,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openDirectory
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
@@ -458,6 +459,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openFile
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly

@@ -342,8 +342,9 @@ module TestSocketAddressing =
                 | Call.Socket (domain, kind) ->
                     let fd, system =
                         match stepped (socketCall platform domain kind) system with
-                        | Ok (SteppedCall.Socket (Ok created)) -> created
-                        | Ok (SteppedCall.Socket (Error error)) -> failwith $"%s{describe}: socket answered %O{error}"
+                        | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) -> fd, system
+                        | Ok (SteppedCall.Socket (DescriptorAnswer.Failed error, _)) ->
+                            failwith $"%s{describe}: socket answered %O{error}"
                         | Ok other ->
                             failwith $"%s{describe}: socket answered SteppedCall.%s{UnionCaseName.ofValue other}"
                         | Error refusal ->

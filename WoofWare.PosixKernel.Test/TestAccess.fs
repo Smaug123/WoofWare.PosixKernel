@@ -1033,12 +1033,13 @@ module TestAccess =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private openOrFail (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.openPath (path p) plainOpen 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"open(%s{p}) did not open: %O{other}"
 
     /// The probe's base as the current directory, with a descriptor open on it

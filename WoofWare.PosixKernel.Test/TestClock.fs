@@ -413,9 +413,10 @@ module TestClock =
     let private classify (system : UnixSystem<int, string>) (clockId : int) : Outcome =
         match UnixClock.tryClockGettime (Callers.leader system) clockId system with
         | Error _ -> Outcome.Refused
-        | Ok (Error UnixError.EINVAL) -> Outcome.Invalid
-        | Ok (Error other) -> failwith $"clock id %d{clockId} failed with %O{other}, which no measured kernel does"
-        | Ok (Ok reading) ->
+        | Ok (ClockGettimeAnswer.Failed UnixError.EINVAL) -> Outcome.Invalid
+        | Ok (ClockGettimeAnswer.Failed other) ->
+            failwith $"clock id %d{clockId} failed with %O{other}, which no measured kernel does"
+        | Ok (ClockGettimeAnswer.Completed reading) ->
             if UnixTimestamp.seconds reading = UnixSystem.nanosecondsSinceBoot system / 1_000_000_000L then
                 Outcome.Monotonic
             elif UnixTimestamp.seconds reading = UnixTimestamp.seconds (UnixSystem.realtime system) then
@@ -505,7 +506,8 @@ module TestClock =
             )
             |> List.forall (fun clockId ->
                 match UnixClock.tryClockGettime (Callers.leader system) clockId system with
-                | Ok (Ok reading) -> exactNanoseconds reading = expectedReading flavour clockId bootTime up
+                | Ok (ClockGettimeAnswer.Completed reading) ->
+                    exactNanoseconds reading = expectedReading flavour clockId bootTime up
                 | other -> failwith $"%O{flavour} clock id %d{clockId} should have answered, got %A{other}"
             )
 
@@ -523,7 +525,9 @@ module TestClock =
             UnixClock.tryClockGettime (Callers.leader system) 6 system,
             UnixClock.tryClockGettime (Callers.leader system) 8 system
         with
-        | Ok (Ok realtime), Ok (Ok monotonic), Ok (Ok uptime) ->
+        | Ok (ClockGettimeAnswer.Completed realtime),
+          Ok (ClockGettimeAnswer.Completed monotonic),
+          Ok (ClockGettimeAnswer.Completed uptime) ->
             realtime |> shouldEqual (UnixTimestamp.createOrFail "TestClock" 10L 1_000_000)
             monotonic |> shouldEqual (UnixTimestamp.createOrFail "TestClock" 0L 1_000_000)
             uptime |> shouldEqual (UnixTimestamp.createOrFail "TestClock" 0L 1_000_999)

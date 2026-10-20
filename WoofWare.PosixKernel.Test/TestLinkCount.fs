@@ -51,6 +51,7 @@ module TestLinkCount =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -72,6 +73,15 @@ module TestLinkCount =
         match answer with
         | SyscallAnswer.Completed value -> value, system
         | SyscallAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
+
+    let private returned
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
 
     /// A fresh system on `platform`, its filesystem the flavour's default.
     let private systemOn (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
@@ -101,9 +111,9 @@ module TestLinkCount =
         | LinkCountStep.Create path ->
             let fd, system =
                 Answered.openPath (rooted path) creating 0o644 system
-                |> completed $"creat %s{path}"
+                |> returned $"creat %s{path}"
 
-            match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> held, system
             | other -> failwith $"close %d{fd}: %A{other}"
         | LinkCountStep.Unlink path ->
@@ -122,9 +132,9 @@ module TestLinkCount =
             | Error refusal -> failwith $"rename %s{source} %s{destination} was refused: %A{refusal}"
         | LinkCountStep.Hold path ->
             let fd, system =
-                Answered.openPath (rooted path) reading 0 system |> completed $"open %s{path}"
+                Answered.openPath (rooted path) reading 0 system |> returned $"open %s{path}"
 
-            Map.add path (int fd) held, system
+            Map.add path fd held, system
 
     let private reported (what : string) (answer : Result<FileStatusAnswer, 'refusal>) : FileStatus =
         match answer with

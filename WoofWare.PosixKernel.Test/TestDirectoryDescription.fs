@@ -51,6 +51,7 @@ module TestDirectoryDescription =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -77,6 +78,15 @@ module TestDirectoryDescription =
         | SyscallAnswer.Completed value -> value, system
         | SyscallAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
 
+    let private returned
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
+
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
@@ -85,9 +95,9 @@ module TestDirectoryDescription =
     let private createFile (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let fd, system =
             Answered.openPath (rooted path) creating 0o644 system
-            |> completed $"creat %s{path}"
+            |> returned $"creat %s{path}"
 
-        closeFd (int fd) system
+        closeFd fd system
 
     let private makeDirectory (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
@@ -100,16 +110,10 @@ module TestDirectoryDescription =
         |> snd
 
     let private openAt (flags : OpenFlags) (path : string) (system : UnixSystem<int, string>) =
-        let fd, system =
-            Answered.openPath (rooted path) flags 0 system |> completed $"open %s{path}"
-
-        int fd, system
+        Answered.openPath (rooted path) flags 0 system |> returned $"open %s{path}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system =
-            Answered.dup (Callers.leader system) fd system |> completed $"dup %d{fd}"
-
-        int fd, system
+        Answered.dup (Callers.leader system) fd system |> returned $"dup %d{fd}"
 
     let private read (fd : int) (system : UnixSystem<int, string>) =
         match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
@@ -683,7 +687,7 @@ module TestDirectoryDescription =
                 |> createFile "f"
 
             match Answered.openPath (rooted "f") directoryReading 0 system with
-            | SyscallAnswer.Failed UnixError.ENOTDIR, _ -> ()
+            | DescriptorAnswer.Failed UnixError.ENOTDIR, _ -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
     [<Test>]
@@ -741,7 +745,7 @@ module TestDirectoryDescription =
                     PathArgumentBytes.Unreadable
                 ] do
                 match OpenOutcomes.openPath path word 0 system with
-                | Ok (SyscallAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
+                | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
                 | other -> failwith $"%O{platform}: %A{other}"
 
     // ------------------------------------------------------------ invariants

@@ -138,15 +138,23 @@ module TestInotifyMeasured =
         | SyscallAnswer.Completed value -> $"%d{value}"
         | SyscallAnswer.Failed error -> $"-1 %O{error}"
 
+    let private descriptorRc (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned fd -> $"%d{fd}"
+        | DescriptorAnswer.Failed error -> $"-1 %O{error}"
+
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-        | Ok (Ok created) -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
-    let private initAnswer (flags : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
+    let private initAnswer
+        (flags : int)
+        (system : UnixSystem<int, string>)
+        : DescriptorAnswer * UnixSystem<int, string>
+        =
         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-        | Ok (Ok (fd, system)) -> SyscallAnswer.Completed (int64 fd), system
-        | Ok (Error error) -> SyscallAnswer.Failed error, system
+        | Ok answered -> answered
         | Error refusal -> failwith $"inotify_init1(0x%x{flags}) refused: %s{InotifyRefusal.describe refusal}"
 
     let private addWatch
@@ -337,7 +345,7 @@ module TestInotifyMeasured =
 
         let ep, s =
             match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         system <- s
@@ -490,7 +498,7 @@ module TestInotifyMeasured =
 
         let regular, s =
             match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "w/f") 0 0 system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
+            | Ok (OpenOutcome.Answered (DescriptorAnswer.Returned fd), s) -> fd, s
             | other -> failwith $"%A{other}"
 
         system <- s
@@ -656,7 +664,7 @@ module TestInotifyMeasured =
 
         let ep, s =
             match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         system <- s
@@ -724,7 +732,7 @@ module TestInotifyMeasured =
 
         let d, s =
             match UnixDescriptor.tryDup (Callers.leader s) fd s with
-            | Ok (SyscallAnswer.Completed d, s) -> int d, s
+            | Ok (DescriptorAnswer.Returned d, s) -> d, s
             | other -> failwith $"%A{other}"
 
         let w1, s = addWatch fd "a" create s
@@ -889,10 +897,10 @@ module TestInotifyMeasured =
 
         let rec count (n : int) =
             match initAnswer cloexec system with
-            | SyscallAnswer.Completed _, s ->
+            | DescriptorAnswer.Returned _, s ->
                 system <- s
                 count (n + 1)
-            | SyscallAnswer.Failed error, _ -> n, error
+            | DescriptorAnswer.Failed error, _ -> n, error
 
         let created, error = count 0
 
@@ -907,8 +915,8 @@ module TestInotifyMeasured =
             [ 0..31 ]
             |> List.choose (fun bit ->
                 match UnixInotify.tryInotifyInit1 (Callers.leader system) (1 <<< bit) system with
-                | Ok (Ok _) -> Some $"0%s{Convert.ToString (1L <<< bit, 8)}"
-                | Ok (Error UnixError.EINVAL) -> None
+                | Ok (DescriptorAnswer.Returned _, _) -> Some $"0%s{Convert.ToString (1L <<< bit, 8)}"
+                | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) when after = system -> None
                 | other -> failwith $"bit %d{bit}: %A{other}"
             )
 
@@ -923,11 +931,11 @@ module TestInotifyMeasured =
             "single-bits-accepted", $"""%s{String.concat "," accepted} (others EINVAL)"""
             "cloexec-nonblock",
             (match initAnswer (cloexec ||| nonblock) system with
-             | SyscallAnswer.Completed _, _ -> "ok"
-             | answer, _ -> rc answer)
-            "cloexec-plus-bit0", rc (fst (initAnswer (cloexec ||| 1) system))
+             | DescriptorAnswer.Returned _, _ -> "ok"
+             | answer, _ -> descriptorRc answer)
+            "cloexec-plus-bit0", descriptorRc (fst (initAnswer (cloexec ||| 1) system))
             "zero", $"F_GETFL=0%s{Convert.ToString (fcntlOf zero afterZero 3, 8)} F_GETFD=%d{fcntlOf zero afterZero 1}"
-            "negative-one", rc (fst (initAnswer -1 system))
+            "negative-one", descriptorRc (fst (initAnswer -1 system))
         ]
         |> shouldEqual (rows instanceProbe "F" [])
 
@@ -960,12 +968,12 @@ module TestInotifyMeasured =
 
         let regular, s =
             match UnixNamespace.tryOpenPath (Callers.thread 0 s) (PathArg.ofText "g/f") 0 0 s with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
+            | Ok (OpenOutcome.Answered (DescriptorAnswer.Returned fd), s) -> fd, s
             | other -> failwith $"%A{other}"
 
         let epoll, s =
             match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         system <- s
@@ -1038,12 +1046,12 @@ module TestInotifyMeasured =
 
         let regular, system =
             match UnixNamespace.tryOpenPath (Callers.thread 0 system) (PathArg.ofText "g/f") 0 0 system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
+            | Ok (OpenOutcome.Answered (DescriptorAnswer.Returned fd), s) -> fd, s
             | other -> failwith $"%A{other}"
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         system, fd, regular, epoll
@@ -1239,10 +1247,10 @@ module TestInotifyMeasured =
 
         let rec instances (fds : int list) =
             match initAnswer cloexec system with
-            | SyscallAnswer.Completed fd, s ->
+            | DescriptorAnswer.Returned fd, s ->
                 system <- s
-                instances (int fd :: fds)
-            | SyscallAnswer.Failed error, _ -> List.rev fds, error
+                instances (fd :: fds)
+            | DescriptorAnswer.Failed error, _ -> List.rev fds, error
 
         let fds, error = instances []
         let actual = ResizeArray<string * string> ()
@@ -1396,7 +1404,7 @@ module TestInotifyMeasured =
 
         let ep, s =
             match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         let s =
@@ -1633,7 +1641,7 @@ module TestInotifyMeasured =
 
         let ep, s =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         // The probe's registration is level-triggered, which this library's

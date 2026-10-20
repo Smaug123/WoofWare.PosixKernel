@@ -50,6 +50,7 @@ module TestStatBlocks =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -73,8 +74,8 @@ module TestStatBlocks =
 
     let private create (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.openPath (UnixPath.parseOrFail context path) creating 0o644 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"creat %s{path}: %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"creat %s{path}: %O{error}"
 
     let private applyToModel
         (fd : int)

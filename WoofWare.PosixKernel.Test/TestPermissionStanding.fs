@@ -982,6 +982,7 @@ module TestPermissionStanding =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -993,11 +994,11 @@ module TestPermissionStanding =
         }
 
     /// Whether the call answered a descriptor.
-    let private opened (answer : SyscallAnswer, system : UnixSystem<int, string>) : bool * UnixSystem<int, string> =
+    let private opened (answer : DescriptorAnswer, system : UnixSystem<int, string>) : bool * UnixSystem<int, string> =
         match answer with
-        | SyscallAnswer.Completed _ -> true, system
-        | SyscallAnswer.Failed UnixError.EACCES -> false, system
-        | SyscallAnswer.Failed error -> failwith $"expected a descriptor or EACCES, got %O{error}"
+        | DescriptorAnswer.Returned _ -> true, system
+        | DescriptorAnswer.Failed UnixError.EACCES -> false, system
+        | DescriptorAnswer.Failed error -> failwith $"expected a descriptor or EACCES, got %O{error}"
 
     [<Test>]
     let ``Linux open, search, opendir and create select the triple the probe measured, over every mode`` () : unit =
@@ -1176,7 +1177,7 @@ module TestPermissionStanding =
                 }
 
             match Answered.openPath (path p) readWrite 0 system with
-            | SyscallAnswer.Completed fd, system -> change (int fd) system |> modeOf p
+            | DescriptorAnswer.Returned fd, system -> change fd system |> modeOf p
             | other -> failwith $"open %s{p}: %A{other}"
 
         let one = ImmutableArray.Create 9uy
@@ -1201,7 +1202,7 @@ module TestPermissionStanding =
 
         for p, expected in [ "/outside", 0o0666 ; "/inside", 0o2666 ] do
             match Answered.openPath (path p) truncating 0 system with
-            | SyscallAnswer.Completed _, system -> modeOf p system |> shouldEqual expected
+            | DescriptorAnswer.Returned _, system -> modeOf p system |> shouldEqual expected
             | other -> failwith $"open O_TRUNC %s{p}: %A{other}"
 
     [<Test>]
@@ -1224,7 +1225,7 @@ module TestPermissionStanding =
 
         let fd, opened =
             match Answered.openPath (path "/f") readWrite 0 system with
-            | SyscallAnswer.Completed fd, opened -> int fd, opened
+            | DescriptorAnswer.Returned fd, opened -> fd, opened
             | other -> failwith $"open: %A{other}"
 
         let one = ImmutableArray.Create 9uy
@@ -1248,7 +1249,7 @@ module TestPermissionStanding =
             }
 
         match Answered.openPath (path "/f") truncating 0 system with
-        | SyscallAnswer.Completed _, truncated -> modeOf "/f" truncated |> shouldEqual 0o6666
+        | DescriptorAnswer.Returned _, truncated -> modeOf "/f" truncated |> shouldEqual 0o6666
         | other -> failwith $"open(O_TRUNC): %A{other}"
 
     [<Test>]
@@ -1311,7 +1312,7 @@ module TestPermissionStanding =
                 // entry at most.
                 for requested in allModes do
                     match Answered.openPath (path "/p/c") creating requested system with
-                    | SyscallAnswer.Completed _, next ->
+                    | DescriptorAnswer.Returned _, next ->
                         let expected = linuxCreated (parentBits &&& 0o2000 <> 0) standing requested umask
                         let actual = modeOf "/p/c" next
 
@@ -1351,6 +1352,12 @@ module TestPermissionStanding =
             | SyscallAnswer.Failed UnixError.EACCES -> false
             | SyscallAnswer.Failed error -> failwith $"expected success or EACCES, got %O{error}"
 
+        let openSucceeds (answer : DescriptorAnswer, _ : UnixSystem<int, string>) : bool =
+            match answer with
+            | DescriptorAnswer.Returned _ -> true
+            | DescriptorAnswer.Failed UnixError.EACCES -> false
+            | DescriptorAnswer.Failed error -> failwith $"expected a descriptor or EACCES, got %O{error}"
+
         let renamed (source : string) (destination : string) (system : UnixSystem<int, string>) : bool =
             Eager.tryRename (argument source) (argument destination) system
             |> ok
@@ -1383,9 +1390,9 @@ module TestPermissionStanding =
                         }
                         0
                         system
-                    |> succeeds
+                    |> openSucceeds
                 "open(O_CREAT) /d/new",
-                fun system -> Answered.openPath (path "/d/new") creating 0o600 system |> succeeds
+                fun system -> Answered.openPath (path "/d/new") creating 0o600 system |> openSucceeds
                 "mkdir /d/new",
                 fun system ->
                     Answered.mkdir (Callers.leader system) (PathArg.ofPath (path "/d/new")) 0o755 system
@@ -1435,16 +1442,14 @@ module TestPermissionStanding =
 
         let throughDescriptor (p : string) : string option list =
             match OpenFlagWords.openPath (PathArg.ofPath (path p)) readWrite 0 system with
-            | Ok (SyscallAnswer.Completed fd, opened) ->
-                let fd = int fd
-
+            | Ok (DescriptorAnswer.Returned fd, opened) ->
                 [
                     WriteOutcomes.write fd one opened |> refused
                     WriteOutcomes.admitThenPwrite 0 fd one 0L opened |> refused
                     UnixDescriptor.tryFtruncate (Callers.leader opened) fd 0L opened |> refused
                     UnixDescriptor.tryFtruncate (Callers.leader opened) fd 4L opened |> refused
                 ]
-            | Ok (SyscallAnswer.Failed _, _) -> []
+            | Ok (DescriptorAnswer.Failed _, _) -> []
             | Error refusal -> [ Some $"%A{refusal}" ]
 
         [
