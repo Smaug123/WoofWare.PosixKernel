@@ -93,7 +93,18 @@ module internal InotifyDeliveryOps =
 
     /// Every event a watch in a sequence may ask for.
     let eventBits : uint32 list =
-        [ modify ; attrib ; movedFrom ; movedTo ; create ; delete ; 0x400u ; 0x800u ]
+        [
+            modify
+            attrib
+            closeWrite
+            closeNoWrite
+            movedFrom
+            movedTo
+            create
+            delete
+            0x400u
+            0x800u
+        ]
 
     /// `IN_EXCL_UNLINK`.
     let exclUnlink : uint32 = 0x04000000u
@@ -602,6 +613,10 @@ module internal InotifyDeliveryOps =
         | DeleteSelf
         /// `IN_MOVE_SELF`.
         | MoveSelf
+        /// `IN_CLOSE_WRITE`.
+        | CloseWrite
+        /// `IN_CLOSE_NOWRITE`.
+        | CloseNoWrite
 
     /// Every label a record of `mask` naming `entry` ("" for none) carries.
     let recordLabels (mask : uint32) (entry : string) : RecordLabel list =
@@ -626,4 +641,8 @@ module internal InotifyDeliveryOps =
                 RecordLabel.DeleteSelf
             if mask &&& moveSelf <> 0u then
                 RecordLabel.MoveSelf
+            if mask &&& closeWrite <> 0u then
+                RecordLabel.CloseWrite
+            if mask &&& closeNoWrite <> 0u then
+                RecordLabel.CloseNoWrite
         ]

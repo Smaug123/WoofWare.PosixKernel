@@ -274,8 +274,7 @@ module TestFaultingFileWrite =
             if linux then
                 let instance, system = InotifyReplay.init1 InotifyReplay.nonblock system
 
-                let _, system =
-                    InotifyReplay.watch instance "/f" InotifyReplay.modelledEvents system
+                let _, system = InotifyReplay.watch instance "/f" InotifyReplay.graphEvents system
 
                 Some instance, system
             else
