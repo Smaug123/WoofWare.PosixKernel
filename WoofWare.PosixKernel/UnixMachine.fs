@@ -43,6 +43,11 @@ type internal UnixMachineState =
             /// `UnixSystem.checkInvariants` holds the keys to the UDP sockets
             /// in `Sockets`.
             DatagramReceivers : Map<SocketId, DatagramReceiver>
+            /// Which datagrams that reach no socket the machine answers with
+            /// an ICMP port-unreachable error, and what it remembers of those
+            /// it has answered: a record for the whole machine, which outlives
+            /// the socket that sent the datagram.
+            PortUnreachableReplies : PortUnreachableReplies
             /// Every TCP connection end in TIME_WAIT whose connection both
             /// sockets have closed, keyed by its own endpoint and its peer's.
             /// An entry is made as the connection is forgotten, for the end

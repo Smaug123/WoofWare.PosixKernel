@@ -1316,6 +1316,23 @@ module UnixReadWrite =
         | TcpSendCall.Send false
         | TcpSendCall.Write -> broken answer thread target system
 
+    /// The system with the UDP socket `socketId`'s pending error taken, and
+    /// the error, if one is pending.
+    let private takePendingError<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (socketId : SocketId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : (UnixError * ProcessView<'Thread, 'Handler>) option
+        =
+        match DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine) with
+        | Some error, after ->
+            Some (
+                error,
+                { system with
+                    Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
+                }
+            )
+        | None, _ -> None
+
     /// A write of `count` bytes from `buffer`, past the buffer screen, as a
     /// datagram from the UDP socket `socketId` to `peer`, its peer: the
     /// answer it gives without the bytes, or how many to copy.
@@ -1343,7 +1360,18 @@ module UnixReadWrite =
         // EMSGSIZE, and sends nothing, ahead of a fault in its buffer.
         if count > largest then
             answered (WriteAnswer.Failed UnixError.EMSGSIZE) system
-        elif count = 0UL then
+        else
+
+        // Measured (`udp-error.c` Y2, Y3 and `udp-transfer.c` L14, in
+        // docs/plans/2026-10-18-udp-data-path): Linux's pending error answers
+        // after EMSGSIZE and ahead of everything else, the empty datagram and
+        // EFAULT included, and the send takes it, sending nothing. Darwin's
+        // answers ahead of EMSGSIZE too, in `socketWrite`.
+        match takePendingError socketId system with
+        | Some (error, system) -> answered (WriteAnswer.Failed error) system
+        | None ->
+
+        if count = 0UL then
             // Measured (K3, E4, E5): an empty datagram is sent whatever the
             // buffer, which nothing reads.
             match DatagramDelivery.deliver socketId peer ImmutableArray.Empty system with
@@ -1392,6 +1420,23 @@ module UnixReadWrite =
                 }
             else
                 system
+
+        // Measured (`udp-error.c` Y2, Y3 and Y7, in
+        // docs/plans/2026-10-18-udp-data-path): a Darwin UDP socket's pending
+        // error answers a send ahead of everything else, EMSGSIZE, EFAULT and
+        // an unconnected socket's EDESTADDRREQ included, and the send takes
+        // it. Linux's answers later, and only on a connected socket
+        // (`datagramWrite`).
+        let pendingError =
+            match flavour with
+            | SimulatedUnixFlavour.Darwin when UnixMachineState.receivesDatagrams socket ->
+                takePendingError socketId system
+            | SimulatedUnixFlavour.Darwin
+            | SimulatedUnixFlavour.Linux -> None
+
+        match pendingError with
+        | Some (error, system) -> Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed error), system))
+        | None ->
 
         match socket.Phase with
         | SocketPhase.Connecting _ -> ReservedConnecting.fail "UnixReadWrite.write" socketId

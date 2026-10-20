@@ -94,6 +94,7 @@
         <Compile Include="TcpTransfer.fs" />
         <Compile Include="TcpConnection.fs" />
         <Compile Include="DatagramReceiver.fs" />
+        <Compile Include="PortUnreachableReplies.fs" />
         <Compile Include="PortHolderRules.fs" />
         <Compile Include="FileSystemStatistics.fs" />
         <Compile Include="EntropyPool.fs" />

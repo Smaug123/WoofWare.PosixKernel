@@ -9,11 +9,11 @@ type internal DeliveryRefusal =
     /// `destination` as any other: which one a real kernel picks is not
     /// modelled.
     | Tie of destination : Ipv4Endpoint * sockets : SocketId list
-    /// No socket takes a datagram from the connected socket `sender` to
-    /// `destination`, which a real kernel answers with an ICMP error that
-    /// leaves `ECONNREFUSED` pending at the sender; this kernel does not yet
-    /// model that error.
-    | Unreachable of sender : SocketId * destination : Ipv4Endpoint
+    /// No socket takes a datagram from `source` to `destination`, and the
+    /// sockets `sockets` are each as good a socket as any other for the ICMP
+    /// error that answers it, which a real kernel delivers as it would a
+    /// datagram from `destination` to `source`.
+    | ErrorTie of source : Ipv4Endpoint * destination : Ipv4Endpoint * sockets : SocketId list
     /// A destination outside loopback's 127.0.0.0/8, to which neither the
     /// source a datagram carries nor its delivery is measured.
     | BeyondLoopback of destination : Ipv4Endpoint
@@ -35,8 +35,9 @@ module internal DeliveryRefusal =
         | DeliveryRefusal.Tie (destination, sockets) ->
             let named = sockets |> List.map (sprintf "%O") |> String.concat ", "
             $"the datagram is to %s{Ipv4Endpoint.toString destination}, and sockets %s{named} are each as good a receiver for it as any other. Measured, a socket connected to the datagram's source beats one that is not, and one bound to the destination's address beats one bound to the wildcard; between two that match equally, Linux delivers to the one bound last, which this kernel does not record, and under SO_REUSEPORT a hash decides."
-        | DeliveryRefusal.Unreachable (sender, destination) ->
-            $"socket %O{sender}, which is connected, sends a datagram to %s{Ipv4Endpoint.toString destination}, where no socket takes it. A real kernel answers it with an ICMP port-unreachable error, which leaves ECONNREFUSED pending at the sender, and this kernel does not yet model that error."
+        | DeliveryRefusal.ErrorTie (source, destination, sockets) ->
+            let named = sockets |> List.map (sprintf "%O") |> String.concat ", "
+            $"no socket takes the datagram from %s{Ipv4Endpoint.toString source} to %s{Ipv4Endpoint.toString destination}, and the ICMP port-unreachable error that answers it goes to the socket a datagram from %s{Ipv4Endpoint.toString destination} to %s{Ipv4Endpoint.toString source} would reach, if that socket is connected. Sockets %s{named} are each as good a socket for it as any other, and which one a real kernel picks is not modelled: Linux picks the one bound last, which this kernel does not record."
         | DeliveryRefusal.BeyondLoopback destination ->
             $"the datagram is to %s{Ipv4Endpoint.toString destination}, outside loopback's 127.0.0.0/8, and which source address it would carry, and whether it is delivered, are not measured."
         | DeliveryRefusal.ZeroPortPeer (destination, socket) ->
@@ -55,6 +56,22 @@ type internal DatagramDelivered =
     /// Darwin lets a datagram be sent to and delivers to no one, raising no
     /// error.
     | Unowned
+    /// No socket took it, and the machine's ICMP port-unreachable error left
+    /// `ECONNREFUSED` pending at the socket `erred`, if it raised an error
+    /// and that error reached a connected socket.
+    | Unheld of erred : SocketId option
+
+/// Where a datagram goes, decided before anything is changed.
+[<RequireQualifiedAccess>]
+type private DatagramFate =
+    /// To an address the machine does not take as its own (`DatagramDelivered.Unowned`).
+    | Unowned
+    /// To the socket `receiver`.
+    | Reaches of receiver : SocketId
+    /// To no socket. The machine then remembers `replies`, and its error
+    /// leaves `ECONNREFUSED` pending at `erred`, if it reaches a connected
+    /// socket.
+    | Unheld of erred : SocketId option * replies : PortUnreachableReplies
 
 /// Which UDP socket on the machine a datagram reaches.
 [<RequireQualifiedAccess>]
@@ -183,6 +200,12 @@ module internal DatagramDelivery =
     /// On Linux the sender's own send raises an `EPOLLOUT` edge, and on
     /// Darwin it marks the sender as having sent, which changes what its own
     /// datagrams cost it from then on.
+    ///
+    /// A datagram no socket takes is answered with an ICMP port-unreachable
+    /// error by the machine's `PortUnreachableReplies`, and the error is
+    /// delivered as a datagram back from `destination` would be, leaving
+    /// `ECONNREFUSED` pending at the socket it reaches if that socket is
+    /// connected.
     let deliver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (sender : SocketId)
         (destination : Ipv4Endpoint)
@@ -208,16 +231,44 @@ module internal DatagramDelivery =
                 failwith
                     $"DatagramDelivery.deliver: socket %O{sender} sends a datagram with binding %A{binding}; a datagram socket that sends has a port (this is a bug in this library)."
 
-        let receiverOfDestination =
-            if owns machine destination.Address then
-                receiverOf machine from destination |> Result.map Some
+        let fate : Result<DatagramFate, DeliveryRefusal> =
+            if not (owns machine destination.Address) then
+                Ok DatagramFate.Unowned
             else
-                Ok None
 
-        match receiverOfDestination with
+            match receiverOf machine from destination with
+            | Error refusal -> Error refusal
+            | Ok (Some receiver) -> Ok (DatagramFate.Reaches receiver)
+            | Ok None ->
+
+            match
+                PortUnreachableReplies.answer
+                    system.Scheduling.NanosecondsSinceBoot
+                    from
+                    destination
+                    machine.PortUnreachableReplies
+            with
+            | false, replies -> Ok (DatagramFate.Unheld (None, replies))
+            | true, replies ->
+
+            // Measured (`udp-transfer.c` L4, L10, L12, L15 and L16, in
+            // docs/plans/2026-10-18-udp-data-path): the error goes to the
+            // socket a datagram from the destination to the source would
+            // reach, and only if that socket is connected, which is usually
+            // the sender itself; an unconnected one is told nothing. Linux's
+            // IP_RECVERR, which would tell it, is not settable.
+            match receiverOf machine destination from with
+            | Error (DeliveryRefusal.Tie (_, sockets)) -> Error (DeliveryRefusal.ErrorTie (from, destination, sockets))
+            | Error refusal -> Error refusal
+            | Ok None -> Ok (DatagramFate.Unheld (None, replies))
+            | Ok (Some erred) ->
+                match (UnixMachineState.socket erred machine).Phase with
+                | SocketPhase.DatagramPeer _ -> Ok (DatagramFate.Unheld (Some erred, replies))
+                | _ -> Ok (DatagramFate.Unheld (None, replies))
+
+        match fate with
         | Error refusal -> Error refusal
-        | Ok (Some None) -> Error (DeliveryRefusal.Unreachable (sender, destination))
-        | Ok found ->
+        | Ok fate ->
 
         // The sender is marked first: a Darwin socket sending to itself pays
         // the full charge for its own datagram (`udp-mbufs.c` section 2).
@@ -236,10 +287,33 @@ module internal DatagramDelivery =
             |> SocketWake.signal sender SocketWake.DatagramSent
 
         let delivered, system =
-            match found with
-            | None
-            | Some None -> DatagramDelivered.Unowned, system
-            | Some (Some receiver) ->
+            match fate with
+            | DatagramFate.Unowned -> DatagramDelivered.Unowned, system
+            | DatagramFate.Unheld (erred, replies) ->
+                let system =
+                    { system with
+                        Machine =
+                            { system.Machine with
+                                PortUnreachableReplies = replies
+                            }
+                    }
+
+                match erred with
+                | None -> DatagramDelivered.Unheld None, system
+                | Some erred ->
+                    // Measured (`udp-error.c` Y8): one epoll registration
+                    // watching the sender for IN|OUT|ET reports the send's
+                    // OUT edge and the error's ERR edge together, as 0xc.
+                    DatagramDelivered.Unheld (Some erred),
+                    { system with
+                        Machine =
+                            UnixMachineState.withDatagramReceiver
+                                erred
+                                (DatagramReceiver.refused (UnixMachineState.datagramReceiver erred system.Machine))
+                                system.Machine
+                    }
+                    |> SocketWake.signal erred SocketWake.ErrorRaised
+            | DatagramFate.Reaches receiver ->
                 let connected =
                     match (UnixMachineState.socket receiver system.Machine).Phase with
                     | SocketPhase.DatagramPeer _ -> true
@@ -252,6 +326,8 @@ module internal DatagramDelivery =
                         payload
                         (UnixMachineState.datagramReceiver receiver system.Machine)
                 with
+                // Measured (`udp-transfer.c` L13): a receiver too full to
+                // take the datagram raises no error at the sender.
                 | DatagramArrival.Dropped, _ -> DatagramDelivered.Dropped receiver, system
                 | DatagramArrival.Queued, after ->
                     // Measured (`udp-transfer.c` G5): every arrival is an

@@ -4240,6 +4240,7 @@ module UnixSystem =
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
                     DatagramReceivers = Map.empty
+                    PortUnreachableReplies = PortUnreachableReplies.defaultFor flavour
                     TimeWaits = Map.empty
                     TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L

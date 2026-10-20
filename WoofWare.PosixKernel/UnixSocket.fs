@@ -2993,6 +2993,25 @@ module UnixSocket =
                                         transfer
                                         system.Machine
                             }
+                    // A UDP socket's pending error is an ICMP error's, which
+                    // the read takes before the copy-out as a refusal's is,
+                    // connected or not (measured, `udp-error.c` Y5 and Y7 in
+                    // docs/plans/2026-10-18-udp-data-path: ECONNREFUSED, then
+                    // 0, through a null value buffer and at length 0 too).
+                    | SocketPhase.Idle
+                    | SocketPhase.DatagramPeer _ when UnixMachineState.receivesDatagrams socket ->
+                        match
+                            DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine)
+                        with
+                        | None, _ -> ints [ 0 ], system
+                        | Some error, after ->
+                            ints
+                                [
+                                    UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
+                                ],
+                            { system with
+                                Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
+                            }
                     | SocketPhase.Idle
                     | SocketPhase.Listening _
                     | SocketPhase.Refused RefusalError.Reported
@@ -3428,10 +3447,11 @@ module UnixSocket =
     ///   hundredths over 100, rounded toward zero).
     /// - `SO_ERROR` is the raw ECONNREFUSED of a refusal still pending
     ///   (`SocketPhase.Refused RefusalError.Pending`), the raw error a reset
-    ///   left pending on a connected socket, and 0
+    ///   left pending on a connected socket, the raw ECONNREFUSED an ICMP
+    ///   port-unreachable error left pending on a UDP socket, and 0
     ///   otherwise. Reading a pending error takes it: a refused socket is left
-    ///   `Refused RefusalError.Reported`, and a connected one with nothing
-    ///   pending, whether the copy-out then succeeds
+    ///   `Refused RefusalError.Reported`, and a connected or UDP one with
+    ///   nothing pending, whether the copy-out then succeeds
     ///   or not. Only a call that fails before reading the option leaves the
     ///   error pending: one answered before the cell is read, or a Linux one
     ///   declaring a negative length.
