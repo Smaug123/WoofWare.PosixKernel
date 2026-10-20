@@ -85,8 +85,8 @@ module TestCredentialSetxid =
                     (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
                     booted
             with
-            | Ok (_, system) -> system
-            | Error error -> failwith $"sigaction: %O{error}"
+            | SigactionAnswer.Completed _, system -> system
+            | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
         let numbering =
             match flavour with
@@ -99,8 +99,8 @@ module TestCredentialSetxid =
             match
                 UnixSignal.rtSigprocmask (Callers.thread thread system) (MaskHow.block numbering) (Some mask) 8UL system
             with
-            | Ok (_, system) -> system
-            | Error error -> failwith $"rt_sigprocmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"rt_sigprocmask: %O{error}"
 
         let blockUser2 (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             let mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR2)
@@ -108,8 +108,8 @@ module TestCredentialSetxid =
             match
                 UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.block numbering) (Some mask) system
             with
-            | Ok (_, system) -> system
-            | Error error -> failwith $"pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
         ((caught, 1), others)
         ||> List.fold (fun (system, thread) other ->
@@ -129,7 +129,7 @@ module TestCredentialSetxid =
                     | outcome, _ -> failwith $"poll: %A{outcome}"
                 | Other.OwesReturn ->
                     match UnixSignal.pthreadKill (Callers.leader system) thread (user1 flavour) system with
-                    | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+                    | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
                     | other -> failwith $"pthread_kill: %A{other}"
                 | Other.BlocksSignal33 -> block thread (Signal.RealTime 1) system
                 | Other.BlocksAnother -> blockUser2 thread system
@@ -240,8 +240,8 @@ module TestCredentialSetxid =
                         8UL
                         system
                 with
-                | Ok (_, system) -> system
-                | Error error -> failwith $"rt_sigprocmask: %O{error}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed error, _ -> failwith $"rt_sigprocmask: %O{error}"
             else
                 system
 

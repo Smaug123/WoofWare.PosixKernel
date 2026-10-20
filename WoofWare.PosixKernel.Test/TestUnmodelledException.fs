@@ -103,8 +103,8 @@ module TestUnmodelledException =
             )
             |> List.ofArray
 
-        // A control: a function whose `Error` is an errno.
-        answered |> shouldContain ("UnixSignal.sigaction", "UnixError")
+        // A control: a parser, whose `Error` says what was wrong with its input.
+        answered |> shouldContain ("SignalMask.ofWord", "SignalMaskRefusal")
 
         answered
         |> List.filter (fun (_, error : string) -> not (publicErrors.Contains error))

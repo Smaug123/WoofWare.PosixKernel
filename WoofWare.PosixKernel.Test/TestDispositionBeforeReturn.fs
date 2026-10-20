@@ -51,8 +51,8 @@ module TestDispositionBeforeReturn =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (Callers.leader system) (usr1 system) (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     // ------------------------------------------------------------------
     // The probe's rows
@@ -160,7 +160,7 @@ module TestDispositionBeforeReturn =
     /// `system` once the leader has sent the sleeper SIGUSR1.
     let private signalled (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryPthreadKill (Callers.leader system) sleeper (usr1 system) system with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
         | other -> failwith $"pthread_kill: %A{other}"
 
     let private pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =

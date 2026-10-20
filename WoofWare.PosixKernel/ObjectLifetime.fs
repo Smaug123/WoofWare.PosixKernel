@@ -558,6 +558,7 @@ module ObjectLifetime =
         let machine =
             ({ system.Machine with
                 Sockets = sockets
+                DatagramReceivers = Map.remove socketId system.Machine.DatagramReceivers
                 Connections = connections
              },
              candidates)

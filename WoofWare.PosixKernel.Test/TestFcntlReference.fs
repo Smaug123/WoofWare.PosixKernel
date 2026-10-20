@@ -125,7 +125,7 @@ module TestFcntlReference =
             | Kind.PipeWrite -> false
 
         d.Access
-        ||| flag d.NonBlocking (OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking)
+        ||| flag d.NonBlocking OpenFlagBit.NonBlocking
         ||| flag d.Synchronous OpenFlagBit.Synchronous
         ||| flag d.DataSynchronous OpenFlagBit.DataSynchronous
         ||| flag (not r.Darwin && madeByOpen) (OpenFlagBit.Unmodelled UnmodelledOpenFlag.LargeFile)

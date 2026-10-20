@@ -248,8 +248,10 @@ A syscall answers what the kernel does: perhaps an errno (a `UnixError`), or the
 A call that can end the process answers a `ProcessFate`: `ProcessFate.Continues (outcome, system)`, with the call's own outcome and the system the process carries on as, or `ProcessFate.ProcessEnded (ended, system)`, with how the process ended and the system without it, since the process is gone from the system as it ends (see "Threads, and the end of the process").
 Those calls are a write or `send` that raises `SIGPIPE`, `kill` and `pthreadKill`, the return to user mode, and a thread's exit.
 
-A few functions answer a `Result` whose `Error` is an errno: those whose own failure is a value the client reports to the process, such as `UnixSignal.kill` and `UnixClock.clockGettime`, and the four that answer nothing else, `UnixSignal.sigaction`, `UnixSignal.sigactionSyscall`, `UnixSignal.pthreadSigmask` and `UnixSignal.rtSigprocmask`.
-A function that cannot fail, such as `UnixClock.gettimeofday`, answers without a `Result` at all.
+A syscall's errno is the `Failed` case of the call's own answer, such as `SyscallAnswer.Failed`, `DescriptorAnswer.Failed` or `ClockGettimeAnswer.Failed`, and never the `Error` of a `Result`.
+A failing call comes back with the system wherever a succeeding one does, unchanged where the failure changed nothing.
+`pthread_kill(3)`, `pthread_sigmask(3)` and `posix_fadvise(3)` return their error rather than setting errno, and their answers' `Failed` cases say so.
+A function that cannot fail, such as `UnixClock.gettimeofday`, answers its value alone.
 The errors of the parsers that build a value, such as `UnixByteString.ofString`'s, say what was wrong with the input.
 
 Where this library will not say what the kernel does, the call throws `UnmodelledException`, and the docstrings say the call is refused.
@@ -567,13 +569,13 @@ Every other command Linux has, and any command without `FUTEX_PRIVATE_FLAG`, thr
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `kill(2)` | `UnixSignal.kill (caller : Caller) (pid : int) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (caller : Caller) (target : 'Thread) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `sigaction(3)` | `UnixSignal.sigaction (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (caller : Caller) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `kill(2)` | `UnixSignal.kill (caller : Caller) (pid : int) (signo : int)` | `ProcessFate<KillAnswer>` |
+| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (caller : Caller) (target : 'Thread) (signo : int)` | `ProcessFate<KillAnswer>` |
+| `sigaction(3)` | `UnixSignal.sigaction (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `SigactionAnswer * UnixSystem` |
+| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `SigactionAnswer * UnixSystem` |
+| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (caller : Caller) (how : int) (set : SignalMask option)` | `SignalMaskAnswer * UnixSystem` |
+| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (caller : Caller) (how : int) (set : SignalMask option)` | `SignalMaskAnswer * UnixSystem` |
+| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (caller : Caller) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `SignalMaskAnswer * UnixSystem` |
 | `sigpending(2)` | `UnixSignal.sigpending (caller : Caller)` | `SignalMask` |
 | `sigsuspend(2)` | `UnixSignal.sigsuspend (caller : Caller) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
 | Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (caller : Caller) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
@@ -589,7 +591,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
+| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `ClockGettimeAnswer` |
 | `gettimeofday(2)` | `UnixClock.gettimeofday (caller : Caller)` | `UnixTimestamp` |
 | Linux's `getrandom(2)` | `UnixEntropy.getRandom (caller : Caller) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
@@ -692,10 +694,10 @@ let make (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSyst
     | SteppedCall.Accept (AcceptOutcome.WouldBlock _, asleep) ->
         printfn "thread %d sleeps in accept" (Caller.thread caller)
         asleep
-    | SteppedCall.SigAction (Ok (_, system))
+    | SteppedCall.SigAction (SigactionAnswer.Completed _, system)
     | SteppedCall.Listen (ListenAnswer.Listening _, system)
     | SteppedCall.Spawn (SpawnAnswer.Spawned _, system)
-    | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+    | SteppedCall.PthreadKill (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
         snd (returnToUser caller system)
     | stepped -> failwith $"unexpected from %A{call}: %A{stepped}"
 
@@ -929,7 +931,7 @@ printfn "processes left: %d" (UnixSystem.processIds remaining).Count
 
 ## Signals
 
-`UnixSignal.kill` and `UnixSignal.pthreadKill` generate a signal, and answer a `ProcessFate<KillOutcome>`: the process runs on (`KillOutcome.ProcessRuns`), with the signal pending or discarded; the signal stopped it (`KillOutcome.ProcessStopped`); or the signal killed it at once (`ProcessFate.ProcessEnded`).
+`UnixSignal.kill` and `UnixSignal.pthreadKill` generate a signal, and answer a `ProcessFate<KillAnswer>`: the process runs on (`KillAnswer.Completed KillOutcome.ProcessRuns`), with the signal pending or discarded; the signal stopped it (`KillAnswer.Completed (KillOutcome.ProcessStopped _)`); the signal killed it at once (`ProcessFate.ProcessEnded`); or the call failed, sending nothing (`KillAnswer.Failed`).
 `kill` of a pid that names no process on the machine, and under Linux no thread either, is `ESRCH` (under Darwin, a number that is no signal is `EINVAL` first); a process that has ended is gone, as if its parent had reaped it.
 `kill` of another process, of a process group, of process 1 (which every real machine has, and a `UnixSystem` never holds), or under Linux of a thread's ID, is refused.
 Under Linux a pending signal counts against `RLIMIT_SIGPENDING`, the receiving process's limit on the signals queued for its real user in all that user's processes (`ProcessLaunch.withPendingSignalLimit`, by default `UnixSystem.defaultPendingSignalLimit`).
@@ -1006,13 +1008,13 @@ let resumed (fate : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit>) : Un
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
 // pthread_sigmask(how, {SIGTERM}, NULL), with `how` under Linux's numbering:
-// SIG_BLOCK is 0 and SIG_UNBLOCK 1. Its Error is an errno.
+// SIG_BLOCK is 0 and SIG_UNBLOCK 1. Its errno is SignalMaskAnswer.Failed.
 let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
 let mask (how : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
     match UnixSignal.pthreadSigmask leader how (Some sigterm) system with
-    | Ok (_previous, system) -> system
-    | Error errno -> failwith $"pthread_sigmask failed: %O{errno}"
+    | SignalMaskAnswer.Completed _previous, system -> system
+    | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask failed: %O{errno}"
 
 let blocked = booted |> mask 0 |> returnToUser |> resumed
 
@@ -1022,9 +1024,9 @@ let pending =
     let signo = Signal.toRawSignoUnder numbering Signal.SIGTERM
 
     match UnixSignal.kill leader pid signo blocked with
-    | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system |> returnToUser |> resumed
-    | Ok outcome -> failwith $"unexpected kill: %A{outcome}"
-    | Error errno -> failwith $"kill failed: %O{errno}"
+    | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system |> returnToUser |> resumed
+    | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill failed: %O{errno}"
+    | outcome -> failwith $"unexpected kill: %A{outcome}"
 
 // Unblocking it: as thread 0 returns to user mode it takes SIGTERM, whose
 // default action ends the process.
@@ -1083,8 +1085,8 @@ let handled =
     let action = SignalDisposition.Catch { SignalCatch.ofHandler "on-usr1" with Restart = true }
 
     match UnixSignal.sigaction first usr1 (Some action) booted with
-    | Ok (_, system) -> snd (returnToUser first system)
-    | Error errno -> failwith $"sigaction failed: %O{errno}"
+    | SigactionAnswer.Completed _, system -> snd (returnToUser first system)
+    | SigactionAnswer.Failed errno, _ -> failwith $"sigaction failed: %O{errno}"
 
 let readFd, piped =
     match UnixPipe.pipe2 first 0 UserBuffer.Mapped handled with
@@ -1103,7 +1105,7 @@ let signalled =
     match read spawned with
     | ReadOutcome.WouldBlock _, asleep ->
         match UnixSignal.pthreadKill first 1 usr1 asleep with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> snd (returnToUser first system)
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> snd (returnToUser first system)
         | other -> failwith $"unexpected from pthread_kill: %A{other}"
     | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
 

@@ -134,8 +134,8 @@ module TestFirstWake =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (leader system) (signo signal system) (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     let private pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
         match UnixPipe.tryPipe2 (leader system) 0 UserBuffer.Mapped system with
@@ -584,7 +584,7 @@ module TestFirstWake =
             | Event.Drain -> w.Drain system
             | Event.Signal ->
                 match UnixSignal.tryPthreadKill (leader system) front (signo Signal.SIGUSR1 system) system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"pthread_kill: %A{other}"
             | Event.Deadline ->
                 match deadline with
@@ -713,7 +713,7 @@ module TestFirstWake =
 
         let system =
             match UnixSignal.tryPthreadKill (leader system) 1 (signo Signal.SIGUSR1 system) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> wake system
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> wake system
             | other -> failwith $"pthread_kill: %A{other}"
 
         let system =

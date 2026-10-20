@@ -109,6 +109,15 @@ module TestSocketTable =
             (fun machine ->
                 { machine with
                     Sockets = sockets |> List.map (fun (id, socket) -> SocketId id, socket) |> Map.ofList
+                    // Each UDP socket comes with its receive side, as
+                    // `socket(2)` makes it.
+                    DatagramReceivers =
+                        sockets
+                        |> List.filter (snd >> UnixMachineState.receivesDatagrams)
+                        |> List.map (fun (id, _) ->
+                            SocketId id, DatagramReceiver.create SimulatedUnixFlavour.Linux machine.UdpReceiveSpace
+                        )
+                        |> Map.ofList
                     NextSocketId = SocketId nextSocketId
                 }
             )
@@ -442,6 +451,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openDirectory
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
@@ -449,6 +459,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openFile
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly

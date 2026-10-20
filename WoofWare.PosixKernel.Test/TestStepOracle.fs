@@ -719,8 +719,8 @@ module TestStepOracle =
         let signo = Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some action) system with
-        | Ok (_, system) -> leaderReturned system
-        | Error error -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
+        | SigactionAnswer.Completed _, system -> leaderReturned system
+        | SigactionAnswer.Failed error, _ -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
 
     /// `system` with SIGUSR1 caught, blocked by the leader, and pending on the
     /// process.
@@ -735,11 +735,11 @@ module TestStepOracle =
 
         let system =
             match UnixSignal.pthreadSigmask (Callers.leader system) (MaskHow.block numbering) (Some usr1) system with
-            | Ok (_, system) -> leaderReturned system
-            | Error error -> failwith $"setting up, pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> leaderReturned system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"setting up, pthread_sigmask: %O{error}"
 
         match UnixSignal.kill (Callers.leader system) pid (Signal.toRawSignoUnder numbering Signal.SIGUSR1) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> leaderReturned system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> leaderReturned system
         | other -> failwith $"setting up, kill: %A{other}"
 
     /// `system` with its leader inside a handler for SIGUSR2, whose frame is
@@ -756,7 +756,7 @@ module TestStepOracle =
             Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGUSR2
 
         match UnixSignal.pthreadKill leader 0 usr2 system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) ->
             match UnixSignal.onReturnToUser leader system with
             | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system) when
                 frame.Id = HandlerFrameId 0L

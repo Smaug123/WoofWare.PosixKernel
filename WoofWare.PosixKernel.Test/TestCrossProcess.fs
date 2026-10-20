@@ -735,6 +735,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -901,25 +902,25 @@ module TestCrossProcess =
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             match UnixSignal.pthreadSigmask caller (MaskHow.number numbering how) (Some set) machine with
-            | Ok (_, machine) -> machine
-            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, machine -> machine
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
 
         match ending with
         | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
         | Ending.Kill ->
             match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
-            | Ok fate -> ended "kill" fate
-            | Error errno -> failwith $"kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill: %O{errno}"
+            | fate -> ended "kill" fate
         | Ending.Raise ->
             match UnixSignal.pthreadKill caller 0 sigterm machine with
-            | Ok fate -> ended "pthread_kill" fate
-            | Error errno -> failwith $"pthread_kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"pthread_kill: %O{errno}"
+            | fate -> ended "pthread_kill" fate
         | Ending.ReturnToUser ->
             let machine = machine |> mask SignalMaskChange.Block |> returned
 
             let machine =
                 match UnixSignal.pthreadKill caller 0 sigterm machine with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, machine) -> returned machine
                 | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
 
             machine
@@ -1214,6 +1215,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -1798,6 +1800,7 @@ module TestCrossProcess =
                                     CloseOnExec = false
                                     Synchronous = false
                                     DataSynchronous = false
+                                    NonBlocking = false
                                     Directory = false
                                 }
                                 0o644
@@ -1961,6 +1964,7 @@ module TestCrossProcess =
                     CloseOnExec = false
                     Synchronous = false
                     DataSynchronous = false
+                    NonBlocking = false
                     Directory = false
                 }
                 0o644

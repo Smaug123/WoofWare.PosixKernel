@@ -166,8 +166,9 @@ module TestProcessSignalPair =
                     (Some action)
                     system
             with
-            | Ok (_, system) -> ReturnsToUser.untilResumed (Callers.thread leaderThread system) system
-            | Error errno -> failwith $"sigaction: %O{errno}"
+            | SigactionAnswer.Completed _, system ->
+                ReturnsToUser.untilResumed (Callers.thread leaderThread system) system
+            | SigactionAnswer.Failed errno, _ -> failwith $"sigaction: %O{errno}"
 
         let system = booted |> install row.First |> install row.Second
 
@@ -182,8 +183,9 @@ module TestProcessSignalPair =
                         (Some mask)
                         system
                 with
-                | Ok (_, system) -> ReturnsToUser.untilResumed (Callers.thread sender system) system
-                | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system ->
+                    ReturnsToUser.untilResumed (Callers.thread sender system) system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
             else
                 system
 
@@ -219,7 +221,7 @@ module TestProcessSignalPair =
                 system
 
         match kill row.First system with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
             let senderStarted, system = returnRecording sender system
 
             let between, polls, system =
@@ -235,7 +237,7 @@ module TestProcessSignalPair =
 
             match kill row.Second system with
             | Error refusal -> Error (KillRefusal.describe refusal)
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
                 let senderAfter, system = returnRecording sender system
 
                 let leaderStarted, polls =

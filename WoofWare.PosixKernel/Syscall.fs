@@ -895,19 +895,19 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixInotify.inotifyRmWatch` answers.
     | InotifyRmWatch of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.kill` answers.
-    | Kill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | Kill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.pthreadKill` answers.
-    | PthreadKill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | PthreadKill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.sigaction` answers.
-    | SigAction of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigAction of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigactionSyscall` answers.
-    | SigActionSyscall of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigActionSyscall of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.pthreadSigmask` answers.
-    | PthreadSigMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | PthreadSigMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigprocmask` answers.
-    | SigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.rtSigprocmask` answers.
-    | RtSigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | RtSigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigpending` answers.
     | SigPending of pending : SignalMask
     /// What `UnixSignal.sigsuspend` answers.
@@ -925,7 +925,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// A `sigtimedwait(2)`. Reserved: see `SteppedSigTimedWait`.
     | SigTimedWait of stepped : SteppedSigTimedWait<'Thread, 'Handler>
     /// What `UnixClock.clockGettime` answers.
-    | ClockGetTime of result : Result<UnixTimestamp, UnixError>
+    | ClockGetTime of answer : ClockGettimeAnswer
     /// What `UnixClock.gettimeofday` answers.
     | GetTimeOfDay of time : UnixTimestamp
     /// A `nanosleep(2)`. Reserved: see `SteppedNanosleep`.
@@ -983,14 +983,6 @@ module SteppedCall =
             match fate with
             | ProcessFate.Continues (_, system)
             | ProcessFate.ProcessEnded (_, system) -> system
-
-        let ofResult
-            (result : Result<'Answer * UnixSystem<'Thread, 'Handler>, UnixError>)
-            : UnixSystem<'Thread, 'Handler>
-            =
-            match result with
-            | Ok (_, system) -> system
-            | Error _ -> madeIn
 
         let reserved (name : string) : UnixSystem<'Thread, 'Handler> =
             failwith
@@ -1058,6 +1050,11 @@ module SteppedCall =
         | SteppedCall.SigSuspend (_, system)
         | SteppedCall.RtSigSuspend (_, system)
         | SteppedCall.Pause (_, system)
+        | SteppedCall.SigAction (_, system)
+        | SteppedCall.SigActionSyscall (_, system)
+        | SteppedCall.PthreadSigMask (_, system)
+        | SteppedCall.SigProcMask (_, system)
+        | SteppedCall.RtSigProcMask (_, system)
         | SteppedCall.GetRandom (_, system)
         | SteppedCall.GetEntropy (_, system)
         | SteppedCall.UMask (_, system)
@@ -1071,16 +1068,8 @@ module SteppedCall =
         | SteppedCall.Write (fate, _)
         | SteppedCall.Send fate -> ofFate fate
         | SteppedCall.ExitThread fate -> ofFate fate
-        | SteppedCall.Kill result
-        | SteppedCall.PthreadKill result ->
-            match result with
-            | Ok fate -> ofFate fate
-            | Error _ -> madeIn
-        | SteppedCall.SigAction result
-        | SteppedCall.SigActionSyscall result -> ofResult result
-        | SteppedCall.PthreadSigMask result
-        | SteppedCall.SigProcMask result
-        | SteppedCall.RtSigProcMask result -> ofResult result
+        | SteppedCall.Kill fate
+        | SteppedCall.PthreadKill fate -> ofFate fate
         | SteppedCall.PosixFAdvise _
         | SteppedCall.BytesAvailable _
         | SteppedCall.TerminalAttributes _

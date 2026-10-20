@@ -572,8 +572,8 @@ module TestUnixThreadLifecycle =
                     live thread && not (Set.contains thread model.Parked)
                     ->
                     match UnixSystem.tryStep (Callers.thread thread system) call system with
-                    | Ok (SteppedCall.PthreadSigMask (Ok (_, after))) -> after, model
-                    | Ok (SteppedCall.PthreadSigMask (Error errno)) ->
+                    | Ok (SteppedCall.PthreadSigMask (SignalMaskAnswer.Completed _, after)) -> after, model
+                    | Ok (SteppedCall.PthreadSigMask (SignalMaskAnswer.Failed errno, _)) ->
                         failwith $"pthread_sigmask(SIG_BLOCK) failed with %O{errno}"
                     | other -> failwith $"pthread_sigmask(SIG_BLOCK) answered %A{Result.map Stepped.view other}"
                 | Op.EnqueueOnThread (thread, signal) when live thread ->
