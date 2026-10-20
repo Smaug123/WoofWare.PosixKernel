@@ -6,9 +6,16 @@ subtree check and before vfs_rename, so it beats the type rule and every
 EACCES; Darwin has no such arm and answers whatever its ordinary ordering
 gives. Measured outputs sit beside this file.
 
+The rows with a trailing separator ask where the trap sits against the
+ENOTDIR a trailing separator over a non-directory earns. Linux moved it:
+up to 6.18 the trap is checked after that ENOTDIR, and from 6.19 (where
+__start_renaming checks it while taking the locks) before.
+
     python3 ancestor-trap.py /tmp/scratch
     container run --rm -v "$PWD:/probe" --user 1000:1000 python:3-slim \
         python3 /probe/ancestor-trap.py /tmp/scratch     # ext4, unprivileged
+    container run --rm -v "$PWD:/probe" python:3-slim \
+        python3 /probe/ancestor-trap.py /tmp/scratch     # ext4, uid 0
 """
 import os, errno, sys, shutil, stat
 base = sys.argv[1]
@@ -48,3 +55,22 @@ attempt("rename(a/l, a) l symlink", "a/l", "a", s7)
 def s8():
     os.makedirs(base+"/a/b"); open(base+"/a/b/f","w").close(); os.chmod(base+"/a/b", 0o555)
 attempt("rename(a/b/f, a) a/b 0555, f file", "a/b/f", "a", s8)
+def s9():
+    os.makedirs(base+"/a"); open(base+"/a/f","w").close()
+attempt("rename(a/f/, a) f file", "a/f/", "a", s9)
+attempt("rename(a/f, a/) f file", "a/f", "a/", s9)
+attempt("rename(a/f/, a/) f file", "a/f/", "a/", s9)
+attempt("rename(a/l/, a) l symlink", "a/l/", "a", s7)
+def s10():
+    os.makedirs(base+"/a/b"); open(base+"/a/b/f","w").close()
+attempt("rename(a/b/f, a/) f file", "a/b/f", "a/", s10)
+def s11():
+    os.makedirs(base+"/a/b"); open(base+"/a/b/f","w").close(); os.chmod(base+"/a/b", 0o555)
+attempt("rename(a/b/f/, a) a/b 0555", "a/b/f/", "a", s11)
+# Controls. A directory source takes no ENOTDIR from a separator, so the trap
+# answers on every Linux; and a separator with no trap in the way is ENOTDIR on
+# every Linux, so the rows above are not a separator check that went missing.
+attempt("rename(a/sub/, a/) sub dir", "a/sub/", "a/", s4)
+def s12():
+    os.makedirs(base+"/a"); os.makedirs(base+"/z"); open(base+"/a/f","w").close()
+attempt("rename(a/f, z/) not an ancestor", "a/f", "z/", s12)

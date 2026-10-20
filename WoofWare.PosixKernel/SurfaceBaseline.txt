@@ -3902,10 +3902,44 @@ WoofWare.PosixKernel.RefusalError.IsReported [property]: [read-only] bool
 WoofWare.PosixKernel.RefusalError.Pending [static property]: [read-only] WoofWare.PosixKernel.RefusalError
 WoofWare.PosixKernel.RefusalError.Reported [static property]: [read-only] WoofWare.PosixKernel.RefusalError
 WoofWare.PosixKernel.RefusalError.Tag [property]: [read-only] int
+WoofWare.PosixKernel.RenameAncestorCheck inherit obj, implements WoofWare.PosixKernel.RenameAncestorCheck System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameAncestorCheck System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.RenameAncestorCheck+Tags inherit obj
+WoofWare.PosixKernel.RenameAncestorCheck+Tags.AfterTrailingSeparators [static field]: int = 0
+WoofWare.PosixKernel.RenameAncestorCheck+Tags.BeforeTrailingSeparators [static field]: int = 1
+WoofWare.PosixKernel.RenameAncestorCheck.AfterTrailingSeparators [static property]: [read-only] WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameAncestorCheck.BeforeTrailingSeparators [static property]: [read-only] WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameAncestorCheck.Equals [method]: (WoofWare.PosixKernel.RenameAncestorCheck, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.RenameAncestorCheck.get_AfterTrailingSeparators [static method]: unit -> WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameAncestorCheck.get_BeforeTrailingSeparators [static method]: unit -> WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameAncestorCheck.get_IsAfterTrailingSeparators [method]: unit -> bool
+WoofWare.PosixKernel.RenameAncestorCheck.get_IsBeforeTrailingSeparators [method]: unit -> bool
+WoofWare.PosixKernel.RenameAncestorCheck.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.RenameAncestorCheck.IsAfterTrailingSeparators [property]: [read-only] bool
+WoofWare.PosixKernel.RenameAncestorCheck.IsBeforeTrailingSeparators [property]: [read-only] bool
+WoofWare.PosixKernel.RenameAncestorCheck.Tag [property]: [read-only] int
+WoofWare.PosixKernel.RenameRefusalOrder inherit obj, implements WoofWare.PosixKernel.RenameRefusalOrder System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameRefusalOrder System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.RenameRefusalOrder+Linux inherit WoofWare.PosixKernel.RenameRefusalOrder
+WoofWare.PosixKernel.RenameRefusalOrder+Linux.ancestorCheck [property]: [read-only] WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameRefusalOrder+Linux.get_ancestorCheck [method]: unit -> WoofWare.PosixKernel.RenameAncestorCheck
+WoofWare.PosixKernel.RenameRefusalOrder+Tags inherit obj
+WoofWare.PosixKernel.RenameRefusalOrder+Tags.Darwin [static field]: int = 1
+WoofWare.PosixKernel.RenameRefusalOrder+Tags.Linux [static field]: int = 0
+WoofWare.PosixKernel.RenameRefusalOrder.Darwin [static property]: [read-only] WoofWare.PosixKernel.RenameRefusalOrder
+WoofWare.PosixKernel.RenameRefusalOrder.Equals [method]: (WoofWare.PosixKernel.RenameRefusalOrder, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.RenameRefusalOrder.get_Darwin [static method]: unit -> WoofWare.PosixKernel.RenameRefusalOrder
+WoofWare.PosixKernel.RenameRefusalOrder.get_IsDarwin [method]: unit -> bool
+WoofWare.PosixKernel.RenameRefusalOrder.get_IsLinux [method]: unit -> bool
+WoofWare.PosixKernel.RenameRefusalOrder.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.RenameRefusalOrder.IsDarwin [property]: [read-only] bool
+WoofWare.PosixKernel.RenameRefusalOrder.IsLinux [property]: [read-only] bool
+WoofWare.PosixKernel.RenameRefusalOrder.NewLinux [static method]: WoofWare.PosixKernel.RenameAncestorCheck -> WoofWare.PosixKernel.RenameRefusalOrder
+WoofWare.PosixKernel.RenameRefusalOrder.Tag [property]: [read-only] int
 WoofWare.PosixKernel.RenameRules inherit obj, implements WoofWare.PosixKernel.RenameRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.RenameRules..ctor [constructor]: WoofWare.PosixKernel.RenameWalkOrder
+WoofWare.PosixKernel.RenameRules..ctor [constructor]: (WoofWare.PosixKernel.RenameWalkOrder, WoofWare.PosixKernel.RenameRefusalOrder)
 WoofWare.PosixKernel.RenameRules.Equals [method]: (WoofWare.PosixKernel.RenameRules, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.RenameRules.get_RefusalOrder [method]: unit -> WoofWare.PosixKernel.RenameRefusalOrder
 WoofWare.PosixKernel.RenameRules.get_WalkOrder [method]: unit -> WoofWare.PosixKernel.RenameWalkOrder
+WoofWare.PosixKernel.RenameRules.RefusalOrder [property]: [read-only] WoofWare.PosixKernel.RenameRefusalOrder
 WoofWare.PosixKernel.RenameRules.WalkOrder [property]: [read-only] WoofWare.PosixKernel.RenameWalkOrder
 WoofWare.PosixKernel.RenameWalkOrder inherit obj, implements WoofWare.PosixKernel.RenameWalkOrder System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameWalkOrder System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.RenameWalkOrder+Tags inherit obj

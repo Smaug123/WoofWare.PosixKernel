@@ -1020,18 +1020,34 @@ module SimulatedUnixPlatform =
             }
 
     /// Everything this platform's `rename(2)` does differently. See
-    /// `RenameRules`, whose field this picks; the walk is
-    /// `finalNameTrailingSeparator`'s, and the ordering of the refusals —
-    /// which is most of the divergence — follows from the flavour alone.
+    /// `RenameRules`, whose fields this picks; the walk is
+    /// `finalNameTrailingSeparator`'s.
     let renameRules (platform : SimulatedUnixPlatform) : RenameRules =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux ->
+        match kernel platform with
+        | SimulatedUnixKernel.Linux version ->
+            // Commit 5c8752729970 ("VFS/nfsd/ovl: introduce start_renaming()
+            // and end_renaming()"), first released in 6.19, moved the check of a
+            // destination that is the source's ancestor into the locking of the
+            // two parents, ahead of the trailing-separator checks.
+            let checksAncestorWhileLocking =
+                {
+                    Major = 6u
+                    Minor = 19u
+                    Patch = 0u
+                }
+
             {
                 WalkOrder = RenameWalkOrder.ParentsThenFinals
+                RefusalOrder =
+                    if version >= checksAncestorWhileLocking then
+                        RenameRefusalOrder.Linux RenameAncestorCheck.BeforeTrailingSeparators
+                    else
+                        RenameRefusalOrder.Linux RenameAncestorCheck.AfterTrailingSeparators
             }
-        | SimulatedUnixFlavour.Darwin ->
+        | SimulatedUnixKernel.Darwin _ ->
             {
                 WalkOrder = RenameWalkOrder.SourceThenDestination
+                RefusalOrder = RenameRefusalOrder.Darwin
             }
 
     /// Whether this platform's kernel screens a read or write buffer before it

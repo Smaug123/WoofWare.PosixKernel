@@ -1,4 +1,4 @@
-Darwin 25.6.0 uid 501
+Darwin 27.0.0 uid 501
 rename(a/f, a) f file             : EISDIR
 rename(a/sub, a) a 0555           : EACCES
 rename(a/b/c, a) a/b 0555         : EACCES
@@ -7,3 +7,11 @@ rename(a/b/c, a/b) parent         : ENOTEMPTY
 rename(a/b/c, a/b) parent 0555    : EACCES
 rename(a/l, a) l symlink          : EISDIR
 rename(a/b/f, a) a/b 0555, f file : EISDIR
+rename(a/f/, a) f file            : ENOTDIR
+rename(a/f, a/) f file            : EISDIR
+rename(a/f/, a/) f file           : ENOTDIR
+rename(a/l/, a) l symlink         : ENOENT
+rename(a/b/f, a/) f file          : EISDIR
+rename(a/b/f/, a) a/b 0555        : ENOTDIR
+rename(a/sub/, a/) sub dir        : ENOTEMPTY
+rename(a/f, z/) not an ancestor   : EISDIR
