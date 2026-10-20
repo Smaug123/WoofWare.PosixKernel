@@ -245,9 +245,30 @@ module TestDatagramTransferAgainstHost =
 
     // ------------------------------------------------------------ the kernel
 
-    let private kernelSockets (platform : SimulatedUnixPlatform) : int list * UnixSystem<int, string> =
+    /// The receive buffer a fresh UDP socket on this host starts with, which
+    /// the host's administrator configures: `getsockopt(SO_RCVBUF)`.
+    let private hostReceiveBuffer (flavour : SimulatedUnixFlavour) (fd : int) : int =
+        // SOL_SOCKET and SO_RCVBUF: 1 and 8 on Linux, 0xffff and 0x1002 on Darwin.
+        let level, option =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> 1, 8
+            | SimulatedUnixFlavour.Darwin -> 0xffff, 0x1002
+
+        let mutable value = 0
+        let mutable length = 4u
+        check "SO_RCVBUF" (HostCalls.getSockOptInt (fd, level, option, &value, &length))
+        value
+
+    /// Five sockets, as the fixture describes them, on a machine whose UDP
+    /// receive buffer is `receiveBuffer`.
+    let private kernelSockets
+        (platform : SimulatedUnixPlatform)
+        (receiveBuffer : int)
+        : int list * UnixSystem<int, string>
+        =
         let mutable system =
             UnixSystem.initial<int, string> platform
+            |> UnixBootImage.withUdpReceiveSpace (Some receiveBuffer)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let address = CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 0us)
@@ -538,12 +559,33 @@ module TestDatagramTransferAgainstHost =
         | "-" -> []
         | _ -> text.Split separator |> Array.toList |> List.map parse
 
+    /// What a host answered to a sequence: the receive buffer its UDP sockets
+    /// started with, and one `Seen` for each call each op made.
+    type private HostRun =
+        {
+            ReceiveBuffer : int
+            Calls : Seen list list
+        }
+
+    let private writeRun (run : HostRun) : string =
+        let calls = joined " " writeSeens run.Calls
+        $"%d{run.ReceiveBuffer};%s{calls}"
+
+    let private parseRun (text : string) : HostRun =
+        match text.Split (';', 2) with
+        | [| buffer ; calls |] ->
+            {
+                ReceiveBuffer = int buffer
+                Calls = split ' ' (split ',' parseSeen) calls
+            }
+        | _ -> failwith $"not a UDP run: %s{text}"
+
     /// Sequences of up to 40 ops over the fixture's five sockets, made on the
-    /// host and in the kernel and compared answer by answer; each op answers
-    /// one `Seen` for each call it makes. A Mac's answers are recorded in
+    /// host and in the kernel and compared answer by answer, the kernel booted
+    /// with the host's receive buffer. A Mac's answers are recorded in
     /// `hostCorpus/udpTransfer.darwin.txt`, which every host replays, so CI,
     /// which runs on Linux, holds the Darwin column too.
-    let private transfers : HostComparison<Op list, Seen list list> =
+    let private transfers : HostComparison<Op list, HostRun> =
         {
             Name = "udpTransfer"
             Inputs =
@@ -553,21 +595,25 @@ module TestDatagramTransferAgainstHost =
             Count = 40
             WriteInput = writeOps
             ParseInput = split ' ' parseOp
-            WriteAnswer = joined " " writeSeens
-            ParseAnswer = split ' ' (split ',' parseSeen)
+            WriteAnswer = writeRun
+            ParseAnswer = parseRun
             Host =
                 fun platform ops ->
                     let flavour = SimulatedUnixPlatform.flavour platform
                     let host = hostSockets platform
 
                     try
-                        ops |> List.mapi (fun index op -> hostApply flavour host index op)
+                        {
+                            ReceiveBuffer = hostReceiveBuffer flavour host.Head
+                            Calls = ops |> List.mapi (fun index op -> hostApply flavour host index op)
+                        }
                     finally
                         for fd in host do
                             HostCalls.close fd |> ignore<int>
             Disagreement =
-                fun platform ops answers ->
-                    let kernel, system = kernelSockets platform
+                fun platform ops run ->
+                    let kernel, system = kernelSockets platform run.ReceiveBuffer
+                    let answers = run.Calls
 
                     let rec go
                         (system : UnixSystem<int, string>)
@@ -596,7 +642,7 @@ module TestDatagramTransferAgainstHost =
 
     [<Test>]
     let ``the kernel answers random UDP transfers as this host does`` () : unit =
-        HostPlatform.onUnixHost (fun flavour -> HostCorpus.live transfers (HostPlatform.platformOf flavour))
+        HostPlatform.onUnixHostKernel (HostCorpus.live transfers)
 
     [<Test>]
     let ``the kernel answers random UDP transfers as Darwin did`` () : unit =
