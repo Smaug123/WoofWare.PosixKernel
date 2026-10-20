@@ -161,8 +161,10 @@ type internal WriteInto =
     /// descriptor `fd` names, which moves past them; the change is reported
     /// under `through`, the name that description was opened through.
     | File of fd : int * inode : InodeNumber * offset : int64 * through : ReachedThrough
-    /// A character device, which takes every byte and keeps none.
-    | Device
+    /// The character device `inode`, which takes every byte and keeps none;
+    /// the write is reported under `through`, the name the description was
+    /// opened through.
+    | Device of inode : InodeNumber * through : ReachedThrough
     /// The pipe `pipe`.
     | Pipe of pipe : PipeId
     /// `connectionEnd` of `connection`.
@@ -212,8 +214,10 @@ type internal PWriteInto =
     /// The file `inode`, from the call's offset; the change is reported
     /// under `through`, the name its description was opened through.
     | File of inode : InodeNumber * through : ReachedThrough
-    /// A character device, which takes every byte and keeps none.
-    | Device
+    /// The character device `inode`, which takes every byte and keeps none;
+    /// the write is reported under `through`, the name its description was
+    /// opened through.
+    | Device of inode : InodeNumber * through : ReachedThrough
 
 /// Whether a `write` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitWrite` answers it: the step before the copy that
@@ -552,6 +556,10 @@ module internal WriteStep =
 type internal PWriteAdmission =
     /// Answered without the buffer being read at all.
     | Answered of answer : WriteAnswer
+    /// Answered by the driver of the character device `inode` without the
+    /// buffer being read: the call answers `answer`, the write reported under
+    /// `through` if it moved bytes (`UnixReadWrite.applyPWriteDeviceAnswer`).
+    | DeviceAnswered of answer : WriteAnswer * inode : InodeNumber * through : ReachedThrough
     /// The copy is reached: extract exactly `count` bytes and pass them to
     /// `UnixReadWrite.tryApplyPWrite` with `into`.
     | Transfer of count : int * into : PWriteInto
@@ -788,8 +796,9 @@ type private PReadTarget =
 type private PWriteTarget =
     /// A regular file, reached through `through`.
     | File of inode : InodeNumber * through : ReachedThrough
-    /// A character device, whose driver answers.
-    | CharacterDevice of device : CharacterDevice
+    /// The character device `inode`, reached through `through`, whose driver
+    /// answers.
+    | CharacterDevice of inode : InodeNumber * device : CharacterDevice * through : ReachedThrough
 
 /// What a `write` will operate on, once the descriptor's access mode has been
 /// checked and before its buffer is screened.
@@ -814,8 +823,9 @@ type private WriteTarget =
     /// The write end of a pipe, the open file description it was reached
     /// through, and whether that description carries `O_NONBLOCK`.
     | Pipe of pipe : PipeId * description : OpenFileDescriptionId * nonBlocking : bool
-    /// A character device, whose driver answers.
-    | CharacterDevice of device : CharacterDevice
+    /// The character device `inode`, reached through `through`, whose driver
+    /// answers.
+    | CharacterDevice of inode : InodeNumber * device : CharacterDevice * through : ReachedThrough
 
 /// How far a write into a pipe gets before it needs the caller's bytes.
 [<RequireQualifiedAccess>]
@@ -1655,11 +1665,38 @@ module UnixReadWrite =
 
         Ok (Ok (FileContents.read offset transfer contents), accessed ())
 
+    /// `system` after a write to the character device `inode`, through a
+    /// description opened `through` a name, answered `answer`: one that moved
+    /// bytes is reported to the inotify instances watching the device
+    /// (`ChangeNotice.DeviceWritten`), and changes nothing else.
+    let private deviceWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (inode : InodeNumber)
+        (through : ReachedThrough)
+        (answer : WriteAnswer)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        match answer with
+        // Linux's `vfs_write` raises `fsnotify_modify` only for a write that
+        // returns a positive count: measured, an empty write and an EFAULT
+        // raise nothing (`docs/probes/inotify-device-write`, section D).
+        | WriteAnswer.Completed moved when moved > 0L ->
+            { system with
+                Machine =
+                    UnixMachineState.commitFileSystem
+                        (ChangeNotice.DeviceWritten (inode, through))
+                        (VirtualFileSystem.unchanged system.Machine.FileSystem)
+                        system.Machine
+            }
+        | WriteAnswer.Completed _
+        | WriteAnswer.Failed _ -> system
+
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
     /// passed; `None` where it copies them, which it then takes all of.
-    /// Neither device in `CharacterDevice.all` changes anything a later call
-    /// could see, so a write moves no timestamp, position or pool.
+    /// Neither device in `CharacterDevice.all` keeps what it is given, so a
+    /// write moves no timestamp, position or pool; the caller reports one that
+    /// moved bytes to inotify (`deviceWritten`).
     let private deviceWriteWithoutBytes
         (device : CharacterDevice)
         (buffer : UserBuffer)
@@ -3017,7 +3054,8 @@ module UnixReadWrite =
                     )
                 )
             | None -> Ok (WriteTarget.Socket socketId)
-        | OpenFileTarget.CharacterDevice (_, device, _) -> Ok (WriteTarget.CharacterDevice device)
+        | OpenFileTarget.CharacterDevice (inode, device, _) ->
+            Ok (WriteTarget.CharacterDevice (inode, device, ReachedDescription.through "UnixReadWrite.write" reached))
         | OpenFileTarget.File (inode, offset) ->
             Ok (WriteTarget.File (inode, offset, ReachedDescription.through "UnixReadWrite.write" reached))
         | OpenFileTarget.Pipe (pipeId, PipeEnd.Write) ->
@@ -3348,15 +3386,16 @@ module UnixReadWrite =
                 connectionId
                 connectionEnd
                 system
-        | WriteTarget.CharacterDevice device ->
+        | WriteTarget.CharacterDevice (inode, device, through) ->
             // No position check, as for a read: a device's position is always
             // 0.
             let count = oneCallsWorth platform count
 
             match deviceWriteWithoutBytes device buffer count with
             | Error refusal -> Error (WriteRefusal.Buffer refusal)
-            | Ok (Some answer) -> Ok (unchanged (WriteAdmission.Answered answer))
-            | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device)))
+            | Ok (Some answer) ->
+                Ok (WriteStep.Returns (WriteAdmission.Answered answer, deviceWritten inode through answer system))
+            | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device (inode, through))))
         | WriteTarget.Pipe (pipeId, descriptionId, nonBlocking) ->
             // A pipe has no position, and its own write decides the zero-length
             // case, which it answers differently from a file.
@@ -3452,7 +3491,8 @@ module UnixReadWrite =
 
         match into with
         // Both devices take every byte they are given and keep none of it.
-        | WriteInto.Device -> returns system
+        | WriteInto.Device (inode, through) ->
+            returns (deviceWritten inode through (WriteAnswer.Completed (int64 bytes.Length)) system)
         | WriteInto.Connection (connectionId, connectionEnd) ->
             let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
             returns (intoConnection connectionId connectionEnd bytes transfer system)
@@ -4424,7 +4464,10 @@ module UnixReadWrite =
             seekable (PWriteTarget.File (inode, ReachedDescription.through "UnixReadWrite.pwrite" reached))
         // Seekable as far as `pwrite` asks: measured on Linux, 16@0 answers as
         // `write` does (`devices.c`, PWRITE rows).
-        | OpenFileTarget.CharacterDevice (_, device, _) -> seekable (PWriteTarget.CharacterDevice device)
+        | OpenFileTarget.CharacterDevice (inode, device, _) ->
+            seekable (
+                PWriteTarget.CharacterDevice (inode, device, ReachedDescription.through "UnixReadWrite.pwrite" reached)
+            )
 
     /// Every answer `pwrite(2)` gives without reading the caller's buffer, and
     /// otherwise how many bytes to extract and where they go: the step before
@@ -4478,11 +4521,11 @@ module UnixReadWrite =
         else
 
         match target with
-        | PWriteTarget.CharacterDevice device ->
+        | PWriteTarget.CharacterDevice (inode, device, through) ->
             match deviceWriteWithoutBytes device buffer count with
             | Error refusal -> Error (PWriteRefusal.Buffer refusal)
-            | Ok (Some answer) -> Ok (PWriteAdmission.Answered answer)
-            | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device))
+            | Ok (Some answer) -> Ok (PWriteAdmission.DeviceAnswered (answer, inode, through))
+            | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device (inode, through)))
         | PWriteTarget.File (inode, through) ->
 
         match buffer with
@@ -4508,7 +4551,8 @@ module UnixReadWrite =
         let written =
             match into with
             // Both devices take every byte they are given and keep none of it.
-            | PWriteInto.Device -> Ok system
+            | PWriteInto.Device (inode, through) ->
+                Ok (deviceWritten inode through (WriteAnswer.Completed (int64 bytes.Length)) system)
             | PWriteInto.File (inode, through) ->
 
             let now = UnixMachineState.realtime system.Scheduling system.Machine
@@ -4570,6 +4614,20 @@ module UnixReadWrite =
         | Ok faulted -> Ok (WriteAnswer.Failed UnixError.EFAULT, faulted)
         | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
             Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
+
+    /// The step after a `pwrite` whose admission the driver of the character
+    /// device `inode` answered without the buffer
+    /// (`PWriteAdmission.DeviceAnswered`): `answer`, with the write reported
+    /// under `through` if it moved bytes. `system` must be the one the
+    /// admission was made against.
+    let internal applyPWriteDeviceAnswer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (answer : WriteAnswer)
+        (inode : InodeNumber)
+        (through : ReachedThrough)
+        (system : ProcessView<'Thread, 'Handler>)
+        : WriteAnswer * ProcessView<'Thread, 'Handler>
+        =
+        answer, deviceWritten inode through answer system
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -5108,6 +5166,8 @@ module UnixReadWrite =
         |> Result.bind (fun admission ->
             match admission with
             | PWriteAdmission.Answered answer -> Ok (CallProgress.Answered (answer, system))
+            | PWriteAdmission.DeviceAnswered (answer, inode, through) ->
+                Ok (CallProgress.Answered (applyPWriteDeviceAnswer answer inode through system))
             | PWriteAdmission.Faults (count, inode, through) ->
                 tryApplyPWriteFault offset count inode through system
                 |> Result.map CallProgress.Answered

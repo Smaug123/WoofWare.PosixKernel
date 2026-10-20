@@ -73,8 +73,8 @@ module TestInotifyRemovedDirectoryMeasured =
 
         // Named "a" throughout.
         let fd, s = init1 nonblock system
-        let wn, s = watch fd "n1" modelledEvents s
-        let wa, s = watch fd "n1/a" modelledEvents s
+        let wn, s = watch fd "n1" graphEvents s
+        let wa, s = watch fd "n1/a" graphEvents s
         system <- s |> chdir "n1/a" |> rmdir "../a"
         system <- rowOf produced fd "as-named-rmdir" $"n=%d{wn} a=%d{wa}: " system
         system <- chmod "." 0o700 system
@@ -83,8 +83,8 @@ module TestInotifyRemovedDirectoryMeasured =
 
         // Renamed "a" to "b" within its parent, then removed as "b".
         let fd, s = init1 nonblock system
-        let wn, s = watch fd "n2" modelledEvents s
-        let wa, s = watch fd "n2/a" modelledEvents s
+        let wn, s = watch fd "n2" graphEvents s
+        let wa, s = watch fd "n2/a" graphEvents s
         system <- s |> chdir "n2/a" |> rename "../a" "../b" |> rmdir "../b"
         system <- rowOf produced fd "renamed-rmdir" $"n=%d{wn} a=%d{wa}: " system
         system <- chmod "." 0o700 system
@@ -93,9 +93,9 @@ module TestInotifyRemovedDirectoryMeasured =
 
         // Moved to another parent as "c", then removed there.
         let fd, s = init1 nonblock system
-        let wn, s = watch fd "n3" modelledEvents s
-        let wm, s = watch fd "m3" modelledEvents s
-        let wa, s = watch fd "n3/a" modelledEvents s
+        let wn, s = watch fd "n3" graphEvents s
+        let wm, s = watch fd "m3" graphEvents s
+        let wa, s = watch fd "n3/a" graphEvents s
         system <- s |> chdir "n3/a" |> rename "../a" "../../m3/c" |> rmdir "../c"
         system <- rowOf produced fd "moved-rmdir" $"n=%d{wn} m=%d{wm} a=%d{wa}: " system
         system <- chmod "." 0o700 system
@@ -104,9 +104,9 @@ module TestInotifyRemovedDirectoryMeasured =
 
         // Displaced: "x" renamed over "y", the current directory.
         let fd, s = init1 nonblock system
-        let wn, s = watch fd "n4" modelledEvents s
-        let wx, s = watch fd "n4/x" modelledEvents s
-        let wy, s = watch fd "n4/y" modelledEvents s
+        let wn, s = watch fd "n4" graphEvents s
+        let wx, s = watch fd "n4/x" graphEvents s
+        let wy, s = watch fd "n4/y" graphEvents s
         system <- s |> chdir "n4/y" |> rename "../x" "../y"
         system <- rowOf produced fd "displaced-rename" $"n=%d{wn} x=%d{wx} y=%d{wy}: " system
         system <- chmod "." 0o700 system
@@ -127,9 +127,9 @@ module TestInotifyRemovedDirectoryMeasured =
                 ]
 
         let fd, s = init1 nonblock system
-        let wu, s = watch fd "u" modelledEvents s
-        let wp, s = watch fd "u/par" modelledEvents s
-        let wc, s = watch fd "u/par/child" modelledEvents s
+        let wu, s = watch fd "u" graphEvents s
+        let wp, s = watch fd "u/par" graphEvents s
+        let wc, s = watch fd "u/par/child" graphEvents s
         system <- s |> chdir "u/par/child" |> rmdir "../child"
         system <- rowOf produced fd "child-rmdir" $"u=%d{wu} par=%d{wp} child=%d{wc}: " system
         system <- rmdir "../../par" system
@@ -151,8 +151,8 @@ module TestInotifyRemovedDirectoryMeasured =
         let produced = ResizeArray<string * string> ()
         let mutable system = boot root [ "e", directory 0o777 [ "a", directory 0o755 [] ] ]
         let fd, s = init1 nonblock system
-        let we, s = watch fd "e" (modelledEvents ||| exclUnlink) s
-        let wa, s = watch fd "e/a" (modelledEvents ||| exclUnlink) s
+        let we, s = watch fd "e" (graphEvents ||| exclUnlink) s
+        let wa, s = watch fd "e/a" (graphEvents ||| exclUnlink) s
         system <- s |> chdir "e/a" |> rmdir "../a"
         system <- rowOf produced fd "excl-unlink-rmdir" $"e=%d{we} a=%d{wa}: " system
         system <- chmod "." 0o700 system
@@ -166,8 +166,8 @@ module TestInotifyRemovedDirectoryMeasured =
         let produced = ResizeArray<string * string> ()
         let mutable system = boot root [ "f", directory 0o777 [ "a", directory 0o755 [] ] ]
         let fd, s = init1 nonblock system
-        let wf, s = watch fd "f" modelledEvents s
-        let wa, s = watch fd "f/a" modelledEvents s
+        let wf, s = watch fd "f" graphEvents s
+        let wa, s = watch fd "f/a" graphEvents s
         let byName, s = openFd directoryFlags "f/a" 0 s
         system <- s |> chdir "f/a" |> rmdir "../a"
         system <- rowOf produced fd "rmdir" $"f=%d{wf} a=%d{wa}: " system

@@ -70,7 +70,7 @@ module internal InotifyAddWatchRefusal =
             $"this kernel is %O{flavour}-flavoured, and inotify exists on Linux only, so no kernel of this flavour has the call."
         | InotifyAddWatchRefusal.UnmodelledEvents events ->
             let names = events |> List.map (sprintf "%O") |> String.concat ", "
-            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open, read or release of a file to a watch, and unmounts nothing. Ask for the other events only."
+            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open or read of a file to a watch, and unmounts nothing. Ask for the other events only."
         | InotifyAddWatchRefusal.OneShot ->
             "the watch would carry IN_ONESHOT, which removes the watch after its first event, and that removal is not modelled."
         | InotifyAddWatchRefusal.Path refusal -> PathRefusal.describe refusal

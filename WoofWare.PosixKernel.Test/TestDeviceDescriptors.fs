@@ -590,6 +590,8 @@ module TestDeviceDescriptors =
                 match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 count) 0L returned with
                 | Ok (PWriteAdmission.Transfer (transfer, _)) -> transfer |> shouldEqual count
                 | Ok (PWriteAdmission.Answered answer) -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                | Ok (PWriteAdmission.DeviceAnswered _ as answered) ->
+                    failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
                 | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                 | Error other -> failwith $"admitPWrite: %A{other}"
             else
@@ -910,9 +912,12 @@ module TestDeviceDescriptors =
             | CharacterDevice.Zero, _
             | CharacterDevice.Random, _
             | CharacterDevice.Tty, _ -> failwith $"%O{device} has no node, so it cannot have been opened"
-            | CharacterDevice.Null, _ ->
-                admission
-                |> shouldEqual (PWriteAdmission.Answered (WriteAnswer.Completed (int64 count)))
+            | CharacterDevice.Null, PWriteAdmission.Answered answer ->
+                count |> shouldEqual 0UL
+                answer |> shouldEqual (WriteAnswer.Completed 0L)
+            | CharacterDevice.Null, PWriteAdmission.DeviceAnswered (answer, _, _) ->
+                answer |> shouldEqual (WriteAnswer.Completed (int64 count))
+            | CharacterDevice.Null, other -> failwith $"/dev/null's pwrite reached %A{other}"
             | CharacterDevice.URandom, PWriteAdmission.Answered answer ->
                 count |> shouldEqual 0UL
                 answer |> shouldEqual (WriteAnswer.Completed 0L)
@@ -927,6 +932,8 @@ module TestDeviceDescriptors =
                 | Error refusal -> failwith $"pwrite refused: %A{refusal}"
             | CharacterDevice.URandom, (PWriteAdmission.Faults _ as faults) ->
                 failwith $"a mapped buffer faulted: %A{faults}"
+            | CharacterDevice.URandom, (PWriteAdmission.DeviceAnswered _ as answered) ->
+                failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
 
         let offsetGen =
             Gen.oneof

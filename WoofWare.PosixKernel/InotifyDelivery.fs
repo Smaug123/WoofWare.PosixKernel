@@ -78,6 +78,14 @@ type internal ChangeNotice =
     /// since unlinked, was released (Linux's dentry going), and nothing in
     /// the graph changed (`VirtualFileSystem.unchanged`).
     | NameReleased of inode : InodeNumber
+    /// An open file description onto `inode`, opened `through` a name, and
+    /// for writing if `writable`, was released: nothing references it any
+    /// more. Nothing in the graph changed (`VirtualFileSystem.unchanged`).
+    | Released of inode : InodeNumber * through : ReachedThrough * writable : bool
+    /// A write through a descriptor opened `through` a name moved bytes to the
+    /// character device `inode`. Nothing in the graph changed
+    /// (`VirtualFileSystem.unchanged`).
+    | DeviceWritten of inode : InodeNumber * through : ReachedThrough
     /// A read of `inode` moved its access time, the one change it holds
     /// (`FsChange.AttributesChanged`). It raises nothing: Linux's
     /// `IN_ACCESS` is the read's own, raised whether or not the time moves
@@ -103,10 +111,12 @@ type internal InotifyNotification =
         /// A watch with `IN_EXCL_UNLINK` hears nothing of it: an event Linux
         /// raises with the path the change went through, whose name has been
         /// unlinked since the descriptor was opened through it. That is a
-        /// write's `IN_MODIFY`, at the directory's watch and the inode's own,
-        /// and not a `setattr`'s, nor the `IN_ATTRIB` of the set-ID bits a
-        /// write clears (measured, `inotify-dentry-probe.c` section E,
-        /// `inotify-delivery-probe.c` row Z write-unlinked-excl-unlink).
+        /// write's `IN_MODIFY` and a release's `IN_CLOSE_*`, at the
+        /// directory's watch and the inode's own, and not a `setattr`'s, nor
+        /// the `IN_ATTRIB` of the set-ID bits a write clears (measured,
+        /// `inotify-dentry-probe.c` section E, `inotify-delivery-probe.c` row
+        /// Z write-unlinked-excl-unlink, `docs/probes/inotify-close` section
+        /// U, `docs/probes/inotify-device-write` section E).
         HiddenByExclUnlink : bool
     }
 
@@ -371,6 +381,21 @@ module internal InotifyDelivery =
                 [ InotifyEffect.WatchesEnd inode ], nextCookie
             else
                 [], nextCookie
+        | ChangeNotice.Released (inode, through, writable) ->
+            if not (List.isEmpty changes) then
+                failwith
+                    $"InotifyDelivery: the release of a description onto inode %O{inode} changed the graph, %A{changes} (this is a bug in this library)."
+
+            // Linux's `fsnotify_close`, which chooses by `FMODE_WRITE`, whether
+            // or not anything was written (measured, `docs/probes/inotify-close`
+            // section A).
+            let event =
+                if writable then
+                    InotifyEvent.CloseWrite
+                else
+                    InotifyEvent.CloseNoWrite
+
+            notified (reached mutation through inode (Set.singleton event) true), nextCookie
         | ChangeNotice.SetAttributes (through, set) ->
             let inode, contents, attributes = attributeChanges "a setattr" changes
 
@@ -411,6 +436,41 @@ module internal InotifyDelivery =
                     []
 
             notified (cleared @ written), nextCookie
+        | ChangeNotice.DeviceWritten (inode, through) ->
+            if not (List.isEmpty changes) then
+                failwith
+                    $"InotifyDelivery: a write to character device %O{inode} changed the graph, %A{changes} (this is a bug in this library)."
+
+            match VirtualFileSystem.tryGetContent inode after with
+            | Some (InodeContent.CharacterDevice _) -> ()
+            | other ->
+                failwith
+                    $"InotifyDelivery: a device write named inode %O{inode}, which holds %A{other} rather than a character device (this is a bug in this library)."
+
+            let unlinked =
+                match through with
+                | ReachedThrough.Name (_, unlinked) -> unlinked
+                | ReachedThrough.Unnamed ->
+                    failwith
+                        $"InotifyDelivery: a write to character device %O{inode} came through %A{through}, where a descriptor is opened onto a device by a name (this is a bug in this library)."
+
+            // Linux's `fsnotify_modify` reports a write to a file that is
+            // neither a regular file nor a directory to the file's own watch
+            // alone, not to the directory's of the name it went through, and an
+            // `IN_EXCL_UNLINK` watch hears nothing of it once that name is
+            // unlinked (measured, `docs/probes/inotify-device-write` sections
+            // D, N and E, the last for a node `mknod` made outside `/dev` too).
+            let notification =
+                {
+                    Watched = inode
+                    Events = Set.singleton InotifyEvent.Modify
+                    SubjectIsDirectory = false
+                    Cookie = 0u
+                    Name = None
+                    HiddenByExclUnlink = unlinked
+                }
+
+            [ InotifyEffect.Notify notification ], nextCookie
         | ChangeNotice.FaultedWrite through ->
             match changes with
             | [] -> [], nextCookie

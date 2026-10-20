@@ -73,8 +73,8 @@ module TestInotifySelfMeasured =
         let system = boot root [ "fw", directory 0o755 [] ] |> writeFile "fw/f" "seed"
         let system = link "fw/f" "fw/f2" system
         let fd, system = init1 nonblock system
-        let wd, system = watch fd "fw/f" modelledEvents system
-        let wd2, system = watch fd "fw/f2" modelledEvents system
+        let wd, system = watch fd "fw/f" closeEvents system
+        let wd2, system = watch fd "fw/f2" closeEvents system
         let produced = ResizeArray<string * string> ()
         let row = recorder produced fd
         produced.Add ("two-names-one-inode", $"wd via f=%d{wd} via f2=%d{wd2}")
@@ -100,8 +100,8 @@ module TestInotifySelfMeasured =
         let system = boot root [ "u", directory 0o755 [ "f", file "x" ; "g", file "x" ] ]
 
         let fd, system = init1 nonblock system
-        let wu, system = watch fd "u" modelledEvents system
-        let wf, system = watch fd "u/f" modelledEvents system
+        let wu, system = watch fd "u" graphEvents system
+        let wf, system = watch fd "u/f" graphEvents system
         let wg, system = watch fd "u/g" modify system
         let produced = ResizeArray<string * string> ()
         let row = recorder produced fd
@@ -112,7 +112,7 @@ module TestInotifySelfMeasured =
         let system = row "rm-after-events" system
         let system = system |> unlink "u/g" |> row "unlink-last-name-no-self-event"
         let system = system |> writeFile "u/f" "y" |> row "recreate"
-        let again, system = watch fd "u/f" modelledEvents system
+        let again, system = watch fd "u/f" graphEvents system
         let drained, _ = drain fd system
         produced.Add ("rewatch", $"wd=%d{again}: %s{drained}")
         actual produced |> shouldEqual (expected selfProbe "U")
@@ -124,8 +124,8 @@ module TestInotifySelfMeasured =
             boot root [ "n", directory 0o755 [ "a", file "x" ] ] |> link "n/a" "n/b"
 
         let instance, system = init1 nonblock system
-        let _, system = watch instance "n" modelledEvents system
-        let wf, system = watch instance "n/a" modelledEvents system
+        let _, system = watch instance "n" graphEvents system
+        let wf, system = watch instance "n/a" graphEvents system
         instance, wf, system
 
     [<Test>]
@@ -215,9 +215,9 @@ module TestInotifySelfMeasured =
 
         let fd, system = init1 nonblock system
         let row = recorder produced fd
-        let wr, system = watch fd "r" modelledEvents system
-        let ws, system = watch fd "r/s" modelledEvents system
-        let wt, system = watch fd "r/t" modelledEvents system
+        let wr, system = watch fd "r" graphEvents system
+        let ws, system = watch fd "r/s" graphEvents system
+        let wt, system = watch fd "r/t" graphEvents system
         produced.Add ("wds", $"r=%d{wr} s=%d{ws} t=%d{wt}")
         let system = system |> rename "r/s" "r/t" |> row "watched-over-watched"
         let _, system = system |> link "r/t" "r/u" |> drain fd
@@ -229,15 +229,15 @@ module TestInotifySelfMeasured =
 
         let fd, system = init1 nonblock system
         let row = recorder produced fd
-        let wr, system = watch fd "rd" modelledEvents system
-        let wsd, system = watch fd "rd/sd" modelledEvents system
-        let wtd, system = watch fd "rd/td" modelledEvents system
+        let wr, system = watch fd "rd" graphEvents system
+        let wsd, system = watch fd "rd/sd" graphEvents system
+        let wtd, system = watch fd "rd/td" graphEvents system
         produced.Add ("dir-wds", $"r=%d{wr} sd=%d{wsd} td=%d{wtd}")
         let system = system |> rename "rd/sd" "rd/td" |> row "watched-dir-over-watched-dir"
         let system = close fd system
 
         let fd, system = init1 nonblock system
-        let ws, system = watch fd "rs/s" (modelledEvents &&& ~~~moveSelf) system
+        let ws, system = watch fd "rs/s" (graphEvents &&& ~~~moveSelf) system
         let drained, _ = system |> rename "rs/s" "rs/s2" |> drain fd
         produced.Add ("no-move-self-asked", $"wd=%d{ws}: %s{drained}")
 
@@ -268,16 +268,16 @@ module TestInotifySelfMeasured =
 
         let fd, system = init1 nonblock system
         let row = recorder produced fd
-        let wd, system = watch fd "d" modelledEvents system
-        let ws, system = watch fd "d/sub" modelledEvents system
+        let wd, system = watch fd "d" graphEvents system
+        let ws, system = watch fd "d/sub" graphEvents system
         produced.Add ("held-wds", $"d=%d{wd} sub=%d{ws}")
         let system = system |> rmdir "d/sub" |> row "held-rmdir"
         system |> close dfd |> row "held-close" |> ignore<UnixSystem<int, string>>
 
         let fd, system = init1 nonblock (fresh ())
         let row = recorder produced fd
-        let wd, system = watch fd "d" modelledEvents system
-        let ws, system = watch fd "d/sub" modelledEvents system
+        let wd, system = watch fd "d" graphEvents system
+        let ws, system = watch fd "d/sub" graphEvents system
         produced.Add ("cwd-wds", $"d=%d{wd} sub=%d{ws}")
         let system = system |> chdir "d/sub" |> rmdir "/d/sub" |> row "cwd-rmdir"
         system |> chdir "/" |> row "cwd-leave" |> ignore<UnixSystem<int, string>>
@@ -287,9 +287,9 @@ module TestInotifySelfMeasured =
 
         let fd, system = init1 nonblock system
         let row = recorder produced fd
-        let wd, system = watch fd "d" modelledEvents system
-        let wa, system = watch fd "d/a" modelledEvents system
-        let wb, system = watch fd "d/a/b" modelledEvents system
+        let wd, system = watch fd "d" graphEvents system
+        let wa, system = watch fd "d/a" graphEvents system
+        let wb, system = watch fd "d/a/b" graphEvents system
         produced.Add ("chain-wds", $"d=%d{wd} a=%d{wa} b=%d{wb}")
         let system = system |> chdir "d/a/b" |> rmdir "/d/a/b" |> row "chain-rmdir-inner"
         let system = system |> rmdir "/d/a" |> row "chain-rmdir-outer"
@@ -303,8 +303,8 @@ module TestInotifySelfMeasured =
         let one, system = init1 nonblock system
         let _, system = watch one "w/f" selfEvents system
         let two, system = init1 nonblock system
-        let _, system = watch two "w" modelledEvents system
-        let _, system = watch two "w/f" modelledEvents system
+        let _, system = watch two "w" graphEvents system
+        let _, system = watch two "w/f" graphEvents system
         let system = unlink "w/f" system
         let first, system = drain one system
         let second, _ = drain two system

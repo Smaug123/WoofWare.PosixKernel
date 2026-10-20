@@ -221,6 +221,7 @@
     <Compile Include="TestPosixFadvise.fs" />
     <Compile Include="TestUnlinkRules.fs" />
     <Compile Include="TestRenameRules.fs" />
+    <Compile Include="TestRenameAncestorTrap.fs" />
     <Compile Include="TestResolutionSplit.fs" />
     <Compile Include="TestVirtualFileSystemAgainstHost.fs" />
     <Compile Include="TestBindingAgainstHost.fs" />
@@ -252,6 +253,7 @@
     <Compile Include="TestConnectedTransferAgainstHost.fs" />
     <Compile Include="TestTcpTransfer.fs" />
     <Compile Include="TestTcpTransferMeasured.fs" />
+    <Compile Include="TestDatagramReceiver.fs" />
     <Compile Include="TestTcpShutdownMeasured.fs" />
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
@@ -300,6 +302,8 @@
     <Compile Include="TestFileContentsCost.fs" />
     <Compile Include="TestInotifyDeliveryMeasured.fs" />
     <Compile Include="TestInotifyRemovedDirectoryMeasured.fs" />
+    <Compile Include="TestInotifyCloseMeasured.fs" />
+    <Compile Include="TestInotifyDeviceWriteMeasured.fs" />
     <Compile Include="TestInotifyDentryMeasured.fs" />
     <Compile Include="TestInotifySelfMeasured.fs" />
     <Compile Include="InotifyDeliveryOps.fs" />
@@ -436,6 +440,15 @@
     <!-- What Linux 6.18.5 reported of a change to a removed directory.
          `TestInotifyRemovedDirectoryMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\inotify-removed-directory\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyRemovedDirectory.linux.txt" />
+    <!-- What Linux 6.18.5 answered of the release of a description under a
+         watch, measured by docs/probes/inotify-close/inotify-close-probe.c.
+         `TestInotifyCloseMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-close\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyClose.linux.txt" />
+    <!-- What Linux 6.18.5 answered of a write to a character device under a
+         watch, measured by
+         docs/probes/inotify-device-write/inotify-device-write-probe.c.
+         `TestInotifyDeviceWriteMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-device-write\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDeviceWrite.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -645,6 +658,14 @@
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\mkdirat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.mkdiratRules.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\unlinkat-rules.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.unlinkatRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\unlinkat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.unlinkatRules.darwin.txt" />
+    <!-- docs/probes/rename/ancestor-trap.py. `TestRenameAncestorTrap` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.18-uid1000.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.18-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-6.17-uid1001.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.17-uid1001.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-6.17-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.17-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-7.0-uid1001.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-7.0-uid1001.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-7.0-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-7.0-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-darwin-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.darwin-uid501.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\renameat-rules.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.renameatRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\renameat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.renameatRules.darwin.txt" />
     <!-- Whether `readlink(2)` consults a symbolic link's own mode, measured per
@@ -752,6 +773,22 @@
          host to its flavour's rows. -->
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-transfer.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpTransfer.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-transfer.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpTransfer.darwin.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- What the UDP probes of docs/plans/2026-10-18-udp-data-path measured:
+         every call's answers (udp-transfer.c), how many datagrams an unread
+         receiver holds (udp-capacity.c), what Linux charges for each and when
+         it gives the charge back (udp-truesize.c, udp-release.c), and what
+         Darwin charges in bytes and mbufs (udp-mbufs.c). `TestDatagramReceiver`
+         replays them. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-transfer.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTransfer.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-transfer.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpTransfer.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-truesize.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTruesize.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-release.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpRelease.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-mbufs.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpMbufs.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>

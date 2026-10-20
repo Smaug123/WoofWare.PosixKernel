@@ -525,7 +525,9 @@ a name created, removed or renamed is `IN_CREATE`, `IN_DELETE`, or `IN_MOVED_FRO
 an inode's gained or lost link (a hard link, an unlink, a rename over it) is `IN_ATTRIB` at its own watch;
 and `chmod`, `chown`, `utimensat` or an `open` with `O_TRUNC` through a path is one record, `IN_ATTRIB` or `IN_MODIFY` as Linux chooses, at the watch on the directory of the name the path reached and then at the inode's own.
 A change made through a descriptor (`write`, `pwrite`, `copy_file_range`, `ftruncate`, `fchmod`, `fchown`, `futimens`, or the empty path under `AT_EMPTY_PATH`) is reported the same way, under the name the descriptor was opened through, which each open file description records:
-a rename of that name moves it, and an unlink of it, a `rmdir` of it or a rename over it leaves it in place, unlinked, and the change is still reported there, except that a watch with `IN_EXCL_UNLINK`, on the directory or on the inode, hears nothing of a write through an unlinked name (it does hear its `ftruncate`, `fchmod` and the rest, and the `IN_ATTRIB` of the set-ID bits a write clears).
+a rename of that name moves it, and an unlink of it, a `rmdir` of it or a rename over it leaves it in place, unlinked, and the change is still reported there, except that a watch with `IN_EXCL_UNLINK`, on the directory or on the inode, hears nothing of a write or a release through an unlinked name (it does hear its `ftruncate`, `fchmod` and the rest, and the `IN_ATTRIB` of the set-ID bits a write clears).
+A `write` or `pwrite` to a device that moves a byte is `IN_MODIFY` at the device's own watch alone, never at the watch on its directory; one that moves none raises nothing.
+The release of an open file description onto a file, a directory or a device, once nothing references it (no descriptor names it, whether `close`, a `dup2` over it or the process's end let go of the last, and no call in flight holds it), is reported the same way: `IN_CLOSE_WRITE` if it was opened for writing, whether or not anything was written, and `IN_CLOSE_NOWRITE` otherwise, before the going of anything the release lets go of.
 A file unlinked while open holds the directory it was named in, as Linux's does, so that directory outlives its own `rmdir` until the file is closed.
 A record repeating the newest queued is dropped, and a full queue takes one `IN_Q_OVERFLOW` record; `inotify_rm_watch` queues `IN_IGNORED`.
 A rename is `IN_MOVE_SELF` at the moved inode's own watch, after the other records of the rename.
@@ -534,7 +536,7 @@ an unlink, `rmdir` or rename over a name no description was opened through, or t
 Its watches then queue `IN_DELETE_SELF` if they ask for it, and `IN_IGNORED`, and end, before the `IN_DELETE` of the name at its directory; afterwards `inotify_rm_watch` of one answers `EINVAL`.
 So a file opened through one name and unlinked through another goes at that unlink, though the descriptor still reads it; a directory, having one name, goes when nothing holds it, a process standing in it included.
 A change to a directory whose last name has gone (by `rmdir`, or a rename over it), reached by "." or ".." (from the current directory, say) or through a descriptor opened that way, is reported as one through a name since unlinked: at the watch on the directory it was last named in, under the name it had when that name went, and then at its own.
-A watch asking for an event this kernel does not raise, `IN_ACCESS`, `IN_OPEN`, `IN_CLOSE_WRITE`, `IN_CLOSE_NOWRITE` or `IN_UNMOUNT`, or carrying `IN_ONESHOT`, is refused.
+A watch asking for an event this kernel does not raise, `IN_ACCESS`, `IN_OPEN` or `IN_UNMOUNT`, or carrying `IN_ONESHOT`, is refused.
 Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |

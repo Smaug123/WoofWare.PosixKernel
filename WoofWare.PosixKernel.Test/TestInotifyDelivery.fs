@@ -60,6 +60,12 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 ///   that descriptor holds, unlinked if the directory has been removed since:
 ///   a change through it is reported there, under the name the directory had
 ///   when its last name went;
+/// - a close of a descriptor, which is the last reference to its description:
+///   `IN_CLOSE_WRITE` if it was opened for writing, and `IN_CLOSE_NOWRITE`
+///   otherwise, as a write through it is reported, a watch with
+///   `IN_EXCL_UNLINK` hearing nothing of it through an unlinked name; before
+///   the inode's going that the close lets go of. A `Create` or an
+///   `OpenTruncate` closes what it opened, through the name its path reached;
 /// - a record carries every event of its change, whichever the watch asked
 ///   for;
 /// - `IN_ISDIR` when the inode is a directory, but on `IN_MOVE_SELF` and
@@ -103,6 +109,13 @@ module TestInotifyDelivery =
         /// A record of a change through a descriptor opened by "." onto a
         /// directory whose last name had gone.
         | ThroughRemovedDirectoryByDot
+        /// A close's record through a kept descriptor whose name has been
+        /// unlinked.
+        | ClosedThroughUnlinked
+        /// A close through an unlinked name, under a watch with
+        /// `IN_EXCL_UNLINK` asking for its event, that the reference expects
+        /// to hear nothing of it.
+        | ExcludedClose
         /// A watched inode's going.
         | Gone
         /// A watched file's going while a descriptor still holds it, through
@@ -516,14 +529,19 @@ module TestInotifyDelivery =
         match op with
         | Op.Create (path, _) ->
             match lookup (named path) true with
-            | _, Some _ -> reference, None
+            | opened, Some node -> notifyPath opened closeWrite node reference, None
             | created, None ->
                 let id, reference = fresh reference
                 let node = Node.File id
-                bind created node reference |> notifyParent created create node 0u, None
+
+                bind created node reference
+                |> notifyParent created create node 0u
+                |> notifyPath created closeWrite node,
+                None
         | Op.OpenTruncate path ->
             match lookup (named path) true with
-            | resolved, Some (Node.File _ as node) -> notifyPath resolved modify node reference, None
+            | resolved, Some (Node.File _ as node) ->
+                notifyPath resolved modify node reference |> notifyPath resolved closeWrite node, None
             | other -> failwith $"O_TRUNC of %s{named path} succeeded on %A{other}"
         | Op.MkDir path ->
             let created, _ = lookup (named path) false
@@ -794,8 +812,10 @@ module TestInotifyDelivery =
         | Op.Close slot ->
             match keptAt slot reference with
             | Some (index, closed) ->
+                let released = if closed.ReadOnly then closeNoWrite else closeWrite
+
                 let reference =
-                    { reference with
+                    { notifyKept closed released true reference with
                         Kept = reference.Kept |> List.removeAt index
                     }
 
@@ -870,6 +890,14 @@ module TestInotifyDelivery =
                 | Op.Fchmod (slot, _) -> keptAt slot reference |> Option.map snd, false
                 | _ -> None, false
 
+            // The kept descriptor a close lets go of, and the name it holds.
+            let closing =
+                match op with
+                | Op.Close slot ->
+                    keptAt slot reference
+                    |> Option.bind (fun (_, kept) -> kept.Through |> Option.map (fun name -> kept, name))
+                | _ -> None
+
             let system, reference, kept =
                 match syscallOf (UnixSystem.platform system) treeOwner fds kept op with
                 | None -> system, reference, kept
@@ -891,6 +919,28 @@ module TestInotifyDelivery =
                         | Op.OpenDotAt _ -> kept @ [ int answered ]
                         | Op.Close slot -> kept |> List.removeAt (slotIndex slot kept.Length)
                         | _ -> kept
+
+                    match op with
+                    | Op.Close _ ->
+                        match closing with
+                        | Some (closed, name) when name.Unlinked ->
+                            if reference.Queued <> queuedBefore then
+                                cover Label.ClosedThroughUnlinked
+
+                            let released = if closed.ReadOnly then closeNoWrite else closeWrite
+
+                            let excludes (inode : int) =
+                                [ 0 ; 1 ]
+                                |> List.exists (fun instance ->
+                                    match Map.tryFind inode reference.Watches.[instance] with
+                                    | Some (_, mask) -> mask &&& released <> 0u && mask &&& exclUnlink <> 0u
+                                    | None -> false
+                                )
+
+                            if excludes name.Parent || excludes (idOf closed.Node) then
+                                cover Label.ExcludedClose
+                        | _ -> ()
+                    | _ -> ()
 
                     match through with
                     | Some through ->
@@ -982,3 +1032,7 @@ module TestInotifyDelivery =
         coverage.Count Label.Gone |> shouldBeGreaterThan 50
         coverage.Count Label.GoneWhileOpen |> shouldBeGreaterThan 5
         coverage.Count Label.WatchesLink |> shouldBeGreaterThan 20
+        coverage.Count (Label.Record RecordLabel.CloseWrite) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.CloseNoWrite) |> shouldBeGreaterThan 50
+        coverage.Count Label.ClosedThroughUnlinked |> shouldBeGreaterThan 30
+        coverage.Count Label.ExcludedClose |> shouldBeGreaterThan 10

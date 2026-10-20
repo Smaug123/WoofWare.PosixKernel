@@ -899,6 +899,15 @@ type UnixSystemDefect<'Thread> =
     /// (`UnixWait.wake`) would miss a sleeper or ask about a thread asleep in
     /// nothing.
     | StaleParkIndex
+    /// A UDP socket has no receive side, so a datagram sent to it, or a
+    /// receive made of it, has nowhere to go.
+    | UdpSocketWithoutReceiver of socket : SocketId
+    /// The machine holds a receive side for `socket`, which is not a UDP
+    /// socket in the socket table.
+    | ReceiverWithoutUdpSocket of socket : SocketId
+    /// A UDP socket's receive side breaks its flavour's accounting
+    /// (`DatagramReceiver.violations`), or was made for the other flavour.
+    | DatagramReceiverBroken of socket : SocketId * violations : string list
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -2005,6 +2014,33 @@ module UnixSystem =
             |> List.map fst
             |> List.filter (fun socketId -> not (Set.contains socketId namedIds))
             |> List.map UnixSystemDefect.UnreferencedSocket
+
+        let receivers =
+            let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+            [
+                for KeyValue (socketId, socket) in machine.Sockets do
+                    if UnixMachineState.receivesDatagrams socket then
+                        match Map.tryFind socketId machine.DatagramReceivers with
+                        | None -> UnixSystemDefect.UdpSocketWithoutReceiver socketId
+                        | Some receiver ->
+                            let violations =
+                                (if DatagramReceiver.flavour receiver <> flavour then
+                                     [
+                                         $"it is a %O{DatagramReceiver.flavour receiver} receiver on a %O{flavour} machine"
+                                     ]
+                                 else
+                                     [])
+                                @ DatagramReceiver.violations receiver
+
+                            if not violations.IsEmpty then
+                                UnixSystemDefect.DatagramReceiverBroken (socketId, violations)
+                for KeyValue (socketId, _) in machine.DatagramReceivers do
+                    match Map.tryFind socketId machine.Sockets with
+                    | Some socket when UnixMachineState.receivesDatagrams socket -> ()
+                    | Some _
+                    | None -> UnixSystemDefect.ReceiverWithoutUdpSocket socketId
+            ]
 
         // Against the table rather than against the descriptions: the table is
         // where a socket lives, so it is the table that must stay below the
@@ -3128,6 +3164,7 @@ module UnixSystem =
 
         dangling
         @ unreferenced
+        @ receivers
         @ freshness
         @ foreignObjects
         @ danglingInodes
@@ -4202,6 +4239,7 @@ module UnixSystem =
                     NextPipeInode = InodeNumber 1L
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
+                    DatagramReceivers = Map.empty
                     TimeWaits = Map.empty
                     TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L
@@ -4222,6 +4260,7 @@ module UnixSystem =
                     Ipv6OnlyByDefault = false
                     TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace flavour
                     TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax flavour
+                    UdpReceiveSpace = UnixMachineState.defaultUdpReceiveSpace flavour
                     LocalIpv4Addresses = defaultLocalIpv4Addresses
                     LocalRoutes = defaultLocalRoutes
                     BootTime = UnixTimestamp.epoch

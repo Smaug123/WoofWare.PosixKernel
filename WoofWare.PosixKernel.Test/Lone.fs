@@ -661,6 +661,18 @@ module internal Lone =
             WoofWare.PosixKernel.UnixReadWrite.tryApplyPWrite fd offset into bytes (view system)
             |> unviewed
 
+        let applyPWriteDeviceAnswer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (answer : WriteAnswer)
+            (inode : InodeNumber)
+            (through : ReachedThrough)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : WriteAnswer * UnixSystem<'Thread, 'Handler>
+            =
+            let answer, after =
+                WoofWare.PosixKernel.UnixReadWrite.applyPWriteDeviceAnswer answer inode through (view system)
+
+            answer, unview after
+
         let tryApplyResumedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (thread : 'Thread)
             (into : WriteResumed)

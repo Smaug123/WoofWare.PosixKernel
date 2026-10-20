@@ -127,11 +127,18 @@ module internal InotifyReplay =
     let movedFrom : uint32 = 0x40u
     let movedTo : uint32 = 0x80u
     let create : uint32 = 0x100u
+    let closeWrite : uint32 = 0x8u
+    let closeNoWrite : uint32 = 0x10u
     let delete : uint32 = 0x200u
 
-    /// `IN_ALL_EVENTS` without the events this kernel does not raise: those
-    /// opening, reading and releasing a file raise.
-    let modelledEvents : uint32 = 0xFC6u
+    /// `IN_ALL_EVENTS` without the events opening, reading and releasing a
+    /// file raise: the probes' `graphEvents`.
+    let graphEvents : uint32 = 0xFC6u
+
+    /// `IN_ALL_EVENTS` without the events this kernel does not raise:
+    /// `IN_OPEN` and `IN_ACCESS`, which opening and reading a file raise. The
+    /// close probe's `closeEvents`.
+    let closeEvents : uint32 = 0xFDEu
 
     /// The mask .NET's `FileSystemWatcher` asks for.
     let dotnetMask : uint32 =
@@ -602,14 +609,14 @@ module internal InotifyReplay =
         )
 
     /// What a row of records would have been under a watch asking for no
-    /// event this kernel does not raise: the records of `IN_ACCESS`,
-    /// `IN_OPEN` and the two `IN_CLOSE_*` events dropped.
+    /// event this kernel does not raise: the records of `IN_ACCESS` and
+    /// `IN_OPEN` dropped.
     let withoutUnmodelled (text : string) : string =
         if text = "(none)" then
             text
         else
 
-        let unmodelled = set [ "ACCESS" ; "OPEN" ; "CLOSE_WRITE" ; "CLOSE_NOWRITE" ]
+        let unmodelled = set [ "ACCESS" ; "OPEN" ]
 
         let kept =
             text.Split " | "

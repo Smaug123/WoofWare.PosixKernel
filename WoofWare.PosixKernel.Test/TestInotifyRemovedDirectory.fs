@@ -34,8 +34,8 @@ module TestInotifyRemovedDirectory =
     let private standingInRemoved () : int * UnixSystem<int, string> =
         let system = boot root seed |> mkdir "gone" 0o755
         let instance, system = init1 nonblock system
-        let _, system = watch instance "." modelledEvents system
-        let _, system = watch instance "gone" modelledEvents system
+        let _, system = watch instance "." graphEvents system
+        let _, system = watch instance "gone" graphEvents system
         let system = system |> chdir "gone" |> rmdir "../gone"
         let _, system = drain instance system
         instance, system
