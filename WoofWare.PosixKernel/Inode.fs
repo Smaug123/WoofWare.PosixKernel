@@ -142,9 +142,21 @@ type DirectoryContent =
         Permissions : PermissionBits
     }
 
-/// A character device, which an inode of kind `InodeContent.CharacterDevice`
-/// stands for. `CharacterDevice.all` lists the ones this kernel has a driver
-/// for.
+/// The number a device node holds, which is all a node holds of the device it
+/// stands for: `open(2)` looks the driver up by it, and `stat(2)` reports it as
+/// `st_rdev`, in the flavour's own encoding of the pair.
+[<Struct>]
+type DeviceNumber =
+    | DeviceNumber of major : uint32 * minor : uint32
+
+    /// The pair as `major:minor`.
+    override this.ToString () : string =
+        match this with
+        | DeviceNumber (major, minor) -> $"%d{major}:%d{minor}"
+
+/// A character device this kernel has, or may one day have, a driver for.
+/// `CharacterDevice.all` lists the ones it has a driver for, which are the ones
+/// a node can be opened as.
 [<RequireQualifiedAccess>]
 type CharacterDevice =
     /// `/dev/null`.
@@ -202,8 +214,10 @@ type InodeContent =
     /// </remarks>
     | Symlink of target : SymlinkTarget * permissions : PermissionBits
     /// A character special file: what `stat(2)` reports as `S_IFCHR`, standing
-    /// for `device` rather than holding any contents of its own.
-    | CharacterDevice of device : CharacterDevice * permissions : PermissionBits
+    /// for the device `number` names rather than holding any contents of its
+    /// own. Opening it reaches the driver registered for that number, if this
+    /// kernel has one.
+    | CharacterDevice of number : DeviceNumber * permissions : PermissionBits
     /// A socket special file: what `stat(2)` reports as `S_IFSOCK`, which a
     /// pathname `bind(2)` of a Unix-domain socket makes.
     ///

@@ -633,6 +633,15 @@ WoofWare.PosixKernel.DescriptorFlagsModule.closeOnExec [static method]: WoofWare
 WoofWare.PosixKernel.DescriptorFlagsModule.closingOnExec [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> bool -> WoofWare.PosixKernel.DescriptorFlags
 WoofWare.PosixKernel.DescriptorFlagsModule.flavour [static method]: WoofWare.PosixKernel.DescriptorFlags -> WoofWare.PosixKernel.SimulatedUnixFlavour
 WoofWare.PosixKernel.DescriptorFlagsModule.none [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DeviceNumber inherit System.ValueType, implements WoofWare.PosixKernel.DeviceNumber System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DeviceNumber System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 1 cases
+WoofWare.PosixKernel.DeviceNumber.Equals [method]: (WoofWare.PosixKernel.DeviceNumber, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.DeviceNumber.get_major [method]: unit -> System.UInt32
+WoofWare.PosixKernel.DeviceNumber.get_minor [method]: unit -> System.UInt32
+WoofWare.PosixKernel.DeviceNumber.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.DeviceNumber.major [property]: [read-only] System.UInt32
+WoofWare.PosixKernel.DeviceNumber.minor [property]: [read-only] System.UInt32
+WoofWare.PosixKernel.DeviceNumber.NewDeviceNumber [static method]: (System.UInt32, System.UInt32) -> WoofWare.PosixKernel.DeviceNumber
+WoofWare.PosixKernel.DeviceNumber.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DirectoryContent inherit obj, implements WoofWare.PosixKernel.DirectoryContent System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryContent System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.DirectoryContent..ctor [constructor]: (Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>, WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.PermissionBits)
 WoofWare.PosixKernel.DirectoryContent.Entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>
@@ -1812,9 +1821,9 @@ WoofWare.PosixKernel.Inode.Owner [property]: [read-only] WoofWare.PosixKernel.In
 WoofWare.PosixKernel.Inode.Times [property]: [read-only] WoofWare.PosixKernel.InodeTimes
 WoofWare.PosixKernel.InodeContent inherit obj, implements WoofWare.PosixKernel.InodeContent System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.InodeContent System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 6 cases
 WoofWare.PosixKernel.InodeContent+CharacterDevice inherit WoofWare.PosixKernel.InodeContent
-WoofWare.PosixKernel.InodeContent+CharacterDevice.device [property]: [read-only] WoofWare.PosixKernel.CharacterDevice
-WoofWare.PosixKernel.InodeContent+CharacterDevice.get_device [method]: unit -> WoofWare.PosixKernel.CharacterDevice
+WoofWare.PosixKernel.InodeContent+CharacterDevice.get_number [method]: unit -> WoofWare.PosixKernel.DeviceNumber
 WoofWare.PosixKernel.InodeContent+CharacterDevice.get_permissions [method]: unit -> WoofWare.PosixKernel.PermissionBits
+WoofWare.PosixKernel.InodeContent+CharacterDevice.number [property]: [read-only] WoofWare.PosixKernel.DeviceNumber
 WoofWare.PosixKernel.InodeContent+CharacterDevice.permissions [property]: [read-only] WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.InodeContent+Directory inherit WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent+Directory.directory [property]: [read-only] WoofWare.PosixKernel.DirectoryContent
@@ -1856,7 +1865,7 @@ WoofWare.PosixKernel.InodeContent.IsFifo [property]: [read-only] bool
 WoofWare.PosixKernel.InodeContent.IsRegularFile [property]: [read-only] bool
 WoofWare.PosixKernel.InodeContent.IsSocket [property]: [read-only] bool
 WoofWare.PosixKernel.InodeContent.IsSymlink [property]: [read-only] bool
-WoofWare.PosixKernel.InodeContent.NewCharacterDevice [static method]: (WoofWare.PosixKernel.CharacterDevice, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
+WoofWare.PosixKernel.InodeContent.NewCharacterDevice [static method]: (WoofWare.PosixKernel.DeviceNumber, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewDirectory [static method]: WoofWare.PosixKernel.DirectoryContent -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewFifo [static method]: WoofWare.PosixKernel.PermissionBits -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewRegularFile [static method]: (WoofWare.PosixKernel.FileContents, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent

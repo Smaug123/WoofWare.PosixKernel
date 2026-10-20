@@ -151,8 +151,69 @@ module TestDeviceFileSystem =
             CharacterDevice.permissions device
             |> shouldEqual (PermissionBits.parseOrFail context expectedMode)
 
-            CharacterDevice.specialFileDevice SimulatedUnixFlavour.Linux device
+            CharacterDevice.number SimulatedUnixFlavour.Linux device
+            |> DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux
             |> shouldEqual expectedDevice
+
+    /// Any device number, weighted towards the small majors and minors real
+    /// drivers register, so that the drivers' own numbers come up, and towards
+    /// the edges of the bit fields an encoding splits each half into.
+    let private deviceNumberGen : Gen<DeviceNumber> =
+        // FsCheck's own `uint32` stays below its size, so it never reaches a
+        // minor of 256, the first whose bits glibc's `makedev` moves.
+        let anyUInt32 =
+            Gen.map2
+                (fun (high : int) (low : int) -> (uint32 high <<< 16) ||| uint32 low)
+                (Gen.choose (0, 0xFFFF))
+                (Gen.choose (0, 0xFFFF))
+
+        let nearPowerOfTwo =
+            gen {
+                let! bit = Gen.choose (0, 31)
+                let! offset = Gen.elements [ -1L ; 0L ; 1L ]
+                return uint32 ((1L <<< bit) + offset)
+            }
+
+        let part =
+            Gen.frequency [ 3, Gen.choose (0, 15) |> Gen.map uint32 ; 1, anyUInt32 ; 1, nearPowerOfTwo ]
+
+        Gen.map2 (fun major minor -> DeviceNumber (major, minor)) part part
+
+    [<Test>]
+    let ``a number reaches a driver exactly when that driver is registered under it`` () : unit =
+        let property (number : DeviceNumber) : unit =
+            let registered =
+                CharacterDevice.all
+                |> List.filter (fun device -> CharacterDevice.number SimulatedUnixFlavour.Linux device = number)
+
+            CharacterDevice.driverOf SimulatedUnixFlavour.Linux number
+            |> shouldEqual (List.tryExactlyOne registered)
+
+            // This kernel holds no device on Darwin.
+            CharacterDevice.driverOf SimulatedUnixFlavour.Darwin number |> shouldEqual None
+
+        Check.One (config, Prop.forAll (Arb.fromGen deviceNumberGen) property)
+
+        // No two drivers share a number, and each driver's own reaches it.
+        for device in CharacterDevice.all do
+            CharacterDevice.number SimulatedUnixFlavour.Linux device
+            |> CharacterDevice.driverOf SimulatedUnixFlavour.Linux
+            |> shouldEqual (Some device)
+
+    [<Test>]
+    let ``st_rdev is the pair as glibc's makedev packs it`` () : unit =
+        // glibc's `gnu_dev_major` and `gnu_dev_minor`, which undo `makedev`.
+        let major (raw : int64) : uint32 =
+            uint32 (((raw >>> 8) &&& 0xFFFL) ||| ((raw >>> 32) &&& ~~~0xFFFL))
+
+        let minor (raw : int64) : uint32 =
+            uint32 ((raw &&& 0xFFL) ||| ((raw >>> 12) &&& ~~~0xFFL))
+
+        let property (number : DeviceNumber) : unit =
+            let raw = DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux number
+            DeviceNumber (major raw, minor raw) |> shouldEqual number
+
+        Check.One (config, Prop.forAll (Arb.fromGen deviceNumberGen) property)
 
     [<Test>]
     let ``each device node reports the measured stat fields`` () : unit =
@@ -581,7 +642,12 @@ module TestDeviceFileSystem =
                 expected
                 |> List.map (fun device ->
                     CharacterDevice.name device,
-                    Some (InodeContent.CharacterDevice (device, CharacterDevice.permissions device))
+                    Some (
+                        InodeContent.CharacterDevice (
+                            CharacterDevice.number SimulatedUnixFlavour.Linux device,
+                            CharacterDevice.permissions device
+                        )
+                    )
                 )
                 |> List.sortBy fst
             )
@@ -590,7 +656,8 @@ module TestDeviceFileSystem =
             |> Map.toList
             |> List.choose (fun (_, inode) ->
                 match inode.Content with
-                | InodeContent.CharacterDevice (device, _) -> Some device
+                | InodeContent.CharacterDevice (number, _) ->
+                    CharacterDevice.driverOf SimulatedUnixFlavour.Linux number
                 | InodeContent.RegularFile _
                 | InodeContent.Directory _
                 | InodeContent.Symlink _
@@ -825,6 +892,100 @@ module TestDeviceFileSystem =
         |> shouldEqual (Ok UnixError.EISDIR)
 
     // ------------------------------------------------------- the node itself
+
+    /// `system` with the node at `/dev/null` holding `number` and `permissions`
+    /// in place of its own.
+    let private withNullHolding
+        (number : DeviceNumber)
+        (permissions : PermissionBits)
+        (system : UnixSystem<int, string>)
+        : InodeNumber * UnixSystem<int, string>
+        =
+        let inode = (reported "/dev/null" system).Inode
+
+        let fileSystem =
+            VirtualFileSystem.Unchecked.setContent
+                inode
+                (InodeContent.CharacterDevice (number, permissions))
+                system.Machine.FileSystem
+
+        inode,
+        { system with
+            Machine =
+                { system.Machine with
+                    CommittedFileSystem = CommittedFileSystem.initial fileSystem
+                }
+        }
+
+    [<Test>]
+    let ``a node whose number has no driver reports it, and opening it is refused once every check has passed``
+        ()
+        : unit
+        =
+        // Excluded by the drivers' own numbers rather than by `driverOf`, which
+        // is under test: a `driverOf` that found a driver for every number
+        // would leave a filter on it nothing to generate.
+        let driven =
+            CharacterDevice.all
+            |> List.map (CharacterDevice.number SimulatedUnixFlavour.Linux)
+            |> Set.ofList
+
+        let undriven =
+            deviceNumberGen |> Gen.filter (fun number -> not (Set.contains number driven))
+
+        let property (number : DeviceNumber) : unit =
+            let inode, system =
+                withNullHolding number (PermissionBits.parseOrFail context 0o666) (booted linux)
+
+            // Such a node is a state a machine can be in.
+            UnixSystem.checkInvariants system |> shouldEqual []
+
+            (reported "/dev/null" system).SpecialFileDevice
+            |> shouldEqual (DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux number)
+
+            for access in
+                [
+                    FileAccessMode.ReadOnly
+                    FileAccessMode.WriteOnly
+                    FileAccessMode.ReadWrite
+                ] do
+                match
+                    OpenFlagWords.openPath
+                        { reading with
+                            Access = access
+                        }
+                        (PathArg.ofText "/dev/null")
+                        0
+                        system
+                with
+                | Error (OpenRefusal.UndrivenDevice (refusedInode, refusedNumber)) ->
+                    refusedInode |> shouldEqual inode
+                    refusedNumber |> shouldEqual number
+                | other -> failwith $"open /dev/null holding %O{number}: expected a refusal, got %A{other}"
+
+            // The open's own checks come first, and answer as they do for any
+            // node: a root-only node is EACCES to the default user.
+            let _, private' =
+                withNullHolding number (PermissionBits.parseOrFail context 0o600) (booted linux)
+
+            match OpenFlagWords.openPath reading (PathArg.ofText "/dev/null") 0 private' with
+            | Ok answer -> failed answer |> shouldEqual (Some UnixError.EACCES)
+            | Error refusal -> failwith $"refused: %s{OpenRefusal.describe refusal}"
+
+            match
+                OpenFlagWords.openPath
+                    { reading with
+                        Directory = true
+                    }
+                    (PathArg.ofText "/dev/null")
+                    0
+                    system
+            with
+            | Ok answer -> failed answer |> shouldEqual (Some UnixError.ENOTDIR)
+            | Error refusal -> failwith $"refused: %s{OpenRefusal.describe refusal}"
+
+        Check.One (config, Prop.forAll (Arb.fromGen undriven) property)
+
 
     [<Test>]
     let ``a device node is a node, whatever asks`` () : unit =

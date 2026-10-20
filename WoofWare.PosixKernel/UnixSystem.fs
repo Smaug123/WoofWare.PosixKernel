@@ -366,8 +366,9 @@ type UnixSystemDefect<'Thread> =
     /// A description names an inode as the wrong kind of object: a
     /// `OpenFileTarget.File` onto a directory or a device, an
     /// `OpenFileTarget.Directory` onto anything but a directory, or an
-    /// `OpenFileTarget.CharacterDevice` onto anything but the node of the device
-    /// it names, or an `OpenFileTarget.Fifo` onto anything but a FIFO. `open` chooses the target by what it opened, so a directory's
+    /// `OpenFileTarget.CharacterDevice` onto anything but a node holding the
+    /// number of the device it names, or an `OpenFileTarget.Fifo` onto anything
+    /// but a FIFO. `open` chooses the target by what it opened, so a directory's
     /// position is always a place in its entries and never a byte offset, and a
     /// device's operations are the driver's own.
     | DescriptionKindMismatch of description : OpenFileDescriptionId * inode : InodeNumber
@@ -1029,7 +1030,11 @@ module UnixSystem =
             | DeviceFileSystemMount.Devtmpfs _ ->
                 PermissionBits 0o755,
                 CharacterDevice.all
-                |> List.map (fun device -> CharacterDevice.name device, device, CharacterDevice.permissions device)
+                |> List.map (fun device ->
+                    CharacterDevice.name device,
+                    CharacterDevice.number SimulatedUnixFlavour.Linux device,
+                    CharacterDevice.permissions device
+                )
             | DeviceFileSystemMount.Devfs -> PermissionBits 0o555, []
 
         // Measured by `docs/probes/devtmpfs-times` over three boots of Linux
@@ -2051,6 +2056,8 @@ module UnixSystem =
             )
 
         let danglingInodes =
+            let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
             machine.OpenFiles
             |> OpenFileTable.descriptions
             |> Map.toList
@@ -2077,7 +2084,10 @@ module UnixSystem =
                 | OpenFileTarget.CharacterDevice (inode, device, _) ->
                     match VirtualFileSystem.tryGetContent inode machine.FileSystem with
                     | None -> Some (UnixSystemDefect.DanglingOpenInode (id, inode))
-                    | Some (InodeContent.CharacterDevice (node, _)) when node = device -> None
+                    | Some (InodeContent.CharacterDevice (number, _)) when
+                        CharacterDevice.driverOf flavour number = Some device
+                        ->
+                        None
                     | Some (InodeContent.CharacterDevice _)
                     | Some (InodeContent.Directory _)
                     | Some (InodeContent.RegularFile _)
