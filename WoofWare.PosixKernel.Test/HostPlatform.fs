@@ -157,32 +157,36 @@ module HostPlatform =
 
         Encoding.ASCII.GetString (field.Slice (0, length))
 
+    /// `preset`, which must be of this host's flavour, running this host's own
+    /// kernel version and reporting its own release: the model of the kernel
+    /// this host is running, as far as `preset`'s architecture and page size
+    /// allow.
+    let runningHostKernel (preset : SimulatedUnixPlatform) : SimulatedUnixPlatform =
+        let flavour = SimulatedUnixPlatform.flavour preset
+        let release = release flavour
+
+        let kernel =
+            match flavour with
+            | SimulatedUnixFlavour.Linux ->
+                match LinuxRelease.version release with
+                | None -> failwith $"this host's release %s{release} does not begin with a Linux version"
+                | Some version -> SimulatedUnixKernel.Linux version
+            | SimulatedUnixFlavour.Darwin ->
+                match DarwinRelease.version release with
+                | None -> failwith $"this host's release %s{release} is not a Darwin version"
+                | Some version -> SimulatedUnixKernel.Darwin version
+
+        SimulatedUnixPlatform.createOrFail
+            "HostPlatform.runningHostKernel"
+            kernel
+            (SimulatedUnixPlatform.architecture preset)
+            (SimulatedUnixPlatform.pageSize preset)
+            release
+
     /// Run `action` against a model of the kernel this host is running: the
     /// preset for its flavour and architecture, but running this host's own
     /// kernel version and reporting its own release. For tests of a fact that
     /// changed between kernel versions, which must hold on whichever kernel the
     /// suite runs on. Skips where `onUnixHostPreset` does.
     let onUnixHostKernel (action : SimulatedUnixPlatform -> unit) : unit =
-        onUnixHostPreset (fun preset ->
-            let flavour = SimulatedUnixPlatform.flavour preset
-            let release = release flavour
-
-            let kernel =
-                match flavour with
-                | SimulatedUnixFlavour.Linux ->
-                    match LinuxRelease.version release with
-                    | None -> failwith $"this host's release %s{release} does not begin with a Linux version"
-                    | Some version -> SimulatedUnixKernel.Linux version
-                | SimulatedUnixFlavour.Darwin ->
-                    match DarwinRelease.version release with
-                    | None -> failwith $"this host's release %s{release} is not a Darwin version"
-                    | Some version -> SimulatedUnixKernel.Darwin version
-
-            SimulatedUnixPlatform.createOrFail
-                "HostPlatform.onUnixHostKernel"
-                kernel
-                (SimulatedUnixPlatform.architecture preset)
-                (SimulatedUnixPlatform.pageSize preset)
-                release
-            |> action
-        )
+        onUnixHostPreset (runningHostKernel >> action)

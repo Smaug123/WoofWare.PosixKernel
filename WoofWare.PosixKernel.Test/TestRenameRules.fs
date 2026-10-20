@@ -223,7 +223,7 @@ module TestRenameRules =
         | Ok destinationResolution ->
 
         RenameRules.verdict
-            (SimulatedUnixPlatform.flavour platform)
+            (SimulatedUnixPlatform.renameRules platform).RefusalOrder
             (SimulatedUnixPlatform.bindableEntryNames platform)
             (Owners.caller privilege)
             sourceResolution
