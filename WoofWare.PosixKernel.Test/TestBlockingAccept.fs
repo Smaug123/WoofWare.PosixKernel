@@ -99,7 +99,7 @@ module TestBlockingAccept =
 
     /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u 0 system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
@@ -165,7 +165,7 @@ module TestBlockingAccept =
 
             let listener = idOf fd system
 
-            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength system with
+            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength 0 system with
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
@@ -182,6 +182,8 @@ module TestBlockingAccept =
                                         Listener = SleepTarget.Waiting (listener, fd)
                                         Destination = destination
                                         DeclaredLength = declaredLength
+                                        NewSocketNonBlocking = false
+                                        NewSocketCloseOnExec = false
                                     }
                             Ordinal = (Kernel.machine system).NextParkOrdinal
                             State = ParkState.Asleep
@@ -240,7 +242,7 @@ module TestBlockingAccept =
         let parked = parkIn 1 fd system
 
         Assert.Throws<System.InvalidOperationException> (fun () ->
-            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped 16u parked
+            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped 16u 0 parked
             |> ignore<_>
         )
         |> ignore<System.InvalidOperationException>
@@ -303,7 +305,7 @@ module TestBlockingAccept =
             let listener = idOf fd system
 
             let system =
-                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength system with
+                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength 0 system with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
@@ -320,7 +322,7 @@ module TestBlockingAccept =
                             system
                         else
                             match
-                                UnixConnection.tryAccept (Callers.thread 2 system) fd UserBuffer.Mapped 16u system
+                                UnixConnection.tryAccept (Callers.thread 2 system) fd UserBuffer.Mapped 16u 0 system
                             with
                             | Ok (AcceptOutcome.Accepted _, system) -> system
                             | other -> failwith $"expected the steal to succeed, got %A{other}"
@@ -369,7 +371,7 @@ module TestBlockingAccept =
             else
                 let oracle =
                     let unparked = Lone.UnixParkState.unpark 1 system
-                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength unparked
+                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength 0 unparked
 
                 finished |> shouldEqual oracle
 
@@ -458,7 +460,7 @@ module TestBlockingAccept =
         let system = setNonBlocking fd true system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped 16u 0 system with
             | Ok (AcceptOutcome.Accepted _, system) -> system
             | other -> failwith $"expected thread 3 to take the connection, got %A{other}"
 
@@ -580,6 +582,8 @@ module TestBlockingAccept =
                                 Listener = SleepTarget.Waiting listeners.[park.Listener]
                                 Destination = UserBuffer.Mapped
                                 DeclaredLength = 16u
+                                NewSocketNonBlocking = false
+                                NewSocketCloseOnExec = false
                             })
                         system
                 )
@@ -831,7 +835,7 @@ module TestBlockingAccept =
         | other -> failwith $"expected thread %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
-        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped 16u system
+        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped 16u 0 system
 
     /// Measured (`close-ends-call.c`, sections A1-A4, and `blocking-accept.c`
     /// section C): on Darwin, closing the descriptor an accept was made
@@ -1427,7 +1431,7 @@ module TestBlockingAccept =
                 match op with
                 | AcceptOp.Accept (thread, fd) ->
                     let answer =
-                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u system
+                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u 0 system
 
                     match Map.tryFind fd reference.Fds, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> cover $"%s{flavourName} accept: EBADF"
@@ -1885,6 +1889,8 @@ module TestBlockingAccept =
                         Listener = SleepTarget.Waiting (listener, fd)
                         Destination = UserBuffer.Mapped
                         DeclaredLength = 16u
+                        NewSocketNonBlocking = false
+                        NewSocketCloseOnExec = false
                     })
                 system
 
@@ -1907,6 +1913,8 @@ module TestBlockingAccept =
                     Listener = SleepTarget.Waiting (absent, 1_000)
                     Destination = UserBuffer.Mapped
                     DeclaredLength = 16u
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 })
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault 1, absent) ]

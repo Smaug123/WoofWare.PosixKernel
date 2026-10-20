@@ -239,7 +239,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixConnection.connect caller 0 UserBuffer.Mapped 16u system |> ignore)
             running
                 "UnixConnection.accept"
-                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u system |> ignore)
+                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u 0 system |> ignore)
             running "UnixConnection.shutdown" (fun caller system -> UnixConnection.shutdown caller 0 2 system |> ignore)
             finishing
                 "UnixConnection.finishAccept"
@@ -740,7 +740,7 @@ module TestCallerChecks =
                 | DescriptorAnswer.Returned _, view -> UnixDescriptor.close leader listener view |> snd
                 | other -> failwith $"dup2 of the listener: %A{other}"
 
-            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
+            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u 0 view with
             | AcceptOutcome.WouldBlock _, view -> view
             | other -> failwith $"the accept: expected it to sleep, got %A{other}"
 

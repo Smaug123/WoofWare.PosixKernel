@@ -240,6 +240,7 @@ module TestSyscallInterruption =
                     world.Listener
                     UserBuffer.Mapped
                     16u
+                    0
                     world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
@@ -801,6 +802,8 @@ module TestSyscallInterruption =
                     Listener = waiting
                     Destination = UserBuffer.Mapped
                     DeclaredLength = 16u
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 }
             ParkedSyscall.PipeRead
                 {

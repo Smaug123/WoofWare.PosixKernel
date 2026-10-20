@@ -194,7 +194,7 @@ module DualModeProbe =
     /// A non-blocking accept, as every accept in the probe is by the time the
     /// listener has nothing queued: the new descriptor, or the errno.
     let private accept (libc : Libc) (fd : int) (cell : uint32) : Result<int * ImmutableArray<byte> * int, Answer> =
-        match UnixConnection.tryAccept (Callers.thread 0 libc.System) fd UserBuffer.Mapped cell libc.System with
+        match UnixConnection.tryAccept (Callers.thread 0 libc.System) fd UserBuffer.Mapped cell 0 libc.System with
         | Result.Ok (AcceptOutcome.Accepted (accepted, copied, reported), system) ->
             libc.System <- system
             Result.Ok (accepted, copied, reported)

@@ -486,6 +486,8 @@ module TestCredentialThreadsMeasured =
                     Listener = SleepTarget.Waiting (description, 3)
                     Destination = UserBuffer.Mapped
                     DeclaredLength = 16u
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 }
         | "nanosleep" ->
             ParkedSyscall.Sleep

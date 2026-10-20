@@ -349,6 +349,7 @@
     <Compile Include="TestBlockingPipe.fs" />
     <Compile Include="TestBlockingConnection.fs" />
     <Compile Include="TestNonBlockingAsleepMeasured.fs" />
+    <Compile Include="TestAccept4FlagsMeasured.fs" />
     <Compile Include="TestConnectionWriteResetMeasured.fs" />
     <Compile Include="TestReceiveSendMeasured.fs" />
     <Compile Include="TestStreamReaderGone.fs" />
@@ -444,6 +445,13 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.darwin.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Where Linux's accept4(2) screens its flags and what they do, measured
+         by docs/probes/accept4-flags. `TestAccept4FlagsMeasured` replays every
+         row. -->
+    <EmbeddedResource Include="..\docs\probes\accept4-flags\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.accept4Flags.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>

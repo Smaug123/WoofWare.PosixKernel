@@ -1453,7 +1453,9 @@ module TestConnectedTransfer =
         let system = sentAll client 10 system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match
+                UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
+            with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1494,7 +1496,7 @@ module TestConnectedTransfer =
 
             let system =
                 match
-                    UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system
+                    UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
                 | other -> failwith $"accept: %A{other}"
@@ -1545,7 +1547,9 @@ module TestConnectedTransfer =
         let _, system = KeventWorld.connect client 40000us system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match
+                UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
+            with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
