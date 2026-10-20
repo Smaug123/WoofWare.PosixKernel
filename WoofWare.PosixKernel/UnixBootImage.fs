@@ -444,6 +444,36 @@ module internal TcpReceiveSpaceRefusal =
         | TcpReceiveSpaceRefusal.NotPositive _ -> RefusalKind.OutOfRange "value"
         | TcpReceiveSpaceRefusal.GrowsAfterHandshake _ -> RefusalKind.Unmodelled
 
+/// Why `UnixBootImage.withUdpReceiveSpace` refuses a value.
+[<RequireQualifiedAccess>]
+type internal UdpReceiveSpaceRefusal =
+    /// The value is below `floor`, the smallest receive buffer measured with
+    /// datagrams of every size on this machine's flavour, so what it admits
+    /// is a guess. Unmodelled.
+    | BelowMeasured of value : int * floor : int
+    /// The value is above `ceiling`, past which a rule this library has not
+    /// measured decides what fits: Linux's admission takes another branch
+    /// above `INT_MAX >> 1`, and Darwin's `kern.ipc.maxsockbuf` (8388608)
+    /// caps the mbuf budget of a buffer above an eighth of it. Unmodelled.
+    | AboveMeasured of value : int * ceiling : int
+
+[<RequireQualifiedAccess>]
+module internal UdpReceiveSpaceRefusal =
+    /// What this library knows about why it refused the value, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : UdpReceiveSpaceRefusal) : string =
+        match refusal with
+        | UdpReceiveSpaceRefusal.BelowMeasured (value, floor) ->
+            $"%d{value} is below %d{floor}, the smallest UDP receive buffer measured with datagrams of every size on this flavour, so what it admits is a guess."
+        | UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling) ->
+            $"%d{value} is above %d{ceiling}, past which a rule this library has not measured decides what a UDP receive buffer admits."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : UdpReceiveSpaceRefusal) : RefusalKind =
+        match refusal with
+        | UdpReceiveSpaceRefusal.BelowMeasured _
+        | UdpReceiveSpaceRefusal.AboveMeasured _ -> RefusalKind.Unmodelled
+
 /// Why `UnixBootImage.withTcpSendSpaceMax` refuses a value.
 [<RequireQualifiedAccess>]
 type internal TcpSendSpaceMaxRefusal =
@@ -1395,6 +1425,62 @@ module UnixBootImage =
             "UnixBootImage.withTcpReceiveSpace"
             TcpReceiveSpaceRefusal.kind
             TcpReceiveSpaceRefusal.describe
+
+    /// `withUdpReceiveSpace`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithUdpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (value : int option)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, UdpReceiveSpaceRefusal>
+        =
+        let machine = image.Machine
+
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+        // Measured with datagrams of every size at the defaults, and on Linux
+        // at 1048576 too (`udp-capacity.c` and `udp-truesize.c` in
+        // docs/plans/2026-10-18-udp-data-path); the rules scale with the
+        // buffer between those and the ceilings.
+        let floor = UnixMachineState.defaultUdpReceiveSpace flavour
+
+        let ceiling =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> System.Int32.MaxValue >>> 1
+            | SimulatedUnixFlavour.Darwin -> 8388608 / 8
+
+        let resolved =
+            match value with
+            | None -> Ok floor
+            | Some value when value < floor -> Error (UdpReceiveSpaceRefusal.BelowMeasured (value, floor))
+            | Some value when value > ceiling -> Error (UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling))
+            | Some value -> Ok value
+
+        resolved
+        |> Result.map (fun resolved ->
+            { machine with
+                UdpReceiveSpace = resolved
+            }
+            |> withMachine image
+        )
+
+    /// Set the receive buffer a new UDP socket starts with (`UdpReceiveSpace`):
+    /// Linux's `net.core.rmem_default` sysctl, Darwin's
+    /// `net.inet.udp.recvspace`. `None` takes the measured default of this
+    /// machine's flavour, 212992 on Linux and 786896 on Darwin.
+    ///
+    /// Refuses a value below that default, the smallest buffer measured with
+    /// datagrams of every size, and one above `INT_MAX >> 1` on Linux or
+    /// 1048576 on Darwin, past which a rule this library has not measured
+    /// decides what fits.
+    let withUdpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (value : int option)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithUdpReceiveSpace value image
+        |> Refusal.orRaise
+            "UnixBootImage.withUdpReceiveSpace"
+            UdpReceiveSpaceRefusal.kind
+            UdpReceiveSpaceRefusal.describe
 
     /// `withTcpSendSpaceMax`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithTcpSendSpaceMax<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

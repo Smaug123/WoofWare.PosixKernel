@@ -11,12 +11,14 @@ module HashedValues =
     let private created : SimulatedUnixPlatform =
         SimulatedUnixPlatform.createOrFail
             "HashedValues"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer832
+            ))
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.FourKiB
             "6.18.5-custom"

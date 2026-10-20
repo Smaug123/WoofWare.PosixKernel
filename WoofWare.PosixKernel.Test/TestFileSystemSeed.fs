@@ -411,12 +411,14 @@ module TestFileSystemSeed =
         let custom =
             SimulatedUnixPlatform.createOrFail
                 "test"
-                (SimulatedUnixKernel.Linux
+                (SimulatedUnixKernel.Linux (
                     {
                         Major = 5u
                         Minor = 4u
                         Patch = 0u
-                    })
+                    },
+                    LinuxKernelBuild.SmallBuffer960
+                ))
                 SimulatedUnixArchitecture.X64
                 SimulatedPageSize.FourKiB
                 "5.4.0-1234-custom"
@@ -435,12 +437,14 @@ module TestFileSystemSeed =
         // release, so a custom platform that restates one *is* it.
         SimulatedUnixPlatform.createOrFail
             "test"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 17u
                     Patch = 0u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer960
+            ))
             SimulatedUnixArchitecture.X64
             SimulatedPageSize.FourKiB
             "6.17.0-1022-azure"

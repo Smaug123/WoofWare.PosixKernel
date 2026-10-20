@@ -1112,7 +1112,7 @@ module UnixSocket =
                 Map.add
                     socketId
                     (DatagramReceiver.create
-                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.datagramReceiveRules system.Machine.UnixPlatform)
                         system.Machine.UdpReceiveSpace)
                     system.Machine.DatagramReceivers
             else
