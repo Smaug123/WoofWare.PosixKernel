@@ -111,6 +111,9 @@ type internal AcceptRefusal =
     /// wakes a sleeping accept for as long as a connection is queued, so it
     /// would wake the other.
     | SignalBesideConsumedWake of listener : OpenFileDescriptionId
+    /// The call carries flags, which only Linux's `accept4` takes, and this
+    /// kernel is of another flavour.
+    | FlagsNotProvided of flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal AcceptRefusal =
@@ -132,6 +135,8 @@ module internal AcceptRefusal =
             $"an accept woken by a connection on the listener open file description %O{listener} names has a signal with a handler deliverable to its thread, and another thread is asleep in an accept on the same listener. Measured on Darwin (docs/probes/first-wake), the woken accept fails with EINTR and the connection stays queued without waking the other accepter. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake the other."
         | AcceptRefusal.DarwinDrainedListener listener ->
             $"socket %O{listener} is a listener on which a close of the descriptor an accept was asleep through has ended every accept, and this accept would sleep on it. Measured on Darwin (close-ends-call.c section A7), such a sleep answers ECONNABORTED as soon as anything wakes it, a connection or a signal, and one connection wakes one such sleeper, the connection staying queued, so a second sleeper sleeps on through it. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake every such sleeper for one connection."
+        | AcceptRefusal.FlagsNotProvided flavour ->
+            $"the call carries flags, and this kernel is %O{flavour}-flavoured; only Linux has accept4, so no program could have made the call."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : AcceptRefusal) : RefusalKind =
@@ -144,6 +149,35 @@ module internal AcceptRefusal =
         | AcceptRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | AcceptRefusal.DarwinDrainedListener _ -> RefusalKind.Unmodelled
         | AcceptRefusal.SignalBesideConsumedWake _ -> RefusalKind.Unmodelled
+        | AcceptRefusal.FlagsNotProvided _ -> RefusalKind.NotOnPlatform
+
+/// What an `accept4` flag word asks of the socket the call makes.
+type internal AcceptFlags =
+    {
+        /// `SOCK_NONBLOCK`: the new socket's open file description is
+        /// non-blocking.
+        AsksNonBlocking : bool
+        /// `SOCK_CLOEXEC`: the new descriptor has `FD_CLOEXEC`.
+        AsksCloseOnExec : bool
+    }
+
+[<RequireQualifiedAccess>]
+module internal AcceptFlags =
+    /// Linux's `accept4` flag word `flags`, or `None` if it carries a bit other
+    /// than `SOCK_NONBLOCK` and `SOCK_CLOEXEC`.
+    let ofLinux (flags : int) : AcceptFlags option =
+        if
+            flags
+            &&& ~~~(OpenFlagNumbering.LinuxNonBlock ||| OpenFlagNumbering.LinuxCloseOnExec)
+            <> 0
+        then
+            None
+        else
+            Some
+                {
+                    AsksNonBlocking = flags &&& OpenFlagNumbering.LinuxNonBlock <> 0
+                    AsksCloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
+                }
 
 /// What `shutdown(2)` answered.
 [<RequireQualifiedAccess>]
@@ -2283,10 +2317,12 @@ module UnixConnection =
     /// `nonBlocking` is the listening description's `O_NONBLOCK` as the
     /// connection is handed over, which is what Darwin's accepted socket
     /// inherits (measured, `blocking-accept.c` section F: a flag set while the
-    /// call slept was inherited).
+    /// call slept was inherited). `flags` is what the call's Linux `accept4`
+    /// flags asked of the new socket, which it has from the moment it exists.
     let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
+        (flags : AcceptFlags)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : ProcessView<'Thread, 'Handler>)
@@ -2357,17 +2393,31 @@ module UnixConnection =
         // description's flag onto the accepted socket and Linux's does not
         // (measured; see `acceptedSocketInheritsNonBlocking`). It is inherited
         // from the description the call was made through, so a `dup` of a
-        // non-blocking listener passes the flag on too.
-        let system =
-            if
-                nonBlocking
-                && SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking system.Machine.UnixPlatform
-            then
-                UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setNonBlocking acceptedFd true (UnixSystemState.fileDescriptors system))
-                    system
+        // non-blocking listener passes the flag on too. Linux's comes from
+        // `SOCK_NONBLOCK` alone (measured, `docs/probes/accept4-flags`,
+        // section C).
+        let inherited =
+            nonBlocking
+            && SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking system.Machine.UnixPlatform
+
+        let registry = UnixSystemState.fileDescriptors system
+
+        let registry =
+            if inherited || flags.AsksNonBlocking then
+                FileDescriptorRegistry.setNonBlocking acceptedFd true registry
             else
-                system
+                registry
+
+        let registry =
+            if flags.AsksCloseOnExec then
+                FileDescriptorRegistry.setFlags
+                    acceptedFd
+                    (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) true)
+                    registry
+            else
+                registry
+
+        let system = UnixSystemState.withFileDescriptors registry system
 
         let copiedOut =
             SimulatedUnixPlatform.copyOutInternetSockaddr
@@ -2383,9 +2433,17 @@ module UnixConnection =
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
+        (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        match flavour with
+        | SimulatedUnixFlavour.Darwin when flags <> 0 -> Error (AcceptRefusal.FlagsNotProvided flavour)
+        | SimulatedUnixFlavour.Darwin
+        | SimulatedUnixFlavour.Linux ->
+
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
         // descriptor answers EBADF and a non-socket ENOTSOCK whatever the
@@ -2393,6 +2451,13 @@ module UnixConnection =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (AcceptOutcome.Failed UnixError.EBADF, system)
         | Some (descriptionId, description) ->
+
+        // Measured (`docs/probes/accept4-flags`, sections A and B): an unknown
+        // flag is EINVAL right after EBADF, ahead of every other answer, the
+        // descriptor limit's included, and leaves the queue alone.
+        match AcceptFlags.ofLinux flags with
+        | None -> Ok (AcceptOutcome.Failed UnixError.EINVAL, system)
+        | Some acceptFlags ->
 
         // Measured (`fcntl-dup.c`, LIMIT rows): Linux takes the new descriptor
         // right after EBADF, so with none left below the limit even a file's
@@ -2469,16 +2534,21 @@ module UnixConnection =
             elif listenState.Drained then
                 Error (AcceptRefusal.DarwinDrainedListener socketId)
             else
+                // Measured (`docs/probes/accept4-flags`, section D):
+                // `SOCK_NONBLOCK` is the new socket's, so the call sleeps, and
+                // the socket it hands over on waking has the flags.
                 let parked =
                     ParkedSyscall.Accept
                         {
                             Listener = SleepTarget.Waiting (descriptionId, fd)
                             Destination = destination
                             DeclaredLength = declaredLength
+                            NewSocketNonBlocking = acceptFlags.AsksNonBlocking
+                            NewSocketCloseOnExec = acceptFlags.AsksCloseOnExec
                         }
 
                 Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
-        | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
+        | _ :: _ -> handOver socketId description.NonBlocking acceptFlags destination declaredLength system
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2486,6 +2556,7 @@ module UnixConnection =
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
+        (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
@@ -2494,7 +2565,7 @@ module UnixConnection =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryAcceptIn (Caller.thread caller) fd destination declaredLength)
+            (tryAcceptIn (Caller.thread caller) fd destination declaredLength flags)
             system
 
     /// `accept(2)`, made by `caller`: take the oldest completed connection off
@@ -2539,16 +2610,25 @@ module UnixConnection =
     /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client whose
     /// own sockets want one answer on every platform clears it itself.
     ///
+    /// `flags` is Linux's `accept4(2)` flag word, and 0 is `accept(2)`. Its
+    /// `SOCK_NONBLOCK` makes the new socket non-blocking and its `SOCK_CLOEXEC`
+    /// gives the new descriptor `FD_CLOEXEC`, from the moment the call makes
+    /// them, a call that slept included; neither changes whether the call
+    /// itself sleeps. Any other bit is `EINVAL`, after `EBADF` and ahead of
+    /// every other answer. Darwin has no `accept4`, so there a `flags` other
+    /// than 0 throws `PlatformNotSupportedException`.
+    ///
     /// The caller's thread must not already be parked.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
+        (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryAccept caller fd destination declaredLength system
+        tryAccept caller fd destination declaredLength flags system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
     /// Whether a thread of any process on the machine but `thread` of this one
@@ -2644,7 +2724,13 @@ module UnixConnection =
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
             | Ok SyscallInterruption.Completion.Completes ->
-                handOver socketId description.NonBlocking parked.Destination parked.DeclaredLength finished
+                let flags =
+                    {
+                        AsksNonBlocking = parked.NewSocketNonBlocking
+                        AsksCloseOnExec = parked.NewSocketCloseOnExec
+                    }
+
+                handOver socketId description.NonBlocking flags parked.Destination parked.DeclaredLength finished
             | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
                 // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the
                 // two-sleeper accept rows): an accepter woken by a connection

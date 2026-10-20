@@ -166,7 +166,7 @@ module TestAccept =
         (system : UnixSystem<int, string>)
         : AcceptOutcome * UnixSystem<int, string>
         =
-        match UnixConnection.tryAccept (Callers.thread 0 system) fd destination declaredLength system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd destination declaredLength 0 system with
         | Ok result -> result
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{AcceptRefusal.describe refusal}"
 
@@ -480,7 +480,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system
             |> shouldEqual (Error (AcceptRefusal.UnmodelledDomain (SocketId 0L, domain)))
 
     [<TestCaseSource(nameof platforms)>]
@@ -493,7 +493,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system
             |> shouldEqual (Error (AcceptRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
     /// The park itself, and what finishes it, are `TestBlockingAccept`'s.
@@ -501,7 +501,7 @@ module TestAccept =
     let ``an empty queue on a blocking listener parks the caller`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system with
         | Ok (AcceptOutcome.WouldBlock condition, _) ->
             condition
             |> shouldEqual (
@@ -523,7 +523,7 @@ module TestAccept =
     let ``a copy-out through an unmapped destination is refused`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 1
 
-        UnixConnection.tryAccept (Callers.thread 0 system) fd (UserBuffer.Unmapped 4096UL) 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd (UserBuffer.Unmapped 4096UL) 16u 0 system
         |> shouldEqual (Error (AcceptRefusal.UnmeasuredCopyOutFault (SocketId 0L)))
 
     /// A destination whose bytes the client cannot produce is a different
@@ -544,7 +544,7 @@ module TestAccept =
         for destination, expected in rows do
             let fd, _, system = listenerWith platform 1
 
-            UnixConnection.tryAccept (Callers.thread 0 system) fd destination 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd destination 16u 0 system
             |> shouldEqual (Error (AcceptRefusal.Buffer expected))
 
     /// A refusal carries no system, so the connection it would have handed over
@@ -554,7 +554,7 @@ module TestAccept =
     let ``a refused copy-out leaves the connection queued`` (platform : SimulatedUnixPlatform) : unit =
         let fd, connections, system = listenerWith platform 1
 
-        UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u 0 system
         |> shouldEqual (Error (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
         queueOf (SocketId 0L) system |> shouldEqual connections
@@ -566,7 +566,7 @@ module TestAccept =
     let ``an empty queue outranks an unwritable buffer`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u 0 system with
         | Ok (AcceptOutcome.WouldBlock _, _) -> ()
         | other -> failwith $"expected the accept to park, got %A{other}"
 
@@ -702,7 +702,7 @@ module TestAccept =
 
         let e =
             Assert.Throws<exn> (fun () ->
-                UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
+                UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system
                 |> ignore<_>
             )
 

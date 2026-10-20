@@ -12,7 +12,7 @@ open WoofWare.PosixKernel
 ///
 /// The rows a replay leaves out are counted and named: those whose answer
 /// turns on `RLIMIT_NOFILE`, which this kernel does not model, and those of a
-/// call it does not make (`accept4`, `send`, Darwin's `F_DUPFD_CLOFORK`).
+/// call it does not make (`send`, Darwin's `F_DUPFD_CLOFORK`).
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestFcntlMeasured =
@@ -39,16 +39,14 @@ module TestFcntlMeasured =
                     for row in FcntlWorld.rows "KIND" run do
                         match row with
                         | [ kind ; getfl ; getfd ] ->
-                            match FcntlWorld.make kind (FcntlWorld.system run) with
-                            | None -> ()
-                            | Some (fd, system) ->
-                                replayed <- replayed + 1
-                                let modelled = $"F_GETFL %s{FcntlWorld.statusFlags fd system}"
-                                let modelledFd = $"F_GETFD %s{FcntlWorld.descriptorFlags fd system}"
+                            let fd, system = FcntlWorld.make kind (FcntlWorld.system run)
+                            replayed <- replayed + 1
+                            let modelled = $"F_GETFL %s{FcntlWorld.statusFlags fd system}"
+                            let modelledFd = $"F_GETFD %s{FcntlWorld.descriptorFlags fd system}"
 
-                                if modelled <> getfl || modelledFd <> getfd then
-                                    yield
-                                        $"%s{run.Name} %s{kind}: measured %s{getfl} %s{getfd}, modelled %s{modelled} %s{modelledFd}"
+                            if modelled <> getfl || modelledFd <> getfd then
+                                yield
+                                    $"%s{run.Name} %s{kind}: measured %s{getfl} %s{getfd}, modelled %s{modelled} %s{modelledFd}"
                         | other -> failwith $"malformed KIND row %A{other}"
                 ]
 
@@ -74,9 +72,7 @@ module TestFcntlMeasured =
                     for row in FcntlWorld.rows "SETFL" run do
                         match row with
                         | [ kind ; label ; before ; set ; after ; clear ; after2 ] ->
-                            match FcntlWorld.make kind (FcntlWorld.system run) with
-                            | None -> ()
-                            | Some (fd, system) ->
+                            let fd, system = FcntlWorld.make kind (FcntlWorld.system run)
 
                             let measuredBefore = Convert.ToUInt32 (field "before 0x" before, 16) |> int
                             let word = Convert.ToUInt32 ((field "set 0x" set).Split(' ').[0], 16) |> int
@@ -477,7 +473,7 @@ module TestFcntlMeasured =
                 | Error refusal -> failwith $"pipe2: %s{Pipe2Refusal.describe refusal}"
 
             let acceptOf (fd : int) (system : UnixSystem<int, string>) =
-                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system with
                 | Ok (AcceptOutcome.Accepted (accepted, _, _), _) ->
                     Ok (FcntlWorld.number (SyscallAnswer.Completed (int64 accepted)))
                 | Ok (AcceptOutcome.Failed error, _) -> Ok (FcntlWorld.number (SyscallAnswer.Failed error))
@@ -1162,7 +1158,9 @@ module TestFcntlMeasured =
                         system
 
                 let system =
-                    match UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u system with
+                    match
+                        UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u 0 system
+                    with
                     | Ok (AcceptOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"accept on an empty listener: %A{other}"
 

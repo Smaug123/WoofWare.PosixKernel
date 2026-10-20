@@ -139,7 +139,7 @@ module TestEphemeralPorts =
         | Error refusal -> failwith $"connect refused: %s{ConnectRefusal.describe refusal}"
 
     let private acceptFrom (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system with
         | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
         | Ok (AcceptOutcome.Failed error, _) -> failwith $"accept failed with %A{error}"
         | Ok (AcceptOutcome.DroppedConnection error, _) -> failwith $"accept dropped the connection with %A{error}"
@@ -647,7 +647,7 @@ module TestEphemeralPorts =
 
                 for listener in run.Listeners do
                     if queueLength listener run > 0 then
-                        yield Syscall.Accept (listener, UserBuffer.Mapped, 16u)
+                        yield Syscall.Accept (listener, UserBuffer.Mapped, 16u, 0)
             ]
 
         candidates.[rng.Next candidates.Length]

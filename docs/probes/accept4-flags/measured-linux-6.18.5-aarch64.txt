@@ -1,0 +1,42 @@
+Linux 6.18.5 aarch64
+A flags 0x00000001 closed fd     -> EBADF
+A flags 0x00000001 fd -1         -> EBADF
+A flags 0x00000001 regular file  -> EINVAL
+A flags 0x00000001 datagram      -> EINVAL
+A flags 0x00000001 idle stream   -> EINVAL
+A flags 0x00000001 empty nb lis. -> EINVAL
+A flags 0x00000001 queued lis.   -> EINVAL; then still queued
+A flags 0x00000001 queued, len -1 -> EINVAL; then still queued
+A flags 0x80000000 closed fd     -> EBADF
+A flags 0x80000000 fd -1         -> EBADF
+A flags 0x80000000 regular file  -> EINVAL
+A flags 0x80000000 datagram      -> EINVAL
+A flags 0x80000000 idle stream   -> EINVAL
+A flags 0x80000000 empty nb lis. -> EINVAL
+A flags 0x80000000 queued lis.   -> EINVAL; then still queued
+A flags 0x80000000 queued, len -1 -> EINVAL; then still queued
+A flags 0x00080801 closed fd     -> EBADF
+A flags 0x00080801 fd -1         -> EBADF
+A flags 0x00080801 regular file  -> EINVAL
+A flags 0x00080801 datagram      -> EINVAL
+A flags 0x00080801 idle stream   -> EINVAL
+A flags 0x00080801 empty nb lis. -> EINVAL
+A flags 0x00080801 queued lis.   -> EINVAL; then still queued
+A flags 0x00080801 queued, len -1 -> EINVAL; then still queued
+A flags 0x00000000 queued, len -1 -> EINVAL; then gone
+B full, flags 0x1 closed fd    -> EBADF
+B full, flags 0x1 regular file -> EINVAL
+B full, flags 0x1 queued lis.  -> EINVAL
+B full, flags 0x0 closed fd    -> EBADF
+B full, flags 0x0 regular file -> EMFILE
+B full, flags 0x0 queued lis.  -> EMFILE
+B after freeing one, queued: still queued
+C blocking     listener, flags 0                -> ok nonblock=0 cloexec=0; listener nonblock=0
+C blocking     listener, flags NONBLOCK         -> ok nonblock=1 cloexec=0; listener nonblock=0
+C blocking     listener, flags CLOEXEC          -> ok nonblock=0 cloexec=1; listener nonblock=0
+C blocking     listener, flags NONBLOCK|CLOEXEC -> ok nonblock=1 cloexec=1; listener nonblock=0
+C non-blocking listener, flags 0                -> ok nonblock=0 cloexec=0; listener nonblock=1
+C non-blocking listener, flags NONBLOCK         -> ok nonblock=1 cloexec=0; listener nonblock=1
+C non-blocking listener, flags CLOEXEC          -> ok nonblock=0 cloexec=1; listener nonblock=1
+C non-blocking listener, flags NONBLOCK|CLOEXEC -> ok nonblock=1 cloexec=1; listener nonblock=1
+D blocking listener, nothing queued, NONBLOCK|CLOEXEC -> ok nonblock=1 cloexec=1; slept

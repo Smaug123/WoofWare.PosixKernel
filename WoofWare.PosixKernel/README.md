@@ -470,7 +470,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `connect(2)` | `UnixConnection.connect (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
 | `connect(2)`, given the bytes | `UnixConnection.connectWithAddress (copied : ImmutableArray<byte>) (paused : PausedConnect)` | `SyscallOutcome * UnixSystem` |
 | `listen(2)` | `UnixSocket.listen (caller : Caller) (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
-| `accept(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
+| `accept(2)`, and Linux's `accept4(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32) (flags : int)` | `AcceptOutcome * UnixSystem` |
 | `shutdown(2)` | `UnixConnection.shutdown (caller : Caller) (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
 | `getsockname(2)` | `UnixSocket.getsockname (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
 | `getpeername(2)` | `UnixSocket.getpeername (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
@@ -726,7 +726,7 @@ let listener, opened =
 
 // It listens on the socket, which nothing will connect to, and starts thread 1, which
 // accepts on it and sleeps. Thread 0 sends thread 1 SIGUSR1.
-let accept = Syscall.Accept (listener, UserBuffer.Mapped, 16u)
+let accept = Syscall.Accept (listener, UserBuffer.Mapped, 16u, 0)
 
 let signalled =
     opened

@@ -181,7 +181,7 @@ module TestSocketUid =
             | SteppedCall.Connect (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"connect: %A{Stepped.view other}"
 
-        match step pid (Syscall.Accept (listener, UserBuffer.Mapped, 16u)) system with
+        match step pid (Syscall.Accept (listener, UserBuffer.Mapped, 16u, 0)) system with
         | SteppedCall.Accept (AcceptOutcome.Accepted (accepted, _, _), system) -> listener, accepted, client, system
         | other -> failwith $"accept: %A{Stepped.view other}"
 

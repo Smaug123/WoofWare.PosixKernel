@@ -327,6 +327,13 @@ type ParkedAccept =
         /// out, after the wait, so under Linux this is right for a caller whose
         /// cell nothing writes while the call sleeps.
         DeclaredLength : uint32
+        /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
+        /// the socket it makes is non-blocking. Never under Darwin, which has
+        /// no `accept4`.
+        NewSocketNonBlocking : bool
+        /// Whether the call's flags carried Linux's `SOCK_CLOEXEC`, so that the
+        /// descriptor it makes has `FD_CLOEXEC`. Never under Darwin.
+        NewSocketCloseOnExec : bool
     }
 
 /// One thread's in-flight blocking `read(2)` of a pipe that held nothing while a

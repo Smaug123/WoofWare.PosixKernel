@@ -338,8 +338,8 @@ module TestStepOracle =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength) ->
-            UnixConnection.tryAccept caller fd destination declaredLength system
+        | Syscall.Accept (fd, destination, declaredLength, flags) ->
+            UnixConnection.tryAccept caller fd destination declaredLength flags system
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -645,7 +645,7 @@ module TestStepOracle =
         let system = system |> stream 10 |> connect 10
 
         let system =
-            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u 0 system with
             | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
             | other -> failwith $"setting up, accept: %A{other}"
 
@@ -1170,6 +1170,12 @@ module TestStepOracle =
         | SimulatedUnixFlavour.Linux -> Gen.elements [ 0 ; 0x80000 ; 0x800 ; 0x80800 ; 0x4000 ; 0x80 ; 0x1 ]
         | SimulatedUnixFlavour.Darwin -> Gen.elements [ 0 ; 0x1000000 ; 0x4 ; 0x1000004 ; 0x1 ]
 
+    /// `accept4(2)` flag words in Linux's numbering: `SOCK_NONBLOCK`,
+    /// `SOCK_CLOEXEC`, both, and words with a bit it rejects. Any word but 0 is
+    /// refused under Darwin, which has no `accept4`.
+    let private acceptFlagsGen : Gen<int> =
+        Gen.elements [ 0 ; 0x800 ; 0x80000 ; 0x80800 ; 0x1 ; Int32.MinValue ]
+
     let private optionLengthGen : Gen<uint32> =
         Gen.frequency
             [
@@ -1578,7 +1584,18 @@ module TestStepOracle =
             Gen.zip socketFd (Gen.elements [ -1 ; 0 ; 1 ; 4 ; 128 ; Int32.MaxValue ])
             |> Gen.filter (fun (fd, backlog) -> fd <> backlog)
             |> Gen.map Syscall.Listen
-            "Accept", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.Accept
+            "Accept",
+            Gen.map4
+                (fun fd destination declaredLength flags -> Syscall.Accept (fd, destination, declaredLength, flags))
+                socketFd
+                userBufferGen
+                socklenGen
+                acceptFlagsGen
+            |> Gen.filter (fun call ->
+                match call with
+                | Syscall.Accept (fd, _, _, flags) -> fd <> flags
+                | _ -> true
+            )
             "Shutdown",
             Gen.zip socketFd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ])
             |> Gen.filter (fun (fd, how) -> fd <> how)
