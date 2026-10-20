@@ -750,7 +750,7 @@ module TestUnixSystemInvariants =
                         Map.add
                             socketId
                             (DatagramReceiver.create
-                                (SimulatedUnixPlatform.flavour machine.UnixPlatform)
+                                (SimulatedUnixPlatform.datagramReceiveRules machine.UnixPlatform)
                                 machine.UdpReceiveSpace)
                             machine.DatagramReceivers
                     else

@@ -68,6 +68,11 @@ module internal DatagramReceiverReference =
     type Model =
         {
             Linux : bool
+            /// Linux: the smallest buffer's charge, which the build fixes.
+            Small : int
+            /// Linux: whether a datagram is admitted while what is held fits
+            /// the buffer (before 6.18), rather than only when it fits too.
+            OnePast : bool
             Buffer : int
             Held : Entry list
             /// Linux's charge taken and not given back.
@@ -77,9 +82,11 @@ module internal DatagramReceiverReference =
             Error : bool
         }
 
-    let create (linux : bool) (buffer : int) : Model =
+    let create (linux : bool) (small : int) (onePast : bool) (buffer : int) : Model =
         {
             Linux = linux
+            Small = small
+            OnePast = onePast
             Buffer = buffer
             Held = []
             Owed = 0
@@ -87,14 +94,14 @@ module internal DatagramReceiverReference =
             Error = false
         }
 
-    let private linuxTruesize (length : int) : int =
-        if length < 198 then 832
+    let private linuxTruesize (small : int) (length : int) : int =
+        if length <= small - 635 then small
         elif length < 646 then 1280
         elif length < 1670 then 2304
         elif length < 3718 then 4352
         elif length < 7814 then 8448
         elif length < 16005 then 16640
-        else length + 832
+        else length + small
 
     let private darwinMbufs (bare : bool) (length : int) : int =
         // The table of section 2.4, row by row.
@@ -138,9 +145,15 @@ module internal DatagramReceiverReference =
 
     let arrive (id : uint16) (length : int) (connected : bool) (m : Model) : bool * Model =
         if m.Linux then
-            let size = linuxTruesize length
+            let size = linuxTruesize m.Small length
 
-            if charged m + size > m.Buffer then
+            let fits =
+                if m.OnePast then
+                    charged m <= m.Buffer
+                else
+                    charged m + size <= m.Buffer
+
+            if not fits then
                 false, m
             else
                 true,
@@ -310,10 +323,91 @@ module TestDatagramReceiver =
     let private linuxBuffer : int = 212992
     let private darwinBuffer : int = 786896
 
+    /// The rules of the kernel most of the probes ran on: Linux 6.18.5 in
+    /// Apple's container, `linuxArm64`.
+    let private containerRules : DatagramReceiveRules =
+        SimulatedUnixPlatform.datagramReceiveRules SimulatedUnixPlatform.linuxArm64
+
     let private fresh (flavour : SimulatedUnixFlavour) : DatagramReceiver =
         match flavour with
-        | SimulatedUnixFlavour.Linux -> DatagramReceiver.create flavour linuxBuffer
-        | SimulatedUnixFlavour.Darwin -> DatagramReceiver.create flavour darwinBuffer
+        | SimulatedUnixFlavour.Linux -> DatagramReceiver.create containerRules linuxBuffer
+        | SimulatedUnixFlavour.Darwin -> DatagramReceiver.create DatagramReceiveRules.Darwin darwinBuffer
+
+    /// A Linux kernel the accounting probes ran on, and the receive buffer
+    /// they ran at.
+    type private LinuxRecording =
+        {
+            /// The kernel, as this library models it.
+            Platform : SimulatedUnixPlatform
+            Buffer : int
+            /// The embedded resource holding a probe's output, by the probe's
+            /// name: `truesize`, `capacity` or `release`.
+            Resource : string -> string
+        }
+
+    /// Apple's container, which most of the plan's rows were read on, and
+    /// GitHub's Azure runners on 6.17 and 7.0, each architecture, at their own
+    /// `rmem_default` and at the stock one
+    /// (`docs/plans/2026-10-18-udp-data-path/runners`).
+    let private linuxRecordings : Map<string, LinuxRecording> =
+        let platform (major : uint32) (minor : uint32) (build : LinuxKernelBuild) architecture release =
+            SimulatedUnixPlatform.createOrFail
+                "TestDatagramReceiver"
+                (SimulatedUnixKernel.Linux (
+                    {
+                        Major = major
+                        Minor = minor
+                        Patch = 0u
+                    },
+                    build
+                ))
+                architecture
+                SimulatedPageSize.FourKiB
+                release
+
+        let container =
+            "6.18.5 container",
+            {
+                Platform = SimulatedUnixPlatform.linuxArm64
+                Buffer = linuxBuffer
+                Resource =
+                    fun probe ->
+                        let name = string (Char.ToUpperInvariant probe.[0]) + probe.Substring 1
+                        $"WoofWare.PosixKernel.Test.udp%s{name}.linux.txt"
+            }
+
+        let runners =
+            [
+                for major, minor, release in [ 6u, 17u, "6.17.0-1022-azure" ; 7u, 0u, "7.0.0-1017-azure" ] do
+                    for architecture, machine in
+                        [
+                            SimulatedUnixArchitecture.X64, "x86_64"
+                            SimulatedUnixArchitecture.Arm64, "aarch64"
+                        ] do
+                        for buffer in [ 212992 ; 1048576 ] do
+                            $"%s{release} %s{machine} at %d{buffer}",
+                            {
+                                Platform = platform major minor LinuxKernelBuild.SmallBuffer960 architecture release
+                                Buffer = buffer
+                                Resource =
+                                    fun probe ->
+                                        $"WoofWare.PosixKernel.Test.udpRunners.udp-%s{probe}.linux-%s{release}-%s{machine}-rmem-%d{buffer}.txt"
+                            }
+            ]
+
+        Map.ofList (container :: runners)
+
+    let private linuxRecordingNames : string list =
+        linuxRecordings |> Map.keys |> List.ofSeq
+
+    let private freshFor (recording : LinuxRecording) : DatagramReceiver =
+        DatagramReceiver.create (SimulatedUnixPlatform.datagramReceiveRules recording.Platform) recording.Buffer
+
+    /// The build a recording's kernel was built as.
+    let private buildOf (recording : LinuxRecording) : LinuxKernelBuild =
+        match SimulatedUnixPlatform.kernel recording.Platform with
+        | SimulatedUnixKernel.Linux (_, build) -> build
+        | SimulatedUnixKernel.Darwin _ -> failwith "a Linux recording of a Darwin kernel"
 
     let private source (id : uint16) : Ipv4Endpoint =
         Ipv4Endpoint.ofParts Ipv4Address.loopback id
@@ -343,14 +437,10 @@ module TestDatagramReceiver =
         | DatagramReceiveAnswer.Datagram _, after -> after
         | answer, _ -> failwith $"expected a datagram to take, got %A{answer}"
 
-    /// How many datagrams of `length` an unread receiver holds, after one
-    /// datagram of 1 byte was taken first if `primed`.
-    let private holds (flavour : SimulatedUnixFlavour) (primed : bool) (length : int) : int =
-        let start =
-            if primed then
-                fresh flavour |> arrive 1 |> snd |> take
-            else
-                fresh flavour
+    /// How many datagrams of `length` an unread receiver made as `empty` is
+    /// holds, after one datagram of 1 byte was taken first if `primed`.
+    let private holds (empty : DatagramReceiver) (primed : bool) (length : int) : int =
+        let start = if primed then empty |> arrive 1 |> snd |> take else empty
 
         let rec fill (count : int) (receiver : DatagramReceiver) : int =
             match arrive length receiver with
@@ -361,13 +451,16 @@ module TestDatagramReceiver =
 
     // ------------------------------------------------------------ capacity
 
-    [<TestCase "linux">]
-    [<TestCase "darwin">]
+    let private capacityRecordings : string list = "darwin" :: linuxRecordingNames
+
+    [<TestCaseSource(nameof capacityRecordings)>]
     let ``an unread receiver holds as many datagrams as udp-capacity.c measured`` (which : string) : unit =
-        let flavour, name =
+        let empty, name =
             match which with
-            | "linux" -> SimulatedUnixFlavour.Linux, "WoofWare.PosixKernel.Test.udpCapacity.linux.txt"
-            | _ -> SimulatedUnixFlavour.Darwin, "WoofWare.PosixKernel.Test.udpCapacity.darwin.txt"
+            | "darwin" -> fresh SimulatedUnixFlavour.Darwin, "WoofWare.PosixKernel.Test.udpCapacity.darwin.txt"
+            | linux ->
+                let recording = linuxRecordings.[linux]
+                freshFor recording, recording.Resource "capacity"
 
         let rows =
             resource name
@@ -404,12 +497,50 @@ module TestDatagramReceiver =
         rows.Length |> shouldBeGreaterThan 20
 
         for length, primed, measured in rows do
-            (length, primed, holds flavour primed length)
+            (length, primed, holds empty primed length)
             |> shouldEqual (length, primed, measured)
 
+    /// The admission rule the version decides, at the versions either side of
+    /// the change, which a kernel version this side of 6.18 would get wrong.
     [<Test>]
-    let ``Linux charges each datagram the truesize udp-truesize.c read`` () : unit =
-        let lines = resource "WoofWare.PosixKernel.Test.udpTruesize.linux.txt"
+    let ``Linux admits only a datagram that fits from 6.18.0`` () : unit =
+        let at (major : uint32) (minor : uint32) (patch : uint32) =
+            SimulatedUnixPlatform.createOrFail
+                "test"
+                (SimulatedUnixKernel.Linux (
+                    {
+                        Major = major
+                        Minor = minor
+                        Patch = patch
+                    },
+                    LinuxKernelBuild.SmallBuffer960
+                ))
+                SimulatedUnixArchitecture.X64
+                SimulatedPageSize.FourKiB
+                "test"
+            |> SimulatedUnixPlatform.datagramReceiveRules
+
+        let onePast =
+            DatagramReceiveRules.Linux (LinuxKernelBuild.SmallBuffer960, LinuxDatagramAdmission.WhileHeldFits)
+
+        let strict =
+            DatagramReceiveRules.Linux (LinuxKernelBuild.SmallBuffer960, LinuxDatagramAdmission.WhenBothFit)
+
+        [ at 6u 12u 0u ; at 6u 17u 0u ; at 6u 17u 13u ]
+        |> List.iter (shouldEqual onePast)
+
+        [ at 6u 18u 0u ; at 6u 18u 5u ; at 7u 0u 0u ] |> List.iter (shouldEqual strict)
+
+    [<TestCaseSource(nameof linuxRecordingNames)>]
+    let ``Linux charges each datagram the truesize udp-truesize.c read`` (which : string) : unit =
+        let recording = linuxRecordings.[which]
+        let build = buildOf recording
+        let lines = resource (recording.Resource "truesize")
+
+        let small =
+            match build with
+            | LinuxKernelBuild.SmallBuffer832 -> 832
+            | LinuxKernelBuild.SmallBuffer960 -> 960
 
         let steps =
             lines
@@ -429,20 +560,23 @@ module TestDatagramReceiver =
         steps.Length |> shouldBeGreaterThan 10
 
         for length, charge in steps do
-            (length, DatagramAccounting.linuxCharge length) |> shouldEqual (length, charge)
+            (length, DatagramAccounting.linuxCharge build length)
+            |> shouldEqual (length, charge)
 
         // Above the staircase, the sampled sizes.
         for length in 16005..97..65507 do
-            DatagramAccounting.linuxCharge length |> shouldEqual (length + 832)
+            DatagramAccounting.linuxCharge build length |> shouldEqual (length + small)
 
-        // Each fill: the charge each, how many were admitted, the final charge.
+        // Each fill of 400 sends: the charge each, how many were admitted, how
+        // many admissions the probe's rule "held plus its own fits SO_RCVBUF"
+        // got wrong, and the final charge.
         let fills =
             lines
             |> List.choose (fun line ->
                 let m =
                     Regex.Match (
                         line,
-                        @"^fill (\d+): charge each (\d+); admitted (\d+) .* admissions against the rule 0; final charge (\d+)$"
+                        @"^fill (\d+): charge each (\d+); admitted (\d+) .* admissions against the rule (\d+); final charge (\d+)$"
                     )
 
                 if m.Success then
@@ -450,7 +584,8 @@ module TestDatagramReceiver =
                         Int32.Parse m.Groups.[1].Value,
                         Int32.Parse m.Groups.[2].Value,
                         Int32.Parse m.Groups.[3].Value,
-                        Int32.Parse m.Groups.[4].Value
+                        Int32.Parse m.Groups.[4].Value,
+                        Int32.Parse m.Groups.[5].Value
                     )
                 else
                     None
@@ -458,17 +593,37 @@ module TestDatagramReceiver =
 
         fills.Length |> shouldEqual 9
 
-        for length, each, admitted, final in fills do
-            DatagramAccounting.linuxCharge length |> shouldEqual each
-            holds SimulatedUnixFlavour.Linux false length |> shouldEqual admitted
-            admitted * each |> shouldEqual final
+        for length, each, admitted, againstTheRule, final in fills do
+            DatagramAccounting.linuxCharge build length |> shouldEqual each
 
-    [<Test>]
-    let ``Linux gives a taken datagram's charge back as udp-truesize.c's release rows measured`` () : unit =
-        let lines = resource "WoofWare.PosixKernel.Test.udpTruesize.linux.txt"
+            // The probe's loop, with the model as the kernel.
+            let modelled, modelledAgainst, ended =
+                List.fold
+                    (fun (admitted, against, receiver) _ ->
+                        let before = DatagramReceiver.charged receiver
+                        let took, after = arrive length receiver
+                        let predicted = before + each <= recording.Buffer
+
+                        (if took then admitted + 1 else admitted),
+                        (if took <> predicted then against + 1 else against),
+                        after
+                    )
+                    (0, 0, freshFor recording)
+                    [ 1..400 ]
+
+            (length, modelled, modelledAgainst, DatagramReceiver.charged ended)
+            |> shouldEqual (length, admitted, againstTheRule, final)
+
+    [<TestCaseSource(nameof linuxRecordingNames)>]
+    let ``Linux gives a taken datagram's charge back as udp-truesize.c's release rows measured``
+        (which : string)
+        : unit
+        =
+        let recording = linuxRecordings.[which]
+        let lines = resource (recording.Resource "truesize")
 
         let filled (count : int) =
-            List.fold (fun receiver _ -> arrive 1000 receiver |> snd) (fresh SimulatedUnixFlavour.Linux) [ 1..count ]
+            List.fold (fun receiver _ -> arrive 1000 receiver |> snd) (freshFor recording) [ 1..count ]
 
         // The charge after each take from a fill of 92.
         let afterEach =
@@ -537,10 +692,12 @@ module TestDatagramReceiver =
 
                 more |> shouldEqual (Int32.Parse m.Groups.[3].Value)
 
-    [<Test>]
-    let ``Linux's reader queue refills on the calls udp-release.c found refilling it`` () : unit =
+    [<TestCaseSource(nameof linuxRecordingNames)>]
+    let ``Linux's reader queue refills on the calls udp-release.c found refilling it`` (which : string) : unit =
+        let recording = linuxRecordings.[which]
+
         let rows =
-            resource "WoofWare.PosixKernel.Test.udpRelease.linux.txt"
+            resource (recording.Resource "release")
             |> List.choose (fun line ->
                 let m =
                     Regex.Match (
@@ -585,7 +742,7 @@ module TestDatagramReceiver =
                 List.fold (fun receiver _ -> arrive 1000 receiver |> snd) receiver [ 1..10 ]
 
             let ended =
-                fresh SimulatedUnixFlavour.Linux
+                freshFor recording
                 |> ten
                 |> between
                 |> ten
@@ -995,25 +1152,51 @@ module TestDatagramReceiver =
             let error, after = DatagramReceiver.takeError receiver
             DatagramReceiverSeen.Error error, after
 
-    [<TestCase "linux">]
-    [<TestCase "darwin">]
+    /// Each set of rules a measured kernel keeps, by a recording made on it,
+    /// and Darwin.
+    let private referenceCases : string list =
+        [
+            "6.18.5 container"
+            "6.17.0-1022-azure x86_64 at 212992"
+            "7.0.0-1017-azure x86_64 at 212992"
+            "7.0.0-1017-azure aarch64 at 1048576"
+            "darwin"
+        ]
+
+    [<TestCaseSource(nameof referenceCases)>]
     let ``DatagramReceiver agrees with the reference over random calls, and keeps its own rules``
         (which : string)
         : unit
         =
-        let flavour, buffer =
+        let flavour, empty, model =
             match which with
-            | "linux" -> SimulatedUnixFlavour.Linux, linuxBuffer
-            | _ -> SimulatedUnixFlavour.Darwin, darwinBuffer
+            | "darwin" ->
+                SimulatedUnixFlavour.Darwin,
+                fresh SimulatedUnixFlavour.Darwin,
+                DatagramReceiverReference.create false 0 false darwinBuffer
+            | linux ->
+                let recording = linuxRecordings.[linux]
+
+                let small =
+                    match buildOf recording with
+                    | LinuxKernelBuild.SmallBuffer832 -> 832
+                    | LinuxKernelBuild.SmallBuffer960 -> 960
+
+                let onePast =
+                    match SimulatedUnixPlatform.kernel recording.Platform with
+                    | SimulatedUnixKernel.Linux (version, _) -> version.Major = 6u && version.Minor < 18u
+                    | SimulatedUnixKernel.Darwin _ -> false
+
+                SimulatedUnixFlavour.Linux,
+                freshFor recording,
+                DatagramReceiverReference.create true small onePast recording.Buffer
 
         let mutable drops = 0
         let mutable releases = 0
 
         let property (ops : DatagramReceiverOp list) : unit =
-            let mutable library = DatagramReceiver.create flavour buffer
-
-            let mutable reference =
-                DatagramReceiverReference.create (flavour = SimulatedUnixFlavour.Linux) buffer
+            let mutable library = empty
+            let mutable reference = model
 
             ops
             |> List.iteri (fun index op ->

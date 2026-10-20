@@ -167,7 +167,8 @@ type internal UnixMachineState =
             /// The receive buffer a new UDP socket starts with, in bytes:
             /// Linux's `net.core.rmem_default` sysctl, Darwin's
             /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
-            /// default (`UnixMachineState.defaultUdpReceiveSpace`).
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`); see
+            /// `UnixBootImage.withUdpReceiveSpace`.
             UdpReceiveSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
@@ -1287,6 +1288,7 @@ module UnixMachineState =
     /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
     /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
     /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    /// GitHub's `ubuntu-24.04` runners configure Linux's as 1048576.
     let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 212992

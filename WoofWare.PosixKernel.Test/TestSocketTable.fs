@@ -115,7 +115,10 @@ module TestSocketTable =
                         sockets
                         |> List.filter (snd >> UnixMachineState.receivesDatagrams)
                         |> List.map (fun (id, _) ->
-                            SocketId id, DatagramReceiver.create SimulatedUnixFlavour.Linux machine.UdpReceiveSpace
+                            SocketId id,
+                            DatagramReceiver.create
+                                (SimulatedUnixPlatform.datagramReceiveRules machine.UnixPlatform)
+                                machine.UdpReceiveSpace
                         )
                         |> Map.ofList
                     NextSocketId = SocketId nextSocketId

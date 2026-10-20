@@ -225,10 +225,25 @@ which each preset states for itself (`linuxX64` 6.17.0, `linuxArm64` 6.18.5):
 ahead of the copy, which CI's 6.17 caught where 6.18.5 had been measured.
 `renameRules`' `RefusalOrder` is the second: Linux 6.19 moved the ENOTEMPTY for a
 destination that is the source's ancestor ahead of the trailing-separator
-ENOTDIR, which CI caught when GitHub's runners moved from 6.17 to 7.0. A
+ENOTDIR, which CI caught when GitHub's runners moved from 6.17 to 7.0.
+`datagramReceiveRules`' admission is the third: from 6.18 a UDP receiver no
+longer lets the last datagram take its charge past `SO_RCVBUF`. A
 host-equality test of such a fact models the host's *own* version
 (`HostPlatform.onUnixHostKernel`), so it holds on whichever kernel runs it, and
 its rows should come from kernels on both sides of the change.
+
+A fact can also follow how the kernel was **built**, which neither the version
+nor the architecture says: the Linux case's `LinuxKernelBuild`. A UDP
+datagram's charge (its `truesize`) is the first such fact. It is 960 bytes for
+the smallest buffer on every Azure kernel GitHub's runners ran (6.17 and 7.0,
+x86-64 and arm64) and 832 on Apple's container kernel 6.18.5.
+`HostPlatform.runningHostKernel` measures the host's build, as it reads the
+host's version.
+
+GitHub's runners also configure what a stock kernel defaults: their
+`net.core.rmem_default` is 1048576, not 212992. Such a setting is boot
+configuration (`UnixBootImage.withUdpReceiveSpace`), and a host-equality test
+reads it from the host rather than assuming the default.
 
 See `reference/probing.md` for the probe technique, including the two ways a
 set-ID measurement reads as "unsupported" when it is not.
