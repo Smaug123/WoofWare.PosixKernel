@@ -6,14 +6,14 @@ open System.Runtime.InteropServices
 open System.Threading
 open FsCheck
 open FsCheck.FSharp
-open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// Random sequences of UDP sends and receives between connected senders and
 /// unconnected receivers on loopback, made on the host the suite runs on and
-/// in the kernel, which must answer each call as the host did: Darwin's
-/// column checked locally, Linux's on CI.
+/// in the kernel, which must answer each call as the host did. Linux's column
+/// is checked live on CI, and Darwin's live on a Mac and, on every host, from
+/// the answers a Mac recorded.
 ///
 /// Two receivers are bound to 127.0.0.1 and left unconnected, the first
 /// through a blocking description (so that Linux's poll of it refills its
@@ -43,14 +43,23 @@ module TestDatagramTransferAgainstHost =
         /// Linux `poll(2)` of every event.
         | Poll of socket : int
 
-    /// One call's answer: the return value and errno, and the bytes a
-    /// receive gave.
+    /// One call's answer: the return value and errno, and a digest of the
+    /// bytes a receive gave into a mapped buffer (`received`).
     type private Seen =
         {
             Returned : int64
             Errno : int
-            Bytes : byte list
+            Received : string
         }
+
+    /// `bytes` as their length and the start of their SHA-256, or `-` for
+    /// none: a datagram can be 9216 bytes, too many to record whole.
+    let private received (bytes : byte[]) : string =
+        if bytes.Length = 0 then
+            "-"
+        else
+            let hash = System.Security.Cryptography.SHA256.HashData bytes
+            $"%d{bytes.Length}~%s{Convert.ToHexString(hash, 0, 12).ToLowerInvariant ()}"
 
     /// Socket 2, 3 and 4's receivers.
     let private targets : int list = [ 0 ; 1 ; 0 ]
@@ -153,7 +162,7 @@ module TestDatagramTransferAgainstHost =
             {
                 Returned = returned
                 Errno = errno
-                Bytes = []
+                Received = "-"
             }
 
         match op with
@@ -214,11 +223,11 @@ module TestDatagramTransferAgainstHost =
                 {
                     Returned = returned
                     Errno = errno
-                    Bytes =
+                    Received =
                         if returned > 0L && mapped then
-                            List.ofArray buffer.[0 .. int returned - 1]
+                            received buffer.[0 .. int returned - 1]
                         else
-                            []
+                            "-"
                 }
             ]
         | Op.Fionread socket ->
@@ -297,13 +306,13 @@ module TestDatagramTransferAgainstHost =
                 {
                     Returned = written
                     Errno = 0
-                    Bytes = []
+                    Received = "-"
                 }
             | WriteAnswer.Failed error ->
                 {
                     Returned = -1L
                     Errno = errno error
-                    Bytes = []
+                    Received = "-"
                 }
 
         let ofRead (mapped : bool) (answer : ReadAnswer) : Seen =
@@ -312,13 +321,13 @@ module TestDatagramTransferAgainstHost =
                 {
                     Returned = int64 bytes.Length
                     Errno = 0
-                    Bytes = if mapped then List.ofSeq bytes else []
+                    Received = if mapped then received (Seq.toArray bytes) else "-"
                 }
             | ReadAnswer.Failed error ->
                 {
                     Returned = -1L
                     Errno = errno error
-                    Bytes = []
+                    Received = "-"
                 }
             | ReadAnswer.Drawn _ -> failwith "a socket draws no entropy"
 
@@ -379,7 +388,7 @@ module TestDatagramTransferAgainstHost =
                     {
                         Returned = int64 count
                         Errno = 0
-                        Bytes = []
+                        Received = "-"
                     }
                 ],
                 system
@@ -397,7 +406,7 @@ module TestDatagramTransferAgainstHost =
                     {
                         Returned = int64 (uint16 revents)
                         Errno = 0
-                        Bytes = []
+                        Received = "-"
                     }
                 ],
                 system
@@ -468,33 +477,132 @@ module TestDatagramTransferAgainstHost =
                     yield 2, Gen.map Op.Poll (Gen.choose (0, 4))
             ]
 
-    [<Test>]
-    let ``the kernel answers random UDP transfers as this host does`` () : unit =
-        HostPlatform.onUnixHost (fun flavour ->
-            let platform = HostPlatform.platformOf flavour
+    // ------------------------------------------------------------ the corpus
 
-            let property (ops : Op list) : unit =
-                let host = hostSockets platform
+    let private bit (value : bool) : string = if value then "1" else "0"
 
-                try
+    let private writeOp (op : Op) : string =
+        match op with
+        | Op.Send (sender, length, viaWrite, mapped) -> $"s:%d{sender}:%d{length}:%s{bit viaWrite}:%s{bit mapped}"
+        | Op.Flood (sender, length, count) -> $"f:%d{sender}:%d{length}:%d{count}"
+        | Op.SendUnconnected (receiver, length, viaWrite) -> $"u:%d{receiver}:%d{length}:%s{bit viaWrite}"
+        | Op.Receive (socket, count, peek, viaRead, mapped) ->
+            $"r:%d{socket}:%d{count}:%s{bit peek}:%s{bit viaRead}:%s{bit mapped}"
+        | Op.Fionread socket -> $"i:%d{socket}"
+        | Op.Poll socket -> $"p:%d{socket}"
+
+    let private parseOp (text : string) : Op =
+        let flag (field : string) : bool =
+            match field with
+            | "0" -> false
+            | "1" -> true
+            | _ -> failwith $"not a flag in a UDP op: %s{text}"
+
+        match text.Split ':' with
+        | [| "s" ; sender ; length ; viaWrite ; mapped |] ->
+            Op.Send (int sender, int length, flag viaWrite, flag mapped)
+        | [| "f" ; sender ; length ; count |] -> Op.Flood (int sender, int length, int count)
+        | [| "u" ; receiver ; length ; viaWrite |] -> Op.SendUnconnected (int receiver, int length, flag viaWrite)
+        | [| "r" ; socket ; count ; peek ; viaRead ; mapped |] ->
+            Op.Receive (int socket, int count, flag peek, flag viaRead, flag mapped)
+        | [| "i" ; socket |] -> Op.Fionread (int socket)
+        | [| "p" ; socket |] -> Op.Poll (int socket)
+        | _ -> failwith $"not a UDP op: %s{text}"
+
+    let private writeSeen (seen : Seen) : string =
+        $"%d{seen.Returned}:%d{seen.Errno}:%s{seen.Received}"
+
+    let private parseSeen (text : string) : Seen =
+        match text.Split ':' with
+        | [| returned ; errno ; received |] ->
+            {
+                Returned = int64 returned
+                Errno = int errno
+                Received = received
+            }
+        | _ -> failwith $"not a UDP answer: %s{text}"
+
+    /// `items` written by `write` and separated by `separator`, or `-` for
+    /// none, which no item's writing is.
+    let private joined (separator : string) (write : 'a -> string) (items : 'a list) : string =
+        match items with
+        | [] -> "-"
+        | _ -> items |> List.map write |> String.concat separator
+
+    let private writeSeens : Seen list -> string = joined "," writeSeen
+
+    let private writeOps : Op list -> string = joined " " writeOp
+
+    let private split (separator : char) (parse : string -> 'a) (text : string) : 'a list =
+        match text with
+        | "-" -> []
+        | _ -> text.Split separator |> Array.toList |> List.map parse
+
+    /// Sequences of up to 40 ops over the fixture's five sockets, made on the
+    /// host and in the kernel and compared answer by answer; each op answers
+    /// one `Seen` for each call it makes. A Mac's answers are recorded in
+    /// `hostCorpus/udpTransfer.darwin.txt`, which every host replays, so CI,
+    /// which runs on Linux, holds the Darwin column too.
+    let private transfers : HostComparison<Op list, Seen list list> =
+        {
+            Name = "udpTransfer"
+            Inputs =
+                fun platform ->
+                    Gen.listOf (opGen (SimulatedUnixPlatform.flavour platform))
+                    |> Gen.map (List.truncate 40)
+            Count = 40
+            WriteInput = writeOps
+            ParseInput = split ' ' parseOp
+            WriteAnswer = joined " " writeSeens
+            ParseAnswer = split ' ' (split ',' parseSeen)
+            Host =
+                fun platform ops ->
+                    let flavour = SimulatedUnixPlatform.flavour platform
+                    let host = hostSockets platform
+
+                    try
+                        ops |> List.mapi (fun index op -> hostApply flavour host index op)
+                    finally
+                        for fd in host do
+                            HostCalls.close fd |> ignore<int>
+            Disagreement =
+                fun platform ops answers ->
                     let kernel, system = kernelSockets platform
 
-                    ops
-                    |> List.indexed
-                    |> List.fold
-                        (fun system (index, op) ->
-                            let expected = hostApply flavour host index op
+                    let rec go
+                        (system : UnixSystem<int, string>)
+                        (calls : (int * Op * Seen list) list)
+                        : string option
+                        =
+                        match calls with
+                        | [] -> None
+                        | (index, op, expected) :: rest ->
                             let seen, system = kernelApply platform kernel index op system
-                            (index, op, seen) |> shouldEqual (index, op, expected)
-                            UnixSystem.checkInvariants system |> shouldEqual []
-                            system
-                        )
-                        system
-                    |> ignore
-                finally
-                    for fd in host do
-                        HostCalls.close fd |> ignore<int>
 
-            let gen = Gen.listOf (opGen flavour) |> Gen.map (List.truncate 40)
-            Check.One (Config.QuickThrowOnFailure.WithMaxTest 40, Prop.forAll (Arb.fromGen gen) property)
-        )
+                            if seen <> expected then
+                                Some
+                                    $"op %d{index} (%s{writeOp op}): the model answered %s{writeSeens seen}, the kernel %s{writeSeens expected}"
+                            else
+                                match UnixSystem.checkInvariants system with
+                                | [] -> go system rest
+                                | violations -> Some $"op %d{index} (%s{writeOp op}) broke invariants: %A{violations}"
+
+                    if answers.Length <> ops.Length then
+                        Some $"%d{ops.Length} ops, but %d{answers.Length} answers"
+                    else
+                        go system (List.mapi2 (fun index op answer -> index, op, answer) ops answers)
+                    |> Option.map (fun disagreement -> $"in [%s{writeOps ops}], %s{disagreement}")
+        }
+
+    [<Test>]
+    let ``the kernel answers random UDP transfers as this host does`` () : unit =
+        HostPlatform.onUnixHost (fun flavour -> HostCorpus.live transfers (HostPlatform.platformOf flavour))
+
+    [<Test>]
+    let ``the kernel answers random UDP transfers as Darwin did`` () : unit =
+        HostCorpus.replay transfers SimulatedUnixPlatform.macOsArm64
+
+    [<Test>]
+    let ``every random UDP transfer reads back as itself`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            HostCorpus.inputsRoundTrip transfers platform
