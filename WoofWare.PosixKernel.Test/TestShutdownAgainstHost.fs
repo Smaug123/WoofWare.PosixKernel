@@ -2042,8 +2042,8 @@ module TestShutdownAgainstHost =
                 | other -> failwith $"connect: %A{other}"
 
             let server, s =
-                match UnixConnection.tryAccept (Callers.thread 1 s) listener UserBuffer.Mapped 16u 0 s with
-                | Ok (AcceptOutcome.Accepted (accepted, _, _), s) -> accepted, s
+                match UnixConnection.tryAccept (Callers.thread 1 s) listener UserBuffer.Mapped (Some 16u) 0 s with
+                | Ok (AcceptOutcome.Accepted (accepted, _), s) -> accepted, s
                 | other -> failwith $"accept: %A{other}"
 
             let s = kernelClose listener s

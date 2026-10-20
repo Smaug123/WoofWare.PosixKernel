@@ -140,7 +140,9 @@ module TestDescriptorBound =
             let listening, system = FcntlWorld.listener 5000us false system
 
             let system =
-                match UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u 0 system with
+                match
+                    UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped (Some 16u) 0 system
+                with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"accept on an empty listener: %A{other}"
 

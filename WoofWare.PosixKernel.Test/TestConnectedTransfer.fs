@@ -1454,7 +1454,13 @@ module TestConnectedTransfer =
 
         let system =
             match
-                UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
             with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
@@ -1496,7 +1502,13 @@ module TestConnectedTransfer =
 
             let system =
                 match
-                    UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
+                    UnixConnection.tryAccept
+                        (Callers.thread 1 system)
+                        listener
+                        UserBuffer.Mapped
+                        (Some 0xFFFFFFFFu)
+                        0
+                        system
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
                 | other -> failwith $"accept: %A{other}"
@@ -1548,7 +1560,13 @@ module TestConnectedTransfer =
 
         let system =
             match
-                UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu 0 system
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
             with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"

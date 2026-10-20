@@ -317,8 +317,10 @@ module internal FcntlWorld =
 
         let system = connect client port system
 
-        match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u flags system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        match
+            UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) flags system
+        with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept: %A{other}"
 
     /// A fresh descriptor of the probe's kind `kind`. Fails for a kind the

@@ -325,8 +325,9 @@ type ParkedAccept =
         /// This is the length the call was entered with. Darwin reads the
         /// caller's cell then; Linux reads it only when it copies the address
         /// out, after the wait, so under Linux this is right for a caller whose
-        /// cell nothing writes while the call sleeps.
-        DeclaredLength : uint32
+        /// cell nothing writes while the call sleeps. `None` for a NULL
+        /// destination, whose cell neither flavour reads.
+        DeclaredLength : uint32 option
         /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
         /// the socket it makes is non-blocking. Never under Darwin, which has
         /// no `accept4`.
