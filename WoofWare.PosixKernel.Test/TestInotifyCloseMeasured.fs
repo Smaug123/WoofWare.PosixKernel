@@ -172,7 +172,7 @@ module TestInotifyCloseMeasured =
 
     [<Test>]
     let ``section K: a directory, the watched directory, and /dev/null`` () : unit =
-        let skipped = [ "fifo-rdwr" ; "fifo-rdonly" ; "dev-null" ; "dev-null-again" ]
+        let skipped = [ "fifo-rdwr" ; "fifo-rdonly" ]
         let produced = ResizeArray<string * string> ()
 
         let system = boot root [ "k", directory 0o777 [ "d", directory 0o755 [] ] ]
@@ -190,27 +190,30 @@ module TestInotifyCloseMeasured =
         let system = close fd system
 
         let fd, system = init1 nonblock system
-        let _, system = watch fd "/dev" closeEvents system
-        let _, system = watch fd "/dev/null" closeEvents system
-        let n, system = openFd readOnly "/dev/null" 0 system
-        let system = close n system |> rowOf produced fd "dev-null-rdonly" ""
-        let system = chmod "/dev/null" 0o666 system |> rowOf produced fd "dev-null-chmod" ""
-        // The probe's write, without its `IN_MODIFY` at the device's own
-        // watch: the close of a description opened for writing.
+        let wdev, system = watch fd "/dev" closeEvents system
+        let wnull, system = watch fd "/dev/null" closeEvents system
         let n, system = openFd writeOnly "/dev/null" 0 system
         let _, system = writeCount n "x" system
-        let _, system = drain fd system
-        let system = close n system
-        let closed, _ = drain fd system
+        let written, system = drain fd system
+
+        let system =
+            close n system
+            |> rowOf produced fd "dev-null" $"dev=%d{wdev} null=%d{wnull}; written: %s{written}; closed: "
+
+        let n, system = openFd readOnly "/dev/null" 0 system
+        let system = close n system |> rowOf produced fd "dev-null-rdonly" ""
+        let n, system = openFd writeOnly "/dev/null" 0 system
+        let _, system = writeCount n "x" system
+        let _, system = writeCount n "y" system
+        let written, system = drain fd system
+
+        let system =
+            close n system
+            |> rowOf produced fd "dev-null-again" $"written: %s{written}; closed: "
+
+        let _ = chmod "/dev/null" 0o666 system |> rowOf produced fd "dev-null-chmod" ""
 
         actual skipped produced |> shouldEqual (expected "K" skipped)
-
-        // The probe's rows for that close.
-        for case in [ "dev-null" ; "dev-null-again" ] do
-            let _, text = expected "K" [] |> List.find (fun (c, _) -> c = case)
-
-            text.Substring (text.IndexOf "closed: " + "closed: ".Length)
-            |> shouldEqual closed
 
     [<Test>]
     let ``section M: a watch asking for one close event, or both`` () : unit =
