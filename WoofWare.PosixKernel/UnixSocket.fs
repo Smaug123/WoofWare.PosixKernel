@@ -1106,11 +1106,24 @@ module UnixSocket =
                 Uid = system.Process.Credentials.EffectiveUser
             }
 
+        // A UDP socket's receive side is made with it.
+        let receivers =
+            if UnixMachineState.receivesDatagrams socket then
+                Map.add
+                    socketId
+                    (DatagramReceiver.create
+                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        system.Machine.UdpReceiveSpace)
+                    system.Machine.DatagramReceivers
+            else
+                system.Machine.DatagramReceivers
+
         fd,
         { system with
             Machine =
                 { system.Machine with
                     Sockets = Map.add socketId socket system.Machine.Sockets
+                    DatagramReceivers = receivers
                     NextSocketId = SocketId (raw + 1L)
                 }
         }

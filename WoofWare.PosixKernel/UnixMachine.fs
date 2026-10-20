@@ -35,6 +35,14 @@ type internal UnixMachineState =
             /// connections waiting in some listener's accept queue. An entry is
             /// removed when nothing references it any more (`UnixDescriptor.close`).
             Connections : Map<ConnectionId, TcpConnection>
+            /// The receive side of every UDP socket on the machine: the
+            /// datagrams each holds, what they cost its receive buffer, and
+            /// its pending error. A socket's entry is made with it
+            /// (`UnixSocket.socket`) and goes with it
+            /// (`ObjectLifetime.releaseDestroyed`), and
+            /// `UnixSystem.checkInvariants` holds the keys to the UDP sockets
+            /// in `Sockets`.
+            DatagramReceivers : Map<SocketId, DatagramReceiver>
             /// Every TCP connection end in TIME_WAIT whose connection both
             /// sockets have closed, keyed by its own endpoint and its peer's.
             /// An entry is made as the connection is forgotten, for the end
@@ -156,6 +164,11 @@ type internal UnixMachineState =
             /// per-flavour default; see `UnixBootImage.withTcpSendSpaceMax`.
             /// Only the Linux flavour reads it, through `TcpBufferSizing`.
             TcpSendSpaceMax : int
+            /// The receive buffer a new UDP socket starts with, in bytes:
+            /// Linux's `net.core.rmem_default` sysctl, Darwin's
+            /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`).
+            UdpReceiveSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
             LocalIpv4Addresses : Ipv4Address list
@@ -426,6 +439,40 @@ module UnixMachineState =
         | None ->
             failwith
                 $"UnixMachineState.socket: %O{socketId} names no socket in this kernel's socket table. Every SocketId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingSocket exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand, rather than anything the simulated process did."
+
+    /// Whether `socket` is a UDP socket, and so has a receive side in
+    /// `DatagramReceivers`: a datagram socket of an Internet domain.
+    let internal receivesDatagrams (socket : SocketDescription) : bool =
+        match socket.Kind, socket.Domain with
+        | SocketKind.Datagram, SocketDomain.Inet
+        | SocketKind.Datagram, SocketDomain.Inet6 -> true
+        | SocketKind.Datagram, SocketDomain.Unix
+        | SocketKind.Stream, _
+        | SocketKind.SeqPacket, _ -> false
+
+    /// The receive side of the UDP socket `socketId`. Loudly partial, as
+    /// `socket` is: `UnixSystem.checkInvariants` holds every UDP socket to
+    /// having one.
+    let internal datagramReceiver (socketId : SocketId) (machine : UnixMachineState) : DatagramReceiver =
+        match Map.tryFind socketId machine.DatagramReceivers with
+        | Some receiver -> receiver
+        | None ->
+            failwith
+                $"UnixMachineState.datagramReceiver: %O{socketId} has no receive side in this kernel. Every UDP socket is made with one, and UnixSystemDefect.UdpSocketWithoutReceiver exists to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
+
+    /// `machine` with the receive side of the UDP socket `socketId` replaced
+    /// by `receiver`. Loudly partial, as `datagramReceiver` is.
+    let internal withDatagramReceiver
+        (socketId : SocketId)
+        (receiver : DatagramReceiver)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        datagramReceiver socketId machine |> ignore
+
+        { machine with
+            DatagramReceivers = Map.add socketId receiver machine.DatagramReceivers
+        }
 
     /// A new kqueue for a Darwin `poll` about to sleep, holding `queue`: its
     /// identity, and the machine holding it.
@@ -1234,6 +1281,16 @@ module UnixMachineState =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 16384
         | SimulatedUnixFlavour.Darwin -> 131072
+
+    /// The UDP receive buffer sysctl's default on each flavour, measured on
+    /// the probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
+    /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 786896
 
     /// The TCP receive buffer sysctl's default on each flavour, measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072
