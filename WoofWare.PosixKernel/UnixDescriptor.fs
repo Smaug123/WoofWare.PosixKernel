@@ -1569,13 +1569,36 @@ module UnixDescriptor =
         (fd : int)
         (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<BytesAvailableAnswer, BytesAvailableRefusal>
+        : Result<BytesAvailableAnswer * ProcessView<'Thread, 'Handler>, BytesAvailableRefusal>
         =
+        // A UDP socket's count: on Linux the oldest datagram's length, which
+        // a call finding the reader queue empty refills it to read, before it
+        // writes the count, so the refill stands though the destination
+        // faults (`udp-release.c` in docs/plans/2026-10-18-udp-data-path); on
+        // Darwin the receive buffer's byte count (`udp-transfer.c` F).
+        let system, datagrams =
+            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            | Some (OpenFileTarget.Socket socketId) when
+                UnixMachineState.receivesDatagrams (UnixMachineState.socket socketId system.Machine)
+                ->
+                let count, receiver =
+                    DatagramReceiver.queried (UnixMachineState.datagramReceiver socketId system.Machine)
+
+                { system with
+                    Machine = UnixMachineState.withDatagramReceiver socketId receiver system.Machine
+                },
+                Some count
+            | _ -> system, None
+
         // Measured by pipe-syscalls.c on both flavours: a descriptor that is not
         // open is EBADF through a bad pointer, and a pipe end is EFAULT through
         // one -- NULL included, and the write end included, though it reports 0
         // on Darwin.
         let held =
+            match datagrams with
+            | Some count -> Ok (Ok count)
+            | None ->
+
             match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
             | None -> Ok (Error UnixError.EBADF)
             | Some (OpenFileTarget.File _)
@@ -1629,14 +1652,14 @@ module UnixDescriptor =
 
         match held with
         | Error refusal -> Error refusal
-        | Ok (Error error) -> Ok (BytesAvailableAnswer.Failed error)
+        | Ok (Error error) -> Ok (BytesAvailableAnswer.Failed error, system)
         | Ok (Ok count) ->
 
         match destination with
-        | UserBuffer.Unmapped _ -> Ok (BytesAvailableAnswer.Failed UnixError.EFAULT)
+        | UserBuffer.Unmapped _ -> Ok (BytesAvailableAnswer.Failed UnixError.EFAULT, system)
         | UserBuffer.Opaque -> Error (BytesAvailableRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (BytesAvailableRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped -> Ok (BytesAvailableAnswer.Reported count)
+        | UserBuffer.Mapped -> Ok (BytesAvailableAnswer.Reported count, system)
 
     /// `bytesAvailable`, with a refusal answered as the `Error` rather than raised.
     let internal tryBytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1644,13 +1667,13 @@ module UnixDescriptor =
         (fd : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BytesAvailableAnswer, BytesAvailableRefusal>
+        : Result<BytesAvailableAnswer * UnixSystem<'Thread, 'Handler>, BytesAvailableRefusal>
         =
         Entry.call
             "UnixDescriptor.bytesAvailable"
             CallerRequirement.Running
             caller
-            Shape.answer
+            (Shape.result Shape.withSystem)
             (tryBytesAvailableIn fd destination)
             system
 
@@ -1661,19 +1684,24 @@ module UnixDescriptor =
     /// On Linux both ends of a pipe report the bytes the pipe holds, even once
     /// the read end has closed; on Darwin the read end reports them and the
     /// write end reports 0. A connected socket reports what waits in its
-    /// receive buffer. EBADF for a descriptor that is not open, whatever the
+    /// receive buffer. A UDP socket reports, on Linux, the oldest datagram's
+    /// length, and on Darwin its receive buffer's count, which charges each
+    /// datagram its source address and a control record beside its bytes. EBADF for a descriptor that is not open, whatever the
     /// destination; EFAULT for an unmapped destination, whatever is held. A
     /// device answers its driver's errno whatever the destination: under
     /// Linux, `ENOTTY` for `/dev/null` and `EINVAL` for `/dev/urandom`.
     /// Refused for every other descriptor.
     ///
-    /// Changes nothing.
+    /// The system comes back with the answer, changed only for a Linux UDP
+    /// socket, whose call moves the datagrams that have arrived into the
+    /// queue a receive takes from, as Linux's does, which decides when the
+    /// receive buffer has room again.
     let bytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
-        : BytesAvailableAnswer
+        : BytesAvailableAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryBytesAvailable caller fd destination system
         |> Refusal.orRaise "UnixDescriptor.bytesAvailable" BytesAvailableRefusal.kind BytesAvailableRefusal.describe

@@ -28,6 +28,7 @@
     <Compile Include="QueueAccounts.fs" />
     <Compile Include="Callers.fs" />
     <Compile Include="ForgedThread.fs" />
+    <Compile Include="ForgedSocket.fs" />
     <Compile Include="Stepped.fs" />
     <Compile Include="IlCalls.fs" />
     <Compile Include="Woken.fs" />
@@ -254,6 +255,8 @@
     <Compile Include="TestTcpTransfer.fs" />
     <Compile Include="TestTcpTransferMeasured.fs" />
     <Compile Include="TestDatagramReceiver.fs" />
+    <Compile Include="TestDatagramTransfer.fs" />
+    <Compile Include="TestDatagramTransferAgainstHost.fs" />
     <Compile Include="TestTcpShutdownMeasured.fs" />
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />

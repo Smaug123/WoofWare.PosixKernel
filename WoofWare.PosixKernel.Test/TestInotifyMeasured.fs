@@ -316,7 +316,7 @@ module TestInotifyMeasured =
 
     let private fionread (fd : int) (system : UnixSystem<int, string>) : string =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> $"%d{count}"
+        | Ok (BytesAvailableAnswer.Reported count, _) -> $"%d{count}"
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
     let private pollIn (fd : int) (events : int16) (system : UnixSystem<int, string>) : string =
@@ -1498,7 +1498,7 @@ module TestInotifyMeasured =
 
         let fionreadNull =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd (UserBuffer.Unmapped 0UL) system with
-            | Ok (BytesAvailableAnswer.Failed error) -> $"-1 %O{error}"
+            | Ok (BytesAvailableAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
         let fadvise =

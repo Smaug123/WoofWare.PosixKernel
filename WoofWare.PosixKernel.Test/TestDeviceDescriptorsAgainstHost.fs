@@ -236,8 +236,8 @@ module TestDeviceDescriptorsAgainstHost =
                 "FIONREAD",
                 hostFionread host,
                 (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-                 | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
-                 | Ok (BytesAvailableAnswer.Failed error) -> Error error
+                 | Ok (BytesAvailableAnswer.Reported count, _) -> Ok (int64 count)
+                 | Ok (BytesAvailableAnswer.Failed error, _) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",

@@ -3633,7 +3633,7 @@ module TestBlockingConnection =
 
     let private available (fd : int) (system : UnixSystem<int, string>) : int =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD of fd %d{fd}: %A{other}"
 
     /// The server end full, written to non-blocking until `EAGAIN`, and the

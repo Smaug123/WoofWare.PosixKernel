@@ -728,7 +728,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixDescriptor.close` answers.
     | Close of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.bytesAvailable` answers.
-    | BytesAvailable of answer : BytesAvailableAnswer
+    | BytesAvailable of answer : BytesAvailableAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.fileClone` answers.
     | FileClone of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.terminalAttributes` answers.
@@ -997,6 +997,7 @@ module SteppedCall =
         | SteppedCall.FLock (_, system)
         | SteppedCall.FTruncate (_, system)
         | SteppedCall.Close (_, system)
+        | SteppedCall.BytesAvailable (_, system)
         | SteppedCall.ChMod (_, system)
         | SteppedCall.FChMod (_, system)
         | SteppedCall.FChModAt (_, system)
@@ -1071,7 +1072,6 @@ module SteppedCall =
         | SteppedCall.Kill fate
         | SteppedCall.PthreadKill fate -> ofFate fate
         | SteppedCall.PosixFAdvise _
-        | SteppedCall.BytesAvailable _
         | SteppedCall.TerminalAttributes _
         | SteppedCall.GetEffectiveUserId _
         | SteppedCall.GetEffectiveGroupId _

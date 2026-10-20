@@ -74,6 +74,7 @@ module TestAccept =
             (fun machine ->
                 { machine with
                     Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
             )

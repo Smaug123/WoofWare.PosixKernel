@@ -183,7 +183,7 @@ module TestCallerChecks =
                 "UnixDescriptor.bytesAvailable"
                 (fun caller system ->
                     UnixDescriptor.bytesAvailable caller 0 UserBuffer.Mapped system
-                    |> ignore<BytesAvailableAnswer>
+                    |> ignore<BytesAvailableAnswer * UnixSystem<int, string>>
                 )
             running
                 "UnixDescriptor.fileClone"
