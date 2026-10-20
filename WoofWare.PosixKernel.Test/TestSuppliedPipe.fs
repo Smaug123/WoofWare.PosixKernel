@@ -42,7 +42,7 @@ module TestSuppliedPipe =
 
     let private fionread (system : UnixSystem<int, string>) : int =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) 0 UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on descriptor 0 answered %A{other}"
 
     /// What `poll` reports for descriptor 0 on Linux.

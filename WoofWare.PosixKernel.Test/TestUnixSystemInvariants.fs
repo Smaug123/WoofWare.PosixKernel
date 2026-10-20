@@ -744,21 +744,9 @@ module TestUnixSystemInvariants =
         socketId,
         Kernel.mapMachine
             (fun machine ->
-                // A UDP socket comes with its receive side, as `socket(2)` makes it.
-                let receivers =
-                    if UnixMachineState.receivesDatagrams socket then
-                        Map.add
-                            socketId
-                            (DatagramReceiver.create
-                                (SimulatedUnixPlatform.flavour machine.UnixPlatform)
-                                machine.UdpReceiveSpace)
-                            machine.DatagramReceivers
-                    else
-                        machine.DatagramReceivers
-
                 { machine with
                     Sockets = Map.add socketId socket machine.Sockets
-                    DatagramReceivers = receivers
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
             )

@@ -165,6 +165,9 @@ module internal LinuxReadiness =
     /// draining raises a send-space wake. Every other description is left as
     /// it was.
     ///
+    /// A UDP socket's poll through a description without `O_NONBLOCK` refills
+    /// its reader queue (`DatagramReceiver.refilled`), as `udp_poll` does.
+    ///
     /// `poll(2)`, an epoll `ADD` or `MOD`, and `epoll_wait`'s re-poll of a
     /// pending entry each poll their targets so.
     let polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -173,10 +176,27 @@ module internal LinuxReadiness =
         : ProcessView<'Thread, 'Handler>
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
-        | Some {
-                   Target = OpenFileTarget.Socket socketId
-               } ->
-            match SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase with
+        | Some ({
+                    Target = OpenFileTarget.Socket socketId
+                } as description) ->
+            let socket = UnixMachineState.socket socketId system.Machine
+
+            match SocketPhase.connectionEnd socket.Phase with
+            | None when UnixMachineState.receivesDatagrams socket ->
+                // Measured (`udp-release.c` in
+                // docs/plans/2026-10-18-udp-data-path): poll and epoll of a
+                // blocking UDP socket refill its reader queue, and of a
+                // non-blocking one do not.
+                if description.NonBlocking then
+                    system
+                else
+                    { system with
+                        Machine =
+                            UnixMachineState.withDatagramReceiver
+                                socketId
+                                (DatagramReceiver.refilled (UnixMachineState.datagramReceiver socketId system.Machine))
+                                system.Machine
+                    }
             | None -> system
             | Some (connectionId, connectionEnd) ->
                 let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
@@ -931,6 +951,8 @@ type internal SocketWake =
     /// applied, and on Linux whatever it asked, even when that changed
     /// nothing.
     | ShutDown of how : TcpShutdownHow
+    /// The UDP socket sent a datagram, which left its send buffer at once.
+    | DatagramSent
 
 [<RequireQualifiedAccess>]
 module internal SocketWake =
@@ -951,8 +973,13 @@ module internal SocketWake =
         | SocketWake.AcceptQueuePush
         | SocketWake.DataArrived ->
             Some (EpollEvents.In ||| EpollEvents.Pri ||| EpollEvents.RdNorm ||| EpollEvents.RdBand)
-        // What `sk_stream_write_space` passes its waiters.
-        | SocketWake.SendSpace -> Some (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.WrBand)
+        // What `sk_stream_write_space` passes its waiters, and what
+        // `sock_def_write_space` passes them as a sent datagram's buffer is
+        // freed (measured, `udp-transfer.c` G6 in
+        // docs/plans/2026-10-18-udp-data-path: an EPOLLOUT|EPOLLET
+        // registration on a UDP sender is reported after each send).
+        | SocketWake.SendSpace
+        | SocketWake.DatagramSent -> Some (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.WrBand)
         // State changes, which queue every registration regardless of interest:
         // the entry keeps the wake's position through a later interest change,
         // and delivery's re-poll does the filtering (measured, `order8.c`,
@@ -997,6 +1024,9 @@ module internal SocketWake =
         | SocketWake.PeerFin -> [ KqueueFilter.Read ]
         // Only Linux resets a refused socket, and Linux has no kqueue.
         | SocketWake.RefusalReset -> []
+        // Measured (`udp-transfer.c` G6): a Darwin UDP sender's send
+        // activates no EVFILT_WRITE.
+        | SocketWake.DatagramSent -> []
 
     /// `wake` happened to the socket `socketId`: signal every epoll
     /// registration of it on the machine, and activate every kqueue

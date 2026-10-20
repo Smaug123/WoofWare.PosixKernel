@@ -448,30 +448,55 @@ module TestUnconnectedSocketTransfer =
         let socketBefore = (Kernel.machine before).Sockets.[socketId]
         let socketAfter = (Kernel.machine after).Sockets.[socketId]
 
-        if
-            socketBefore.Ipv4Binding.IsNone
-            && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
-        then
-            let low, high = UnixSystem.ephemeralPortRange before
+        // A write is a send call, which marks a UDP socket's receive side
+        // (`DatagramReceiver.sent`, a change on Darwin only) whatever it
+        // answers; with that put back, the write changes only what binding it
+        // makes.
+        let receiversBefore = (Kernel.machine before).DatagramReceivers
+        let receiversAfter = (Kernel.machine after).DatagramReceivers
 
-            match socketAfter.Ipv4Binding with
-            | Some binding ->
-                binding.Endpoint.Address = Ipv4Address.any
-                && binding.Endpoint.Port >= low
-                && binding.Endpoint.Port <= high
-                && binding.LockedAddress = None
-                && not binding.LockedPort
-                && Kernel.mapMachine
-                    (fun machine ->
-                        { machine with
-                            NextEphemeralPort = (Kernel.machine before).NextEphemeralPort
-                            Sockets = (Kernel.machine before).Sockets
-                        }
-                    )
-                    after = before
-            | None -> false
-        else
-            after = before
+        let receiverMarked =
+            match Map.tryFind socketId receiversBefore with
+            | Some receiver -> Map.tryFind socketId receiversAfter = Some (DatagramReceiver.sent receiver)
+            | None -> receiversAfter = receiversBefore
+
+        let after =
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        DatagramReceivers = receiversBefore
+                    }
+                )
+                after
+
+        // What the write did to the binding, with the receive side put back.
+        let bindingRight =
+            if
+                socketBefore.Ipv4Binding.IsNone
+                && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
+            then
+                let low, high = UnixSystem.ephemeralPortRange before
+
+                match socketAfter.Ipv4Binding with
+                | Some binding ->
+                    binding.Endpoint.Address = Ipv4Address.any
+                    && binding.Endpoint.Port >= low
+                    && binding.Endpoint.Port <= high
+                    && binding.LockedAddress = None
+                    && not binding.LockedPort
+                    && Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
+                                NextEphemeralPort = (Kernel.machine before).NextEphemeralPort
+                                Sockets = (Kernel.machine before).Sockets
+                            }
+                        )
+                        after = before
+                | None -> false
+            else
+                after = before
+
+        receiverMarked && bindingRight
 
     /// Whether the kernel's answer for `row`'s call on `fd` is the one the probe
     /// saw, or the refusal the rules call for where the answer is a sleep, a

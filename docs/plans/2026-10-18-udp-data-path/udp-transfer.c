@@ -57,6 +57,9 @@
 
 #define SETTLE() usleep(5000)
 
+// An address nothing maps, hidden from the compiler's own checks.
+static void *volatile unmapped __attribute__((unused)) = (void *)1;
+
 static double now_ms(void)
 {
     struct timespec ts;
@@ -298,11 +301,21 @@ static void section_a(void)
         int s = variant == 0 ? udp() : variant == 1 ? bound_any() : bound();
         printf("A2 sender %s: before sendto getsockname=%s", variant == 0 ? "unbound" : variant == 1 ? "bound 0.0.0.0:0" : "bound 127.0.0.1:0", nameof(s));
         ssize_t sent = send_to(s, "hello", 5, portof(r));
+        int sentErrno = errno;
         struct sockaddr_in from;
         memset(&from, 0, sizeof from);
         socklen_t len = sizeof from;
         ssize_t got = recvfrom(r, buf, sizeof buf, 0, (struct sockaddr *)&from, &len);
-        printf(" sendto=%s after getsockname=%s; recvfrom=%s from=%s:%u len=%u\n", res(sent, errno), nameof(s), res(got, errno), inet_ntoa(from.sin_addr), ntohs(from.sin_port), (unsigned)len);
+        // Each formatted on its own line: nameof and inet_ntoa share
+        // inet_ntoa's one static buffer, and errno is read before either
+        // call can change it.
+        int receiveErrno = errno;
+        char sentText[64], gotText[64], fromText[32];
+        snprintf(sentText, sizeof sentText, "%s", res(sent, sentErrno));
+        snprintf(gotText, sizeof gotText, "%s", res(got, receiveErrno));
+        snprintf(fromText, sizeof fromText, "%s", inet_ntoa(from.sin_addr));
+        const char *after = nameof(s);
+        printf(" sendto=%s after getsockname=%s; recvfrom=%s from=%s:%u len=%u\n", sentText, after, gotText, fromText, ntohs(from.sin_port), (unsigned)len);
         close(r); close(s);
     }
 
@@ -606,6 +619,57 @@ static void section_g(void)
         const char *w2 = epoll_now(ep);
         printf("G6 epoll OUT|ET on a sender: registered %s; after its send %s; after the receiver takes it %s\n", w0, w1, w2);
         close(ep); close(r); close(s);
+    }
+    {
+        // G8: one epoll instance watching a sender for OUT|ET and its
+        // receiver for IN|ET; after the registrations' own events are
+        // drained, the sender sends, and epoll_wait with maxevents 1, twice.
+        int r = bound(), s = bound();
+        struct sockaddr_in to = lo(portof(r));
+        connect(s, (struct sockaddr *)&to, sizeof to);
+        int ep = epoll_create1(0);
+        struct epoll_event es = { .events = EPOLLOUT | EPOLLET, .data.fd = s };
+        struct epoll_event er = { .events = EPOLLIN | EPOLLET, .data.fd = r };
+        epoll_ctl(ep, EPOLL_CTL_ADD, s, &es);
+        epoll_ctl(ep, EPOLL_CTL_ADD, r, &er);
+        struct epoll_event got[4];
+        epoll_wait(ep, got, 4, 0);
+        send(s, buf, 10, 0);
+        SETTLE();
+        const char *names[2] = { "-", "-" };
+        for (int k = 0; k < 2; k++) {
+            int n = epoll_wait(ep, got, 1, 0);
+            names[k] = n <= 0 ? "none" : got[0].data.fd == s ? "sender" : got[0].data.fd == r ? "receiver" : "?";
+        }
+        printf("G8 one epoll, sender OUT|ET and receiver IN|ET, after a send, maxevents 1: first %s, then %s\n", names[0], names[1]);
+        close(ep); close(r); close(s);
+    }
+    {
+        // G9: a connected sender watched for OUT|ET; after the registration's
+        // event, a call that fails: is it an OUT edge?
+        static const char *what[] = { "write from an unmapped buffer (EFAULT)", "send of 65508 bytes (EMSGSIZE)", "write of 0 bytes (sent)", "send from an unmapped buffer (EFAULT)" };
+        static char big[65508];
+        for (int k = 0; k < 4; k++) {
+            int r = bound(), s = bound();
+            struct sockaddr_in to = lo(portof(r));
+            connect(s, (struct sockaddr *)&to, sizeof to);
+            int ep = epoll_create1(0);
+            struct epoll_event es = { .events = EPOLLOUT | EPOLLET, .data.fd = s };
+            epoll_ctl(ep, EPOLL_CTL_ADD, s, &es);
+            const char *w0 = epoll_now(ep);
+            ssize_t a;
+            switch (k) {
+            case 0: a = write(s, unmapped, 1); break;
+            case 1: a = send(s, big, sizeof big, 0); break;
+            case 2: a = write(s, buf, 0); break;
+            default: a = send(s, unmapped, 1, 0); break;
+            }
+            int ea = errno;
+            SETTLE();
+            const char *w1 = epoll_now(ep);
+            printf("G9 epoll OUT|ET on a connected sender: registered %s; a %s: %s, then %s\n", w0, what[k], res(a, ea), w1);
+            close(ep); close(r); close(s);
+        }
     }
     {
         // EPOLLIN|EPOLLET registered on an ICMP-errored connected socket.

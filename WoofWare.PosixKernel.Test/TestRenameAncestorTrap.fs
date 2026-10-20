@@ -40,12 +40,15 @@ module TestRenameAncestorTrap =
         =
         SimulatedUnixPlatform.createOrFail
             "TestRenameAncestorTrap"
-            (SimulatedUnixKernel.Linux
+            // The build reaches no rule rename follows.
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = major
                     Minor = minor
                     Patch = patch
-                })
+                },
+                LinuxKernelBuild.SmallBuffer832
+            ))
             architecture
             SimulatedPageSize.FourKiB
             release

@@ -167,8 +167,15 @@ type internal UnixMachineState =
             /// The receive buffer a new UDP socket starts with, in bytes:
             /// Linux's `net.core.rmem_default` sysctl, Darwin's
             /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
-            /// default (`UnixMachineState.defaultUdpReceiveSpace`).
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`); see
+            /// `UnixBootImage.withUdpReceiveSpace`.
             UdpReceiveSpace : int
+            /// The send buffer a new UDP socket starts with, in bytes: Linux's
+            /// `net.core.wmem_default` sysctl, and Darwin's
+            /// `net.inet.udp.maxdgram`, which is also the largest datagram a
+            /// Darwin UDP socket sends. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpSendSpace`).
+            UdpSendSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
             LocalIpv4Addresses : Ipv4Address list
@@ -737,6 +744,18 @@ module UnixMachineState =
                     Out = true
                     Hup = true
                 }
+            | SocketKind.Datagram when receivesDatagrams target ->
+                // Measured (`udp-transfer.c` G1 to G4, L1 and L5, in
+                // docs/plans/2026-10-18-udp-data-path): OUT always, since a
+                // UDP send never waits; IN while a datagram is queued; ERR
+                // while an ICMP error is pending, whatever is queued.
+                let receiver = datagramReceiver socketId machine
+
+                { ReadinessLevel.none with
+                    In = not (DatagramReceiver.isEmpty receiver)
+                    Out = true
+                    Err = DatagramReceiver.errorPending receiver
+                }
             | SocketKind.Datagram ->
                 { ReadinessLevel.none with
                     Out = true
@@ -1287,10 +1306,21 @@ module UnixMachineState =
     /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
     /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
     /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    /// GitHub's `ubuntu-24.04` runners configure Linux's as 1048576.
     let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 212992
         | SimulatedUnixFlavour.Darwin -> 786896
+
+    /// The UDP send buffer sysctl's default on each flavour, measured on the
+    /// probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.wmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.maxdgram` 9216
+    /// on Darwin 27.0.0, as a fresh UDP socket's `SO_SNDBUF` reports.
+    let internal defaultUdpSendSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 9216
 
     /// The TCP receive buffer sysctl's default on each flavour, measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072

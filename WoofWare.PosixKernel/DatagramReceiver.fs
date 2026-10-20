@@ -39,18 +39,32 @@ type internal QueuedDatagram =
 [<RequireQualifiedAccess>]
 module internal DatagramAccounting =
 
-    /// What Linux charges a receiver for an IPv4 datagram of `length` bytes
-    /// that arrived over loopback: the truesize of the buffer it arrived in.
-    let linuxCharge (length : int) : int =
-        // Read through SO_MEMINFO on Linux 6.18.5 aarch64 (`udp-truesize.c`
-        // in docs/plans/2026-10-18-udp-data-path): a staircase of slab sizes
-        // up to 16004 bytes, each step found by bisection, and above that
-        // the length plus 832, sampled at 512 sizes without an exception.
+    /// What a Linux kernel built as `build` charges for the smallest buffer a
+    /// datagram arrives in, which holds a datagram of up to that charge less
+    /// 635 bytes.
+    let private linuxSmallBuffer (build : LinuxKernelBuild) : int =
+        match build with
+        | LinuxKernelBuild.SmallBuffer832 -> 832
+        | LinuxKernelBuild.SmallBuffer960 -> 960
+
+    /// What a Linux kernel built as `build` charges a receiver for an IPv4
+    /// datagram of `length` bytes that arrived over loopback: the truesize of
+    /// the buffer it arrived in.
+    let linuxCharge (build : LinuxKernelBuild) (length : int) : int =
+        // Read through SO_MEMINFO (`udp-truesize.c` in
+        // docs/plans/2026-10-18-udp-data-path), on Linux 6.18.5 aarch64 in
+        // Apple's container and on GitHub's Azure kernels 6.17.0 and 7.0.0
+        // (x86-64 and aarch64): a staircase of slab sizes up to 16004 bytes,
+        // each step found by bisection, and above that the length plus the
+        // smallest buffer's charge, sampled at 512 sizes without an exception.
+        // The builds differ only in the smallest buffer, the first step.
+        let small = linuxSmallBuffer build
+
         if length < 0 || length > 65507 then
             failwith
                 $"DatagramAccounting.linuxCharge: a datagram of %d{length} bytes, which no IPv4 UDP datagram is (this is a bug in this library)."
-        elif length <= 197 then
-            832
+        elif length <= small - 635 then
+            small
         elif length <= 645 then
             1280
         elif length <= 1669 then
@@ -62,7 +76,7 @@ module internal DatagramAccounting =
         elif length <= 16004 then
             16640
         else
-            length + 832
+            length + small
 
     /// What Darwin adds to a receiver's `sb_cc`, which `FIONREAD` reports, for
     /// a datagram of `length` bytes: its bytes and its 16-byte source address,
@@ -151,6 +165,10 @@ type internal LinuxDatagramReceiver =
     {
         /// `SO_RCVBUF`, fixed when the socket was made.
         ReceiveBuffer : int
+        /// How the kernel was built, which fixes each datagram's charge.
+        Build : LinuxKernelBuild
+        /// How the kernel's version admits a datagram against `ReceiveBuffer`.
+        Admission : LinuxDatagramAdmission
         /// The datagrams a receive moved here from `Arrivals`, oldest first:
         /// Linux's reader queue, which a receive refills from the arrival
         /// queue, all of it at once, only when it is empty.
@@ -213,22 +231,25 @@ type internal DatagramReceiver =
 [<RequireQualifiedAccess>]
 module internal DatagramReceiver =
 
-    /// A receiver holding nothing, for a socket made on a machine of `flavour`
-    /// whose UDP receive buffer is `receiveBuffer` bytes: Linux's
+    /// A receiver holding nothing, for a socket made on a machine whose UDP
+    /// receive side keeps `rules` (`SimulatedUnixPlatform.datagramReceiveRules`)
+    /// and whose UDP receive buffer is `receiveBuffer` bytes: Linux's
     /// `net.core.rmem_default`, Darwin's `net.inet.udp.recvspace`.
-    let create (flavour : SimulatedUnixFlavour) (receiveBuffer : int) : DatagramReceiver =
-        match flavour with
-        | SimulatedUnixFlavour.Linux ->
+    let create (rules : DatagramReceiveRules) (receiveBuffer : int) : DatagramReceiver =
+        match rules with
+        | DatagramReceiveRules.Linux (build, admission) ->
             DatagramReceiver.Linux
                 {
                     ReceiveBuffer = receiveBuffer
+                    Build = build
+                    Admission = admission
                     Reader = []
                     Arrivals = []
                     Deficit = 0
                     Charged = 0
                     ErrorPending = false
                 }
-        | SimulatedUnixFlavour.Darwin ->
+        | DatagramReceiveRules.Darwin ->
             DatagramReceiver.Darwin
                 {
                     ReceiveSpace = receiveBuffer
@@ -304,12 +325,18 @@ module internal DatagramReceiver =
         =
         match receiver with
         | DatagramReceiver.Linux linux ->
-            let charge = DatagramAccounting.linuxCharge payload.Length
+            let charge = DatagramAccounting.linuxCharge linux.Build payload.Length
 
-            // Measured (`udp-truesize.c`): admitted exactly when the charge
-            // already held, which includes what was taken and not yet given
-            // back, plus the datagram's own is at most SO_RCVBUF.
-            if linux.Charged + charge > linux.ReceiveBuffer then
+            // Measured (`udp-truesize.c`): against the charge already held,
+            // which includes what was taken and not yet given back, 6.17
+            // admits while that is at most SO_RCVBUF, and 6.18 and later only
+            // when the datagram's own fits beside it.
+            let admitted =
+                match linux.Admission with
+                | LinuxDatagramAdmission.WhileHeldFits -> linux.Charged <= linux.ReceiveBuffer
+                | LinuxDatagramAdmission.WhenBothFit -> linux.Charged + charge <= linux.ReceiveBuffer
+
+            if not admitted then
                 DatagramArrival.Dropped, receiver
             else
                 let datagram =
@@ -577,14 +604,28 @@ module internal DatagramReceiver =
             [
                 if linux.Charged <> heldCharge + linux.Deficit then
                     $"its charge is %d{linux.Charged}, but it holds %d{heldCharge} and owes %d{linux.Deficit}"
-                if linux.Charged > linux.ReceiveBuffer then
-                    $"its charge is %d{linux.Charged}, above its receive buffer of %d{linux.ReceiveBuffer}"
+                // The last datagram admitted while what was held fitted may
+                // take the charge past the buffer by at most its own.
+                let ceiling =
+                    match linux.Admission with
+                    | LinuxDatagramAdmission.WhileHeldFits ->
+                        linux.ReceiveBuffer + DatagramAccounting.linuxCharge linux.Build 65507
+                    | LinuxDatagramAdmission.WhenBothFit -> linux.ReceiveBuffer
+
+                if linux.Charged > ceiling then
+                    $"its charge is %d{linux.Charged}, above the %d{ceiling} its receive buffer of %d{linux.ReceiveBuffer} allows"
+
                 if linux.Deficit < 0 || linux.Deficit >= linux.ReceiveBuffer / 4 then
                     $"it owes %d{linux.Deficit}, outside [0, %d{linux.ReceiveBuffer / 4})"
+
                 if linux.Deficit > 0 && List.isEmpty linux.Reader then
                     $"it owes %d{linux.Deficit} with nothing in its reader queue"
+
                 for datagram in linux.Reader @ linux.Arrivals do
-                    if datagram.Charge <> DatagramAccounting.linuxCharge datagram.Payload.Length then
+                    if
+                        datagram.Charge
+                        <> DatagramAccounting.linuxCharge linux.Build datagram.Payload.Length
+                    then
                         $"a datagram of %d{datagram.Payload.Length} bytes is charged %d{datagram.Charge}"
             ]
         | DatagramReceiver.Darwin darwin ->

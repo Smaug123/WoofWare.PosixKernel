@@ -355,6 +355,7 @@ module TestKqueue =
                 (fun machine ->
                     { machine with
                         Sockets = Map.add machine.NextSocketId socket machine.Sockets
+                        DatagramReceivers = ForgedSocket.receivers machine.NextSocketId socket machine
                         NextSocketId = SocketId (raw + 1L)
                     }
                 )

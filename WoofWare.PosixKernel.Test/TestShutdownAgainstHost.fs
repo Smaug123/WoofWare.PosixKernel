@@ -2191,7 +2191,7 @@ module TestShutdownAgainstHost =
 
             member this.Fionread e =
                 match UnixDescriptor.tryBytesAvailable (Callers.leader system) (this.Fd e) UserBuffer.Mapped system with
-                | Ok (BytesAvailableAnswer.Reported count) -> count
+                | Ok (BytesAvailableAnswer.Reported count, _) -> count
                 | other -> failwith $"FIONREAD: %A{other}"
 
             member this.Rdy e =

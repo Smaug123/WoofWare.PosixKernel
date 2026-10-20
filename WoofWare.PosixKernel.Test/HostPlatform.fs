@@ -157,10 +157,83 @@ module HostPlatform =
 
         Encoding.ASCII.GetString (field.Slice (0, length))
 
+    /// How this Linux host's kernel was built, read as
+    /// `docs/plans/2026-10-18-udp-data-path/udp-truesize.c` reads it: what an
+    /// empty datagram over loopback charges its receiver, through
+    /// `SO_MEMINFO`.
+    let private linuxBuild () : LinuxKernelBuild =
+        let check (what : string) (result : int) : unit =
+            if result < 0 then
+                failwith $"%s{what} failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+        // AF_INET is 2, and SOCK_DGRAM 2, on Linux.
+        let receiver = HostCalls.socket (2, 2, 0)
+        let sender = HostCalls.socket (2, 2, 0)
+
+        try
+            check "socket" receiver
+            check "socket" sender
+            // sockaddr_in for 127.0.0.1, port 0: family 2, then the port and
+            // the address in network order.
+            let loopback =
+                [|
+                    2uy
+                    0uy
+                    0uy
+                    0uy
+                    127uy
+                    0uy
+                    0uy
+                    1uy
+                    0uy
+                    0uy
+                    0uy
+                    0uy
+                    0uy
+                    0uy
+                    0uy
+                    0uy
+                |]
+
+            check "bind" (HostCalls.bind (receiver, loopback, 16u))
+            let name = Array.zeroCreate<byte> 16
+            let mutable length = 16u
+            check "getsockname" (HostCalls.getSockName (receiver, name, &length))
+            check "connect" (HostCalls.connect (sender, name, 16u))
+            check "write" (int (HostCalls.write (sender, [||], 0un)))
+
+            // SOL_SOCKET is 1 and SO_MEMINFO 55; the first of its words is
+            // the receive buffer's charge. Loopback delivers before the write
+            // returns, but a softirq can run it later under load.
+            let charge () : uint32 =
+                let memory = Array.zeroCreate<byte> 36
+                let mutable length = 36u
+                check "SO_MEMINFO" (HostCalls.getSockOptBytes (receiver, 1, 55, memory, &length))
+                BitConverter.ToUInt32 (memory, 0)
+
+            let deadline = DateTime.UtcNow.AddSeconds 5.0
+
+            let rec settled () : uint32 =
+                match charge () with
+                | 0u when DateTime.UtcNow < deadline ->
+                    Threading.Thread.Sleep 1
+                    settled ()
+                | charged -> charged
+
+            match settled () with
+            | 832u -> LinuxKernelBuild.SmallBuffer832
+            | 960u -> LinuxKernelBuild.SmallBuffer960
+            | charged ->
+                failwith
+                    $"this host charges %d{charged} for an empty datagram, which no measured Linux build does (LinuxKernelBuild)"
+        finally
+            HostCalls.close receiver |> ignore<int>
+            HostCalls.close sender |> ignore<int>
+
     /// `preset`, which must be of this host's flavour, running this host's own
-    /// kernel version and reporting its own release: the model of the kernel
-    /// this host is running, as far as `preset`'s architecture and page size
-    /// allow.
+    /// kernel version and reporting its own release, and on Linux built as this
+    /// host's kernel was: the model of the kernel this host is running, as far
+    /// as `preset`'s architecture and page size allow.
     let runningHostKernel (preset : SimulatedUnixPlatform) : SimulatedUnixPlatform =
         let flavour = SimulatedUnixPlatform.flavour preset
         let release = release flavour
@@ -170,7 +243,7 @@ module HostPlatform =
             | SimulatedUnixFlavour.Linux ->
                 match LinuxRelease.version release with
                 | None -> failwith $"this host's release %s{release} does not begin with a Linux version"
-                | Some version -> SimulatedUnixKernel.Linux version
+                | Some version -> SimulatedUnixKernel.Linux (version, linuxBuild ())
             | SimulatedUnixFlavour.Darwin ->
                 match DarwinRelease.version release with
                 | None -> failwith $"this host's release %s{release} is not a Darwin version"

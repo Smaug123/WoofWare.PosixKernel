@@ -358,7 +358,7 @@ module TestInotifyAgainstHost =
                                             UserBuffer.Mapped
                                             system
                                     with
-                                    | Ok (BytesAvailableAnswer.Reported count) -> count |> shouldEqual available
+                                    | Ok (BytesAvailableAnswer.Reported count, _) -> count |> shouldEqual available
                                     | other -> failwith $"%A{op}: %A{other}"
                             | Op.Close slot ->
                                 match slots.[slot] with

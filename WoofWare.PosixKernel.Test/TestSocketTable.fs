@@ -112,12 +112,13 @@ module TestSocketTable =
                     // Each UDP socket comes with its receive side, as
                     // `socket(2)` makes it.
                     DatagramReceivers =
-                        sockets
-                        |> List.filter (snd >> UnixMachineState.receivesDatagrams)
-                        |> List.map (fun (id, _) ->
-                            SocketId id, DatagramReceiver.create SimulatedUnixFlavour.Linux machine.UdpReceiveSpace
+                        (machine, sockets)
+                        ||> List.fold (fun forged (id, socket) ->
+                            { forged with
+                                DatagramReceivers = ForgedSocket.receivers (SocketId id) socket forged
+                            }
                         )
-                        |> Map.ofList
+                        |> fun forged -> forged.DatagramReceivers
                     NextSocketId = SocketId nextSocketId
                 }
             )

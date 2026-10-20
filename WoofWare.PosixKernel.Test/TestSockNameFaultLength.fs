@@ -75,7 +75,8 @@ module TestSockNameFaultLength =
 
             SimulatedUnixPlatform.createOrFail
                 resource
-                (SimulatedUnixKernel.Linux version)
+                // The build reaches no rule getsockname follows.
+                (SimulatedUnixKernel.Linux (version, LinuxKernelBuild.SmallBuffer832))
                 architecture
                 SimulatedPageSize.FourKiB
                 release
@@ -255,12 +256,14 @@ module TestSockNameFaultLength =
         let at (major : uint32) (minor : uint32) (patch : uint32) =
             SimulatedUnixPlatform.createOrFail
                 "test"
-                (SimulatedUnixKernel.Linux
+                (SimulatedUnixKernel.Linux (
                     {
                         Major = major
                         Minor = minor
                         Patch = patch
-                    })
+                    },
+                    LinuxKernelBuild.SmallBuffer832
+                ))
                 SimulatedUnixArchitecture.X64
                 SimulatedPageSize.FourKiB
                 "test"

@@ -28,6 +28,7 @@
     <Compile Include="QueueAccounts.fs" />
     <Compile Include="Callers.fs" />
     <Compile Include="ForgedThread.fs" />
+    <Compile Include="ForgedSocket.fs" />
     <Compile Include="Stepped.fs" />
     <Compile Include="IlCalls.fs" />
     <Compile Include="Woken.fs" />
@@ -254,6 +255,8 @@
     <Compile Include="TestTcpTransfer.fs" />
     <Compile Include="TestTcpTransferMeasured.fs" />
     <Compile Include="TestDatagramReceiver.fs" />
+    <Compile Include="TestDatagramTransfer.fs" />
+    <Compile Include="TestDatagramTransferAgainstHost.fs" />
     <Compile Include="TestTcpShutdownMeasured.fs" />
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
@@ -789,6 +792,9 @@
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-truesize.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTruesize.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-release.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpRelease.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-mbufs.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpMbufs.darwin.txt" />
+    <!-- The same probes on GitHub's Azure runners, 6.17 and 7.0, each
+         architecture, at the runners' rmem_default and at the stock one. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\runners\udp-*.txt" LogicalName="WoofWare.PosixKernel.Test.udpRunners.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
