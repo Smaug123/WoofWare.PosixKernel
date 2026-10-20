@@ -78,7 +78,9 @@ module TestVirtualFileSystemAgainstHost =
     let private R_OK = 4
 
     /// Which simulated platform this test host actually is, so the model is
-    /// asked to resolve as a kernel of the flavour it is being compared against.
+    /// asked to resolve as a kernel of the flavour it is being compared against,
+    /// at the host's own kernel version: `rename`'s refusal order changed
+    /// between Linux versions (`RenameAncestorCheck`).
     ///
     /// Classified by `HostPlatform`, so that what counts as "this host" is
     /// written down once; the refusal below is this fixture's own, and is not
@@ -94,7 +96,7 @@ module TestVirtualFileSystemAgainstHost =
     /// module initialisation on a host where every test here `Assert.Ignore`s.
     let private hostPlatform () : SimulatedUnixPlatform =
         match HostPlatform.flavour () with
-        | Some flavour -> HostPlatform.platformOf flavour
+        | Some flavour -> HostPlatform.runningHostKernel (HostPlatform.platformOf flavour)
         | None ->
             failwith
                 "TestVirtualFileSystemAgainstHost: this host is neither macOS nor Linux, so there is no SimulatedUnixPlatform to compare it against. The rows here skip on Windows only, so on any other unmodelled Unix this is where you land: give that flavour a preset, or widen the skip."

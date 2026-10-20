@@ -2661,7 +2661,7 @@ module UnixNamespace =
 
         let verdict =
             RenameRules.verdict
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                rules.RefusalOrder
                 (SimulatedUnixPlatform.bindableEntryNames system.Machine.UnixPlatform)
                 system.Process.Credentials
                 sourceResolution

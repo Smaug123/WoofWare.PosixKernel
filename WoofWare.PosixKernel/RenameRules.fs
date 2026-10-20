@@ -40,13 +40,38 @@ type RenameWalkOrder =
     /// `namei` makes for itself under rename semantics.
     | SourceThenDestination
 
+/// Where Linux's `rename(2)` refuses a destination that is the source's own
+/// parent or an ancestor of it (ENOTEMPTY), against the ENOTDIR a trailing
+/// separator earns when the source is not a directory. The two meet only when
+/// both apply: `rename("a/f/", "a")` and `rename("a/f", "a/")`, with `a/f` a
+/// file.
+///
+/// Measured by `docs/probes/rename/ancestor-trap.py` on Linux 6.17, 6.18 and
+/// 7.0, unprivileged and at uid 0.
+[<RequireQualifiedAccess>]
+type RenameAncestorCheck =
+    /// After the trailing-separator checks, so `rename("a/f/", "a")` is
+    /// ENOTDIR: Linux before 6.19.
+    | AfterTrailingSeparators
+    /// Before them, so `rename("a/f/", "a")` is ENOTEMPTY: Linux from 6.19,
+    /// which makes the check while it locks the two parents, before it looks
+    /// at either path's trailing separator.
+    | BeforeTrailingSeparators
+
+/// The order in which `rename(2)` makes the refusals it judges against both
+/// resolved paths.
+[<RequireQualifiedAccess>]
+type RenameRefusalOrder =
+    /// Linux's, with its check of a destination that is the source's ancestor
+    /// where `ancestorCheck` puts it.
+    | Linux of ancestorCheck : RenameAncestorCheck
+    /// Darwin's, which refuses no destination for being the source's ancestor.
+    | Darwin
+
 // The ordering half lives in `RenameRules.linuxVerdict` and
 // `RenameRules.darwinVerdict`, for the reason `UnlinkRules.verdict` gives.
 /// Everything a kernel does differently when `rename(2)` moves a name.
 ///
-/// Two fields. The rest of the divergence — the *order* of the refusals and
-/// the errno vocabulary — follows from the platform's flavour alone, so it
-/// is not a field here.
 /// `rename` diverges more than any operation before it: the two flavours
 /// disagree about where the permission checks sit, about *which* directory's
 /// write bit a directory-over-directory rename even consults, and about where
@@ -59,6 +84,9 @@ type RenameRules =
         /// Which path is resolved first, and how far, before the other is
         /// looked at. See `RenameWalkOrder`.
         WalkOrder : RenameWalkOrder
+        /// The order of the refusals judged once both paths are resolved. See
+        /// `RenameRefusalOrder`.
+        RefusalOrder : RenameRefusalOrder
     }
 
 /// What `rename(2)` should do next, once both of its paths have been resolved.
@@ -229,7 +257,10 @@ module internal RenameRules =
     /// own parent, or an ancestor of it, is refused straight after the EINVAL
     /// arm, ahead of the type rule and every EACCES. Measured (ext4, uid 1000
     /// and 0): `rename(a/f, a)` with `f` a file is ENOTEMPTY, not EISDIR, and
-    /// `rename(a/sub, a)` with `a` unwritable is ENOTEMPTY, not EACCES.
+    /// `rename(a/sub, a)` with `a` unwritable is ENOTEMPTY, not EACCES. Under
+    /// `RenameAncestorCheck.BeforeTrailingSeparators` it comes earlier still,
+    /// ahead of the two trailing-separator arms: `rename(a/f/, a)` is ENOTEMPTY
+    /// there and ENOTDIR under `AfterTrailingSeparators`.
     ///
     /// Linux never consults the mode of the thing being displaced: measured,
     /// `rename(dir, emptydir)` succeeds with the destination at mode 0. That is
@@ -239,6 +270,7 @@ module internal RenameRules =
     /// their next check and nothing else moves, so privilege exempts the caller
     /// from the write bits and the sticky bits and from nothing else.
     let private linuxVerdict
+        (ancestorCheck : RenameAncestorCheck)
         (credentials : Credentials)
         (source : Resolution)
         (destination : Resolution)
@@ -265,7 +297,22 @@ module internal RenameRules =
         let displacedDirectory = RenameChecks.existingDirectory destinationExisting vfs
         let displacesNonDirectory = RenameChecks.namesNonDirectory destinationExisting vfs
 
-        if source.TrailingSeparatorDemanded && not movedIsDirectory then
+        // The other direction of the subtree trap below: the destination names
+        // the source's own parent, or an ancestor of it. Linux refuses that with
+        // ENOTEMPTY before `vfs_rename`, so it beats the type rule and every
+        // EACCES -- measured for a file, a symlink and a directory source, with
+        // the parents writable and not (`docs/probes/rename/ancestor-trap.py`).
+        let destinationIsAncestor =
+            match displacedDirectory with
+            | Some displaced -> VirtualFileSystem.isWithinSubtree displaced sourceDirectory vfs
+            | None -> false
+
+        if
+            ancestorCheck = RenameAncestorCheck.BeforeTrailingSeparators
+            && destinationIsAncestor
+        then
+            RenameVerdict.Refuse UnixError.ENOTEMPTY
+        elif source.TrailingSeparatorDemanded && not movedIsDirectory then
             RenameVerdict.Refuse UnixError.ENOTDIR
         elif destination.TrailingSeparatorDemanded && not movedIsDirectory then
             RenameVerdict.Refuse UnixError.ENOTDIR
@@ -276,17 +323,11 @@ module internal RenameRules =
             && VirtualFileSystem.isWithinSubtree moved destinationDirectory vfs
         then
             RenameVerdict.Refuse UnixError.EINVAL
-        elif
-            // The other direction of the same trap: the destination names the
-            // source's own parent, or an ancestor of it. `do_renameat2` refuses
-            // that with ENOTEMPTY immediately after the EINVAL arm and before
-            // `vfs_rename`, so it beats the type rule and every EACCES --
-            // measured for a file, a symlink and a directory source, with the
-            // parents writable and not (`docs/probes/rename/ancestor-trap.py`).
-            (match displacedDirectory with
-             | Some displaced -> VirtualFileSystem.isWithinSubtree displaced sourceDirectory vfs
-             | None -> false)
-        then
+        elif destinationIsAncestor then
+            // Reached under `BeforeTrailingSeparators` too, where the first arm
+            // has already refused every call this one would: an ancestor of the
+            // source is neither the source nor inside it, so neither arm between
+            // the two can answer such a call.
             RenameVerdict.Refuse UnixError.ENOTEMPTY
         elif RemovalChecks.lacksWrite "RenameRules: the source's parent" credentials sourceDirectory vfs then
             RenameVerdict.Refuse UnixError.EACCES
@@ -570,7 +611,7 @@ module internal RenameRules =
     /// only looked up, so it is never refused this way.
     ///
     let verdict
-        (flavour : SimulatedUnixFlavour)
+        (order : RenameRefusalOrder)
         (bindable : BindableEntryNames)
         (credentials : Credentials)
         (source : Resolution)
@@ -579,9 +620,9 @@ module internal RenameRules =
         : RenameVerdict
         =
         let verdict =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> linuxVerdict credentials source destination vfs
-            | SimulatedUnixFlavour.Darwin -> darwinVerdict credentials source destination vfs
+            match order with
+            | RenameRefusalOrder.Linux ancestorCheck -> linuxVerdict ancestorCheck credentials source destination vfs
+            | RenameRefusalOrder.Darwin -> darwinVerdict credentials source destination vfs
 
         match verdict with
         | RenameVerdict.Move (_, _, _, destinationName) when not (BindableEntryNames.admits bindable destinationName) ->
