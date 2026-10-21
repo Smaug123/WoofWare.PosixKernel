@@ -293,15 +293,6 @@ type ListenState =
         /// dequeues from the head. Measured on both flavours: accept returns
         /// connections in the order the connects completed.
         Queue : QueuedConnection list
-        /// Under Darwin, whether a close of the descriptor an `accept(2)` asleep
-        /// on this listener was made through has ended every accept asleep on
-        /// it. Never under Linux.
-        ///
-        /// It stays so for as long as the socket listens, a second `listen(2)`
-        /// included: a later accept that finds a connection queued takes it,
-        /// but one that would sleep answers `ECONNABORTED` as soon as anything
-        /// wakes it, a connection or a signal.
-        Drained : bool
     }
 
 [<RequireQualifiedAccess>]
@@ -565,6 +556,21 @@ type SocketDescription =
         /// conflicts with a second bind on both flavours, where a merely-bound
         /// one may not.
         Phase : SocketPhase
+        /// Under Darwin, whether a close has drained the socket: xnu's
+        /// `SS_DRAINING`, which a close of a descriptor sets when an `accept(2)`,
+        /// or a read or write of a connection, is asleep through it, ending
+        /// every such call asleep on the socket, through whichever descriptor.
+        /// Never under Linux, whose close ends no call.
+        ///
+        /// It lasts for the socket's life. On a listener, a second `listen(2)`
+        /// changing nothing, an accept that finds a connection queued takes
+        /// it, and one that would sleep answers `ECONNABORTED` as soon as
+        /// anything wakes it, a connection or a signal. On an end of a
+        /// connection, a read or a write that would sleep answers `EBADF`
+        /// instead, a write having first taken the room there was, and one
+        /// that finds bytes, a FIN or room for all it writes answers as it
+        /// would have.
+        Drained : bool
         /// The uid the kernel holds this socket to, fixed for its life: XNU's
         /// `so_cred`, Linux's `sk_uid`. It is the effective uid of the process
         /// that made the socket with `socket(2)`, whatever that process's

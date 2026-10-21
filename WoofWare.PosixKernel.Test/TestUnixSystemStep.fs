@@ -299,6 +299,7 @@ module TestUnixSystemStep =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
             Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
@@ -427,7 +428,6 @@ module TestUnixSystemStep =
                     {
                         ListenState.Backlog = 4
                         ListenState.Queue = []
-                        ListenState.Drained = false
                     }
                 SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client)
                 SocketPhase.EstablishedPendingReport (ConnectionId 0L)
@@ -691,6 +691,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = refused
+                Drained = false
                 Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
@@ -800,6 +801,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = SocketPhase.Idle
+                Drained = false
                 Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial

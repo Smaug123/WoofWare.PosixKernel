@@ -117,6 +117,7 @@ module TestPoll =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -205,7 +206,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }),
                 0x0000s
                 "IPv4 TCP, listening, queue nonempty",
@@ -216,7 +216,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = [ ForgedConnection.queued queued ]
-                            Drained = false
                         }),
                 0x0041s
                 "IPv4 TCP, established, peer alive",
@@ -347,7 +346,6 @@ module TestPoll =
                     {
                         Backlog = 1
                         Queue = [ ForgedConnection.queued (ConnectionId 0L) ]
-                        Drained = false
                     })
                 linux
 

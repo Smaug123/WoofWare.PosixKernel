@@ -138,7 +138,6 @@ module TestSocketEventDelivery =
                                             {
                                                 Backlog = 8
                                                 Queue = []
-                                                Drained = false
                                             }
                                 }
                     }

@@ -84,6 +84,7 @@ module TestConnect =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -111,7 +112,6 @@ module TestConnect =
                     {
                         Backlog = 8
                         Queue = []
-                        Drained = false
                     })
 
         let _, system = withSocket (SocketId 1L) listener system

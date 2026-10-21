@@ -1797,13 +1797,13 @@ module TestBlockingAccept =
                     SocketTable.all (Kernel.machine system).Sockets
                     |> Map.tryPick (fun _ socket ->
                         match socket.Phase with
-                        | SocketPhase.Listening listenState -> Some listenState
+                        | SocketPhase.Listening listenState -> Some (listenState, socket.Drained)
                         | _ -> None
                     )
 
                 match socket with
-                | Some listenState when reference.Alive ->
-                    (queuedClients listenState.Queue system, listenState.Drained)
+                | Some (listenState, drained) when reference.Alive ->
+                    (queuedClients listenState.Queue system, drained)
                     |> shouldEqual (reference.Queue, reference.Drained)
                 | None when not reference.Alive -> ()
                 | other -> failwith $"%s{where ()}: the listener is %A{other}, alive %b{reference.Alive}"
@@ -1970,7 +1970,7 @@ module TestBlockingAccept =
             let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Phase with
-            | SocketPhase.Listening listenState ->
+            | SocketPhase.Listening _ ->
                 socketId,
                 Kernel.mapMachine
                     (fun machine ->
@@ -1979,11 +1979,7 @@ module TestBlockingAccept =
                                 SocketTable.set
                                     socketId
                                     { socket with
-                                        Phase =
-                                            SocketPhase.Listening
-                                                { listenState with
-                                                    Drained = true
-                                                }
+                                        Drained = true
                                     }
                                     machine.Sockets
                         }
@@ -2039,7 +2035,7 @@ module TestBlockingAccept =
         let socketId, drained = drainedByHand fd system
 
         UnixSystem.checkInvariants drained
-        |> shouldEqual [ UnixSystemDefect.ListenerDrainedUnderLinux socketId ]
+        |> shouldEqual [ UnixSystemDefect.SocketDrainedUnderLinux socketId ]
 
         let ended =
             parkIn 1 fd system
@@ -2059,10 +2055,7 @@ module TestBlockingAccept =
         let _, asleepOnDrained = parkIn 1 fd system |> drainedByHand fd
 
         UnixSystem.checkInvariants asleepOnDrained
-        |> shouldEqual
-            [
-                UnixSystemDefect.ParkedAcceptOnDrainedListener (Callers.ofDefault 1, listener)
-            ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnDrainedSocket (Callers.ofDefault 1, listener) ]
 
     /// `SO_RCVTIMEO` bounds a blocking accept on Linux, answering EAGAIN at the
     /// timeout (`blocking-accept.c`, section E1; Darwin's accept ignores it).

@@ -82,6 +82,7 @@ module TestEpollCtl =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -300,7 +301,6 @@ module TestEpollCtl =
                     {
                         Backlog = 64
                         Queue = []
-                        Drained = false
                     })
                 system
         | "udp" -> withSocket SocketDomain.Inet SocketKind.Datagram SocketPhase.Idle system
@@ -532,7 +532,6 @@ module TestEpollCtl =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }),
                 0x0000u
                 "IPv4 TCP, listening, queue nonempty",
@@ -543,7 +542,6 @@ module TestEpollCtl =
                         {
                             Backlog = 8
                             Queue = [ ForgedConnection.queued queued ]
-                            Drained = false
                         }),
                 0x0041u
                 "IPv4 TCP, established, peer alive",

@@ -360,6 +360,7 @@
     <Compile Include="TestSuppliedPipe.fs" />
     <Compile Include="TestBlockingPipe.fs" />
     <Compile Include="TestBlockingConnection.fs" />
+    <Compile Include="TestCloseDrainMeasured.fs" />
     <Compile Include="TestNonBlockingAsleepMeasured.fs" />
     <Compile Include="TestAccept4FlagsMeasured.fs" />
     <Compile Include="TestConnectionWriteResetMeasured.fs" />
@@ -855,6 +856,12 @@
          is embedded from beside it. `TestReceiveSendMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-recv-send.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpRecvSend.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-recv-send.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpRecvSend.darwin.txt" />
+    <!-- What a close does to calls asleep through a dup of the descriptor it
+         closes, and to later calls through the dup:
+         docs/plans/2026-10-07-tcp-byte-transfer/tcp-close-drain.c, whose output
+         TestCloseDrainMeasured replays row by row. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-close-drain.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpCloseDrain.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-close-drain.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpCloseDrain.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>

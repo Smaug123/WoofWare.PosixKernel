@@ -1099,6 +1099,7 @@ module UnixSocket =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Drained = false
                 // Measured (`docs/probes/socket-creator-uid`, CREATE rows on
                 // Linux; `docs/probes/darwin-root/bind-uids.c`, CRED rows on
                 // Darwin): the effective uid at socket(2), which a later change
@@ -1912,7 +1913,6 @@ module UnixSocket =
                     {
                         Backlog = backlog
                         Queue = []
-                        Drained = false
                     }
 
         let system =

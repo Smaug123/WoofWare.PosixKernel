@@ -590,10 +590,12 @@ type UnixSystemDefect<'Thread> =
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wake` crashes.
     | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
-    /// A thread is asleep in an `accept` on a listener a close has drained
-    /// (`ListenState.Drained`): the close that drains a listener ends every
-    /// accept asleep on it, and `accept` refuses to sleep on one.
-    | ParkedAcceptOnDrainedListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
+    /// A thread is asleep in an `accept`, or a read or write of a connection,
+    /// on a socket a close has drained (`SocketDescription.Drained`): the close
+    /// that drains a socket ends every such call asleep on it, `accept`
+    /// refuses to sleep on a drained listener, and a read or write that would
+    /// sleep on a drained end answers `EBADF` instead.
+    | ParkedOnDrainedSocket of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// Under Darwin, a thread is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
@@ -609,9 +611,9 @@ type UnixSystemDefect<'Thread> =
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
     | ParkedCallEndedByCloseUnderLinux of thread : Caller<'Thread>
-    /// Under Linux, a listener records that a close has drained it
-    /// (`ListenState.Drained`), which only Darwin's close does.
-    | ListenerDrainedUnderLinux of socket : SocketId
+    /// Under Linux, a socket records that a close has drained it
+    /// (`SocketDescription.Drained`), which only Darwin's close does.
+    | SocketDrainedUnderLinux of socket : SocketId
     /// A thread is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wake` crashes.
@@ -2611,11 +2613,10 @@ module UnixSystem =
                 SocketTable.all machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (socketId, socket) ->
-                    match socket.Phase with
-                    | SocketPhase.Listening {
-                                                Drained = true
-                                            } -> Some (UnixSystemDefect.ListenerDrainedUnderLinux socketId)
-                    | _ -> None
+                    if socket.Drained then
+                        Some (UnixSystemDefect.SocketDrainedUnderLinux socketId)
+                    else
+                        None
                 )
 
         let connectionFreshness =
@@ -3433,12 +3434,15 @@ module UnixSystem =
                 match Map.tryFind description descriptions with
                 | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, description) ]
                 | Some found ->
+                    // Whether the socket is an end of a connection, and if so
+                    // whether a close has drained it.
                     let connected =
                         match found.Target with
                         | OpenFileTarget.Socket socketId ->
                             match SocketTable.tryFind socketId system.Machine.Sockets with
-                            | Some socket -> (SocketPhase.connectionEnd socket.Phase).IsSome
-                            | None -> false
+                            | Some socket when (SocketPhase.connectionEnd socket.Phase).IsSome -> Some socket.Drained
+                            | Some _
+                            | None -> None
                         | OpenFileTarget.File _
                         | OpenFileTarget.Directory _
                         | OpenFileTarget.CharacterDevice _
@@ -3446,11 +3450,12 @@ module UnixSystem =
                         | OpenFileTarget.Inotify _
                         | OpenFileTarget.Pipe _
                         | OpenFileTarget.Kqueue _
-                        | OpenFileTarget.Epoll _ -> false
+                        | OpenFileTarget.Epoll _ -> None
 
-                    if connected then
-                        enteredThrough thread fd description
-                    else
+                    match connected with
+                    | Some false -> enteredThrough thread fd description
+                    | Some true -> [ UnixSystemDefect.ParkedOnDrainedSocket (caller thread, description) ]
+                    | None ->
                         [
                             UnixSystemDefect.ParkedConnectionTransferOnNonConnection (caller thread, description)
                         ]
@@ -3724,9 +3729,9 @@ module UnixSystem =
                             match description.Target with
                             | OpenFileTarget.Socket socketId ->
                                 match SocketTable.tryFind socketId system.Machine.Sockets with
-                                | Some {
-                                           Phase = SocketPhase.Listening listenState
-                                       } -> Some listenState.Drained
+                                | Some ({
+                                            Phase = SocketPhase.Listening _
+                                        } as socket) -> Some socket.Drained
                                 | Some _
                                 | None -> None
                             | OpenFileTarget.File _
@@ -3740,7 +3745,7 @@ module UnixSystem =
 
                         match listening with
                         | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (caller thread, listener) ]
-                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (caller thread, listener) ]
+                        | Some true -> [ UnixSystemDefect.ParkedOnDrainedSocket (caller thread, listener) ]
                         | Some false -> enteredThrough thread fd listener
                 | Some (ParkedSyscall.PipeRead read) ->
                     let progress =

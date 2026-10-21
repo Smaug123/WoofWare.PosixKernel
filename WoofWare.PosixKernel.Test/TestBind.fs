@@ -60,6 +60,7 @@ module TestBind =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 

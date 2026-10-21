@@ -106,8 +106,8 @@ type internal AcceptRefusal =
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
     /// The accept would sleep on a listener a close has drained
-    /// (`ListenState.Drained`): its queue is empty and the description it was
-    /// made through blocking.
+    /// (`SocketDescription.Drained`): its queue is empty and the description it
+    /// was made through blocking.
     ///
     /// Darwin answers such a sleep with `ECONNABORTED` once anything wakes it,
     /// and a connection wakes one sleeper and stays queued, so a second sleeper
@@ -2236,6 +2236,7 @@ module UnixConnection =
                     ReuseAddress = queued.ReuseAddress
                     Options = queued.Options
                     Phase = SocketPhase.Established (connectionId, ConnectionEnd.Server)
+                    Drained = false
                     // Measured by `docs/probes/socket-creator-uid` (ACCEPT
                     // rows), with the listener made under one uid and the
                     // accept made under another: Darwin's accepted socket
@@ -2602,7 +2603,7 @@ module UnixConnection =
             // too.
             if description.NonBlocking then
                 Ok (AcceptOutcome.Failed UnixError.EAGAIN, system)
-            elif listenState.Drained then
+            elif socket.Drained then
                 Error (AcceptRefusal.DarwinDrainedListener socketId)
             else
                 // Measured (`docs/probes/accept4-flags`, section D):
@@ -2683,7 +2684,7 @@ module UnixConnection =
     /// Under Darwin, a close of the descriptor a sleeping accept was made
     /// through ends every accept asleep on the listener, through that
     /// descriptor or another, and leaves the listener drained
-    /// (`ListenState.Drained`); see `UnixDescriptor.close`. A later accept on
+    /// (`SocketDescription.Drained`); see `UnixDescriptor.close`. A later accept on
     /// it that finds a connection queued takes it, and a non-blocking one that
     /// finds none answers `EAGAIN`; one that would sleep is refused.
     ///
@@ -2791,10 +2792,10 @@ module UnixConnection =
 
         let finished = (UnixParkState.unpark thread system)
 
-        match (UnixMachineState.socket socketId system.Machine).Phase with
-        | SocketPhase.Listening {
-                                    Drained = true
-                                } ->
+        let socket = UnixMachineState.socket socketId system.Machine
+
+        match socket.Phase with
+        | SocketPhase.Listening _ when socket.Drained ->
             failwith
                 $"UnixConnection.finishAccept: thread %O{thread}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
         | SocketPhase.Listening {

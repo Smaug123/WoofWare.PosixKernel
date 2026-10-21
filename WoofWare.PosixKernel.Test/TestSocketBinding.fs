@@ -355,6 +355,7 @@ module TestSocketBinding =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = SocketPhase.Idle
+            Drained = false
             Uid = UserId.root
         }
 

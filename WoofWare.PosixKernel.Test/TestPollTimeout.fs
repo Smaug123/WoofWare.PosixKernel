@@ -79,8 +79,8 @@ module TestPollTimeout =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -126,7 +126,6 @@ module TestPollTimeout =
                                         {
                                             Backlog = 8
                                             Queue = List.map ForgedConnection.queued queue
-                                            Drained = false
                                         }
                             }
                             machine.Sockets

@@ -99,6 +99,7 @@ module TestAccept =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -153,7 +154,6 @@ module TestAccept =
                     {
                         Backlog = 8
                         Queue = List.map ForgedConnection.queued connections
-                        Drained = false
                     }
             )
 
@@ -249,7 +249,6 @@ module TestAccept =
                                     ReuseAddress = true
                                 }
                             )
-                        Drained = false
                     }
             )
 

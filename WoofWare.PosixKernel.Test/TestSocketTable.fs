@@ -133,6 +133,7 @@ module TestSocketTable =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
             Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
@@ -640,7 +641,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued queue
-                                    Drained = false
                                 }
                     }
                 ]
@@ -800,7 +800,6 @@ module TestSocketTable =
                                 {
                                     Backlog = backlog
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                 for i in 1..clients -> int64 i, someSocket
@@ -1147,7 +1146,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                     1L, someSocket
@@ -1459,7 +1457,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = [ ForgedConnection.queued (ConnectionId 5L) ]
-                                    Drained = false
                                 }
                     }
                 ]
@@ -1547,7 +1544,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued [ ConnectionId 0L ; ConnectionId 0L ]
-                                    Drained = false
                                 }
                     }
                 ]
@@ -1662,7 +1658,6 @@ module TestSocketTable =
             {
                 Backlog = 8
                 Queue = List.map ForgedConnection.queued connections
-                Drained = false
             }
 
     /// A connection has one client and one server: the server end is queued
