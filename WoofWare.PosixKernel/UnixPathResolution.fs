@@ -892,7 +892,7 @@ module UnixPathResolution =
                     LinkCount = reportedLinkCount system.Machine.UnixPlatform links
                     SpecialFileDevice =
                         match entry.Content with
-                        | InodeContent.CharacterDevice (device, _) -> CharacterDevice.specialFileDevice flavour device
+                        | InodeContent.CharacterDevice (number, _) -> DeviceNumber.specialFileDevice flavour number
                         | InodeContent.RegularFile _
                         | InodeContent.Directory _
                         | InodeContent.Symlink _ -> 0L

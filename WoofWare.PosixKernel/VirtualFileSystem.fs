@@ -264,9 +264,8 @@ type VirtualFileSystemDefect =
     /// The inode number a mount keeps for the directory it covers is also the
     /// number of an inode in the graph.
     | CoveredInodeInUse of root : InodeNumber * covered : InodeNumber
-    /// An inode holds a kind of content that nothing in this version makes,
-    /// such as `InodeContent.Socket` or `InodeContent.Fifo`, or the node of a
-    /// device that `CharacterDevice.all` does not list.
+    /// An inode holds a kind of content that nothing in this version makes:
+    /// `InodeContent.Socket` or `InodeContent.Fifo`.
     | ReservedContent of inode : InodeNumber
     /// `directory`, on a filesystem that matches names by canonical
     /// equivalence, binds both `first` and `second`, which might be two
@@ -2009,8 +2008,9 @@ module VirtualFileSystem =
                 $"VirtualFileSystem.forget: inode %O{inode} is still named by %d{count} directory entry/entries, so forgetting it would leave the graph with a dangling entry (this is a bug in the caller of VirtualFileSystem.forget)."
 
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
-    /// `permissions` owned by `owner`, holding one node for each of `devices`
-    /// owned by `owner` too, all created at `now`. The root directory's own
+    /// `permissions` owned by `owner`, holding one character device node for
+    /// each of `devices`, under its name, holding its number and with its
+    /// permissions, owned by `owner` too, all created at `now`. The root directory's own
     /// times do not move: a mount changes no directory of the filesystem it
     /// covers.
     ///
@@ -2023,7 +2023,7 @@ module VirtualFileSystem =
         (name : DirectoryEntryName)
         (permissions : PermissionBits)
         (owner : InodeOwner)
-        (devices : (DirectoryEntryName * CharacterDevice * PermissionBits) list)
+        (devices : (DirectoryEntryName * DeviceNumber * PermissionBits) list)
         (now : UnixTimestamp)
         (vfs : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
@@ -2092,9 +2092,9 @@ module VirtualFileSystem =
         let vfs, members =
             devices
             |> List.fold
-                (fun (vfs, members) (deviceName, device, devicePermissions) ->
+                (fun (vfs, members) (deviceName, number, devicePermissions) ->
                     let node, vfs =
-                        allocate (InodeContent.CharacterDevice (device, devicePermissions)) owner now vfs
+                        allocate (InodeContent.CharacterDevice (number, devicePermissions)) owner now vfs
 
                     let vfs =
                         bind mountRoot deviceName node now vfs
@@ -2471,7 +2471,7 @@ module VirtualFileSystem =
         let content =
             match entry.Content with
             | InodeContent.RegularFile (contents, _) -> InodeContent.RegularFile (contents, bits)
-            | InodeContent.CharacterDevice (device, _) -> InodeContent.CharacterDevice (device, bits)
+            | InodeContent.CharacterDevice (number, _) -> InodeContent.CharacterDevice (number, bits)
             | InodeContent.Socket _ -> InodeContent.Socket bits
             | InodeContent.Fifo _ -> InodeContent.Fifo bits
             | InodeContent.Directory directory ->
@@ -2850,23 +2850,15 @@ module VirtualFileSystem =
 
         // Nothing in this version makes a socket inode or a FIFO inode:
         // `mknodat` of `S_IFSOCK` or `S_IFIFO`, and a Unix-domain `bind`, all
-        // refuse. Nor a node for zero, random or tty: only the device filesystem's
-        // mount makes device nodes, one for each device in
-        // `CharacterDevice.all`, and `mknod` makes none. So one here came from
-        // a bug.
+        // refuse. So one here came from a bug.
         let reservedContent =
             vfs.Inodes
             |> Map.toList
             |> List.choose (fun (inode, entry) ->
                 match entry.Content with
                 | InodeContent.Socket _
-                | InodeContent.Fifo _
-                | InodeContent.CharacterDevice (CharacterDevice.Zero, _)
-                | InodeContent.CharacterDevice (CharacterDevice.Random, _)
-                | InodeContent.CharacterDevice (CharacterDevice.Tty, _) ->
-                    Some (VirtualFileSystemDefect.ReservedContent inode)
-                | InodeContent.CharacterDevice (CharacterDevice.Null, _)
-                | InodeContent.CharacterDevice (CharacterDevice.URandom, _)
+                | InodeContent.Fifo _ -> Some (VirtualFileSystemDefect.ReservedContent inode)
+                | InodeContent.CharacterDevice _
                 | InodeContent.RegularFile _
                 | InodeContent.Directory _
                 | InodeContent.Symlink _ -> None
