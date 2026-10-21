@@ -473,8 +473,8 @@ module TestFcntlMeasured =
                 | Error refusal -> failwith $"pipe2: %s{Pipe2Refusal.describe refusal}"
 
             let acceptOf (fd : int) (system : UnixSystem<int, string>) =
-                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u 0 system with
-                | Ok (AcceptOutcome.Accepted (accepted, _, _), _) ->
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system with
+                | Ok (AcceptOutcome.Accepted (accepted, _), _) ->
                     Ok (FcntlWorld.number (SyscallAnswer.Completed (int64 accepted)))
                 | Ok (AcceptOutcome.Failed error, _) -> Ok (FcntlWorld.number (SyscallAnswer.Failed error))
                 | Error (AcceptRefusal.DescriptorLimit refusal) -> Error refusal
@@ -1159,7 +1159,13 @@ module TestFcntlMeasured =
 
                 let system =
                     match
-                        UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u 0 system
+                        UnixConnection.tryAccept
+                            (Callers.thread 1 system)
+                            listening
+                            UserBuffer.Mapped
+                            (Some 16u)
+                            0
+                            system
                     with
                     | Ok (AcceptOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"accept on an empty listener: %A{other}"

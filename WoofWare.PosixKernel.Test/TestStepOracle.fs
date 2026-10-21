@@ -645,8 +645,8 @@ module TestStepOracle =
         let system = system |> stream 10 |> connect 10
 
         let system =
-            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u 0 system with
-            | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
+            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (11, _), system) -> system
             | other -> failwith $"setting up, accept: %A{other}"
 
         system |> stream 12 |> connect 12
@@ -1589,7 +1589,7 @@ module TestStepOracle =
                 (fun fd destination declaredLength flags -> Syscall.Accept (fd, destination, declaredLength, flags))
                 socketFd
                 userBufferGen
-                socklenGen
+                (Gen.optionOf socklenGen)
                 acceptFlagsGen
             |> Gen.filter (fun call ->
                 match call with

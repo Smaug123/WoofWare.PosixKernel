@@ -558,8 +558,8 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u 0 system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
         read Option.NoDelay accepted system
@@ -660,8 +660,8 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u 0 system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
@@ -692,8 +692,8 @@ module TestSocketOptions =
         | Ok reset ->
             UnixSystem.checkInvariants reset |> shouldEqual []
 
-            match UnixConnection.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped 16u 0 reset with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), reset) ->
+            match UnixConnection.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped (Some 16u) 0 reset with
+            | Ok (AcceptOutcome.Accepted (fd, _), reset) ->
                 read fd reset |> shouldEqual (ReadAnswer.Failed UnixError.ECONNRESET)
             | other -> failwith $"%O{platform}: accepting the reset connection answered %A{other}"
         | Error refusal -> failwith $"%O{platform}, queued: %s{CloseRefusal.describe refusal}"
@@ -728,7 +728,7 @@ module TestSocketOptions =
                 (Callers.thread 0 system)
                 listener
                 UserBuffer.Mapped
-                System.UInt32.MaxValue
+                (Some System.UInt32.MaxValue)
                 0
                 system
 

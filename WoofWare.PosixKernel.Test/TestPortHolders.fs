@@ -1191,8 +1191,10 @@ module TestPortHolders =
             let id = List.head (queueOf listener walk)
             let listenerFd, reuse = walk.Listeners.[listener]
 
-            match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u 0 system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) ->
+            match
+                UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) 0 system
+            with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) ->
                 let connection = walk.Connections.[id]
 
                 { walk with

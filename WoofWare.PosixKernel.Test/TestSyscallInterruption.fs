@@ -239,7 +239,7 @@ module TestSyscallInterruption =
                     (Callers.thread thread world.System)
                     world.Listener
                     UserBuffer.Mapped
-                    16u
+                    (Some 16u)
                     0
                     world.System)
                 (function
@@ -801,7 +801,7 @@ module TestSyscallInterruption =
                 {
                     Listener = waiting
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 }

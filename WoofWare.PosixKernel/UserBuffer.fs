@@ -159,7 +159,7 @@ module BufferRefusal =
         | BufferRefusal.OpaqueAtTransfer ->
             "the buffer names memory whose bytes the caller cannot produce. A real kernel would transfer the bytes at that address, so EFAULT would be a wrong answer rather than an approximate one, and there is nothing else to give."
         | BufferRefusal.AddresslessAtScreen ->
-            "the buffer is not an address at all, and this platform screens a buffer's address against its limit before performing the operation. There is no address to screen, so whether the kernel would accept it is unknown rather than false."
+            "the buffer is not an address at all, and this platform screens the buffer's address before performing the operation, against its limit or against NULL. There is no address to screen, so what the kernel would do with it is unknown rather than false."
         | BufferRefusal.AddresslessAtTransfer ->
             "the buffer is not an address at all, and the transfer would have to dereference it. This platform screens nothing up front, so the call gets this far before running out of answer."
 
