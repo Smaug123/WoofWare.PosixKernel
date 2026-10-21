@@ -1,0 +1,213 @@
+T1: tcp, sleepers read@dup; events close write
+T1 parked: 0 returned; [0 read@dup asleep]
+T1: close answered 0 0 in 0 ms
+T1 after close: 0 returned; [0 read@dup asleep]
+T1 after write: 1 returned; [0 read@dup 3 #1]
+T1 after the signal: 1 returned; [0 read@dup 3 #1]
+T1: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T2: tcp, sleepers read@dup read@later; events close park write
+T2 parked: 0 returned; [0 read@dup asleep] [1 read@later unparked]
+T2: close answered 0 0 in 0 ms
+T2 after close: 0 returned; [0 read@dup asleep] [1 read@later unparked]
+T2 after park: 0 returned; [0 read@dup asleep] [1 read@later asleep]
+T2 after write: 1 returned; [0 read@dup asleep] [1 read@later 3 #1]
+T2 after the signal: 2 returned; [0 read@dup -1 EINTR #2] [1 read@later 3 #1]
+T2: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T3: tcp, sleepers read@fd read@dup; events close write
+T3 parked: 0 returned; [0 read@fd asleep] [1 read@dup asleep]
+T3: close answered 0 0 in 0 ms
+T3 after close: 0 returned; [0 read@fd asleep] [1 read@dup asleep]
+T3 after write: 1 returned; [0 read@fd asleep] [1 read@dup 3 #1]
+T3 after the signal: 2 returned; [0 read@fd -1 EINTR #2] [1 read@dup 3 #1]
+T3: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T4: tcp, sleepers recv@fd recv@dup; events close write
+T4 parked: 0 returned; [0 recv@fd asleep] [1 recv@dup asleep]
+T4: close answered 0 0 in 0 ms
+T4 after close: 0 returned; [0 recv@fd asleep] [1 recv@dup asleep]
+T4 after write: 1 returned; [0 recv@fd 3 #1] [1 recv@dup asleep]
+T4 after the signal: 2 returned; [0 recv@fd 3 #1] [1 recv@dup -1 EINTR #2]
+T4: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T5: tcp, sleepers peek@fd peek@dup; events close write
+T5 parked: 0 returned; [0 peek@fd asleep] [1 peek@dup asleep]
+T5: close answered 0 0 in 0 ms
+T5 after close: 0 returned; [0 peek@fd asleep] [1 peek@dup asleep]
+T5 after write: 2 returned; [0 peek@fd 3 #2] [1 peek@dup 3 #1]
+T5 after the signal: 2 returned; [0 peek@fd 3 #2] [1 peek@dup 3 #1]
+T5: then 3 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T6: tcp, sleepers read@fd read@dup read@fd; events close write
+T6 parked: 0 returned; [0 read@fd asleep] [1 read@dup asleep] [2 read@fd asleep]
+T6: close answered 0 0 in 0 ms
+T6 after close: 0 returned; [0 read@fd asleep] [1 read@dup asleep] [2 read@fd asleep]
+T6 after write: 1 returned; [0 read@fd asleep] [1 read@dup asleep] [2 read@fd 3 #1]
+T6 after the signal: 3 returned; [0 read@fd -1 EINTR #2] [1 read@dup -1 EINTR #3] [2 read@fd 3 #1]
+T6: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T7: tcp, sleepers read@fd read@later; events close park write
+T7 parked: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T7: close answered 0 0 in 0 ms
+T7 after close: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T7 after park: 0 returned; [0 read@fd asleep] [1 read@later asleep]
+T7 after write: 1 returned; [0 read@fd asleep] [1 read@later 3 #1]
+T7 after the signal: 2 returned; [0 read@fd -1 EINTR #2] [1 read@later 3 #1]
+T7: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T8: tcp, sleepers read@fd read@later; events close write park
+T8 parked: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T8: close answered 0 0 in 0 ms
+T8 after close: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T8 after write: 1 returned; [0 read@fd 3 #1] [1 read@later unparked]
+T8 after park: 1 returned; [0 read@fd 3 #1] [1 read@later asleep]
+T8 after the signal: 2 returned; [0 read@fd 3 #1] [1 read@later -1 EINTR #2]
+T8: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T9: tcp, sleepers read@fd read@later; events close fin park
+T9 parked: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T9: close answered 0 0 in 0 ms
+T9 after close: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+T9 after fin: 1 returned; [0 read@fd 0 #1] [1 read@later unparked]
+T9 after park: 2 returned; [0 read@fd 0 #1] [1 read@later 0 #2]
+T9 after the signal: 2 returned; [0 read@fd 0 #1] [1 read@later 0 #2]
+T9: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T10: tcp, sleepers read@fd read@later read@later; events close write park park
+T10 parked: 0 returned; [0 read@fd asleep] [1 read@later unparked] [2 read@later unparked]
+T10: close answered 0 0 in 0 ms
+T10 after close: 0 returned; [0 read@fd asleep] [1 read@later unparked] [2 read@later unparked]
+T10 after write: 1 returned; [0 read@fd 3 #1] [1 read@later unparked] [2 read@later unparked]
+T10 after park: 1 returned; [0 read@fd 3 #1] [1 read@later asleep] [2 read@later unparked]
+T10 after park: 1 returned; [0 read@fd 3 #1] [1 read@later asleep] [2 read@later asleep]
+T10 after the signal: 3 returned; [0 read@fd 3 #1] [1 read@later -1 EINTR #2] [2 read@later -1 EINTR #3]
+T10: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T11: tcp, sleepers read@fd; events close nb poll0 write nb
+T11 parked: 0 returned; [0 read@fd asleep]
+T11: close answered 0 0 in 0 ms
+T11 after close: 0 returned; [0 read@fd asleep]
+T11: recv(dup, MSG_DONTWAIT) answered -1 EAGAIN
+T11 after nb: 0 returned; [0 read@fd asleep]
+T11: poll(dup, IN|OUT, 0) answered 1 revents=0x4
+T11 after poll0: 0 returned; [0 read@fd asleep]
+T11 after write: 1 returned; [0 read@fd 3 #1]
+T11: recv(dup, MSG_DONTWAIT) answered -1 EAGAIN
+T11 after nb: 1 returned; [0 read@fd 3 #1]
+T11 after the signal: 1 returned; [0 read@fd 3 #1]
+T11: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T12: tcp, sleepers recv@fd peek@later; events close park write
+T12 parked: 0 returned; [0 recv@fd asleep] [1 peek@later unparked]
+T12: close answered 0 0 in 0 ms
+T12 after close: 0 returned; [0 recv@fd asleep] [1 peek@later unparked]
+T12 after park: 0 returned; [0 recv@fd asleep] [1 peek@later asleep]
+T12 after write: 2 returned; [0 recv@fd 3 #2] [1 peek@later 3 #1]
+T12 after the signal: 2 returned; [0 recv@fd 3 #2] [1 peek@later 3 #1]
+T12: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T13: tcp, sleepers write@dup; events close room
+T13 parked: 0 returned; [0 write@dup asleep]
+T13: close answered 0 0 in 0 ms
+T13 after close: 0 returned; [0 write@dup asleep]
+T13 after room: 1 returned; [0 write@dup 1000 #1]
+T13 after the signal: 1 returned; [0 write@dup 1000 #1]
+T13: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T14: tcp, sleepers write@fd write@dup; events close room
+T14 parked: 0 returned; [0 write@fd asleep] [1 write@dup asleep]
+T14: close answered 0 0 in 0 ms
+T14 after close: 0 returned; [0 write@fd asleep] [1 write@dup asleep]
+T14 after room: 2 returned; [0 write@fd 1000 #2] [1 write@dup 1000 #1]
+T14 after the signal: 2 returned; [0 write@fd 1000 #2] [1 write@dup 1000 #1]
+T14: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T15: tcp, sleepers write@fd write@later; events close park room
+T15 parked: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+T15: close answered 0 0 in 0 ms
+T15 after close: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+T15 after park: 0 returned; [0 write@fd asleep] [1 write@later asleep]
+T15 after room: 2 returned; [0 write@fd 1000 #2] [1 write@later 1000 #1]
+T15 after the signal: 2 returned; [0 write@fd 1000 #2] [1 write@later 1000 #1]
+T15: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T16: tcp, sleepers write@fd write@later; events close room park
+T16 parked: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+T16: close answered 0 0 in 0 ms
+T16 after close: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+T16 after room: 1 returned; [0 write@fd 1000 #1] [1 write@later unparked]
+T16 after park: 2 returned; [0 write@fd 1000 #1] [1 write@later 1000 #2]
+T16 after the signal: 2 returned; [0 write@fd 1000 #1] [1 write@later 1000 #2]
+T16: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 1000, dup has 0 unsent; sigpipe 0
+T17: tcp, sleepers read@fd write@later; events close park write room
+T17 parked: 0 returned; [0 read@fd asleep] [1 write@later unparked]
+T17: close answered 0 0 in 0 ms
+T17 after close: 0 returned; [0 read@fd asleep] [1 write@later unparked]
+T17 after park: 0 returned; [0 read@fd asleep] [1 write@later asleep]
+T17 after write: 1 returned; [0 read@fd 3 #1] [1 write@later asleep]
+T17 after room: 2 returned; [0 read@fd 3 #1] [1 write@later 1000 #2]
+T17 after the signal: 2 returned; [0 read@fd 3 #1] [1 write@later 1000 #2]
+T17: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T18: tcp, sleepers write@fd read@later; events close park write room
+T18 parked: 0 returned; [0 write@fd asleep] [1 read@later unparked]
+T18: close answered 0 0 in 0 ms
+T18 after close: 0 returned; [0 write@fd asleep] [1 read@later unparked]
+T18 after park: 0 returned; [0 write@fd asleep] [1 read@later asleep]
+T18 after write: 1 returned; [0 write@fd asleep] [1 read@later 3 #1]
+T18 after room: 2 returned; [0 write@fd 1000 #2] [1 read@later 3 #1]
+T18 after the signal: 2 returned; [0 write@fd 1000 #2] [1 read@later 3 #1]
+T18: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T21: tcp, sleepers write@fd big@later; events close room park
+T21 parked: 0 returned; [0 write@fd asleep] [1 big@later unparked]
+T21: close answered 0 0 in 0 ms
+T21 after close: 0 returned; [0 write@fd asleep] [1 big@later unparked]
+T21 after room: 1 returned; [0 write@fd 1000 #1] [1 big@later unparked]
+T21 after park: 2 returned; [0 write@fd 1000 #1] [1 big@later 8388608 #2]
+T21 after the signal: 2 returned; [0 write@fd 1000 #1] [1 big@later 8388608 #2]
+T21: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 5304123, dup has 3084485 unsent; sigpipe 0
+T22: tcp, sleepers read@fd write@dup; events close room write
+T22 parked: 0 returned; [0 read@fd asleep] [1 write@dup asleep]
+T22: close answered 0 0 in 0 ms
+T22 after close: 0 returned; [0 read@fd asleep] [1 write@dup asleep]
+T22 after room: 1 returned; [0 read@fd asleep] [1 write@dup 1000 #1]
+T22 after write: 2 returned; [0 read@fd 3 #2] [1 write@dup 1000 #1]
+T22 after the signal: 2 returned; [0 read@fd 3 #2] [1 write@dup 1000 #1]
+T22: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T23: tcp, sleepers write@fd read@dup; events close write room
+T23 parked: 0 returned; [0 write@fd asleep] [1 read@dup asleep]
+T23: close answered 0 0 in 0 ms
+T23 after close: 0 returned; [0 write@fd asleep] [1 read@dup asleep]
+T23 after write: 1 returned; [0 write@fd asleep] [1 read@dup 3 #1]
+T23 after room: 2 returned; [0 write@fd 1000 #2] [1 read@dup 3 #1]
+T23 after the signal: 2 returned; [0 write@fd 1000 #2] [1 read@dup 3 #1]
+T23: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T19: tcp, sleepers poll@fd read@dup; events close write
+T19 parked: 0 returned; [0 poll@fd asleep] [1 read@dup asleep]
+T19: close answered 0 0 in 0 ms
+T19 after close: 0 returned; [0 poll@fd asleep] [1 read@dup asleep]
+T19 after write: 2 returned; [0 poll@fd 1 revents=0x20 #2] [1 read@dup 3 #1]
+T19 after the signal: 2 returned; [0 poll@fd 1 revents=0x20 #2] [1 read@dup 3 #1]
+T19: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+T20: tcp, sleepers select@fd read@dup; events close write
+T20 parked: 0 returned; [0 select@fd asleep] [1 read@dup asleep]
+T20: close answered 0 0 in 0 ms
+T20 after close: 0 returned; [0 select@fd asleep] [1 read@dup asleep]
+T20 after write: 2 returned; [0 select@fd 1 #2] [1 read@dup 3 #1]
+T20 after the signal: 2 returned; [0 select@fd 1 #2] [1 read@dup 3 #1]
+T20: then 0 bytes queued for the dup; dup's F_GETFL 0x2; peer holds 0, dup has 0 unsent; sigpipe 0
+P1: pipe, sleepers read@fd read@dup; events close write
+P1 parked: 0 returned; [0 read@fd asleep] [1 read@dup asleep]
+P1: close answered 0 0 in 0 ms
+P1 after close: 0 returned; [0 read@fd asleep] [1 read@dup asleep]
+P1 after write: 1 returned; [0 read@fd 3 #1] [1 read@dup asleep]
+P1 after the signal: 2 returned; [0 read@fd 3 #1] [1 read@dup -1 EINTR #2]
+P1: then 0 bytes queued for the dup; dup's F_GETFL 0x0; sigpipe 0
+P2: pipe, sleepers read@fd read@later; events close park write
+P2 parked: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+P2: close answered 0 0 in 0 ms
+P2 after close: 0 returned; [0 read@fd asleep] [1 read@later unparked]
+P2 after park: 0 returned; [0 read@fd asleep] [1 read@later asleep]
+P2 after write: 1 returned; [0 read@fd 3 #1] [1 read@later asleep]
+P2 after the signal: 2 returned; [0 read@fd 3 #1] [1 read@later -1 EINTR #2]
+P2: then 0 bytes queued for the dup; dup's F_GETFL 0x0; sigpipe 0
+P3: pipe, sleepers write@fd write@dup; events close room
+P3 parked: 0 returned; [0 write@fd asleep] [1 write@dup asleep]
+P3: close answered 0 0 in 0 ms
+P3 after close: 0 returned; [0 write@fd asleep] [1 write@dup asleep]
+P3 after room: 2 returned; [0 write@fd 1000 #1] [1 write@dup 1000 #2]
+P3 after the signal: 2 returned; [0 write@fd 1000 #1] [1 write@dup 1000 #2]
+P3: then 0 bytes queued for the read end; dup's F_GETFL 0x1; sigpipe 0
+P4: pipe, sleepers write@fd write@later; events close park room
+P4 parked: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+P4: close answered 0 0 in 0 ms
+P4 after close: 0 returned; [0 write@fd asleep] [1 write@later unparked]
+P4 after park: 0 returned; [0 write@fd asleep] [1 write@later asleep]
+P4 after room: 2 returned; [0 write@fd 1000 #1] [1 write@later 1000 #2]
+P4 after the signal: 2 returned; [0 write@fd 1000 #1] [1 write@later 1000 #2]
+P4: then 0 bytes queued for the read end; dup's F_GETFL 0x1; sigpipe 0
