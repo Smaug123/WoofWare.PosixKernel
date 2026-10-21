@@ -87,6 +87,9 @@ output:
   mbuf memory, read from `net.inet.udp.pcblist_n`, what a socket's history
   does to the charge, and whether the two-budget rule predicts every arrival.
   Darwin only.
+- `udp-error.c`: what each call does with an ICMP error pending, beyond
+  section L of `udp-transfer.c` (section Y), and the sysctls that decide
+  which datagrams are answered with one. Both flavours, 2026-10-20.
 
 Each probe was run more than once. Every row repeated, except the two that are
 races by nature: which of several sleeping receivers took a datagram (S1), and
@@ -382,6 +385,38 @@ How the pending error is reported and taken:
 `FIONREAD` with both pending is 4 on Linux and 36 on Darwin: the datagram,
 whatever the error.
 
+The calls that table leaves open (`udp-error.c`, Y1 to Y8):
+
+| call, with the error pending | L | D |
+|---|---|---|
+| `connect` that connects: elsewhere, or to the same peer | succeeds; the error stays | `ECONNREFUSED`, taken, connected |
+| `connect` that fails: `AF_UNSPEC` (D), port 0 (D), an unknown family, a short length, an unmapped address, Linux's broadcast `EACCES` | its own answer; the error stays | same |
+| `connect` `AF_UNSPEC` (L), port 0 (L) | succeeds; the error stays | (fails, above) |
+| `send` or `write` too large to send | **`EMSGSIZE`**; the error stays | **`ECONNREFUSED`**, taken |
+| `send` or `write` from an unmapped buffer | `ECONNREFUSED`, taken | same |
+| `read` or `recv` into an unmapped buffer, nothing queued | `ECONNREFUSED`, taken | same |
+| `FIONREAD`, `getsockname`, `getpeername`, `bind` (`EINVAL`) | the error stays | same |
+| `SO_ERROR` into a null value buffer | `EFAULT`, taken | 0, taken |
+| `SO_ERROR` of length 0 | 0, nothing written, taken | same |
+
+So both flavours can leave an **unconnected** socket with the error pending:
+Linux after an `AF_UNSPEC` connect, and Darwin after any connect that fails,
+since its connect disconnects first. There, Linux's `write` and `send` answer
+**`EDESTADDRREQ` and keep it**; Darwin's answer **`ECONNREFUSED` and take
+it**. A receive takes it on both, Linux's zero-length `read` aside, and so do
+`SO_ERROR` and Darwin's connect.
+
+Under `EPOLLET` on Linux (Y8), a registration made with the error pending
+reports OUT|ERR (0xc) once; nothing that then takes the error, whether a
+`write`, a `recv`, `SO_ERROR` or a connect, is an edge. A send that raises the
+error is reported OUT|ERR together, as one event.
+
+**Darwin's window is configuration** (Y0):
+`net.inet.udp.port_unreach_rlc_enable` 1 and
+`net.inet.udp.port_unreach_rlc_bucket_ms` 100, with `net.inet.udp.blackhole`
+and `net.inet.icmp.suppress_icmp_port_unreach` 0. Only those defaults are
+measured.
+
 ### 2.9 Sending on a connected socket (K)
 
 - `write`, `send` and `sendto` with no address reach the peer, on both.
@@ -619,7 +654,8 @@ of that window.
 - **Darwin's 100 ms window** (2.8, X) is one machine-wide record: the
   four-tuple and kernel-clock time of the last datagram answered with the
   error. It is not in any receiver, since it outlives its socket and counts
-  unconnected senders.
+  unconnected senders. Its width is a sysctl, so the machine holds it as
+  configuration, at the measured default, beside the record.
   - A datagram to no one is answered unless it is on the record's four-tuple
     and the clock has moved less than 100 ms past the record. An answer
     replaces the record; a suppressed datagram leaves it alone.
@@ -788,6 +824,11 @@ it touches.
   - **U1c.** The ICMP error (3.5): the pending error, `SO_ERROR`, Darwin's
     four-tuple window, and what `connect` does with a pending error. Section L
     and X join the host test.
+    - Two rules the connected sends of U1c cannot reach wait for U3's
+      `sendto`: that an unconnected socket the error reaches is told nothing
+      (L4, L16), and whether a Darwin send that only takes the error marks
+      the socket as having sent, which a socket that never sent can hold only
+      once another socket's `sendto` gave it the error (L16).
 - **U2. The port index** (3.3). No behaviour change.
 - **U3. `sendto` and `recvfrom`** (3.6): the argument and answer types, the
   destination ladder of 2.10 (sharing `connect`'s decoding and autobind), and
@@ -817,10 +858,10 @@ Patrick, 2026-10-18:
 
 - **3.1**: (A), a machine map of datagram receivers.
 - **3.2**: (A), each flavour's accounting reproduced, with (A2): an arrival at
-  a Darwin queue holding 1757 datagrams is refused. **Superseded, for Patrick
-  to confirm**: review found (A2) unsafe for mixed sizes, and Darwin's mbuf
-  charges are now measured, so (A) models both of Darwin's budgets exactly,
-  and nothing is refused (3.2).
+  a Darwin queue holding 1757 datagrams is refused. **Superseded**: review
+  found (A2) unsafe for mixed sizes, and Darwin's mbuf charges are now
+  measured, so (A) models both of Darwin's budgets exactly, and nothing is
+  refused (3.2). Patrick confirmed this on 2026-10-20.
 - **3.3**: ties are refused; U1 delivers by a scan, and U2 adds the port index.
 - **Staging**: as section 4, U1 to U6 in order.
 

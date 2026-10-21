@@ -19,8 +19,9 @@ open WoofWare.PosixKernel
 /// through a blocking description (so that Linux's poll of it refills its
 /// reader queue) and the second through a non-blocking one; three senders
 /// are bound and each connected to a receiver. Every datagram so has exactly
-/// one socket to reach, which keeps the calls clear of the ICMP error and of
-/// ties, neither of which the kernel models yet.
+/// one socket to reach, which keeps the calls clear of ties, which the kernel
+/// refuses, and of the ICMP error, which `TestDatagramErrorAgainstHost`
+/// compares.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestDatagramTransferAgainstHost =

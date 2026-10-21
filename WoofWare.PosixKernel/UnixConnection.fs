@@ -1827,7 +1827,23 @@ module UnixConnection =
                         }
                 }
 
-            completed system
+            // Measured (`udp-error.c` Y1 and Y7, and `udp-transfer.c` L7, in
+            // docs/plans/2026-10-18-udp-data-path): a Darwin connect that
+            // connects the socket answers its pending error, and takes it,
+            // the socket connected all the same; one that fails leaves the
+            // error pending, as every Linux connect does.
+            match flavour with
+            | SimulatedUnixFlavour.Darwin when UnixMachineState.receivesDatagrams sock ->
+                match DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine) with
+                | Some error, after ->
+                    failed
+                        error
+                        { system with
+                            Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
+                        }
+                | None, _ -> completed system
+            | SimulatedUnixFlavour.Darwin
+            | SimulatedUnixFlavour.Linux -> completed system
 
     /// What `connectDecoded` reads of `copied`, the bytes a connect on
     /// `socket` copied in, declared `declaredLength` long.
