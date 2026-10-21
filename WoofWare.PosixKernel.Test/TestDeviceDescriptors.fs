@@ -332,9 +332,9 @@ module TestDeviceDescriptors =
 
     [<Test>]
     let ``a description of a device this kernel has no driver for breaks the invariants`` () : unit =
-        // No node names such a device (`VirtualFileSystem.checkInvariants`
-        // reports one as `ReservedContent`), so a description naming one names
-        // a node of some other device.
+        // `open` refuses a node whose number has no driver, so no description
+        // names such a device: not through another device's node, nor through
+        // a node holding the device's own number.
         let urandom =
             match
                 UnixPathResolution.tryStat
@@ -370,6 +370,24 @@ module TestDeviceDescriptors =
 
             VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
             |> shouldEqual []
+
+            let ownNumber =
+                VirtualFileSystem.Unchecked.setContent
+                    urandom
+                    (InodeContent.CharacterDevice (
+                        CharacterDevice.number SimulatedUnixFlavour.Linux device,
+                        CharacterDevice.permissions device
+                    ))
+                    (UnixSystem.fileSystem system)
+
+            system
+            |> Kernel.mapMachine (fun machine ->
+                { machine with
+                    CommittedFileSystem = CommittedFileSystem.initial ownNumber
+                }
+            )
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
     [<Test>]
     let ``fstatfs through a device's descriptor is statfs of its path`` () : unit =

@@ -560,6 +560,11 @@ type internal OpenRefusal =
     | UnmodelledDirectoryOpen of flags : int
     /// This kernel will not resolve the path. Nothing was read or changed.
     | Path of PathRefusal
+    /// The path names `inode`, a character device node holding `number`, for
+    /// which this kernel has no driver. Every check that could fail the open
+    /// passed, so what happens next is the driver's. Nothing was read or
+    /// changed.
+    | UndrivenDevice of inode : InodeNumber * number : DeviceNumber
 
 [<RequireQualifiedAccess>]
 module internal OpenRefusal =
@@ -577,6 +582,8 @@ module internal OpenRefusal =
         | OpenRefusal.UnmodelledDirectoryOpen flags ->
             $"flags 0x%x{flags} ask for O_DIRECTORY with a write access mode, O_TRUNC or O_NOFOLLOW. Only O_DIRECTORY|O_RDONLY (what opendir(3) opens with) is modelled; where ENOTDIR falls among EISDIR, EACCES and ELOOP for any other combination is not."
         | OpenRefusal.Path refusal -> PathRefusal.describe refusal
+        | OpenRefusal.UndrivenDevice (inode, number) ->
+            $"the path names inode %O{inode}, a character device node holding device number %O{number}, which this kernel has no driver for. The open passed every check a kernel makes before it reaches the driver, so what it answers is that driver's."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : OpenRefusal) : RefusalKind =
@@ -586,6 +593,7 @@ module internal OpenRefusal =
         | OpenRefusal.IoctlOnlyAccessMode _ -> RefusalKind.Unmodelled
         | OpenRefusal.UnmodelledDirectoryOpen _ -> RefusalKind.Unmodelled
         | OpenRefusal.Path inner -> PathRefusal.kind inner
+        | OpenRefusal.UndrivenDevice _ -> RefusalKind.Unmodelled
 
 /// `open(2)`'s flag word, in the simulated flavour's own `<fcntl.h>`
 /// numbering, read as the kernel reads it.
@@ -926,7 +934,7 @@ module UnixNamespace =
             // A directory gets a description positioned in its entries rather
             // than at a byte offset. It can only be here for reading: every
             // writable or truncating open of one answered EISDIR before this.
-            let fd, registry =
+            let opening =
                 match VirtualFileSystem.tryGetContent inode system.Machine.FileSystem with
                 | Some (InodeContent.Directory _) ->
                     FileDescriptorRegistry.openDirectory
@@ -936,16 +944,23 @@ module UnixNamespace =
                         through
                         inode
                         (UnixSystemState.fileDescriptors system)
-                | Some (InodeContent.CharacterDevice (device, _)) ->
-                    FileDescriptorRegistry.openCharacterDevice
-                        descriptorFlags
-                        status
-                        flags.NonBlocking
-                        through
-                        inode
-                        device
-                        flags.Access
-                        (UnixSystemState.fileDescriptors system)
+                    |> Ok
+                // A node reaches the driver registered for its number, as a
+                // real kernel's does once the open's own checks have passed.
+                | Some (InodeContent.CharacterDevice (number, _)) ->
+                    match CharacterDevice.driverOf flavour number with
+                    | None -> Error (OpenRefusal.UndrivenDevice (inode, number))
+                    | Some device ->
+                        FileDescriptorRegistry.openCharacterDevice
+                            descriptorFlags
+                            status
+                            flags.NonBlocking
+                            through
+                            inode
+                            device
+                            flags.Access
+                            (UnixSystemState.fileDescriptors system)
+                        |> Ok
                 | Some (InodeContent.Socket _) ->
                     failwith
                         $"UnixNamespace.openPath: inode %O{inode} is a socket. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
@@ -963,8 +978,12 @@ module UnixNamespace =
                         inode
                         flags.Access
                         (UnixSystemState.fileDescriptors system)
+                    |> Ok
 
-            Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
+            match opening with
+            | Error refusal -> Error refusal
+            | Ok (fd, registry) ->
+                Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
         if
             flags.Directory
