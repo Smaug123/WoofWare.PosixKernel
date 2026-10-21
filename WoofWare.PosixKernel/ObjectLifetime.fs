@@ -413,13 +413,13 @@ module ObjectLifetime =
         | OpenFileTarget.Socket socketId ->
 
         let dying =
-            match Map.tryFind socketId system.Machine.Sockets with
+            match SocketTable.tryFind socketId system.Machine.Sockets with
             | Some socket -> socket
             | None ->
                 failwith
                     $"ObjectLifetime.releaseDestroyed: the description names socket %O{socketId}, which this system's socket table does not hold. Releasing a description is the only operation here that removes a socket, and it removes it together with the description that named it, so a live description onto an absent socket means the two tables were built out of step. There is nothing to repair it with: the objects this release would have freed cannot be found (this is a bug in this library or in whatever assembled this system)."
 
-        let sockets = Map.remove socketId system.Machine.Sockets
+        let sockets = SocketTable.remove socketId system.Machine.Sockets
 
         // A connection lives while any socket phase or accept queue
         // references it. The dying socket may have been the last such
@@ -438,7 +438,7 @@ module ObjectLifetime =
             | SocketPhase.Connecting _ -> []
 
         let stillReferenced (connection : ConnectionId) : bool =
-            sockets
+            SocketTable.all sockets
             |> Map.exists (fun _ survivor ->
                 match survivor.Phase with
                 | SocketPhase.Established (c, _)

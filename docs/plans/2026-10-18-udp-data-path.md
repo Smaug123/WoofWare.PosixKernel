@@ -830,6 +830,13 @@ it touches.
       the socket as having sent, which a socket that never sent can hold only
       once another socket's `sendto` gave it the error (L16).
 - **U2. The port index** (3.3). No behaviour change.
+  - The machine's sockets become a `SocketTable`, whose private
+    representation keeps the UDP sockets indexed by port, and
+    `DatagramDelivery.receiverOf` reads only those at the destination port.
+  - A send still costs time linear in the machine's open file descriptions:
+    every socket wake (`SocketWake.signal`, TCP's too) walks them all to
+    signal epoll instances and activate kqueues. That is the leftover of the
+    per-call cost work, not a cost of delivery, and is its own change.
 - **U3. `sendto` and `recvfrom`** (3.6): the argument and answer types, the
   destination ladder of 2.10 (sharing `connect`'s decoding and autobind), and
   the source writes of 2.11.

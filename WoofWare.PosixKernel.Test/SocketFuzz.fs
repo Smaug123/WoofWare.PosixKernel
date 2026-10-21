@@ -340,7 +340,7 @@ module SocketFuzz =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { sock with
                                         Addressing =

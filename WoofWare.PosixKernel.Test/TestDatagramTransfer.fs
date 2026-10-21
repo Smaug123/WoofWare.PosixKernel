@@ -100,7 +100,7 @@ module TestDatagramTransfer =
             | other -> failwith $"fd %d{fd} is %A{other}"
 
         let port =
-            match (Kernel.machine system).Sockets.[socketId].Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith "the bound socket has no binding"
 
@@ -528,7 +528,7 @@ module TestDatagramTransfer =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"%A{other}"
 
-            match (Kernel.machine system).Sockets.[socketId].Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port, system
             | None -> failwith "no binding"
 
@@ -629,7 +629,7 @@ module TestDatagramTransfer =
             let port =
                 match FileDescriptorRegistry.tryFindTarget first (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Socket socketId) ->
-                    (Kernel.machine system).Sockets.[socketId].Ipv4Binding.Value.Endpoint.Port
+                    (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding.Value.Endpoint.Port
                 | other -> failwith $"%A{other}"
 
             let system =
@@ -691,7 +691,7 @@ module TestDatagramTransfer =
         let portOf (fd : int) (system : UnixSystem<int, string>) : uint16 =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                (Kernel.machine system).Sockets.[socketId].Ipv4Binding.Value.Endpoint.Port
+                (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding.Value.Endpoint.Port
             | other -> failwith $"%A{other}"
 
         let p = portOf a system
@@ -897,7 +897,7 @@ module TestDatagramTransfer =
         let port =
             match FileDescriptorRegistry.tryFindTarget a (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                (Kernel.machine system).Sockets.[socketId].Ipv4Binding.Value.Endpoint.Port
+                (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding.Value.Endpoint.Port
             | other -> failwith $"%A{other}"
 
         let system = connectTo a Ipv4Address.loopback 0us system
@@ -1428,7 +1428,7 @@ module TestDatagramTransfer =
         let cPort =
             match FileDescriptorRegistry.tryFindTarget c (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                (Kernel.machine system).Sockets.[socketId].Ipv4Binding.Value.Endpoint.Port
+                (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding.Value.Endpoint.Port
             | other -> failwith $"%A{other}"
 
         let system = connectTo q Ipv4Address.loopback cPort system
@@ -1549,7 +1549,7 @@ module TestDatagramTransfer =
         let tcpPort =
             match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                (Kernel.machine system).Sockets.[socketId].Ipv4Binding.Value.Endpoint.Port
+                (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding.Value.Endpoint.Port
             | other -> failwith $"%A{other}"
 
         let c, system = senderTo tcpPort system

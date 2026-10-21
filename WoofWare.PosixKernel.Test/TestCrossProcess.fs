@@ -1711,7 +1711,7 @@ module TestCrossProcess =
                 OpenFileTable.descriptions (UnixSystem.openFiles machine)
                 |> shouldEqual Map.empty
 
-                (Kernel.machine machine).Sockets |> shouldEqual Map.empty
+                SocketTable.all (Kernel.machine machine).Sockets |> shouldEqual Map.empty
                 (Kernel.machine machine).Connections |> shouldEqual Map.empty
             | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 

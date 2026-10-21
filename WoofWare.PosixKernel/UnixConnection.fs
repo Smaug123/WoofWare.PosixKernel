@@ -591,7 +591,7 @@ module UnixConnection =
                 Machine =
                     { system.Machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { sock with
                                     Phase = phase
@@ -937,7 +937,7 @@ module UnixConnection =
             else
 
             let listeners =
-                system.Machine.Sockets
+                SocketTable.all system.Machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (otherId, other) ->
                     match other.Phase with
@@ -1080,14 +1080,14 @@ module UnixConnection =
                             { system.Machine with
                                 Sockets =
                                     system.Machine.Sockets
-                                    |> Map.add
+                                    |> SocketTable.set
                                         socketId
                                         { sock with
                                             Addressing =
                                                 SocketAddressing.replaceBinding (Some clientBinding) sock.Addressing
                                             Phase = clientPhase
                                         }
-                                    |> Map.add
+                                    |> SocketTable.set
                                         listenerId
                                         { listenerSocket with
                                             Phase =
@@ -1190,7 +1190,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1222,7 +1222,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1256,7 +1256,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1347,7 +1347,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1504,7 +1504,7 @@ module UnixConnection =
                                     Machine =
                                         { machine with
                                             Sockets =
-                                                Map.add
+                                                SocketTable.set
                                                     socketId
                                                     { sock with
                                                         Addressing =
@@ -1567,7 +1567,7 @@ module UnixConnection =
                         Machine =
                             { system.Machine with
                                 Sockets =
-                                    Map.add
+                                    SocketTable.set
                                         socketId
                                         { sock with
                                             Addressing =
@@ -1642,7 +1642,7 @@ module UnixConnection =
                                 Machine =
                                     { system.Machine with
                                         Sockets =
-                                            Map.add
+                                            SocketTable.set
                                                 socketId
                                                 { sock with
                                                     Addressing =
@@ -1722,7 +1722,7 @@ module UnixConnection =
                                     Machine =
                                         { machine with
                                             Sockets =
-                                                Map.add
+                                                SocketTable.set
                                                     socketId
                                                     { sock with
                                                         Addressing =
@@ -1800,7 +1800,7 @@ module UnixConnection =
             // resolved afresh, and how it refuses that is unmeasured.
             let duplicate =
                 flavour = SimulatedUnixFlavour.Darwin
-                && system.Machine.Sockets
+                && SocketTable.all system.Machine.Sockets
                    |> Map.exists (fun otherId other ->
                        otherId <> socketId
                        && other.Kind = SocketKind.Datagram
@@ -1817,7 +1817,7 @@ module UnixConnection =
                     Machine =
                         { system.Machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { sock with
                                         Addressing = SocketAddressing.replaceBinding (Some binding) sock.Addressing
@@ -1833,7 +1833,7 @@ module UnixConnection =
             // the socket connected all the same; one that fails leaves the
             // error pending, as every Linux connect does.
             match flavour with
-            | SimulatedUnixFlavour.Darwin when UnixMachineState.receivesDatagrams sock ->
+            | SimulatedUnixFlavour.Darwin when SocketTable.receivesDatagrams sock ->
                 match DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine) with
                 | Some error, after ->
                     failed
@@ -2247,8 +2247,8 @@ module UnixConnection =
                     { system.Machine with
                         Sockets =
                             system.Machine.Sockets
-                            |> Map.add acceptedId accepted
-                            |> Map.add
+                            |> SocketTable.set acceptedId accepted
+                            |> SocketTable.set
                                 socketId
                                 { listener with
                                     Phase =
@@ -2297,7 +2297,7 @@ module UnixConnection =
         let connectionId = queued.Connection
 
         let sockets =
-            Map.add
+            SocketTable.set
                 socketId
                 { listener with
                     Phase = SocketPhase.Listening listenState
@@ -2309,7 +2309,7 @@ module UnixConnection =
         // once, and only this one held it. Closing the server end leaves the
         // client half-closed, and the connection lives while the client does.
         let clients =
-            sockets
+            SocketTable.all sockets
             |> Map.toList
             |> List.choose (fun (survivorId, survivor) ->
                 match survivor.Phase with
@@ -3014,7 +3014,7 @@ module UnixConnection =
                           transfer
                           system.Machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Phase = phase

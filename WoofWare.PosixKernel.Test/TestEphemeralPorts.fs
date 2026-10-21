@@ -744,7 +744,7 @@ module TestEphemeralPorts =
     /// socket has gone.
     let private orphanedEndpointPorts (system : UnixSystem<int, string>) : Set<uint16> =
         let boundEndpoints =
-            (Kernel.machine system).Sockets
+            SocketTable.all (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.choose (fun (_, socket) ->
                 socket.Ipv4Binding
@@ -797,7 +797,7 @@ module TestEphemeralPorts =
                 let orphaned = orphanedEndpointPorts run'.System
 
                 let reservedOverlap =
-                    (Kernel.machine run'.System).Sockets
+                    SocketTable.all (Kernel.machine run'.System).Sockets
                     |> Map.toList
                     |> List.choose (fun (socketId, socket) ->
                         match socket.Ipv4Binding, socket.Phase with
@@ -818,14 +818,14 @@ module TestEphemeralPorts =
                 // A port a refused connect gave back holds nothing: taking the
                 // socket away changes no conflict a new socket's bind meets
                 // and no port an allocation chooses.
-                for KeyValue (socketId, socket) in (Kernel.machine run'.System).Sockets do
+                for KeyValue (socketId, socket) in SocketTable.all (Kernel.machine run'.System).Sockets do
                     match socket.Ipv4Binding with
                     | Some binding when not (PortHold.isHeld binding.PortHold) ->
                         let machine = Kernel.machine run'.System
 
                         let without =
                             { machine with
-                                Sockets = Map.remove socketId machine.Sockets
+                                Sockets = SocketTable.remove socketId machine.Sockets
                             }
 
                         if invisibleTo (UnixSystem.nanosecondsSinceBoot run'.System) machine without |> not then

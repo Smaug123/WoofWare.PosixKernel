@@ -110,7 +110,7 @@ module TestNonBlocking =
             NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
 
         first |> shouldNotEqual second
-        (Kernel.machine system).Sockets |> Map.count |> shouldEqual 2
+        SocketTable.all (Kernel.machine system).Sockets |> Map.count |> shouldEqual 2
 
         let targetOf fd =
             FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system)

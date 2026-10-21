@@ -94,7 +94,7 @@ module TestPollTimeout =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
                     DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
@@ -118,7 +118,7 @@ module TestPollTimeout =
             (fun machine ->
                 { machine with
                     Sockets =
-                        Map.add
+                        SocketTable.set
                             socketId
                             { socket with
                                 Phase =
@@ -287,7 +287,7 @@ module TestPollTimeout =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Phase = SocketPhase.Refused RefusalError.Pending

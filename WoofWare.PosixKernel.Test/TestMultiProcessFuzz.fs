@@ -2099,7 +2099,7 @@ module TestMultiProcessFuzz =
                 if names then Some pid else None
             )
 
-        (Kernel.machine machine).Sockets
+        SocketTable.all (Kernel.machine machine).Sockets
         |> Map.toList
         |> List.collect (fun (listener, socket) ->
             match socket.Phase with
@@ -2143,7 +2143,7 @@ module TestMultiProcessFuzz =
         =
         queued
         |> List.filter (fun queued ->
-            match Map.tryFind queued.Client (Kernel.machine after).Sockets with
+            match SocketTable.tryFind queued.Client (Kernel.machine after).Sockets with
             | None -> false
             | Some _ ->
 
@@ -2167,7 +2167,7 @@ module TestMultiProcessFuzz =
                     | TcpEndState.Closed _, _ -> false)
 
             let stillQueued =
-                match Map.tryFind queued.Listener (Kernel.machine after).Sockets with
+                match SocketTable.tryFind queued.Listener (Kernel.machine after).Sockets with
                 | Some socket ->
                     match socket.Phase with
                     | SocketPhase.Listening listenState ->
@@ -2181,7 +2181,10 @@ module TestMultiProcessFuzz =
                         $"client %O{queued.Client} was reset while its connection waited in listener %O{queued.Listener}'s queue"
 
                 false
-            elif Map.containsKey queued.Listener (Kernel.machine after).Sockets || accepted then
+            elif
+                SocketTable.containsKey queued.Listener (Kernel.machine after).Sockets
+                || accepted
+            then
                 false
             elif not reset then
                 failwith $"listener %O{queued.Listener} went, and client %O{queued.Client} it queued was not reset"

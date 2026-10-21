@@ -334,7 +334,7 @@ module TestUnconnectedSocketTransfer =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"the dissolve did not complete: %A{other}"
 
-        let before = (Kernel.machine system).Sockets.[socketId]
+        let before = (UnixMachineState.socket socketId (Kernel.machine system))
         before.Phase |> shouldEqual SocketPhase.Idle
 
         before.Ipv4Binding
@@ -345,7 +345,7 @@ module TestUnconnectedSocketTransfer =
         | Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EDESTADDRREQ), after)) ->
             let low, high = UnixSystem.ephemeralPortRange system
 
-            match (Kernel.machine after).Sockets.[socketId].Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine after)).Ipv4Binding with
             | Some binding ->
                 binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
 
@@ -445,8 +445,8 @@ module TestUnconnectedSocketTransfer =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-        let socketBefore = (Kernel.machine before).Sockets.[socketId]
-        let socketAfter = (Kernel.machine after).Sockets.[socketId]
+        let socketBefore = (UnixMachineState.socket socketId (Kernel.machine before))
+        let socketAfter = (UnixMachineState.socket socketId (Kernel.machine after))
 
         // A write is a send call, which marks a UDP socket's receive side
         // (`DatagramReceiver.sent`, a change on Darwin only) whatever it

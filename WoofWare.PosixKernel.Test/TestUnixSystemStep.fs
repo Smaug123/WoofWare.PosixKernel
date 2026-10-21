@@ -318,7 +318,7 @@ module TestUnixSystemStep =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.ofList [ socketZero, socketDescription ]
+                    Sockets = ForgedSocket.table [ socketZero, socketDescription ]
                 }
             )
             system
@@ -339,7 +339,7 @@ module TestUnixSystemStep =
             (fun machine ->
                 { machine with
                     Sockets =
-                        Map.ofList
+                        ForgedSocket.table
                             [
                                 socketZero,
                                 { socketDescription with
@@ -449,7 +449,7 @@ module TestUnixSystemStep =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with
@@ -706,7 +706,7 @@ module TestUnixSystemStep =
             Kernel.mapMachine
                 (fun machine ->
                     { machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
                 )
                 linux
@@ -733,7 +733,7 @@ module TestUnixSystemStep =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     { socket with
@@ -816,7 +816,7 @@ module TestUnixSystemStep =
             Kernel.mapMachine
                 (fun machine ->
                     { machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
                 )
                 flavour
@@ -5699,7 +5699,7 @@ module TestUnixSystemStep =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.ofList [ socketZero, bound ]
+                    Sockets = ForgedSocket.table [ socketZero, bound ]
                 }
             )
             system
@@ -5877,7 +5877,7 @@ module TestUnixSystemStep =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with

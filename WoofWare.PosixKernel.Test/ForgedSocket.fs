@@ -16,7 +16,7 @@ module internal ForgedSocket =
         (machine : UnixMachineState)
         : Map<SocketId, DatagramReceiver>
         =
-        if UnixMachineState.receivesDatagrams socket then
+        if SocketTable.receivesDatagrams socket then
             Map.add
                 socketId
                 (DatagramReceiver.create
@@ -25,3 +25,8 @@ module internal ForgedSocket =
                 machine.DatagramReceivers
         else
             machine.DatagramReceivers
+
+    /// A socket table holding exactly `sockets`.
+    let table (sockets : (SocketId * SocketDescription) list) : SocketTable =
+        (SocketTable.empty, sockets)
+        ||> List.fold (fun table (socketId, socket) -> SocketTable.set socketId socket table)

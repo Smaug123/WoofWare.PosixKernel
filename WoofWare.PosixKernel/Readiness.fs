@@ -182,7 +182,7 @@ module internal LinuxReadiness =
             let socket = UnixMachineState.socket socketId system.Machine
 
             match SocketPhase.connectionEnd socket.Phase with
-            | None when UnixMachineState.receivesDatagrams socket ->
+            | None when SocketTable.receivesDatagrams socket ->
                 // Measured (`udp-release.c` in
                 // docs/plans/2026-10-18-udp-data-path): poll and epoll of a
                 // blocking UDP socket refill its reader queue, and of a

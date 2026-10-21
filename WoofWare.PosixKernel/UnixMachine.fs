@@ -18,7 +18,8 @@ type internal UnixMachineState =
             /// (`UnixProcessState.FileDescriptors`) holds only which of these
             /// each descriptor names.
             OpenFiles : OpenFileTable
-            /// Every socket on the machine, by identity.
+            /// Every socket on the machine, by identity, with its UDP sockets
+            /// indexed by the port each is bound to (`SocketTable`).
             ///
             /// Separate from `OpenFiles` because a socket's lifetime is not
             /// a description's: an `OpenFileTarget.Socket` holds only the
@@ -29,7 +30,7 @@ type internal UnixMachineState =
             /// connection awaiting `accept(2)` is a `TcpConnection` in
             /// `Connections`, not a socket, precisely so this rule can stay
             /// strict.
-            Sockets : Map<SocketId, SocketDescription>
+            Sockets : SocketTable
             /// Every TCP connection the simulated kernel holds: established ends
             /// referenced from a socket's `SocketPhase`, and completed
             /// connections waiting in some listener's accept queue. An entry is
@@ -446,21 +447,11 @@ module UnixMachineState =
     /// `checkInvariants` rejects a machine in which one of those names nothing.
     /// A `None` here would push that impossible case onto every call site.
     let internal socket (socketId : SocketId) (machine : UnixMachineState) : SocketDescription =
-        match Map.tryFind socketId machine.Sockets with
+        match SocketTable.tryFind socketId machine.Sockets with
         | Some socket -> socket
         | None ->
             failwith
                 $"UnixMachineState.socket: %O{socketId} names no socket in this kernel's socket table. Every SocketId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingSocket exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand, rather than anything the simulated process did."
-
-    /// Whether `socket` is a UDP socket, and so has a receive side in
-    /// `DatagramReceivers`: a datagram socket of an Internet domain.
-    let internal receivesDatagrams (socket : SocketDescription) : bool =
-        match socket.Kind, socket.Domain with
-        | SocketKind.Datagram, SocketDomain.Inet
-        | SocketKind.Datagram, SocketDomain.Inet6 -> true
-        | SocketKind.Datagram, SocketDomain.Unix
-        | SocketKind.Stream, _
-        | SocketKind.SeqPacket, _ -> false
 
     /// The receive side of the UDP socket `socketId`. Loudly partial, as
     /// `socket` is: `UnixSystem.checkInvariants` holds every UDP socket to
@@ -708,7 +699,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : SocketId option
         =
-        machine.Sockets
+        SocketTable.all machine.Sockets
         |> Map.tryFindKey (fun _ socket -> SocketPhase.connectionEnd socket.Phase = Some (connectionId, connectionEnd))
 
     /// The readiness a socket presents right now, before any waiter's interest
@@ -749,7 +740,7 @@ module UnixMachineState =
                     Out = true
                     Hup = true
                 }
-            | SocketKind.Datagram when receivesDatagrams target ->
+            | SocketKind.Datagram when SocketTable.receivesDatagrams target ->
                 // Measured (`udp-transfer.c` G1 to G4, L1 and L5, in
                 // docs/plans/2026-10-18-udp-data-path): OUT always, since a
                 // UDP send never waits; IN while a datagram is queued; ERR
@@ -927,7 +918,7 @@ module UnixMachineState =
         let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
         let unconnected =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.choose (fun (socketId, socket) ->
                 match socket.Ipv4Binding, SocketPhase.connectionEnd socket.Phase with
@@ -951,7 +942,7 @@ module UnixMachineState =
             | SocketKind.Stream ->
 
             let socketsByEnd : Map<ConnectionId * ConnectionEnd, SocketId * SocketDescription> =
-                machine.Sockets
+                SocketTable.all machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (socketId, socket) ->
                     SocketPhase.connectionEnd socket.Phase

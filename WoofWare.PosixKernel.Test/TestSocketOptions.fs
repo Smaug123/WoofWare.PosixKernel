@@ -603,7 +603,7 @@ module TestSocketOptions =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { UnixMachineState.socket socketId machine with
                                     Addressing =

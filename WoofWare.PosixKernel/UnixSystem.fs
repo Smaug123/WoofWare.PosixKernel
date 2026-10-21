@@ -908,6 +908,10 @@ type UnixSystemDefect<'Thread> =
     /// A UDP socket's receive side breaks its flavour's accounting
     /// (`DatagramReceiver.violations`), or was made for the other flavour.
     | DatagramReceiverBroken of socket : SocketId * violations : string list
+    /// The socket table's index of the UDP sockets by the port each is bound
+    /// to is not what its sockets say, so a datagram would miss a socket
+    /// that should take it.
+    | StaleDatagramPortIndex
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -1321,7 +1325,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : SocketDescription option
         =
-        Map.tryFind socketId system.Machine.Sockets
+        SocketTable.tryFind socketId system.Machine.Sockets
 
     /// The kqueue of the sleeping Darwin `poll` whose park names `queue`
     /// (`ParkedKqueuePoll.Queue`), or `None` if the machine holds none by that
@@ -2003,13 +2007,13 @@ module UnixSystem =
 
         let dangling =
             named
-            |> List.filter (fun (_, socketId) -> not (Map.containsKey socketId machine.Sockets))
+            |> List.filter (fun (_, socketId) -> not (SocketTable.containsKey socketId machine.Sockets))
             |> List.map UnixSystemDefect.DanglingSocket
 
         let namedIds = named |> List.map snd |> Set.ofList
 
         let unreferenced =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.map fst
             |> List.filter (fun socketId -> not (Set.contains socketId namedIds))
@@ -2019,8 +2023,8 @@ module UnixSystem =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
             [
-                for KeyValue (socketId, socket) in machine.Sockets do
-                    if UnixMachineState.receivesDatagrams socket then
+                for KeyValue (socketId, socket) in SocketTable.all machine.Sockets do
+                    if SocketTable.receivesDatagrams socket then
                         match Map.tryFind socketId machine.DatagramReceivers with
                         | None -> UnixSystemDefect.UdpSocketWithoutReceiver socketId
                         | Some receiver ->
@@ -2036,17 +2040,23 @@ module UnixSystem =
                             if not violations.IsEmpty then
                                 UnixSystemDefect.DatagramReceiverBroken (socketId, violations)
                 for KeyValue (socketId, _) in machine.DatagramReceivers do
-                    match Map.tryFind socketId machine.Sockets with
-                    | Some socket when UnixMachineState.receivesDatagrams socket -> ()
+                    match SocketTable.tryFind socketId machine.Sockets with
+                    | Some socket when SocketTable.receivesDatagrams socket -> ()
                     | Some _
                     | None -> UnixSystemDefect.ReceiverWithoutUdpSocket socketId
             ]
+
+        let datagramPortIndex =
+            if SocketTable.indexFresh machine.Sockets then
+                []
+            else
+                [ UnixSystemDefect.StaleDatagramPortIndex ]
 
         // Against the table rather than against the descriptions: the table is
         // where a socket lives, so it is the table that must stay below the
         // counter even once a socket can outlive every descriptor of it.
         let freshness =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.map fst
             |> List.filter (fun socketId -> socketId >= machine.NextSocketId)
@@ -2263,7 +2273,7 @@ module UnixSystem =
         // (`Some`), or through an accept queue (`None`), which has its own
         // defect case and its own no-duplicates rule.
         let connectionReferences =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.collect (fun (socketId, socket) ->
                 match socket.Phase with
@@ -2454,7 +2464,7 @@ module UnixSystem =
             sysctls @ entries
 
         let phaseKindMismatches =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.choose (fun (socketId, socket) ->
                 let mismatched =
@@ -2475,7 +2485,7 @@ module UnixSystem =
             match SimulatedUnixPlatform.flavour machine.UnixPlatform with
             | SimulatedUnixFlavour.Darwin -> []
             | SimulatedUnixFlavour.Linux ->
-                machine.Sockets
+                SocketTable.all machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (socketId, socket) ->
                     match socket.Phase with
@@ -2585,7 +2595,7 @@ module UnixSystem =
                        |> Option.exists (fun holds -> holds > 0)
                     ->
                     // A description onto an absent socket is `DanglingSocket`'s.
-                    match Map.tryFind socketId machine.Sockets with
+                    match SocketTable.tryFind socketId machine.Sockets with
                     | Some socket when ObjectLifetime.lingerCanRefuseRelease socket ->
                         Some (UnixSystemDefect.LingeringSocketHeldOnlyByCalls (id, socketId))
                     | Some _
@@ -2684,7 +2694,7 @@ module UnixSystem =
 
         // Addresses no bind, listen or connect could have produced.
         let bindings =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.collect (fun (socketId, socket) ->
                 let unboundListener =
@@ -3165,6 +3175,7 @@ module UnixSystem =
         dangling
         @ unreferenced
         @ receivers
+        @ datagramPortIndex
         @ freshness
         @ foreignObjects
         @ danglingInodes
@@ -3302,7 +3313,7 @@ module UnixSystem =
                     let connected =
                         match found.Target with
                         | OpenFileTarget.Socket socketId ->
-                            match Map.tryFind socketId system.Machine.Sockets with
+                            match SocketTable.tryFind socketId system.Machine.Sockets with
                             | Some socket -> (SocketPhase.connectionEnd socket.Phase).IsSome
                             | None -> false
                         | OpenFileTarget.File _
@@ -3518,7 +3529,7 @@ module UnixSystem =
                                     FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
                                 with
                                 | Some (OpenFileTarget.Socket socketId) as target ->
-                                    match Map.tryFind socketId system.Machine.Sockets with
+                                    match SocketTable.tryFind socketId system.Machine.Sockets with
                                     | Some socket when DarwinReadiness.modelsSocket socket ->
                                         if
                                             not (List.contains key queue.Active)
@@ -3589,7 +3600,7 @@ module UnixSystem =
                         let listening =
                             match description.Target with
                             | OpenFileTarget.Socket socketId ->
-                                match Map.tryFind socketId system.Machine.Sockets with
+                                match SocketTable.tryFind socketId system.Machine.Sockets with
                                 | Some {
                                            Phase = SocketPhase.Listening listenState
                                        } -> Some listenState.Drained
@@ -4231,7 +4242,7 @@ module UnixSystem =
             Machine =
                 {
                     OpenFiles = OpenFileTable.empty
-                    Sockets = Map.empty
+                    Sockets = SocketTable.empty
                     Pipes = Map.empty
                     NextPipeId = PipeId 0L
                     // Any start would do; one, because no filesystem hands out
