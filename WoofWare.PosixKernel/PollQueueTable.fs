@@ -1,9 +1,11 @@
 namespace WoofWare.PosixKernel
 
 /// The kqueue of every Darwin `poll(2)` asleep on the machine (`PollQueue`), by
-/// identity, and an index of them that a close reads: which queues registered
-/// through each descriptor of each process, as Darwin keeps a list per
-/// descriptor of the knotes made through it (`fd_knlist`).
+/// identity, and two indexes of them: which queues registered through each
+/// descriptor of each process, which a close reads, as Darwin keeps a list per
+/// descriptor of the knotes made through it (`fd_knlist`); and which queues
+/// registered each socket, which a wake of the socket reads, as XNU hangs a
+/// socket's knotes off the socket.
 ///
 /// The representation is private to this file, so every change to a queue
 /// goes through `add`, `set`, `remove`, `map` or `dropRegistrationsThrough`,
@@ -17,6 +19,11 @@ type internal PollQueueTable =
             /// queue's owner and the descriptor, by the value of each queue's
             /// identity, and the filters it registers through the descriptor.
             Through : Map<int64, Map<int64, Set<KqueueFilter>>>
+            /// The queues with a registration attached to each socket
+            /// (`PollRegistration.Socket`), keyed by the socket's value, by
+            /// the value of each queue's identity, and the keys it registers
+            /// the socket under.
+            OnSocket : Map<int64, Map<int64, Set<int * KqueueFilter>>>
         }
 
 [<RequireQualifiedAccess>]
@@ -27,6 +34,7 @@ module internal PollQueueTable =
         {
             Queues = Map.empty
             Through = Map.empty
+            OnSocket = Map.empty
         }
 
     /// Every queue, by its identity.
@@ -35,24 +43,39 @@ module internal PollQueueTable =
     /// The queue `id`, if the machine holds it.
     let tryFind (id : PollQueueId) (table : PollQueueTable) : PollQueue option = Map.tryFind id table.Queues
 
-    /// `index` with each registration of `queue`, the queue `id`, filed in it
-    /// by `file`.
+    /// `table`'s indexes with each registration of `queue`, the queue `id`,
+    /// filed in them (`filing` true) or no longer filed.
     let private fileQueue
-        (file :
-            int64
-                -> int64
-                -> KqueueFilter
-                -> Map<int64, Map<int64, Set<KqueueFilter>>>
-                -> Map<int64, Map<int64, Set<KqueueFilter>>>)
+        (filing : bool)
         (PollQueueId raw)
         (queue : PollQueue)
-        (index : Map<int64, Map<int64, Set<KqueueFilter>>>)
-        : Map<int64, Map<int64, Set<KqueueFilter>>>
+        (table : PollQueueTable)
+        : PollQueueTable
         =
-        (index, queue.Registrations)
-        ||> Map.fold (fun index (fd, filter) _ ->
-            file (RegistrationIndex.throughDescriptor queue.Owner fd) raw filter index
-        )
+        let file (key : 'Key) (distinct : 'Distinct) (index : Map<'Key, Map<int64, Set<'Distinct>>>) =
+            if filing then
+                RegistrationIndex.file key raw distinct index
+            else
+                RegistrationIndex.unfile key raw distinct index
+
+        let through, onSocket =
+            ((table.Through, table.OnSocket), queue.Registrations)
+            ||> Map.fold (fun (through, onSocket) (fd, filter as key) registration ->
+                let through =
+                    file (RegistrationIndex.throughDescriptor queue.Owner fd) filter through
+
+                let onSocket =
+                    match registration.Socket with
+                    | Some (SocketId socket) -> file socket key onSocket
+                    | None -> onSocket
+
+                through, onSocket
+            )
+
+        { table with
+            Through = through
+            OnSocket = onSocket
+        }
 
     /// Whether `before` and `after`, states of one queue, are certainly filed
     /// alike in the index: they share their owner and their registrations.
@@ -61,7 +84,7 @@ module internal PollQueueTable =
         before.Owner = after.Owner
         && LanguagePrimitives.PhysicalEquality before.Registrations after.Registrations
 
-    /// `table`'s index with the queue `id` filed as `after` says rather than
+    /// `table`'s indexes with the queue `id` filed as `after` says rather than
     /// as `before` does, where an absent queue is filed under nothing: in time
     /// logarithmic in the index for each registration of either, unless they
     /// are certainly filed alike (`filedAlike`).
@@ -82,19 +105,14 @@ module internal PollQueueTable =
         if alike then
             table
         else
-            let through =
+            let table =
                 match before with
-                | Some before -> fileQueue RegistrationIndex.unfile id before table.Through
-                | None -> table.Through
+                | Some before -> fileQueue false id before table
+                | None -> table
 
-            let through =
-                match after with
-                | Some after -> fileQueue RegistrationIndex.file id after through
-                | None -> through
-
-            { table with
-                Through = through
-            }
+            match after with
+            | Some after -> fileQueue true id after table
+            | None -> table
 
     /// `table` holding `queue` as the new queue `id`. Loudly partial on an
     /// identity the table already holds: a new queue's identity is fresh.
@@ -159,6 +177,21 @@ module internal PollQueueTable =
         |> Seq.map (fun (KeyValue (queue, _)) -> PollQueueId queue)
         |> List.ofSeq
 
+    /// The queues with a registration attached to the socket `socketId`, in
+    /// identity order, each with the keys it registers the socket under, in
+    /// time logarithmic in the number of registrations and linear in the
+    /// number of queues answered.
+    let registeringOnSocket
+        (socketId : SocketId)
+        (table : PollQueueTable)
+        : (PollQueueId * Set<int * KqueueFilter>) list
+        =
+        let (SocketId socket) = socketId
+
+        RegistrationIndex.membersUnder socket table.OnSocket
+        |> Seq.map (fun (KeyValue (queue, keys)) -> PollQueueId queue, keys)
+        |> List.ofSeq
+
     /// `table` with every registration made through the descriptor `fd`
     /// removed from every queue the process `owner`'s polls made, active or
     /// not: what closing `fd` does to them. Visits only the queues with such a
@@ -180,10 +213,10 @@ module internal PollQueueTable =
                     $"PollQueueTable.dropRegistrationsThrough: the index says %O{id} is a queue of process %O{owner} registering through fd %d{fd}, but it is %A{other} (this is a bug in this library)."
         )
 
-    /// Whether the index is that of the queues, as adding each afresh would
-    /// build it.
+    /// Whether the indexes are those of the queues, as adding each afresh
+    /// would build them.
     let indexFresh (table : PollQueueTable) : bool =
         let fresh =
             (empty, table.Queues) ||> Map.fold (fun fresh id queue -> add id queue fresh)
 
-        fresh.Through = table.Through
+        fresh.Through = table.Through && fresh.OnSocket = table.OnSocket

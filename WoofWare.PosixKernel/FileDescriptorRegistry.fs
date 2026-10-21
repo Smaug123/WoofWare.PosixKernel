@@ -1423,16 +1423,41 @@ module internal RegistrationIndex =
 /// inode (`i_fsnotify_marks`); the descriptions opened through each name, as
 /// Linux's descriptions share the name's dentry; the inodes the descriptions
 /// hold; and how many inotify instances and watches each user holds, as
-/// Linux counts them per user (`ucounts`).
+/// Linux counts them per user (`ucounts`). And two are what a wake of a
+/// socket or a pipe reads: the descriptions of each socket and each pipe end,
+/// as Linux reaches a socket's or a pipe's file from the object; and the
+/// kqueues registering each socket, as XNU hangs a socket's knotes off the
+/// socket (`so_rcv.sb_sel`, `so_snd.sb_sel`).
 ///
 /// The representation is private to this module, so every change to an
-/// entry goes through `add`, `remove` or `map`, or through one of the
+/// entry goes through `add` or `remove`, or through one of the
 /// functions that change one registration of an epoll instance or a kqueue
 /// (`registerInEpoll` and its kin) or one watch of an inotify instance
-/// (`setInotifyWatch`, `removeInotifyWatch`), which keep the indexes, and
-/// nothing else can change one.
+/// (`setInotifyWatch`, `removeInotifyWatch`), which keep the indexes, or
+/// through `signalEpolls`, which changes only ready lists, and nothing else
+/// can change one.
 [<RequireQualifiedAccess>]
 module private OpenFileEntries =
+
+    /// An object a wake is for, under which the descriptions of it are
+    /// filed.
+    [<RequireQualifiedAccess>]
+    type Named =
+        | Socket of socket : int64
+        | PipeEnd of pipe : int64 * pipeEnd : PipeEnd
+
+    /// The object `target` is, if a wake can be for it.
+    let private namedBy (target : OpenFileTarget) : Named option =
+        match target with
+        | OpenFileTarget.Socket (SocketId socket) -> Some (Named.Socket socket)
+        | OpenFileTarget.Pipe (PipeId pipe, pipeEnd) -> Some (Named.PipeEnd (pipe, pipeEnd))
+        | OpenFileTarget.File _
+        | OpenFileTarget.Directory _
+        | OpenFileTarget.CharacterDevice _
+        | OpenFileTarget.Fifo _
+        | OpenFileTarget.Kqueue _
+        | OpenFileTarget.Inotify _
+        | OpenFileTarget.Epoll _ -> None
 
     /// How many live descriptions name each end of one pipe.
     [<Struct>]
@@ -1469,6 +1494,15 @@ module private OpenFileEntries =
                 /// identity, and the filters it registers through the
                 /// descriptor.
                 KqueuesThrough : Map<int64, Map<int64, Set<KqueueFilter>>>
+                /// The kqueues with a registration attached to each socket
+                /// (`KqueueRegistration.Socket`), keyed by the socket's value,
+                /// by the value of each kqueue's identity, and the keys it
+                /// registers the socket under.
+                KqueuesOnSocket : Map<int64, Map<int64, Set<int * KqueueFilter>>>
+                /// The values of the identities of the live descriptions of
+                /// each socket and each pipe end. An object no live
+                /// description is of has no key.
+                Naming : Map<Named, Set<int64>>
                 /// The inotify instances with a watch on each inode, keyed by
                 /// the inode's value, by the value of each instance's
                 /// identity, and the values of the descriptors of its watches
@@ -1504,6 +1538,8 @@ module private OpenFileEntries =
             Flocks = Map.empty
             EpollsRegistering = Map.empty
             KqueuesThrough = Map.empty
+            KqueuesOnSocket = Map.empty
+            Naming = Map.empty
             WatchesOn = Map.empty
             InotifyInstancesOf = Map.empty
             InotifyWatchesOf = Map.empty
@@ -1578,9 +1614,32 @@ module private OpenFileEntries =
                 else
                     Map.add object held entries.Flocks
 
+        let naming =
+            match namedBy entry.Description.Target with
+            | None -> entries.Naming
+            | Some named ->
+                let (OpenFileDescriptionId raw) = id
+                let filed = Map.tryFind named entries.Naming |> Option.defaultValue Set.empty
+
+                let filed =
+                    if step > 0 then
+                        Set.add raw filed
+                    else
+                        if not (Set.contains raw filed) then
+                            failwith
+                                $"OpenFileEntries: description %d{raw} of %A{named} left the table without having been filed under it (this is a bug in this library)."
+
+                        Set.remove raw filed
+
+                if Set.isEmpty filed then
+                    Map.remove named entries.Naming
+                else
+                    Map.add named filed entries.Naming
+
         { entries with
             PipeEnds = pipeEnds
             Flocks = flocks
+            Naming = naming
         }
 
     /// `counts` with `step` added to the count under `key`, and no key for a
@@ -1631,14 +1690,17 @@ module private OpenFileEntries =
                 EpollsRegistering = epolls
             }
         | OpenFileTarget.Kqueue state ->
-            let kqueues =
-                (entries.KqueuesThrough, state.Registrations)
-                ||> Map.fold (fun kqueues (fd, filter) _ ->
-                    file (RegistrationIndex.throughDescriptor state.Owner fd) filter kqueues
+            let kqueues, onSocket =
+                ((entries.KqueuesThrough, entries.KqueuesOnSocket), state.Registrations)
+                ||> Map.fold (fun (kqueues, onSocket) (fd, filter as key) registration ->
+                    let (SocketId socket) = registration.Socket
+
+                    file (RegistrationIndex.throughDescriptor state.Owner fd) filter kqueues, file socket key onSocket
                 )
 
             { entries with
                 KqueuesThrough = kqueues
+                KqueuesOnSocket = onSocket
             }
         | OpenFileTarget.Inotify state ->
             let owner = UserId.toUInt32 state.Owner
@@ -1854,56 +1916,6 @@ module private OpenFileEntries =
                 All = Map.remove id entries.All
             }
 
-    /// Whether `before` and `after`, entries of the description `id`, are
-    /// certainly counted alike in the indexes: onto the same pipe end or none,
-    /// holding the same lock on the same object or none, filed alike in the
-    /// registration and watch indexes (`registersAlike`), and in those of
-    /// names and held inodes (`namedAlike`).
-    let private indexedAlike (id : OpenFileDescriptionId) (before : OpenFileEntry) (after : OpenFileEntry) : bool =
-        LanguagePrimitives.PhysicalEquality before after
-        || (match before.Description.Target, after.Description.Target with
-            | OpenFileTarget.Pipe (PipeId first, firstEnd), OpenFileTarget.Pipe (PipeId second, secondEnd) ->
-                first = second && firstEnd = secondEnd
-            | OpenFileTarget.Pipe _, _
-            | _, OpenFileTarget.Pipe _ -> false
-            | _, _ -> true)
-           && before.Description.Flock = after.Description.Flock
-           && (before.Description.Flock.IsNone
-               || OpenFileDescription.object id before.Description = OpenFileDescription.object id after.Description)
-           && registersAlike before after
-           && namedAlike before after
-
-    /// `entries` with each description's entry rewritten by `f`, in time
-    /// linear in the number of entries, plus, for each entry `f` counts
-    /// differently in the indexes (`indexedAlike`), time logarithmic in their
-    /// size and linear in what that entry registers.
-    let map (f : OpenFileDescriptionId -> OpenFileEntry -> OpenFileEntry) (entries : Entries) : Entries =
-        // Map.map keeps the map's shape, which adding each entry again would
-        // not: a rename rewrites every description onto an inode.
-        let recounted =
-            ResizeArray<struct (OpenFileDescriptionId * OpenFileEntry * OpenFileEntry)> ()
-
-        let all =
-            entries.All
-            |> Map.map (fun id entry ->
-                let rewritten = f id entry
-
-                if not (indexedAlike id entry rewritten) then
-                    recounted.Add (struct (id, entry, rewritten))
-
-                rewritten
-            )
-
-        ({ entries with
-            All = all
-         },
-         recounted)
-        ||> Seq.fold (fun entries (struct (id, before, after)) ->
-            count 1 id after (count -1 id before entries)
-            |> refileRegistrations id (Some before) (Some after)
-            |> refileNames id (Some before) (Some after)
-        )
-
     /// Entries of exactly the descriptions in `all`.
     let ofMap (all : Map<OpenFileDescriptionId, OpenFileEntry>) : Entries =
         (empty, all) ||> Map.fold (fun entries id entry -> add id entry entries)
@@ -2056,6 +2068,17 @@ module private OpenFileEntries =
             entries.KqueuesThrough
             |> RegistrationIndex.file (RegistrationIndex.throughDescriptor state.Owner fd) raw filter
 
+        let onSocket =
+            match Map.tryFind key state.Registrations with
+            | Some replaced ->
+                let (SocketId socket) = replaced.Socket
+                RegistrationIndex.unfile socket raw key entries.KqueuesOnSocket
+            | None -> entries.KqueuesOnSocket
+
+        let onSocket =
+            let (SocketId socket) = registration.Socket
+            RegistrationIndex.file socket raw key onSocket
+
         let state =
             { state with
                 Registrations = Map.add key registration state.Registrations
@@ -2064,6 +2087,7 @@ module private OpenFileEntries =
         { entries with
             All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
             KqueuesThrough = filed
+            KqueuesOnSocket = onSocket
         }
 
     /// `entries` with the live kqueue `kqueue` registering nothing under any
@@ -2079,15 +2103,19 @@ module private OpenFileEntries =
         let entry, state = kqueueEntry "unregisterFromKqueue" kqueue entries
         let (OpenFileDescriptionId raw) = kqueue
 
-        let registrations, filed =
-            ((state.Registrations, entries.KqueuesThrough), keys)
-            ||> Set.fold (fun (registrations, filed) (fd, filter as key) ->
-                if not (Map.containsKey key registrations) then
+        let registrations, filed, onSocket =
+            ((state.Registrations, entries.KqueuesThrough, entries.KqueuesOnSocket), keys)
+            ||> Set.fold (fun (registrations, filed, onSocket) (fd, filter as key) ->
+                match Map.tryFind key registrations with
+                | None ->
                     failwith
                         $"OpenFileEntries.unregisterFromKqueue: kqueue %O{kqueue} registers nothing under %A{key} (this is a bug in this library)."
+                | Some removed ->
+                    let (SocketId socket) = removed.Socket
 
-                Map.remove key registrations,
-                RegistrationIndex.unfile (RegistrationIndex.throughDescriptor state.Owner fd) raw filter filed
+                    Map.remove key registrations,
+                    RegistrationIndex.unfile (RegistrationIndex.throughDescriptor state.Owner fd) raw filter filed,
+                    RegistrationIndex.unfile socket raw key onSocket
             )
 
         let state =
@@ -2099,7 +2127,75 @@ module private OpenFileEntries =
         { entries with
             All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
             KqueuesThrough = filed
+            KqueuesOnSocket = onSocket
         }
+
+    /// The values of the identities of the live descriptions of `named`.
+    let naming (named : Named) (entries : Entries) : Set<int64> =
+        Map.tryFind named entries.Naming |> Option.defaultValue Set.empty
+
+    /// The kqueues with a registration attached to the socket `socket`, by the
+    /// values of their identities, and the keys each registers it under.
+    let kqueuesOnSocket (SocketId socket) (entries : Entries) : Map<int64, Set<int * KqueueFilter>> =
+        RegistrationIndex.membersUnder socket entries.KqueuesOnSocket
+
+    /// `entries` with every registration of a description in `naming` that a
+    /// wake with `wakeKey` makes pending appended to its epoll instance's
+    /// ready list (see `OpenFileTable.signalEpollInstances`): visiting only
+    /// the instances that register one of `naming` (`epollsRegistering`), and
+    /// in each only the registrations of those.
+    let signalEpolls (naming : Set<OpenFileDescriptionId>) (wakeKey : uint32 option) (entries : Entries) : Entries =
+        let keysByEpoll =
+            (Map.empty, naming)
+            ||> Set.fold (fun keysByEpoll (OpenFileDescriptionId raw as target) ->
+                (keysByEpoll, RegistrationIndex.membersUnder raw entries.EpollsRegistering)
+                ||> Map.fold (fun keysByEpoll epoll fds ->
+                    let keys = Map.tryFind epoll keysByEpoll |> Option.defaultValue Set.empty
+                    Map.add epoll (fds |> Set.fold (fun keys fd -> Set.add (fd, target) keys) keys) keysByEpoll
+                )
+            )
+
+        (entries, keysByEpoll)
+        ||> Map.fold (fun entries epoll keys ->
+            let epoll = OpenFileDescriptionId epoll
+            let entry, state = epollEntry "signalEpolls" epoll entries
+
+            // In key order, as the registrations are held, before the sort,
+            // which is stable.
+            let entering =
+                keys
+                |> Set.toList
+                |> List.map (fun key ->
+                    match Map.tryFind key state.Registrations with
+                    | Some registration -> key, registration
+                    | None ->
+                        failwith
+                            $"OpenFileEntries.signalEpolls: the index says epoll instance %O{epoll} registers %A{key}, which it does not (this is a bug in this library)."
+                )
+                |> List.filter (fun (key, registration) ->
+                    EpollRegistration.isArmed registration
+                    && not (List.contains key state.Ready)
+                    && (
+                        match wakeKey with
+                        | None -> true
+                        | Some key -> key &&& registration.Events <> 0u
+                    )
+                )
+                |> List.sortByDescending (fun (_, registration) -> registration.RegisteredAt)
+                |> List.map fst
+
+            match entering with
+            | [] -> entries
+            | entering ->
+                let state =
+                    { state with
+                        Ready = state.Ready @ entering
+                    }
+
+                { entries with
+                    All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+                }
+        )
 
     /// The inotify instances with a watch on `inode`, by the values of their
     /// identities, and the values of the descriptors of their watches on it.
@@ -2225,6 +2321,8 @@ module private OpenFileEntries =
         && fresh.Flocks = entries.Flocks
         && fresh.EpollsRegistering = entries.EpollsRegistering
         && fresh.KqueuesThrough = entries.KqueuesThrough
+        && fresh.KqueuesOnSocket = entries.KqueuesOnSocket
+        && fresh.Naming = entries.Naming
         && fresh.WatchesOn = entries.WatchesOn
         && fresh.InotifyInstancesOf = entries.InotifyInstancesOf
         && fresh.InotifyWatchesOf = entries.InotifyWatchesOf
@@ -2608,6 +2706,37 @@ module OpenFileTable =
         =
         OpenFileEntries.kqueuesThrough owner fd table.Entries
         |> Seq.map (fun (KeyValue (kqueue, _)) -> OpenFileDescriptionId kqueue)
+        |> List.ofSeq
+
+    /// The live descriptions of the socket `socketId`.
+    let internal descriptionsNamingSocket (socketId : SocketId) (table : OpenFileTable) : Set<OpenFileDescriptionId> =
+        let (SocketId socket) = socketId
+
+        OpenFileEntries.naming (OpenFileEntries.Named.Socket socket) table.Entries
+        |> Set.map OpenFileDescriptionId
+
+    /// The live descriptions of the `pipeEnd` end of `pipeId`.
+    let internal descriptionsNamingPipeEnd
+        (pipeId : PipeId)
+        (pipeEnd : PipeEnd)
+        (table : OpenFileTable)
+        : Set<OpenFileDescriptionId>
+        =
+        let (PipeId pipe) = pipeId
+
+        OpenFileEntries.naming (OpenFileEntries.Named.PipeEnd (pipe, pipeEnd)) table.Entries
+        |> Set.map OpenFileDescriptionId
+
+    /// The kqueues with a registration attached to the socket `socketId`
+    /// (`KqueueRegistration.Socket`), in identity order, each with the keys
+    /// it registers the socket under.
+    let internal kqueuesOnSocket
+        (socketId : SocketId)
+        (table : OpenFileTable)
+        : (OpenFileDescriptionId * Set<int * KqueueFilter>) list
+        =
+        OpenFileEntries.kqueuesOnSocket socketId table.Entries
+        |> Seq.map (fun (KeyValue (kqueue, keys)) -> OpenFileDescriptionId kqueue, keys)
         |> List.ofSeq
 
     /// The inode a description of `target` is onto, if it is onto one: a
@@ -3457,52 +3586,10 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        let entries =
-            table.Entries
-            |> OpenFileEntries.map (fun _ entry ->
-                match entry.Description.Target with
-                | OpenFileTarget.Kqueue _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> entry
-                | OpenFileTarget.Epoll epollState ->
-                    let entering =
-                        epollState.Registrations
-                        |> Map.toList
-                        |> List.filter (fun ((_, targetId as key), registration) ->
-                            Set.contains targetId naming
-                            && EpollRegistration.isArmed registration
-                            && not (List.contains key epollState.Ready)
-                            && (
-                                match wakeKey with
-                                | None -> true
-                                | Some key -> key &&& registration.Events <> 0u
-                            )
-                        )
-                        |> List.sortByDescending (fun (_, registration) -> registration.RegisteredAt)
-                        |> List.map fst
-
-                    match entering with
-                    | [] -> entry
-                    | entering ->
-                        { entry with
-                            Description =
-                                { entry.Description with
-                                    Target =
-                                        OpenFileTarget.Epoll
-                                            { epollState with
-                                                Ready = epollState.Ready @ entering
-                                            }
-                                }
-                        }
-            )
-
+        // Only the instances that register one of `naming` are visited, so a
+        // wake costs time in what watches its object, not in the table.
         { table with
-            Entries = entries
+            Entries = OpenFileEntries.signalEpolls naming wakeKey table.Entries
         }
 
     /// The state of the inotify instance `instance` names. Loudly partial on a

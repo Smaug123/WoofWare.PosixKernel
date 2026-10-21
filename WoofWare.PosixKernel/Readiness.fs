@@ -774,51 +774,67 @@ module internal KqueueQueue =
     /// an event one process's call causes activates another's registrations
     /// as its own.
     let activate (socketId : SocketId) (filters : KqueueFilter list) (machine : UnixMachineState) : UnixMachineState =
+        // Only the kqueues and poll queues registering the socket are
+        // visited, through their indexes by socket, so an event costs time in
+        // what watches the socket rather than in the machine.
         let openFiles =
-            (machine.OpenFiles, OpenFileTable.toSeq machine.OpenFiles |> Seq.toList)
-            ||> List.fold (fun openFiles (kqueue, description) ->
-                match description.Target with
-                | OpenFileTarget.Kqueue state ->
-                    let registrations =
-                        state.Registrations
-                        |> Map.toList
-                        |> List.map (fun (key, registration) ->
-                            key, Some registration.Socket, registration.RegisteredAt
-                        )
+            (machine.OpenFiles, OpenFileTable.kqueuesOnSocket socketId machine.OpenFiles)
+            ||> List.fold (fun openFiles (kqueue, keys) ->
+                let state =
+                    match OpenFileTable.tryFind kqueue machine.OpenFiles with
+                    | Some {
+                               Target = OpenFileTarget.Kqueue state
+                           } -> state
+                    | other ->
+                        failwith
+                            $"KqueueQueue.activate: the index says %O{kqueue} is a kqueue registering %O{socketId}, but it is %A{other} (this is a bug in this library)."
 
-                    match entering socketId filters registrations state.Active machine with
-                    | [] -> openFiles
-                    | entering ->
-                        OpenFileTable.setKqueueState
-                            kqueue
-                            { state with
-                                Active = state.Active @ entering
-                            }
-                            openFiles
-                | OpenFileTarget.Epoll _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> openFiles
+                let registrations =
+                    keys
+                    |> Set.toList
+                    |> List.map (fun key ->
+                        let registration = Map.find key state.Registrations
+                        key, Some registration.Socket, registration.RegisteredAt
+                    )
+
+                match entering socketId filters registrations state.Active machine with
+                | [] -> openFiles
+                | entering ->
+                    OpenFileTable.setKqueueState
+                        kqueue
+                        { state with
+                            Active = state.Active @ entering
+                        }
+                        openFiles
             )
 
         let pollQueues =
-            machine.PollQueues
-            |> PollQueueTable.map (fun queue ->
+            (machine.PollQueues, PollQueueTable.registeringOnSocket socketId machine.PollQueues)
+            ||> List.fold (fun pollQueues (id, keys) ->
+                let queue =
+                    match PollQueueTable.tryFind id machine.PollQueues with
+                    | Some queue -> queue
+                    | None ->
+                        failwith
+                            $"KqueueQueue.activate: the index says %O{id} registers %O{socketId}, but the machine holds no such queue (this is a bug in this library)."
+
                 let registrations =
-                    queue.Registrations
-                    |> Map.toList
-                    |> List.map (fun (key, registration) -> key, registration.Socket, int64 registration.RegisteredAt)
+                    keys
+                    |> Set.toList
+                    |> List.map (fun key ->
+                        let registration = Map.find key queue.Registrations
+                        key, registration.Socket, int64 registration.RegisteredAt
+                    )
 
                 match entering socketId filters registrations queue.Active machine with
-                | [] -> queue
+                | [] -> pollQueues
                 | entering ->
-                    { queue with
-                        Active = queue.Active @ entering
-                    }
+                    PollQueueTable.set
+                        id
+                        { queue with
+                            Active = queue.Active @ entering
+                        }
+                        pollQueues
             )
 
         { machine with

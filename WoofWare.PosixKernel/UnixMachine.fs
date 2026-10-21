@@ -516,13 +516,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            match description.Target with
-            | OpenFileTarget.Socket target when target = socketId -> Some descriptionId
-            | _ -> None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingSocket socketId machine.OpenFiles
 
     /// Every live open file description on the machine naming `pipeEnd` of
     /// `pipeId`.
@@ -532,14 +526,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            if description.Target = OpenFileTarget.Pipe (pipeId, pipeEnd) then
-                Some descriptionId
-            else
-                None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingPipeEnd pipeId pipeEnd machine.OpenFiles
 
     /// Whether `pipeEnd` of the pipe `pipeId`, which is `pipe`, is still open:
     /// whether some open file description on the machine names it, or the
