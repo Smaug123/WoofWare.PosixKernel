@@ -523,17 +523,18 @@ Z1 is every `sendto` of six sender states, two buffers, five counts, two flag
 words and seventeen destinations (2040 calls), and Z2 every `recvfrom` of four
 queues, six length cells, three address buffers, two data buffers, three
 counts and four flag words (1728). Z5 puts an unmapped length cell through a
-closed descriptor, a pipe and an empty socket. Each ran on Darwin 27.0.0 three
-times, on Linux 6.18.5 in the container, and on GitHub's runners (6.17.0 and
-7.0.0, x86-64 and aarch64), Z5 apart, which ran on the first two alone. A
+closed descriptor, a pipe and an empty socket, and Z6 puts the length cell at
+the start of the data buffer, so that every write to it shows, even of the
+value it held. Each ran on Darwin 27.0.0 at least three times, on Linux 6.18.5
+in the container, and on GitHub's runners (6.17.0 and 7.0.0, x86-64 and
+aarch64), Z5 and Z6 apart, which ran on the first two alone. A
 script holding the ladders below predicted every call on every kernel, but the
 60 Darwin receives into an unmapped buffer that 3.6 refuses.
 
-The Darwin runs agreed but for one call in one run: of the 510 `MSG_OOB` sends
-from a socket an `AF_UNSPEC` connect had disconnected with the error pending,
-one found the error gone afterwards, which nothing in the row takes. The
-recording is a run where it stayed. `MSG_OOB` is refused, so no test reads
-those rows.
+The Darwin runs agreed but for one call in each of two runs: an `MSG_OOB` send
+from a socket with the error pending, which found the error gone afterwards,
+though nothing in the row takes it. The recording is a run where it stayed.
+`MSG_OOB` is refused, so no test reads those rows.
 
 **`sendto` on Linux**, each rung ahead of the next:
 
@@ -599,10 +600,11 @@ those rows.
 3. the receive: the queue first, then the error, which `MSG_PEEK` leaves
    pending; with neither, 0 for a count of 0 and `EAGAIN` otherwise;
 4. if the receive succeeded and the address is not NULL: a datagram's address
-   is copied to the first `min(length, 16)` bytes, a fault there ignored and
-   the length left as it was, and otherwise the length written is 16; a length
-   of 0, a NULL cell, or a receive of 0 with no datagram writes 0 to the cell
-   and nothing to the address.
+   is copied to the first `min(length, 16)` bytes and the length written is
+   16, but a fault there is ignored, and the length the cell held is written
+   back (Z6); a NULL cell copies nothing and writes nothing; a length of 0, or
+   a receive of 0 with no datagram, writes 0 to the cell and nothing to the
+   address. A NULL source writes nothing to the cell either (Z6).
 
 **Z3.** A Darwin send that only takes a pending error marks the socket as
 having sent, as a datagram does: one another socket's `sendto` erred, then

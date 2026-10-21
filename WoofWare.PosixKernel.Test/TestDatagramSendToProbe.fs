@@ -606,6 +606,90 @@ module TestDatagramSendToProbe =
             Map.ofList [ "answer", $"-1 %O{error}" ]
         | other -> failwith $"recvfrom: %A{other}"
 
+    /// What the model saw of a Z6 row: a `recvfrom` of a datagram of 8 bytes
+    /// into a buffer of 8 that starts with its own length cell, as a client
+    /// makes it, writing what the paused call names before it reads the
+    /// cell, and then what the answer says was written.
+    let private z6 (platform : SimulatedUnixPlatform) (inputs : Map<string, string>) : Map<string, string> =
+        let system = boot platform
+        let r, rport, system = boundAt Ipv4Address.loopback system
+        let t, tport, system = boundAt Ipv4Address.loopback system
+        let system = connectTo t rport system
+        let _, system = send t (ImmutableArray.Create<byte> "abcdefgh"B) system
+        let leader = Callers.leader system
+
+        let buffer = Array.create 8 0xBBuy
+        BinaryPrimitives.WriteUInt32LittleEndian (Span<byte> (buffer, 0, 4), Convert.ToUInt32 (inputs.["start"], 16))
+        let address = Array.create 32 0xAAuy
+
+        let source =
+            match inputs.["address"] with
+            | "null" -> UserBuffer.Unmapped 0UL
+            | "mapped" -> UserBuffer.Mapped
+            | _ -> UserBuffer.Unmapped 1UL
+
+        let flags =
+            if inputs.["flags"] = "peek" then
+                MessageFlag.number (SimulatedUnixPlatform.flavour platform) MessageFlag.Peek
+                |> Option.get
+            else
+                0
+
+        let answer : RecvFromAnswer option =
+            match UnixReadWrite.tryRecvFrom leader r UserBuffer.Mapped 8UL flags source UserBuffer.Mapped system with
+            | Error _ -> None
+            | Ok (CallProgress.Answered (RecvFromOutcome.Answered answer, _)) -> Some answer
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                (PausedRecvFrom.received paused).CopyTo buffer
+
+                let cell =
+                    BinaryPrimitives.ReadUInt32LittleEndian (ReadOnlySpan<byte> (buffer, 0, 4))
+
+                match UnixReadWrite.tryRecvFromWithLength cell paused with
+                | Error _ -> None
+                | Ok (RecvFromOutcome.Answered answer, _) -> Some answer
+                | other -> failwith $"recvfromWithLength: %A{other}"
+            | other -> failwith $"recvfrom: %A{other}"
+
+        match answer with
+        | None -> Map.ofList [ "refused", "" ]
+        | Some answer ->
+
+        let writeCell (length : uint32) =
+            BinaryPrimitives.WriteUInt32LittleEndian (Span<byte> (buffer, 0, 4), length)
+
+        let shown =
+            match answer with
+            | RecvFromAnswer.Received (bytes, returned, copy) ->
+                bytes.CopyTo buffer
+
+                match copy with
+                | PeerAddressCopy.Written (copiedOut, reported) ->
+                    copiedOut.CopyTo address
+                    writeCell (uint32 reported)
+                | PeerAddressCopy.NotRequested -> ()
+
+                $"%d{returned}"
+            | RecvFromAnswer.Failed error -> $"-1 %O{error}"
+            | RecvFromAnswer.FailedAfterReceiving (error, bytes, overwritten) ->
+                bytes.CopyTo buffer
+                overwritten |> Option.iter writeCell
+                $"-1 %O{error}"
+
+        let addressShown =
+            if inputs.["address"] = "mapped" then
+                let port = hex [| byte (tport >>> 8) ; byte tport |]
+                let text = hex (Array.truncate 20 address)
+
+                if text.Substring (4, 4) = port then
+                    text.Substring (0, 4) + "pppp" + text.Substring 8
+                else
+                    text
+            else
+                "-"
+
+        Map.ofList [ "answer", shown ; "buffer", hex buffer ; "addr", addressShown ]
+
     /// What the model saw of a Z4 row (Darwin): what a datagram of 10 bytes
     /// costs a socket after one sendto, or `refused`.
     let private z4 (platform : SimulatedUnixPlatform) (inputs : Map<string, string>) : Map<string, string> =
@@ -649,14 +733,21 @@ module TestDatagramSendToProbe =
     // ------------------------------------------------------------ the tests
 
     /// Whether the model must refuse the row's call rather than answer it:
-    /// `MSG_OOB`, which no send models, and a Darwin receive that would copy
-    /// a datagram into an unmapped buffer (plan section 3.6).
+    /// `MSG_OOB`, which no send models; a Darwin receive that would copy a
+    /// datagram into an unmapped buffer (plan section 3.6); and a Darwin
+    /// receive of a datagram whose source faults, which writes back a length
+    /// above `INT_MAX` that a `PeerAddressCopy` cannot report.
     let private refuses (platform : SimulatedUnixPlatform) (row : Row) : bool =
         let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 
         match row.Section with
         | "Z1" -> row.Inputs.["flags"] = "oob"
         | "Z4" -> row.Inputs.["call"] = "oob"
+        // A length written back that a `PeerAddressCopy`'s int cannot hold.
+        | "Z6" ->
+            darwin
+            && row.Inputs.["address"] = "unmapped"
+            && row.Inputs.["start"] = "ffffffff"
         | "Z2" ->
             darwin
             && row.Inputs.["buffer"] = "unmapped"
@@ -664,6 +755,12 @@ module TestDatagramSendToProbe =
             && not (row.Inputs.["flags"].Contains "peek")
             && (row.Inputs.["queue"] = "abc")
             && row.Inputs.["cell"] <> "unmapped"
+            || darwin
+               && row.Inputs.["address"] = "unmapped"
+               && row.Inputs.["cell"] = "ffffffff"
+               && (row.Inputs.["queue"] = "zero"
+                   || row.Inputs.["queue"] = "abc"
+                      && not (row.Inputs.["buffer"] = "unmapped" && row.Inputs.["count"] <> "0"))
         | _ -> false
 
     let private replayThrough
@@ -711,7 +808,8 @@ module TestDatagramSendToProbe =
             | "Z2" -> z2
             | "Z3" -> z3
             | "Z4" -> z4
-            | _ -> z5
+            | "Z5" -> z5
+            | _ -> z6
 
         replayThrough observe refuses (fun _ -> true) section name
 
@@ -937,6 +1035,15 @@ module TestDatagramSendToProbe =
         : unit
         =
         replay "Z5" name
+
+    /// The runners' recordings predate Z6.
+    [<TestCase("darwin 27.0")>]
+    [<TestCase("6.18.5 container")>]
+    let ``every write a recvfrom makes to a length cell inside its buffer is the one its kernel made``
+        (name : string)
+        : unit
+        =
+        replay "Z6" name
 
     [<Test>]
     let ``a Darwin sendto marks the socket as having sent unless copying its destination failed`` () : unit =

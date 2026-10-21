@@ -3853,3 +3853,27 @@ Z5 fd=pipe address=mapped cell=unmapped: answer=-1 ENOTSOCK
 Z5 fd=pipe address=null cell=unmapped: answer=-1 ENOTSOCK
 Z5 fd=empty address=mapped cell=unmapped: answer=-1 EAGAIN
 Z5 fd=empty address=null cell=unmapped: answer=-1 EAGAIN
+Z6 address=null start=10 flags=0: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=10 flags=peek: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=0 flags=0: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=0 flags=peek: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=2 flags=0: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=2 flags=peek: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=ffffffff flags=0: answer=8 buffer=6162636465666768 addr=-
+Z6 address=null start=ffffffff flags=peek: answer=8 buffer=6162636465666768 addr=-
+Z6 address=mapped start=10 flags=0: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=10 flags=peek: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=0 flags=0: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=0 flags=peek: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=2 flags=0: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=2 flags=peek: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=ffffffff flags=0: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=mapped start=ffffffff flags=peek: answer=8 buffer=1000000065666768 addr=0200pppp7f0000010000000000000000aaaaaaaa
+Z6 address=unmapped start=10 flags=0: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=10 flags=peek: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=0 flags=0: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=0 flags=peek: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=2 flags=0: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=2 flags=peek: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=ffffffff flags=0: answer=-1 EFAULT buffer=1000000065666768 addr=-
+Z6 address=unmapped start=ffffffff flags=peek: answer=-1 EFAULT buffer=1000000065666768 addr=-

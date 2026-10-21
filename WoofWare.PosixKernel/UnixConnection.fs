@@ -14,9 +14,16 @@ type PeerAddressCopy =
     /// structure's untruncated size. As for `getsockname`, the declared length
     /// bounds what is written and not what is reported: a call declaring 8
     /// writes eight bytes and still reports 16.
+    ///
+    /// A `recvfrom(2)` writes its datagram's source so, but for Darwin's whose
+    /// copy of the source faulted, which writes nothing to the buffer and the
+    /// length the cell held back to the cell, and its writes of 0 to the
+    /// cell for a length of 0 or a receive of nothing.
     | Written of copiedOut : ImmutableArray<byte> * reportedLength : int
     /// The caller's address buffer was NULL, so the kernel wrote nothing: not
-    /// the buffer, and not the length cell either, which it never read.
+    /// the buffer, and not the length cell either, which it never read. A
+    /// `recvfrom(2)` answers this too where it copies no source and writes
+    /// nothing to the cell: for a NULL source, or a NULL cell.
     | NotRequested
 
 /// What became of an `accept(2)` this kernel could answer.

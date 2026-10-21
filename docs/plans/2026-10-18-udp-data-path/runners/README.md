@@ -19,5 +19,4 @@ evidence that nothing else in the data path differs on these kernels.
 named by kernel release and architecture alone. `TestDatagramSendToProbe`
 replays them, each at its kernel's version: they differ from 6.18.5's only in
 when a `recvfrom` that faults copying the source address writes the length
-cell. They predate the probe's section Z5, which Linux answers from the
-descriptor alone.
+cell. They predate the probe's sections Z5 and Z6.

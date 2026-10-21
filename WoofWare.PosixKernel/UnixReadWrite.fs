@@ -454,6 +454,10 @@ type internal ReceiveRefusal =
     /// A `recvfrom(2)` of a socket that is not an IPv4 UDP one, whose
     /// answers are not measured.
     | UnmodelledReceiveFrom of socket : SocketId * domain : SocketDomain * kind : SocketKind
+    /// A Darwin `recvfrom(2)` whose copy of the source faulted, which writes
+    /// back the length the cell held, `length`: more than the `int` a
+    /// `PeerAddressCopy` reports a length in.
+    | UnrepresentableLength of length : uint32
 
 [<RequireQualifiedAccess>]
 module internal ReceiveRefusal =
@@ -474,6 +478,8 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.DatagramSleep (socket, domain) ->
             ReadRefusal.describe (ReadRefusal.DatagramSleep (socket, domain))
         | ReceiveRefusal.DatagramFault socket -> ReadRefusal.describe (ReadRefusal.DatagramFault socket)
+        | ReceiveRefusal.UnrepresentableLength length ->
+            $"the source's copy faulted, which Darwin ignores, writing back the length the cell held, %d{length}: more than the int a PeerAddressCopy reports a length in."
         | ReceiveRefusal.UnmodelledReceiveFrom (socket, domain, kind) ->
             $"the descriptor is socket %O{socket} (%O{domain}, %O{kind}). This kernel answers recvfrom(2) on an IPv4 UDP socket only; what it answers on any other socket has not been measured. A recv(2) answers a connected stream socket."
 
@@ -488,6 +494,7 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.DatagramFault _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmodelledReceiveFrom _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.UnrepresentableLength _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `send(2)`, or a `sendto(2)`.
 ///
@@ -6385,9 +6392,12 @@ module UnixReadWrite =
                             SimulatedUnixPlatform.internetSocketAddressSize
                         )
                     )
-                // The fault is ignored, and the cell written back as it was
-                // read.
-                | UserBuffer.Unmapped _ -> received PeerAddressCopy.NotRequested
+                // Measured (`udp-sendto.c` Z6): the fault is ignored, and the
+                // cell written back as it was read, which shows where it lies
+                // in the buffer the datagram was copied to.
+                | UserBuffer.Unmapped _ when length > uint32 System.Int32.MaxValue ->
+                    Error (ReceiveRefusal.UnrepresentableLength length)
+                | UserBuffer.Unmapped _ -> received (PeerAddressCopy.Written (ImmutableArray.Empty, int length))
                 | UserBuffer.Opaque
                 | UserBuffer.Addressless -> Error (sourceRefusal source |> Option.get)
             | Some _, LengthCell.Null
@@ -6449,8 +6459,9 @@ module UnixReadWrite =
     ///   or faults is `EFAULT`, one holding a negative `int` `EINVAL`, and an
     ///   address that faults `EFAULT`. A zero length writes the length alone.
     /// - **Darwin** answers `EFAULT` for a length cell that faults, before it
-    ///   receives anything, ignores an address that faults, and writes 0 to
-    ///   the cell for a length of 0 or a receive of nothing.
+    ///   receives anything, ignores an address that faults, writing back the
+    ///   length the cell held, and writes 0 to the cell for a length of 0 or
+    ///   a receive of nothing.
     ///
     /// Both report the address's whole length, 16, whatever the cell held.
     ///

@@ -37,6 +37,10 @@
 //   Z5  whether recvfrom reads a length cell before it looks the descriptor
 //       up: an unmapped cell through a closed descriptor, a pipe, and an
 //       empty UDP socket, with the address NULL and not.
+//   Z6  which writes a recvfrom makes to its length cell, seen by putting the
+//       cell at the start of the data buffer, so that a write of its own
+//       value shows over the datagram's bytes: for each source, and each
+//       length the cell starts with, a datagram of 8 bytes into 8.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -332,7 +336,7 @@ static void hex(char *out, size_t outlen, const unsigned char *bytes, size_t n, 
     for (size_t i = 0; i < n; i++) {
         // The port's two bytes, network order, at bytes 2 and 3 of a
         // `struct sockaddr_in`.
-        if (i == 2 && n > 3 && bytes[2] == hi && bytes[3] == lo) {
+        if (port != 0 && i == 2 && n > 3 && bytes[2] == hi && bytes[3] == lo) {
             strncat(out, "pppp", outlen - strlen(out) - 1);
             i++;
             continue;
@@ -551,6 +555,40 @@ static void z5(void)
     close(empty);
 }
 
+// ---------------------------------------------------------------- Z6
+
+static void z6(void)
+{
+    const char *sources[] = { "null", "mapped", "unmapped" };
+    const unsigned starts[] = { 16, 0, 2, 0xffffffffu };
+    for (size_t a = 0; a < sizeof sources / sizeof *sources; a++)
+        for (size_t l = 0; l < sizeof starts / sizeof *starts; l++)
+            for (int peek = 0; peek <= 1; peek++) {
+                int r = bound_to(INADDR_LOOPBACK);
+                nonblocking(r);
+                int t = bound_to(INADDR_LOOPBACK);
+                struct sockaddr_in to = at(INADDR_LOOPBACK, portof(r));
+                sendto(t, "abcdefgh", 8, 0, (struct sockaddr *)&to, sizeof to);
+                await_datagram(r, 200);
+                static unsigned char buf[8];
+                static unsigned char addr[32];
+                memset(addr, 0xaa, sizeof addr);
+                socklen_t start = starts[l];
+                memcpy(buf, &start, sizeof start);
+                memset(buf + 4, 0xbb, 4);
+                void *addrp = !strcmp(sources[a], "null") ? NULL : !strcmp(sources[a], "mapped") ? (void *)addr : unmapped;
+                ssize_t got = recvfrom(r, buf, sizeof buf, peek ? MSG_PEEK : 0, (struct sockaddr *)addrp, (socklen_t *)buf);
+                int e = errno;
+                char data[32], ad[64] = "-";
+                hex(data, sizeof data, buf, sizeof buf, 0);
+                if (!strcmp(sources[a], "mapped")) hex(ad, sizeof ad, addr, 20, portof(t));
+                printf("Z6 address=%s start=%x flags=%s: answer=%s buffer=%s addr=%s\n", sources[a], starts[l],
+                       peek ? "peek" : "0", res(got, e), data, ad);
+                close(t);
+                close(r);
+            }
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -560,5 +598,6 @@ int main(void)
     z3();
     z4();
     z5();
+    z6();
     return 0;
 }
