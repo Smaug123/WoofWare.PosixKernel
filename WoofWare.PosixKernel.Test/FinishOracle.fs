@@ -68,6 +68,8 @@ module internal FinishOracle =
         | FinishedCall.ConnectionRead (_, system)
         | FinishedCall.SigSuspend (_, system)
         | FinishedCall.InotifyRead (_, system)
+        | FinishedCall.DatagramReceive (FinishedDatagramReceive.Read (_, system))
+        | FinishedCall.DatagramReceive (FinishedDatagramReceive.RecvFrom (_, system))
         | FinishedCall.Futex (_, system) -> Some system
         | FinishedCall.PipeWrite (ProcessFate.Continues (_, system))
         | FinishedCall.ConnectionWrite (ProcessFate.Continues (_, system)) -> Some system
@@ -77,7 +79,6 @@ module internal FinishOracle =
         | FinishedCall.FifoOpen _
         | FinishedCall.Select _
         | FinishedCall.SignalWait _
-        | FinishedCall.DatagramReceive _
         | FinishedCall.DatagramSend _
         | FinishedCall.Connect _ -> None
 
@@ -415,11 +416,54 @@ module internal FinishOracle =
                     (UnixSignal.tryFinishSigsuspend caller system)
                     sameOutcome
                     (fst >> UnionCaseName.ofValue)
+            | ParkedSyscall.DatagramReceive receive ->
+                match receive.Call with
+                | ParkedDatagramReceiveCall.Read
+                | ParkedDatagramReceiveCall.Receive _ ->
+                    held
+                        caller
+                        kind
+                        finished
+                        (fun finished ->
+                            match finished with
+                            | FinishedCall.DatagramReceive (FinishedDatagramReceive.Read (outcome, system)) ->
+                                Some (outcome, system)
+                            | _ -> None
+                        )
+                        (fun refusal ->
+                            match refusal with
+                            | FinishRefusal.Read refusal -> Some refusal
+                            | _ -> None
+                        )
+                        (UnixReadWrite.tryFinishRead caller system)
+                        sameOutcome
+                        (fst >> UnionCaseName.ofValue)
+                | ParkedDatagramReceiveCall.ReceiveFrom _ ->
+                    held
+                        caller
+                        kind
+                        finished
+                        (fun finished ->
+                            match finished with
+                            | FinishedCall.DatagramReceive (FinishedDatagramReceive.RecvFrom (outcome, system)) ->
+                                Some (outcome, system)
+                            | _ -> None
+                        )
+                        (fun refusal ->
+                            match refusal with
+                            | FinishRefusal.Receive refusal -> Some refusal
+                            | _ -> None
+                        )
+                        // A Linux call stops for its length cell, which
+                        // `ParkedCall.ofPark` gives as holding 16.
+                        (UnixReadWrite.tryFinishRecvFrom caller system
+                         |> CallProgress.resumeWith (UnixReadWrite.tryRecvFromWithLength 16u))
+                        sameOutcome
+                        (fst >> UnionCaseName.ofValue)
             | ParkedSyscall.Sleep _
             | ParkedSyscall.FifoOpen _
             | ParkedSyscall.Select _
             | ParkedSyscall.SignalWait _
-            | ParkedSyscall.DatagramReceive _
             | ParkedSyscall.DatagramSend _
             | ParkedSyscall.Connect _ ->
                 match finished with
@@ -500,11 +544,15 @@ module internal FinishOracle =
             | TcpSendCall.Send _ -> [ "Send" ; "SendTo" ]
         | ParkedSyscall.SigSuspend -> [ "SigSuspend" ; "RtSigSuspend" ; "Pause" ]
         | ParkedSyscall.Futex _ -> [ "Futex" ]
+        | ParkedSyscall.DatagramReceive receive ->
+            match receive.Call with
+            | ParkedDatagramReceiveCall.Read -> [ "Read" ]
+            | ParkedDatagramReceiveCall.Receive _ -> [ "Recv" ]
+            | ParkedDatagramReceiveCall.ReceiveFrom _ -> [ "RecvFrom" ]
         | ParkedSyscall.Sleep _
         | ParkedSyscall.FifoOpen _
         | ParkedSyscall.Select _
         | ParkedSyscall.SignalWait _
-        | ParkedSyscall.DatagramReceive _
         | ParkedSyscall.DatagramSend _
         | ParkedSyscall.Connect _ -> []
 
@@ -650,5 +698,55 @@ module internal FinishOracle =
                     mismatched
                     "misuse: a write that copies nothing given a buffer it cannot copy from"
                     yield! sendAsSendTo whole
+                ]
+        | ParkedSyscall.DatagramReceive {
+                                            Call = ParkedDatagramReceiveCall.ReceiveFrom _
+                                        } ->
+            let whole = UnixWait.tryFinish caller (ParkedCall.ofPark parked) system
+
+            let withCell (cell : CopiedArgument<uint32>) : Syscall<'Thread, 'Handler> =
+                match (ParkedCall.ofPark parked : Syscall<'Thread, 'Handler>) with
+                | Syscall.RecvFrom (fd, buffer, count, flags, source, _) ->
+                    Syscall.RecvFrom (fd, buffer, count, flags, source, cell)
+                | other -> failwith $"FinishOracle.refusesMisuse: %A{parked} is not a recvfrom, but %A{other}"
+
+            match UnixReadWrite.tryFinishRecvFrom caller system with
+            | Ok (CallProgress.NeedsCopyIn _) ->
+                for cell in
+                    [
+                        CopiedArgument.Unmapped 0x1000UL
+                        CopiedArgument.Opaque
+                        CopiedArgument.Addressless
+                    ] do
+                    match UnixWait.tryFinish caller (withCell cell) system with
+                    | Error (FinishRefusal.UnreadableBuffer (refused, given)) when
+                        refused = parked && given = CopiedArgument.userBuffer cell
+                        ->
+                        ()
+                    | other -> fail $"given the length cell %A{cell}, answered %A{other}, not UnreadableBuffer"
+
+                [
+                    mismatched
+                    "misuse: a recvfrom that reads its length cell given one it cannot read"
+                ]
+            | Ok (CallProgress.Answered _)
+            | Error _ ->
+                let unread =
+                    UnixWait.tryFinish caller (withCell (CopiedArgument.Unmapped 0x1000UL)) system
+
+                match whole, unread with
+                | Ok (FinishedCall.DatagramReceive (FinishedDatagramReceive.RecvFrom (outcome, after))),
+                  Ok (FinishedCall.DatagramReceive (FinishedDatagramReceive.RecvFrom (outcome', after'))) when
+                    outcome = outcome' && after = after'
+                    ->
+                    ()
+                | Error refusal, Error refusal' when refusal = refusal' -> ()
+                | _ ->
+                    fail
+                        $"answered %A{unread} given an unmapped length cell it does not read, and %A{whole} given one it can"
+
+                [
+                    mismatched
+                    "misuse: a recvfrom that reads no length cell given one it cannot read"
                 ]
         | _ -> [ mismatched ]

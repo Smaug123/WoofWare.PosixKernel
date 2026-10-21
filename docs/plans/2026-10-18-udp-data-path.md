@@ -985,8 +985,8 @@ How (b)'s mark is kept, and what the woken call answers (Patrick,
   after taking the datagram, at the `PausedRecvFrom` its non-blocking call
   stops at. A Darwin one reads the cell before it sleeps, as it reads it
   before anything else, and its park keeps the value.
-- **Darwin's drain** is a flag on the Darwin receiver, as `ListenState.Drained`
-  is on a listener and `KqueueState.Drained` on a kqueue.
+- **Darwin's drain** is the socket's `SocketDescription.Drained`, which a
+  listener and a TCP end share (xnu's one `SS_DRAINING` bit).
 
 ## 4. Staging
 
@@ -1043,12 +1043,20 @@ it touches.
   - A Darwin `recv(MSG_PEEK)` with an error pending leaves it pending (2.15),
     where U1c's took it.
 - **U4. The blocking receive** (3.8): the park's fields, the primitive, the
-  finish, and close per flavour. `ReadRefusal.DatagramSleep` goes. Darwin's
-  close drains the socket when a receive sleeps through the descriptor closed
-  (`udp-sleepers.c` V11, V12, V24-V29), as it drains a TCP socket
-  (`docs/plans/2026-10-07-tcp-byte-transfer/tcp-close-drain.c`): the drain is
-  `SocketDescription.Drained`, which `UnixDescriptor.close` sets and a TCP
-  read or write that would sleep answers `EBADF` for.
+  finish, and close per flavour. `ReadRefusal.DatagramSleep` narrows to a
+  Unix-domain datagram socket's read (`UnixDomainDatagramSleep`), which still
+  sleeps unmodelled.
+  - The probe `udp-sleepers.c` (2.16) comes first, and a replay of every row.
+  - Darwin's close drains the socket when a receive sleeps through the
+    descriptor closed (`udp-sleepers.c` V11, V12, V24-V29), as it drains a TCP
+    socket (`docs/plans/2026-10-07-tcp-byte-transfer/tcp-close-drain.c`): the
+    drain is `SocketDescription.Drained`, which `UnixDescriptor.close` sets
+    and a receive that would sleep answers `EBADF` for.
+  - A Darwin receive whose description has become non-blocking while it
+    slept, woken to find nothing, is refused, as a connected socket's read
+    is: unmeasured for UDP.
+  - A signal with no handler run (`withoutHandler`) is unmeasured for a
+    datagram receive, and so refused, as it was while the park was reserved.
 - **U5. `sendmsg` and `recvmsg`**: their design note, then the calls (2.12).
 - **U6. Darwin `poll` and `kevent` on UDP sockets** (2.6), for issue #12.
 
@@ -1102,6 +1110,12 @@ Patrick, 2026-10-21, for U4 (2.16, 3.8):
   holding what each call's finishing function answers.
 - A blocking Linux `recvfrom` reads its length cell in the finish, through
   `PausedRecvFrom`; a Darwin one reads it before it sleeps.
+
+Once #154 had `UnixWait.finish` take the `Syscall` the thread made and
+resume a woken write's copy itself, `FinishedDatagramReceive.RecvFrom` came to
+hold the call's answer too: `finish` resumes a Linux `recvfrom` with what the
+length cell of its `Syscall.RecvFrom` holds, as it does a write with its
+buffer. `UnixReadWrite.finishRecvFrom` still stops for the cell.
 
 Patrick, 2026-10-20, after U1b's host test failed on GitHub's runners, whose
 kernels and configuration differ from the container's (2.4):

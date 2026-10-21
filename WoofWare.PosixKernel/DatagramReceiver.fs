@@ -299,6 +299,11 @@ module internal DatagramReceiver =
         | DatagramReceiver.Linux linux -> linux.ErrorPending
         | DatagramReceiver.Darwin darwin -> darwin.ErrorPending
 
+    /// Whether a receive has something to answer: a datagram, or the pending
+    /// error. What a receive asleep on the socket waits for.
+    let answers (receiver : DatagramReceiver) : bool =
+        not (isEmpty receiver) || errorPending receiver
+
     /// What `FIONREAD` reports: on Linux, the length of the oldest datagram,
     /// or 0 with none; on Darwin, the charge of every datagram held. Reading
     /// it changes nothing: see `queried` for the call itself.

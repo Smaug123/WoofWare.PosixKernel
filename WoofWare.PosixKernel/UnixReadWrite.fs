@@ -43,9 +43,16 @@ type internal ReadRefusal =
     /// is not mapped. What the kernel does with the bytes it could not copy
     /// is not measured.
     | ConnectionFault of socket : SocketId
-    /// A blocking read of a datagram socket holding nothing, which sleeps
-    /// until a datagram arrives: that sleep is not modelled yet.
-    | DatagramSleep of socket : SocketId * domain : SocketDomain
+    /// A blocking read of a Unix-domain datagram socket, which holds nothing,
+    /// since this kernel delivers no datagram to one; a real one sleeps
+    /// until a datagram arrives.
+    | UnixDomainDatagramSleep of socket : SocketId
+    /// A receive asleep on a UDP socket, which finds nothing to answer when
+    /// it is finished (something woke it, and another receive took what there
+    /// was), through a description that has become non-blocking while it
+    /// slept. Whether it then answers `EAGAIN` or sleeps on is unmeasured, as
+    /// `ConnectionBecameNonBlocking`'s is.
+    | DatagramBecameNonBlocking of socket : SocketId
     /// A Darwin read that would copy a datagram from the UDP socket into a
     /// buffer that is not mapped. Darwin answers `EFAULT` and leaves the
     /// datagram's bytes queued without its source address, a state this
@@ -61,8 +68,8 @@ type internal ReadRefusal =
     /// returns bytes rather than EISDIR (measured), which this kernel does not
     /// model.
     | DevfsDirectory of inode : InodeNumber
-    /// A read asleep on a pipe or a connected socket has an answer, and the
-    /// library will not say whether that or a signal ends it.
+    /// A read asleep on a pipe or a socket has an answer, and the library
+    /// will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
 [<RequireQualifiedAccess>]
@@ -79,8 +86,10 @@ module internal ReadRefusal =
             $"the read was asleep on socket %O{socket}, a connected stream socket, and was woken to find nothing to read, through a description that has become non-blocking while it slept. Whether the kernel then answers EAGAIN or sleeps again is unmeasured: Linux decides whether a socket call may sleep once, as it is made, and Darwin looks at the socket's flag again, by their source."
         | ReadRefusal.ConnectionFault socket ->
             $"the descriptor is socket %O{socket}, a connected stream socket with bytes to read, and the buffer is not mapped. The copy would fault, and whether the kernel then answers EFAULT, and whether it keeps the bytes it could not copy, has not been measured."
-        | ReadRefusal.DatagramSleep (socket, domain) ->
-            $"the descriptor is socket %O{socket} (%O{domain}, datagram), which holds no datagram, and the read is a blocking one. Such a read sleeps until a datagram arrives, and this kernel does not yet model that sleep."
+        | ReadRefusal.UnixDomainDatagramSleep socket ->
+            $"the descriptor is socket %O{socket}, a Unix-domain datagram socket, which holds no datagram, and the read is a blocking one. Such a read sleeps until a datagram arrives, and this kernel delivers no datagram to a Unix-domain socket."
+        | ReadRefusal.DatagramBecameNonBlocking socket ->
+            $"the receive was asleep on socket %O{socket}, a UDP socket, and was woken to find nothing to receive, through a description that has become non-blocking while it slept. Whether the kernel then answers EAGAIN or sleeps again is unmeasured."
         | ReadRefusal.DatagramFault socket ->
             $"the descriptor is socket %O{socket}, a UDP socket holding a datagram, and the buffer is not mapped. Measured, Darwin answers EFAULT and leaves the datagram's bytes queued with its source address and control record removed, which this kernel does not model."
         | ReadRefusal.ScannedDirectoryPosition (inode, fileSystem) ->
@@ -88,7 +97,7 @@ module internal ReadRefusal =
         | ReadRefusal.DevfsDirectory inode ->
             $"the descriptor is directory %O{inode} on Darwin's devfs, where read(2) returns bytes rather than EISDIR (measured on Darwin 27.0), which this kernel does not model."
         | ReadRefusal.Interruption refusal ->
-            $"the read was asleep on a pipe or a connected socket: %s{SyscallInterruptionRefusal.describe refusal}"
+            $"the read was asleep on a pipe or a socket: %s{SyscallInterruptionRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadRefusal) : RefusalKind =
@@ -97,7 +106,8 @@ module internal ReadRefusal =
         | ReadRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
-        | ReadRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
+        | ReadRefusal.UnixDomainDatagramSleep _ -> RefusalKind.Unmodelled
+        | ReadRefusal.DatagramBecameNonBlocking _ -> RefusalKind.Unmodelled
         | ReadRefusal.DatagramFault _ -> RefusalKind.Unmodelled
         | ReadRefusal.ScannedDirectoryPosition _ -> RefusalKind.Unmodelled
         | ReadRefusal.DevfsDirectory _ -> RefusalKind.Unmodelled
@@ -142,7 +152,8 @@ type ReadOutcome =
     | Answered of ReadAnswer
     /// The call did not return: it is a blocking read of a pipe that holds
     /// nothing while a write end is open, of a connected socket with nothing
-    /// to answer, or of an inotify instance holding no record. The calling thread is parked, and
+    /// to answer, of a UDP socket holding no datagram and no error, or of an
+    /// inotify instance holding no record. The calling thread is parked, and
     /// sleeps until `UnixWait.wake` wakes it; then `UnixReadWrite.finishRead`
     /// finishes the call.
     | WouldBlock of WakeCondition
@@ -183,12 +194,15 @@ type RecvFromAnswer =
 type RecvFromOutcome =
     /// The entry point returned.
     | Answered of RecvFromAnswer
-    /// The call did not return, and the calling thread is parked. Nothing in
-    /// this version answers this: a blocking `recvfrom` of a socket holding
-    /// nothing is refused.
+    /// The call did not return: it is a blocking `recvfrom` of a socket
+    /// holding no datagram and no error. The calling thread is parked, and
+    /// sleeps until `UnixWait.wake` wakes it; then
+    /// `UnixReadWrite.finishRecvFrom` finishes the call.
     | WouldBlock of WakeCondition
-    /// The call was asleep, and a signal interrupted it. Nothing in this
-    /// version answers this.
+    /// The call was asleep, and a signal interrupted it. The thread is no
+    /// longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which says whether the call fails with
+    /// `EINTR` or restarts. Only `finishRecvFrom` answers this.
     | Interrupted
 
 /// What `write(2)` did, for a request this kernel could answer.
@@ -461,10 +475,12 @@ type internal ReceiveRefusal =
     | UnmodelledSocketPhase of socket : SocketId * domain : SocketDomain * kind : SocketKind * phase : SocketPhase
     /// As `ReadRefusal.ConnectionFault`.
     | ConnectionFault of socket : SocketId
-    /// As `ReadRefusal.DatagramSleep`.
-    | DatagramSleep of socket : SocketId * domain : SocketDomain
     /// As `ReadRefusal.DatagramFault`.
     | DatagramFault of socket : SocketId
+    /// As `ReadRefusal.DatagramBecameNonBlocking`, for a `recvfrom(2)`.
+    | DatagramBecameNonBlocking of socket : SocketId
+    /// As `ReadRefusal.Interruption`, for a `recvfrom(2)`.
+    | Interruption of SyscallInterruptionRefusal
     /// A `recvfrom(2)` of a socket that is not an IPv4 UDP one, whose
     /// answers are not measured.
     | UnmodelledReceiveFrom of socket : SocketId * domain : SocketDomain * kind : SocketKind
@@ -489,9 +505,10 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.UnmodelledSocketPhase (socket, domain, kind, phase) ->
             $"the descriptor is socket %O{socket} (%O{domain}, %O{kind}), in phase %A{phase}, which is not an end of a connection. This kernel answers recv(2) on a connected stream socket only; what it answers on any other socket has not been measured."
         | ReceiveRefusal.ConnectionFault socket -> ReadRefusal.describe (ReadRefusal.ConnectionFault socket)
-        | ReceiveRefusal.DatagramSleep (socket, domain) ->
-            ReadRefusal.describe (ReadRefusal.DatagramSleep (socket, domain))
         | ReceiveRefusal.DatagramFault socket -> ReadRefusal.describe (ReadRefusal.DatagramFault socket)
+        | ReceiveRefusal.DatagramBecameNonBlocking socket ->
+            ReadRefusal.describe (ReadRefusal.DatagramBecameNonBlocking socket)
+        | ReceiveRefusal.Interruption refusal -> ReadRefusal.describe (ReadRefusal.Interruption refusal)
         | ReceiveRefusal.UnrepresentableLength length ->
             $"the source's copy faulted, which Darwin ignores, writing back the length the cell held, %d{length}: more than the int a PeerAddressCopy reports a length in."
         | ReceiveRefusal.UnmodelledReceiveFrom (socket, domain, kind) ->
@@ -505,8 +522,9 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
-        | ReceiveRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.DatagramFault _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.DatagramBecameNonBlocking _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | ReceiveRefusal.UnmodelledReceiveFrom _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnrepresentableLength _ -> RefusalKind.Unmodelled
 
@@ -811,9 +829,27 @@ module PausedSendToAddress =
         =
         paused.Range
 
-/// A `recvfrom(2)` stopped where the kernel reads the caller's length cell:
-/// `UnixReadWrite.recvfrom` answers it, `PausedRecvFrom.received` says what
-/// the call has put in the caller's buffer by then, and
+/// Which `recvfrom(2)` a `PausedRecvFrom` is, so that its resumption
+/// knows what to ask again.
+[<RequireQualifiedAccess>]
+type internal PausedRecvFromCall =
+    /// The call as first made, with its arguments, which is made again from
+    /// the start with the cell's value.
+    | Call of
+        fd : int *
+        buffer : UserBuffer *
+        count : uint64 *
+        flags : int *
+        source : UserBuffer *
+        sourceLength : UserBuffer
+    /// A call that slept and was woken, whose finishing call is made again
+    /// with the cell's value: its park holds what it needs.
+    | Finish
+
+/// A `recvfrom(2)`, or a woken one, stopped where the kernel reads the
+/// caller's length cell: `UnixReadWrite.recvfrom` and
+/// `UnixReadWrite.finishRecvFrom` answer it, `PausedRecvFrom.received` says
+/// what the call has put in the caller's buffer by then, and
 /// `UnixReadWrite.recvfromWithLength` takes the `socklen_t` the cell holds
 /// once those bytes are there, and finishes the call.
 [<NoEquality ; NoComparison>]
@@ -821,16 +857,11 @@ type PausedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
     private
         {
             Thread : 'Thread
-            Fd : int
-            Buffer : UserBuffer
-            Count : uint64
-            Flags : int
-            Source : UserBuffer
-            SourceLength : UserBuffer
+            Call : PausedRecvFromCall
             Received : ImmutableArray<byte>
-            /// The system the call was made in: everything a `recvfrom` does
-            /// before it reads the cell is a question, which the call asks
-            /// again with the cell's value.
+            /// The system the call, or its finishing call, was made in:
+            /// everything either does before it reads the cell is a question,
+            /// which it asks again with the cell's value.
             System : ProcessView<'Thread, 'Handler>
         }
 
@@ -960,9 +991,10 @@ type private ReadTarget =
     | Pipe of pipe : PipeId * description : OpenFileDescriptionId * nonBlocking : bool
     /// A file, at the offset its open file description currently holds.
     | File of inode : InodeNumber * offset : int64
-    /// A socket that is not an end of a connection, and whether the
-    /// description it was reached through carries `O_NONBLOCK`.
-    | Socket of socket : SocketId * nonBlocking : bool
+    /// A socket that is not an end of a connection, the open file
+    /// description it was reached through, and whether that carries
+    /// `O_NONBLOCK`.
+    | Socket of socket : SocketId * description : OpenFileDescriptionId * nonBlocking : bool
     /// A connected stream socket, the end of `connection` it is, the open file
     /// description it was reached through, and whether that carries
     /// `O_NONBLOCK`.
@@ -1871,8 +1903,6 @@ module UnixReadWrite =
     /// Why a receive from a UDP socket has no answer.
     [<RequireQualifiedAccess>]
     type private DatagramReceiveRefusal =
-        /// The receive is a blocking one, and the socket holds nothing.
-        | Sleep
         /// A Darwin receive that would copy into an unmapped buffer.
         | Fault
         | Buffer of BufferRefusal
@@ -1887,11 +1917,15 @@ module UnixReadWrite =
         /// The call returns 0 with no datagram (`DatagramReceiveAnswer.Zero`).
         | Zero
         | Failed of error : UnixError
+        /// The call is a blocking one, and the socket holds nothing to answer:
+        /// it sleeps, and the system is as it was.
+        | Sleeps
 
     /// `call` of up to `count` bytes (one call's worth) from the UDP socket
     /// `socketId` into `buffer`, through a description that is non-blocking
     /// or not: a datagram's bytes, the pending error, or, with nothing to
-    /// answer, `EAGAIN` if `nonBlocking`. `DatagramReceiver.receive` states
+    /// answer, `EAGAIN` if `nonBlocking`, `EBADF` from a socket a Darwin close
+    /// has drained, and otherwise a sleep. `DatagramReceiver.receive` states
     /// the rules.
     let private takeDatagram<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (call : DatagramReceiveCall)
@@ -1940,13 +1974,52 @@ module UnixReadWrite =
         | DatagramReceiveAnswer.Empty, _ ->
             if nonBlocking then
                 Ok (DatagramTaken.Failed UnixError.EAGAIN, system)
+            // Measured on Darwin 27.0.0 (`udp-sleepers.c` V27 to V29, in
+            // docs/plans/2026-10-18-udp-data-path): once a close has drained
+            // the socket, a receive that would sleep answers EBADF at once.
+            elif (UnixMachineState.socket socketId system.Machine).Drained then
+                Ok (DatagramTaken.Failed UnixError.EBADF, system)
             else
-                Error DatagramReceiveRefusal.Sleep
+                Ok (DatagramTaken.Sleeps, system)
         | DatagramReceiveAnswer.Failed error, after -> Ok (DatagramTaken.Failed error, committed after)
 
-    /// `takeDatagram`, for a `read` or a `recv`, which neither writes a
-    /// source nor admits `MSG_TRUNC`.
+    /// `system` with `thread` parked in a blocking receive of up to `count`
+    /// bytes into `buffer` from the UDP socket the open file description
+    /// `descriptionId` names, made through the descriptor `fd`: what a
+    /// receive that finds nothing to answer does. Measured on both
+    /// (`docs/probes/datagram-park` row R1, and `udp-sleepers.c` in
+    /// docs/plans/2026-10-18-udp-data-path): `read`, `recv` and `recvfrom`
+    /// each sleep until a datagram or the ICMP error arrives.
+    let private parkDatagramReceive<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (fd : int)
+        (descriptionId : OpenFileDescriptionId)
+        (buffer : UserBuffer)
+        (count : int)
+        (call : ParkedDatagramReceiveCall)
+        (system : ProcessView<'Thread, 'Handler>)
+        : WakeCondition * ProcessView<'Thread, 'Handler>
+        =
+        let parked =
+            ParkedSyscall.DatagramReceive
+                {
+                    Socket = SleepTarget.Waiting (descriptionId, fd)
+                    Buffer = buffer
+                    Count = count
+                    Call = call
+                    Chosen = false
+                }
+
+        WakeCondition.ofPark parked, Parking.parkWaiting thread parked system
+
+    /// `takeDatagram`, for a `read` or a `recv` by `thread` through the
+    /// descriptor `fd`, which names the open file description
+    /// `descriptionId`: neither writes a source nor admits `MSG_TRUNC`, and a
+    /// blocking one with nothing to answer parks.
     let private receiveDatagram<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (fd : int)
+        (descriptionId : OpenFileDescriptionId)
         (call : DatagramReceiveCall)
         (count : int)
         (nonBlocking : bool)
@@ -1957,18 +2030,27 @@ module UnixReadWrite =
         =
         takeDatagram call count nonBlocking buffer socketId system
         |> Result.map (fun (taken, system) ->
-            let answer =
-                match taken with
-                | DatagramTaken.Datagram (bytes, returned, _) ->
-                    if returned <> bytes.Length then
-                        failwith
-                            $"UnixReadWrite: a read or recv from socket %O{socketId} returns %d{returned} for %d{bytes.Length} bytes, which only MSG_TRUNC does, and neither admits MSG_TRUNC (this is a bug in this library)."
+            let answered (answer : ReadAnswer) = ReadOutcome.Answered answer, system
 
-                    ReadAnswer.Completed bytes
-                | DatagramTaken.Zero -> ReadAnswer.Completed ImmutableArray.Empty
-                | DatagramTaken.Failed error -> ReadAnswer.Failed error
+            match taken with
+            | DatagramTaken.Datagram (bytes, returned, _) ->
+                if returned <> bytes.Length then
+                    failwith
+                        $"UnixReadWrite: a read or recv from socket %O{socketId} returns %d{returned} for %d{bytes.Length} bytes, which only MSG_TRUNC does, and neither admits MSG_TRUNC (this is a bug in this library)."
 
-            ReadOutcome.Answered answer, system
+                answered (ReadAnswer.Completed bytes)
+            | DatagramTaken.Zero -> answered (ReadAnswer.Completed ImmutableArray.Empty)
+            | DatagramTaken.Failed error -> answered (ReadAnswer.Failed error)
+            | DatagramTaken.Sleeps ->
+                let parkedCall =
+                    match call with
+                    | DatagramReceiveCall.Read -> ParkedDatagramReceiveCall.Read
+                    | DatagramReceiveCall.Receive (peek, _) -> ParkedDatagramReceiveCall.Receive peek
+
+                let condition, parked =
+                    parkDatagramReceive thread fd descriptionId buffer count parkedCall system
+
+                ReadOutcome.WouldBlock condition, parked
         )
 
     /// A read of up to `count` bytes taking them from `pipeId`, which holds
@@ -2353,7 +2435,7 @@ module UnixReadWrite =
                             description.NonBlocking
                         )
                     )
-                | None -> Ok (ReadTarget.Socket (socketId, description.NonBlocking))
+                | None -> Ok (ReadTarget.Socket (socketId, descriptionId, description.NonBlocking))
             | OpenFileTarget.CharacterDevice (_, device, _) -> Ok (ReadTarget.CharacterDevice device)
             | OpenFileTarget.File (inode, offset) -> Ok (ReadTarget.File (inode, offset))
             | OpenFileTarget.Directory (inode, position) -> Ok (ReadTarget.Directory (inode, position))
@@ -2388,7 +2470,7 @@ module UnixReadWrite =
             match readDevice device buffer (oneCallsWorth platform count) system with
             | Error refusal -> Error (ReadRefusal.Buffer refusal)
             | Ok (answer, system) -> answered answer system
-        | ReadTarget.Socket (socketId, nonBlocking) ->
+        | ReadTarget.Socket (socketId, descriptionId, nonBlocking) ->
             // A zero-length read of a socket is where the flavours part, and on
             // one of them it needs no phase at all. Measured across every phase
             // this kernel can produce and every kind it models,
@@ -2427,6 +2509,9 @@ module UnixReadWrite =
 
             if SocketTable.receivesDatagrams socket then
                 receiveDatagram
+                    thread
+                    fd
+                    descriptionId
                     DatagramReceiveCall.Read
                     (oneCallsWorth platform count)
                     nonBlocking
@@ -2435,7 +2520,6 @@ module UnixReadWrite =
                     system
                 |> Result.mapError (fun refusal ->
                     match refusal with
-                    | DatagramReceiveRefusal.Sleep -> ReadRefusal.DatagramSleep (socketId, socket.Domain)
                     | DatagramReceiveRefusal.Fault -> ReadRefusal.DatagramFault socketId
                     | DatagramReceiveRefusal.Buffer refusal -> ReadRefusal.Buffer refusal
                 )
@@ -2452,7 +2536,7 @@ module UnixReadWrite =
                 match UnconnectedSocketRules.read flavour socket.Domain socket.Kind nonBlocking count with
                 | UnconnectedSocketRead.Empty -> answered (ReadAnswer.Completed ImmutableArray.Empty) system
                 | UnconnectedSocketRead.Fails error -> answered (ReadAnswer.Failed error) system
-                | UnconnectedSocketRead.Sleeps -> Error (ReadRefusal.DatagramSleep (socketId, socket.Domain))
+                | UnconnectedSocketRead.Sleeps -> Error (ReadRefusal.UnixDomainDatagramSleep socketId)
             | SocketPhase.EstablishedPendingReport _
             | SocketPhase.Established _ ->
                 failwith
@@ -2660,9 +2744,12 @@ module UnixReadWrite =
     /// the oldest datagram's bytes, as many as fit, the rest of it discarded.
     /// A zero-length read takes the datagram on Darwin, and on Linux answers 0
     /// and takes nothing. Holding nothing, it answers `EAGAIN` through a
-    /// non-blocking description, and a blocking read is refused. A Linux read
-    /// into an unmapped buffer takes the datagram and answers `EFAULT`, and a
-    /// Darwin one is refused.
+    /// non-blocking description, and a blocking read sleeps
+    /// (`ReadOutcome.WouldBlock`) until a datagram or the ICMP error arrives,
+    /// and `finishRead` finishes it; but on a socket a Darwin close has
+    /// drained, it answers `EBADF` at once. A Linux read into an unmapped
+    /// buffer takes the datagram and answers `EFAULT`, and a Darwin one is
+    /// refused.
     ///
     /// Any other socket with no peer (fresh from `socket(2)`, bound, or
     /// listening) answers without the buffer, with the errno its flavour gives
@@ -2864,6 +2951,137 @@ module UnixReadWrite =
                 Parking.parkWaiting thread parkedAgain system
             )
 
+    /// The UDP socket the open file description `description`, which a thread
+    /// parked in a datagram receive in `syscall` holds, names.
+    let private parkedDatagramSocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (syscall : string)
+        (thread : 'Thread)
+        (description : OpenFileDescriptionId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : SocketId
+        =
+        match OpenFileTable.tryFind description system.Machine.OpenFiles with
+        | None ->
+            failwith
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+        | Some found ->
+            match found.Target with
+            | OpenFileTarget.Socket socketId when
+                SocketTable.receivesDatagrams (UnixMachineState.socket socketId system.Machine)
+                ->
+                socketId
+            | target ->
+                failwith
+                    $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps in a datagram receive on open file description %O{description}, which names %A{target} rather than a UDP socket (this is a bug in the caller that recorded the park)."
+
+    /// What a woken datagram receive finds, before it takes anything.
+    [<RequireQualifiedAccess>]
+    type private WokenDatagramReceive =
+        /// A Darwin close has ended it, with `EBADF`.
+        | EndedByClose
+        /// The socket `socket`, through the open file description it holds,
+        /// has a datagram or the pending error for it, and no signal ends it
+        /// first.
+        | Completes of description : OpenFileDescriptionId * fd : int * socket : SocketId
+        /// A signal ends it before it takes anything.
+        | Interrupted of interruption : Interruption
+        /// It finds nothing, and parks again, asleep, for a new wake, with no
+        /// arrival's choice: `parked` is its park, made again.
+        | SleepsAgain of parked : ParkedSyscall
+
+    /// What the datagram receive `parked`, which `thread` is asleep in and
+    /// which `UnixWait.wake` has woken, finds.
+    ///
+    /// Measured on Linux 6.18.5 (`udp-sleepers.c` V4, V7 and V12, in
+    /// docs/plans/2026-10-18-udp-data-path): a receive still asleep when a
+    /// signal came, with a datagram queued, answered the datagram rather
+    /// than `EINTR`, as `__skb_wait_for_more_packets` looks at the queue
+    /// before it looks for a signal. Darwin's `soreceive` is the one a
+    /// connected socket's read runs, where a pending signal beats bytes
+    /// (`SyscallInterruption.beforeCompleting`).
+    let private wokenDatagramReceive<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (syscall : string)
+        (thread : 'Thread)
+        (parked : ParkedDatagramReceive)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<WokenDatagramReceive, SyscallInterruptionRefusal>
+        =
+        match parked.Socket with
+        | SleepTarget.EndedByClose _ ->
+            // Measured on Darwin 27.0.0 (`udp-sleepers.c` V11 and V12): a
+            // close the drain of the socket ends answers EBADF.
+            Ok WokenDatagramReceive.EndedByClose
+        | SleepTarget.Waiting (reader, fd) ->
+
+        let socketId = parkedDatagramSocket syscall thread reader system
+        let receiver = UnixMachineState.datagramReceiver socketId system.Machine
+
+        if DatagramReceiver.answers receiver then
+            match SyscallInterruption.beforeCompleting thread system with
+            | Error refusal -> Error refusal
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (WokenDatagramReceive.Interrupted interruption)
+            | Ok SyscallInterruption.Completion.Completes -> Ok (WokenDatagramReceive.Completes (reader, fd, socketId))
+        else
+
+        match SyscallInterruption.ofPark thread system with
+        | Error refusal -> Error refusal
+        | Ok (Some interruption) -> Ok (WokenDatagramReceive.Interrupted interruption)
+        | Ok None ->
+            ParkedSyscall.DatagramReceive
+                { parked with
+                    Chosen = false
+                }
+            |> WokenDatagramReceive.SleepsAgain
+            |> Ok
+
+    let private finishDatagramRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (parked : ParkedDatagramReceive)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
+        =
+        let call =
+            match parked.Call with
+            | ParkedDatagramReceiveCall.Read -> DatagramReceiveCall.Read
+            | ParkedDatagramReceiveCall.Receive peek -> DatagramReceiveCall.Receive (peek, false)
+            | ParkedDatagramReceiveCall.ReceiveFrom _ ->
+                failwith
+                    $"UnixReadWrite.finishRead: thread %O{thread} is asleep in a recvfrom, which finishRecvFrom finishes (this is a bug in this library)."
+
+        let finished = UnixParkState.unpark thread system
+
+        match wokenDatagramReceive "finishRead" thread parked system with
+        | Error refusal -> Error (ReadRefusal.Interruption refusal)
+        | Ok WokenDatagramReceive.EndedByClose ->
+            Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), finished)
+        | Ok (WokenDatagramReceive.Interrupted interruption) ->
+            Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+        | Ok (WokenDatagramReceive.SleepsAgain parkedAgain) ->
+            match parked.Socket with
+            | SleepTarget.Waiting (reader, _) when nonBlockingNow reader system ->
+                Error (ReadRefusal.DatagramBecameNonBlocking (parkedDatagramSocket "finishRead" thread reader system))
+            | _ ->
+                Ok (
+                    ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                    Parking.parkWaiting thread parkedAgain system
+                )
+        | Ok (WokenDatagramReceive.Completes (reader, fd, socketId)) ->
+            receiveDatagram thread fd reader call parked.Count false parked.Buffer socketId finished
+            |> Result.mapError (fun refusal ->
+                match refusal with
+                | DatagramReceiveRefusal.Fault -> ReadRefusal.DatagramFault socketId
+                | DatagramReceiveRefusal.Buffer refusal -> ReadRefusal.Buffer refusal
+            )
+            |> Result.map (fun (outcome, after) ->
+                match outcome with
+                | ReadOutcome.WouldBlock _ ->
+                    failwith
+                        $"UnixReadWrite.finishRead: socket %O{socketId} has a datagram or an error for a receive, and the receive would sleep (this is a bug in this library)."
+                | ReadOutcome.Answered _
+                | ReadOutcome.Interrupted -> outcome, after
+            )
+
     let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedPipeRead)
@@ -2992,6 +3210,12 @@ module UnixReadWrite =
                 | ParkedSyscall.PipeRead parked -> Some (finishPipeRead thread parked system)
                 | ParkedSyscall.ConnectionRead parked -> Some (finishConnectionRead thread parked system)
                 | ParkedSyscall.InotifyRead parked -> Some (finishInotifyRead thread parked system)
+                | ParkedSyscall.DatagramReceive ({
+                                                     Call = ParkedDatagramReceiveCall.Read
+                                                 } as parked)
+                | ParkedSyscall.DatagramReceive ({
+                                                     Call = ParkedDatagramReceiveCall.Receive _
+                                                 } as parked) -> Some (finishDatagramRead thread parked system)
                 | _ -> None
             )
             thread
@@ -3031,8 +3255,8 @@ module UnixReadWrite =
             system
 
     /// Finish the `read` or `recv` `caller` is asleep in: look at the pipe, the
-    /// connection or the inotify instance again, as a woken real read does,
-    /// and answer.
+    /// connection, the UDP socket or the inotify instance again, as a woken
+    /// real read does, and answer.
     ///
     /// Bytes in the pipe are read, up to the count the call was made with, into
     /// the buffer it was made with: a buffer naming no storage answers `EFAULT`
@@ -3066,6 +3290,12 @@ module UnixReadWrite =
     /// neither, the read sleeps again, refused instead if its description has
     /// become non-blocking. One a
     /// close has ended, under Darwin, answers `EBADF`.
+    ///
+    /// A read or `recv` of a UDP socket is the same, with a datagram or the
+    /// pending error what there is to answer, as the same call made then
+    /// would answer it; under Darwin a close of a descriptor it, or another
+    /// receive on the socket, slept through has ended it with `EBADF`.
+    /// `finishRecvFrom` finishes a `recvfrom`.
     ///
     /// A read of an inotify instance answers, once the instance holds a
     /// record, as the same call made then would, the record beating a signal
@@ -3165,6 +3395,9 @@ module UnixReadWrite =
 
         if SocketTable.receivesDatagrams socket then
             receiveDatagram
+                thread
+                fd
+                descriptionId
                 (DatagramReceiveCall.Receive (flags.Peek, false))
                 count
                 (description.NonBlocking || flags.DontWait)
@@ -3173,7 +3406,6 @@ module UnixReadWrite =
                 system
             |> Result.mapError (fun refusal ->
                 match refusal with
-                | DatagramReceiveRefusal.Sleep -> ReceiveRefusal.DatagramSleep (socketId, socket.Domain)
                 | DatagramReceiveRefusal.Fault -> ReceiveRefusal.DatagramFault socketId
                 | DatagramReceiveRefusal.Buffer refusal -> ReceiveRefusal.Buffer refusal
             )
@@ -3246,7 +3478,8 @@ module UnixReadWrite =
     /// - **`MSG_NOSIGNAL`** changes nothing.
     ///
     /// On a UDP socket it is `read` but for those flags, and for a count of
-    /// zero, which takes the datagram on Linux too.
+    /// zero, which on Linux sleeps until a datagram or the ICMP error comes,
+    /// as a longer one does, and takes the datagram.
     ///
     /// Every other flag is refused, `MSG_TRUNC` among them, as is a count
     /// above `INT_MAX` and a socket that is neither a UDP socket nor an end of
@@ -6231,60 +6464,54 @@ module UnixReadWrite =
         /// reading it faults, is not known.
         | Addressless
 
-    /// `tryRecvFrom` once `Entry` has admitted its caller, given the value of
-    /// the length cell if the call has read it.
-    let private tryRecvFromIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
+    /// The length cell at `sourceLength`, of which the call has read `read`.
+    let private lengthCell (sourceLength : UserBuffer) (read : uint32 option) : LengthCell =
+        match sourceLength, read with
+        | UserBuffer.Mapped, Some length -> LengthCell.Holds length
+        | UserBuffer.Mapped, None -> LengthCell.Unread
+        | UserBuffer.Unmapped 0UL, None -> LengthCell.Null
+        | UserBuffer.Unmapped _, None -> LengthCell.Faults
+        | UserBuffer.Opaque, None -> LengthCell.Opaque
+        | UserBuffer.Addressless, None -> LengthCell.Addressless
+        | _, Some _ ->
+            failwith
+                $"UnixReadWrite.recvfromWithLength: the call was given the value of a length cell at %A{sourceLength}, which it never reads (this is a bug in this library)."
+
+    /// What a `recvfrom`'s receive, and its writes of the source, came to.
+    [<RequireQualifiedAccess ; NoEquality ; NoComparison>]
+    type private ReceivedFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+        | Answered of answer : RecvFromAnswer * system : ProcessView<'Thread, 'Handler>
+        /// The call stops to read the length cell, having put `received` in
+        /// the caller's buffer, and is made again with what the cell holds.
+        | StopsForTheCell of received : ImmutableArray<byte>
+        /// The call is a blocking one, and the socket holds nothing to
+        /// answer.
+        | Sleeps
+
+    /// A `recvfrom`'s receive of up to `count` bytes (one call's worth) from
+    /// the IPv4 UDP socket `socketId` into `buffer`, peeking or not, with
+    /// Linux's `MSG_TRUNC` or not, through a description that is
+    /// non-blocking or not, and its writes of the source to `source` as
+    /// `cell` allows.
+    let private receiveFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (peek : bool)
+        (truncate : bool)
+        (count : int)
+        (nonBlocking : bool)
         (buffer : UserBuffer)
-        (count : uint64)
-        (flags : int)
         (source : UserBuffer)
-        (sourceLength : UserBuffer)
-        (read : uint32 option)
+        (cell : LengthCell)
+        (socketId : SocketId)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<
-              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * ProcessView<'Thread, 'Handler>>,
-              ReceiveRefusal
-           >
+        : Result<ReceivedFrom<'Thread, 'Handler>, ReceiveRefusal>
         =
         let platform = system.Machine.UnixPlatform
-        let flavour = SimulatedUnixPlatform.flavour platform
-        let made = system
 
         let answered (answer : RecvFromAnswer) (system : ProcessView<'Thread, 'Handler>) =
-            Ok (CallProgress.Answered (RecvFromOutcome.Answered answer, system))
+            Ok (ReceivedFrom.Answered (answer, system))
 
-        // The call stops to read the length cell, having put `received` in
-        // the caller's buffer, and is made again from the start with what
-        // the cell holds.
         let stopsForTheCell (received : ImmutableArray<byte>) =
-            ({
-                Thread = thread
-                Fd = fd
-                Buffer = buffer
-                Count = count
-                Flags = flags
-                Source = source
-                SourceLength = sourceLength
-                Received = received
-                System = made
-            }
-            : PausedRecvFrom<'Thread, 'Handler>)
-            |> CallProgress.NeedsCopyIn
-            |> Ok
-
-        let cell : LengthCell =
-            match sourceLength, read with
-            | UserBuffer.Mapped, Some length -> LengthCell.Holds length
-            | UserBuffer.Mapped, None -> LengthCell.Unread
-            | UserBuffer.Unmapped 0UL, None -> LengthCell.Null
-            | UserBuffer.Unmapped _, None -> LengthCell.Faults
-            | UserBuffer.Opaque, None -> LengthCell.Opaque
-            | UserBuffer.Addressless, None -> LengthCell.Addressless
-            | _, Some _ ->
-                failwith
-                    $"UnixReadWrite.recvfromWithLength: the call was given the value of a length cell at %A{sourceLength}, which it never reads (this is a bug in this library)."
+            Ok (ReceivedFrom.StopsForTheCell received)
 
         // A source that is no address, where whether it is NULL decides the
         // answer.
@@ -6292,60 +6519,10 @@ module UnixReadWrite =
 
         let sourceIsNull = source = UserBuffer.Unmapped 0UL
 
-        match ReceiveFlags.decode flavour flags with
-        | Error unmodelled -> Error (ReceiveRefusal.UnmodelledFlags unmodelled)
-        | Ok flags ->
-
-        if count > uint64 System.Int32.MaxValue then
-            Error (ReceiveRefusal.UnmeasuredCount count)
-        else
-
-        let count = oneCallsWorth platform count
-
-        // Measured (`udp-sendto.c` Z5, in
-        // docs/plans/2026-10-18-udp-data-path): Darwin reads a length cell
-        // that is not NULL before it looks the descriptor up, so one that
-        // faults is EFAULT through a closed descriptor or a pipe too. Only
-        // the read's fault comes so early: what the cell held matters only
-        // once a datagram is received.
-        let readFirst =
-            match flavour, cell with
-            | SimulatedUnixFlavour.Darwin, LengthCell.Faults ->
-                Some (answered (RecvFromAnswer.Failed UnixError.EFAULT) system)
-            | SimulatedUnixFlavour.Darwin, LengthCell.Addressless ->
-                Some (Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen))
-            | _ -> None
-
-        match readFirst with
-        | Some answer -> answer
-        | None ->
-
-        match screenedFirst buffer count system with
-        | Error refusal -> Error (ReceiveRefusal.Buffer refusal)
-        | Ok true -> answered (RecvFromAnswer.Failed UnixError.EFAULT) system
-        | Ok false ->
-
-        match socketOf fd system with
-        | Error error -> answered (RecvFromAnswer.Failed error) system
-        | Ok (_, description, socketId) ->
-
-        let socket = UnixMachineState.socket socketId system.Machine
-
-        if not (SocketTable.receivesDatagrams socket && socket.Domain = SocketDomain.Inet) then
-            Error (ReceiveRefusal.UnmodelledReceiveFrom (socketId, socket.Domain, socket.Kind))
-        else
-
         let receive () =
-            takeDatagram
-                (DatagramReceiveCall.Receive (flags.Peek, flags.Truncate))
-                count
-                (description.NonBlocking || flags.DontWait)
-                buffer
-                socketId
-                system
+            takeDatagram (DatagramReceiveCall.Receive (peek, truncate)) count nonBlocking buffer socketId system
             |> Result.mapError (fun refusal ->
                 match refusal with
-                | DatagramReceiveRefusal.Sleep -> ReceiveRefusal.DatagramSleep (socketId, socket.Domain)
                 | DatagramReceiveRefusal.Fault -> ReceiveRefusal.DatagramFault socketId
                 | DatagramReceiveRefusal.Buffer refusal -> ReceiveRefusal.Buffer refusal
             )
@@ -6358,13 +6535,14 @@ module UnixReadWrite =
             | UserBuffer.Unmapped _ -> None
 
         // Measured on both (`udp-sendto.c` Z2; the plan's section 2.15).
-        match flavour with
+        match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
             // The receive comes first; the source's length cell and buffer
             // are read and written only once it has succeeded, and only if
             // the source is not NULL.
             match receive () with
             | Error refusal -> Error refusal
+            | Ok (DatagramTaken.Sleeps, _) -> Ok ReceivedFrom.Sleeps
             | Ok (DatagramTaken.Failed error, system) -> answered (RecvFromAnswer.Failed error) system
             | Ok (DatagramTaken.Zero, _) ->
                 failwith
@@ -6413,6 +6591,7 @@ module UnixReadWrite =
         | SimulatedUnixFlavour.Darwin ->
             match receive () with
             | Error refusal -> Error refusal
+            | Ok (DatagramTaken.Sleeps, _) -> Ok ReceivedFrom.Sleeps
             | Ok (DatagramTaken.Failed error, system) -> answered (RecvFromAnswer.Failed error) system
             | Ok (taken, system) ->
 
@@ -6464,6 +6643,326 @@ module UnixReadWrite =
             | Some _, LengthCell.Addressless ->
                 failwith
                     $"UnixReadWrite.recvfrom: Darwin's length cell %A{cell} reached the copy of the source, past where it answers (this is a bug in this library)."
+
+    /// `tryRecvFrom` once `Entry` has admitted its caller, given the value of
+    /// the length cell if the call has read it.
+    let private tryRecvFromIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (fd : int)
+        (buffer : UserBuffer)
+        (count : uint64)
+        (flags : int)
+        (source : UserBuffer)
+        (sourceLength : UserBuffer)
+        (read : uint32 option)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * ProcessView<'Thread, 'Handler>>,
+              ReceiveRefusal
+           >
+        =
+        let platform = system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let made = system
+
+        let answered (answer : RecvFromAnswer) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (CallProgress.Answered (RecvFromOutcome.Answered answer, system))
+
+        // The call stops to read the length cell, having put `received` in
+        // the caller's buffer, and is made again from the start with what
+        // the cell holds.
+        let stopsForTheCell (received : ImmutableArray<byte>) =
+            ({
+                Thread = thread
+                Call = PausedRecvFromCall.Call (fd, buffer, count, flags, source, sourceLength)
+                Received = received
+                System = made
+            }
+            : PausedRecvFrom<'Thread, 'Handler>)
+            |> CallProgress.NeedsCopyIn
+            |> Ok
+
+        let cell = lengthCell sourceLength read
+
+        match ReceiveFlags.decode flavour flags with
+        | Error unmodelled -> Error (ReceiveRefusal.UnmodelledFlags unmodelled)
+        | Ok flags ->
+
+        if count > uint64 System.Int32.MaxValue then
+            Error (ReceiveRefusal.UnmeasuredCount count)
+        else
+
+        let count = oneCallsWorth platform count
+
+        // Measured (`udp-sendto.c` Z5, in
+        // docs/plans/2026-10-18-udp-data-path): Darwin reads a length cell
+        // that is not NULL before it looks the descriptor up, so one that
+        // faults is EFAULT through a closed descriptor or a pipe too, and
+        // before a blocking call sleeps (`udp-sleepers.c` V20). Only the
+        // read's fault comes so early: what the cell held matters only once
+        // a datagram is received.
+        let readFirst =
+            match flavour, cell with
+            | SimulatedUnixFlavour.Darwin, LengthCell.Faults ->
+                Some (answered (RecvFromAnswer.Failed UnixError.EFAULT) system)
+            | SimulatedUnixFlavour.Darwin, LengthCell.Addressless ->
+                Some (Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen))
+            | _ -> None
+
+        match readFirst with
+        | Some answer -> answer
+        | None ->
+
+        match screenedFirst buffer count system with
+        | Error refusal -> Error (ReceiveRefusal.Buffer refusal)
+        | Ok true -> answered (RecvFromAnswer.Failed UnixError.EFAULT) system
+        | Ok false ->
+
+        match socketOf fd system with
+        | Error error -> answered (RecvFromAnswer.Failed error) system
+        | Ok (descriptionId, description, socketId) ->
+
+        let socket = UnixMachineState.socket socketId system.Machine
+
+        if not (SocketTable.receivesDatagrams socket && socket.Domain = SocketDomain.Inet) then
+            Error (ReceiveRefusal.UnmodelledReceiveFrom (socketId, socket.Domain, socket.Kind))
+        else
+
+        match
+            receiveFrom
+                flags.Peek
+                flags.Truncate
+                count
+                (description.NonBlocking || flags.DontWait)
+                buffer
+                source
+                cell
+                socketId
+                system
+        with
+        | Error refusal -> Error refusal
+        | Ok (ReceivedFrom.Answered (answer, system)) -> answered answer system
+        | Ok (ReceivedFrom.StopsForTheCell received) -> stopsForTheCell received
+        | Ok ReceivedFrom.Sleeps ->
+            match flavour, cell with
+            // Darwin reads the cell before it sleeps, as before anything
+            // else, and its park keeps what it held; a NULL source makes no
+            // use of it. Linux reads it only once a datagram has come, in the
+            // finishing call.
+            | SimulatedUnixFlavour.Darwin, LengthCell.Unread when source <> UserBuffer.Unmapped 0UL ->
+                stopsForTheCell ImmutableArray.Empty
+            | _ ->
+
+            let lengthRead =
+                match cell with
+                | LengthCell.Holds length -> Some length
+                | LengthCell.Null
+                | LengthCell.Faults
+                | LengthCell.Unread
+                | LengthCell.Opaque
+                | LengthCell.Addressless -> None
+
+            let condition, parked =
+                parkDatagramReceive
+                    thread
+                    fd
+                    descriptionId
+                    buffer
+                    count
+                    (ParkedDatagramReceiveCall.ReceiveFrom (
+                        flags.Peek,
+                        flags.Truncate,
+                        source,
+                        sourceLength,
+                        lengthRead
+                    ))
+                    system
+
+            Ok (CallProgress.Answered (RecvFromOutcome.WouldBlock condition, parked))
+
+    /// `tryFinishRecvFromWith`, before the call's hold on the socket is let
+    /// go of.
+    let private finishRecvFromHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (read : uint32 option)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * ProcessView<'Thread, 'Handler>>,
+              ReceiveRefusal
+           >
+        =
+        let parked, peek, truncate, source, sourceLength, lengthRead =
+            UnixThreadTable.expectParked
+                "UnixReadWrite.finishRecvFrom"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.DatagramReceive ({
+                                                         Call = ParkedDatagramReceiveCall.ReceiveFrom (peek,
+                                                                                                       truncate,
+                                                                                                       source,
+                                                                                                       sourceLength,
+                                                                                                       lengthRead)
+                                                     } as receive) ->
+                        Some (receive, peek, truncate, source, sourceLength, lengthRead)
+                    | _ -> None
+                )
+                thread
+                system.Threads
+
+        let made = system
+        let finished = UnixParkState.unpark thread system
+
+        let answered (answer : RecvFromAnswer) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (CallProgress.Answered (RecvFromOutcome.Answered answer, system))
+
+        let read =
+            match lengthRead, read with
+            | Some _, Some _ ->
+                failwith
+                    $"UnixReadWrite.recvfromWithLength: thread %O{thread}'s recvfrom read its length cell before it slept, and was given it again (this is a bug in this library)."
+            | Some length, None
+            | None, Some length -> Some length
+            | None, None -> None
+
+        match wokenDatagramReceive "finishRecvFrom" thread parked system with
+        | Error refusal -> Error (ReceiveRefusal.Interruption refusal)
+        | Ok WokenDatagramReceive.EndedByClose -> answered (RecvFromAnswer.Failed UnixError.EBADF) finished
+        | Ok (WokenDatagramReceive.Interrupted interruption) ->
+            Ok (CallProgress.Answered (RecvFromOutcome.Interrupted, OwedReturns.interrupt thread interruption finished))
+        | Ok (WokenDatagramReceive.SleepsAgain parkedAgain) ->
+            match parked.Socket with
+            | SleepTarget.Waiting (reader, _) when nonBlockingNow reader system ->
+                Error (
+                    ReceiveRefusal.DatagramBecameNonBlocking (
+                        parkedDatagramSocket "finishRecvFrom" thread reader system
+                    )
+                )
+            | _ ->
+                Ok (
+                    CallProgress.Answered (
+                        RecvFromOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                        Parking.parkWaiting thread parkedAgain system
+                    )
+                )
+        | Ok (WokenDatagramReceive.Completes (_, _, socketId)) ->
+            match
+                receiveFrom
+                    peek
+                    truncate
+                    parked.Count
+                    false
+                    parked.Buffer
+                    source
+                    (lengthCell sourceLength read)
+                    socketId
+                    finished
+            with
+            | Error refusal -> Error refusal
+            | Ok (ReceivedFrom.Answered (answer, system)) -> answered answer system
+            | Ok (ReceivedFrom.StopsForTheCell received) ->
+                // The finishing call is made again from the start with what
+                // the cell holds, from the system it was made in, in which the
+                // thread is still parked.
+                ({
+                    Thread = thread
+                    Call = PausedRecvFromCall.Finish
+                    Received = received
+                    System = made
+                }
+                : PausedRecvFrom<'Thread, 'Handler>)
+                |> CallProgress.NeedsCopyIn
+                |> Ok
+            | Ok ReceivedFrom.Sleeps ->
+                failwith
+                    $"UnixReadWrite.finishRecvFrom: socket %O{socketId} has a datagram or an error for a receive, and the receive would sleep (this is a bug in this library)."
+
+    /// `tryFinishRecvFrom` once `Entry` has admitted its caller, given the
+    /// value of the length cell if the finishing call has read it.
+    let private tryFinishRecvFromWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (read : uint32 option)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * ProcessView<'Thread, 'Handler>>,
+              ReceiveRefusal
+           >
+        =
+        let held =
+            match UnixThreadTable.parkedFor thread system.Threads with
+            | Some parked -> ParkedSyscall.descriptions parked
+            | None -> []
+
+        // The call's reference to the socket goes as it returns, and with it
+        // the socket, if no descriptor names it any more, as a read's does.
+        finishRecvFromHolding thread read system
+        |> Result.map (fun progress ->
+            match progress with
+            | CallProgress.NeedsCopyIn _ -> progress
+            | CallProgress.Answered (outcome, after) ->
+                CallProgress.Answered (
+                    outcome,
+                    ObjectLifetime.releaseUnreferencedUnrefusable "UnixReadWrite.finishRecvFrom" held after
+                )
+        )
+
+    /// `tryFinishRecvFrom` once `Entry` has admitted its caller.
+    let internal tryFinishRecvFromIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * ProcessView<'Thread, 'Handler>>,
+              ReceiveRefusal
+           >
+        =
+        tryFinishRecvFromWith thread None system
+
+    /// `finishRecvFrom`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal tryFinishRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * UnixSystem<'Thread, 'Handler>>,
+              ReceiveRefusal
+           >
+        =
+        Entry.call
+            "UnixReadWrite.finishRecvFrom"
+            CallerRequirement.Woken
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryFinishRecvFromIn (Caller.thread caller))
+            system
+
+    /// <summary>
+    /// Finish the `recvfrom` `caller` is asleep in, once `UnixWait.wake` has
+    /// woken it: look at the socket again, as a woken real receive does, and
+    /// answer as `recvfrom` would with what it finds, or sleep again.
+    /// </summary>
+    /// <remarks>
+    /// A Linux call reads its length cell only now, once it has taken the
+    /// datagram, so it may stop for it, as `recvfrom` does, and
+    /// `recvfromWithLength` takes what it holds. A Darwin one read the cell
+    /// before it slept, and never stops here.
+    ///
+    /// A datagram or the pending error beats a signal pending for the thread
+    /// under Linux, and a signal with a handler beats them under Darwin,
+    /// which answers `Interrupted`. A close of the descriptor a Darwin
+    /// receive slept through, or of one another receive on the socket slept
+    /// through, has ended it with `EBADF`. A receive that finds nothing,
+    /// another having taken what woke it, sleeps again, but one whose
+    /// description has become non-blocking meanwhile is refused.
+    ///
+    /// Throws `InvalidOperationException` unless `caller` is a thread of one
+    /// of the system's processes, parked in a `recvfrom` and woken.
+    /// </remarks>
+    let finishRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedRecvFrom<'Thread, 'Handler>, RecvFromOutcome * UnixSystem<'Thread, 'Handler>>
+        =
+        tryFinishRecvFrom caller system
+        |> Refusal.orRaise "UnixReadWrite.finishRecvFrom" ReceiveRefusal.kind ReceiveRefusal.describe
 
     /// `recvfrom`, with a refusal answered as the `Error` rather than raised.
     let internal tryRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -6524,8 +7023,12 @@ module UnixReadWrite =
     ///
     /// Both report the address's whole length, 16, whatever the cell held.
     ///
-    /// A blocking call with nothing to receive is refused, as `recv`'s is, as
-    /// is a socket that is not an IPv4 UDP one, and every flag but
+    /// A blocking call with nothing to receive sleeps
+    /// (`RecvFromOutcome.WouldBlock`), and `finishRecvFrom` finishes it. A
+    /// Darwin call whose length cell is real storage stops for it before it
+    /// sleeps, as it reads it before anything else.
+    ///
+    /// Refused: a socket that is not an IPv4 UDP one, and every flag but
     /// `MSG_PEEK`, `MSG_DONTWAIT`, `MSG_TRUNC` and `MSG_NOSIGNAL`. So is a
     /// `UserBuffer.Opaque` cell where the call uses what it holds, and a
     /// `UserBuffer.Addressless` source or cell where whether it is NULL, or
@@ -6550,23 +7053,20 @@ module UnixReadWrite =
 
     /// `tryRecvFromWithLength` before `Entry.resume` hands back the system it
     /// answers in.
-    let private tryRecvFromWithLengthIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryRecvFromWithLengthIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (length : uint32)
         (paused : PausedRecvFrom<'Thread, 'Handler>)
         : Result<RecvFromOutcome * ProcessView<'Thread, 'Handler>, ReceiveRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.recvfromWithLength" "UnixReadWrite.recvfrom" paused
 
-        tryRecvFromIn
-            paused.Thread
-            paused.Fd
-            paused.Buffer
-            paused.Count
-            paused.Flags
-            paused.Source
-            paused.SourceLength
-            (Some length)
-            paused.System
+        let resumed =
+            match paused.Call with
+            | PausedRecvFromCall.Call (fd, buffer, count, flags, source, sourceLength) ->
+                tryRecvFromIn paused.Thread fd buffer count flags source sourceLength (Some length) paused.System
+            | PausedRecvFromCall.Finish -> tryFinishRecvFromWith paused.Thread (Some length) paused.System
+
+        resumed
         |> Result.map (fun progress ->
             match progress with
             | CallProgress.Answered answer -> answer

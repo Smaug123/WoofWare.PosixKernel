@@ -49,8 +49,21 @@ module internal ParkedCall =
         | ParkedSyscall.FifoOpen _ -> Syscall.Open (PathArgumentBytes.Unreadable, 0, 0)
         | ParkedSyscall.Select _ -> Syscall.Select SelectArguments.SelectArguments
         | ParkedSyscall.SignalWait _ -> Syscall.SigWait SigWaitArguments.SigWaitArguments
-        | ParkedSyscall.DatagramReceive _ ->
-            Syscall.RecvFrom (0, UserBuffer.Mapped, 0UL, 0, UserBuffer.Unmapped 0UL, CopiedArgument.Unmapped 0UL)
+        | ParkedSyscall.DatagramReceive receive ->
+            match receive.Call with
+            | ParkedDatagramReceiveCall.Read -> Syscall.Read (0, UserBuffer.Mapped, 0UL)
+            | ParkedDatagramReceiveCall.Receive _ -> Syscall.Recv (0, UserBuffer.Mapped, 0UL, 0)
+            // A length cell of real storage holds 16, which a Linux call
+            // reads once its datagram has come.
+            | ParkedDatagramReceiveCall.ReceiveFrom (_, _, source, sourceLength, _) ->
+                let cell =
+                    match sourceLength with
+                    | UserBuffer.Mapped -> CopiedArgument.Readable 16u
+                    | UserBuffer.Unmapped address -> CopiedArgument.Unmapped address
+                    | UserBuffer.Opaque -> CopiedArgument.Opaque
+                    | UserBuffer.Addressless -> CopiedArgument.Addressless
+
+                Syscall.RecvFrom (0, UserBuffer.Mapped, 0UL, 0, source, cell)
         | ParkedSyscall.DatagramSend _ ->
             Syscall.SendTo (0, CopiedArgument.Readable (buffer 0), 0UL, 0, CopiedArgument.Unmapped 0UL, 0u)
         | ParkedSyscall.Connect _ -> Syscall.Connect (0, CopiedArgument.Addressless, 0u)

@@ -171,8 +171,13 @@ module internal Parking =
         // connect that sleeps will model.
         | WakePrimitive.AcceptQueueHasRoom _ -> None
         // A futex wake names the waiters it takes as it is made, so no sweep
-        // has to choose among them.
-        | WakePrimitive.FutexWakeTaken -> None
+        // has to choose among them. So does a datagram's arrival at a Linux
+        // socket, which marks the one receive it wakes
+        // (`ParkedDatagramReceive.Chosen`): a sweep sees only states, and a
+        // datagram a peek left queued would wake the next sleeper at each
+        // one. Darwin wakes every receive.
+        | WakePrimitive.FutexWakeTaken
+        | WakePrimitive.DatagramReceivable _ -> None
 
     /// Record that `thread` has parked in `parked`, asleep, placing it after
     /// every park made before it, and taking the holds the call keeps on the

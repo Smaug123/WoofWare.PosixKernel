@@ -558,8 +558,9 @@ type SocketDescription =
         Phase : SocketPhase
         /// Under Darwin, whether a close has drained the socket: xnu's
         /// `SS_DRAINING`, which a close of a descriptor sets when an `accept(2)`,
-        /// or a read or write of a connection, is asleep through it, ending
-        /// every such call asleep on the socket, through whichever descriptor.
+        /// a read or write of a connection, or a receive on a UDP socket, is
+        /// asleep through it, ending every such call asleep on the socket,
+        /// through whichever descriptor.
         /// Never under Linux, whose close ends no call.
         ///
         /// It lasts for the socket's life. On a listener, a second `listen(2)`
@@ -569,7 +570,9 @@ type SocketDescription =
         /// connection, a read or a write that would sleep answers `EBADF`
         /// instead, a write having first taken the room there was, and one
         /// that finds bytes, a FIN or room for all it writes answers as it
-        /// would have.
+        /// would have. On a UDP socket, a receive that would sleep answers
+        /// `EBADF` instead, and one that finds a datagram or the error takes
+        /// it.
         Drained : bool
         /// The uid the kernel holds this socket to, fixed for its life: XNU's
         /// `so_cred`, Linux's `sk_uid`. It is the effective uid of the process

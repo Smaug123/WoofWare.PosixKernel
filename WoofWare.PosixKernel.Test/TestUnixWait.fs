@@ -700,7 +700,11 @@ module TestUnixWait =
 
             ParkedSyscall.DatagramReceive
                 {
-                    Socket = description
+                    ParkedDatagramReceive.Socket = SleepTarget.Waiting (description, 0)
+                    Buffer = UserBuffer.Mapped
+                    Count = 16
+                    Call = ParkedDatagramReceiveCall.Receive false
+                    Chosen = false
                 }
 
             ParkedSyscall.DatagramSend

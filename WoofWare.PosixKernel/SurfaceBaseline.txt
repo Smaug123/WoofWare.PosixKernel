@@ -1505,7 +1505,28 @@ WoofWare.PosixKernel.FinishedCall`2.NewSigSuspend [static method]: (WoofWare.Pos
 WoofWare.PosixKernel.FinishedCall`2.NewSleep [static method]: WoofWare.PosixKernel.FinishedSleep<'Thread, 'Handler> -> WoofWare.PosixKernel.FinishedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.FinishedCall`2.Tag [property]: [read-only] int
 WoofWare.PosixKernel.FinishedConnect`2 inherit obj
-WoofWare.PosixKernel.FinishedDatagramReceive`2 inherit obj
+WoofWare.PosixKernel.FinishedDatagramReceive`2 inherit obj - union type with 2 cases
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Read inherit WoofWare.PosixKernel.FinishedDatagramReceive<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Read.get_outcome [method]: unit -> WoofWare.PosixKernel.ReadOutcome
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Read.get_system [method]: unit -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Read.outcome [property]: [read-only] WoofWare.PosixKernel.ReadOutcome
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Read.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+RecvFrom inherit WoofWare.PosixKernel.FinishedDatagramReceive<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+RecvFrom.get_outcome [method]: unit -> WoofWare.PosixKernel.RecvFromOutcome
+WoofWare.PosixKernel.FinishedDatagramReceive`2+RecvFrom.get_system [method]: unit -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+RecvFrom.outcome [property]: [read-only] WoofWare.PosixKernel.RecvFromOutcome
+WoofWare.PosixKernel.FinishedDatagramReceive`2+RecvFrom.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Tags inherit obj
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Tags.Read [static field]: int = 0
+WoofWare.PosixKernel.FinishedDatagramReceive`2+Tags.RecvFrom [static field]: int = 1
+WoofWare.PosixKernel.FinishedDatagramReceive`2.get_IsRead [method]: unit -> bool
+WoofWare.PosixKernel.FinishedDatagramReceive`2.get_IsRecvFrom [method]: unit -> bool
+WoofWare.PosixKernel.FinishedDatagramReceive`2.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.FinishedDatagramReceive`2.IsRead [property]: [read-only] bool
+WoofWare.PosixKernel.FinishedDatagramReceive`2.IsRecvFrom [property]: [read-only] bool
+WoofWare.PosixKernel.FinishedDatagramReceive`2.NewRead [static method]: (WoofWare.PosixKernel.ReadOutcome, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.FinishedDatagramReceive<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2.NewRecvFrom [static method]: (WoofWare.PosixKernel.RecvFromOutcome, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.FinishedDatagramReceive<'Thread, 'Handler>
+WoofWare.PosixKernel.FinishedDatagramReceive`2.Tag [property]: [read-only] int
 WoofWare.PosixKernel.FinishedDatagramSend`2 inherit obj
 WoofWare.PosixKernel.FinishedFifoOpen`2 inherit obj
 WoofWare.PosixKernel.FinishedSelect`2 inherit obj
@@ -8625,6 +8646,7 @@ WoofWare.PosixKernel.UnixPoll.poll [static method]: 'Thread WoofWare.PosixKernel
 WoofWare.PosixKernel.UnixReadWrite inherit obj
 WoofWare.PosixKernel.UnixReadWrite.copyFileRange [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> System.UInt64 -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixReadWrite.finishRead [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ReadOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixReadWrite.finishRecvFrom [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedRecvFrom<'Thread, 'Handler>, (WoofWare.PosixKernel.RecvFromOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixReadWrite.finishWrite [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedWrite<'Thread, 'Handler>, WoofWare.PosixKernel.ProcessFate<'Thread WoofWare.PosixKernel.WriteOutcome, 'Thread, 'Handler>>
 WoofWare.PosixKernel.UnixReadWrite.pread [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt64 -> System.Int64 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ReadAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixReadWrite.pwrite [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt64 -> System.Int64 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedPWrite<'Thread, 'Handler>, (WoofWare.PosixKernel.WriteAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
@@ -9065,7 +9087,7 @@ WoofWare.PosixKernel.WakeCondition.NewPrimitive [static method]: WoofWare.PosixK
 WoofWare.PosixKernel.WakeCondition.Tag [property]: [read-only] int
 WoofWare.PosixKernel.WakeConditionModule inherit obj
 WoofWare.PosixKernel.WakeConditionModule.ofPark [static method]: WoofWare.PosixKernel.ParkedSyscall -> WoofWare.PosixKernel.WakeCondition
-WoofWare.PosixKernel.WakePrimitive inherit obj, implements WoofWare.PosixKernel.WakePrimitive System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.WakePrimitive System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 22 cases
+WoofWare.PosixKernel.WakePrimitive inherit obj, implements WoofWare.PosixKernel.WakePrimitive System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.WakePrimitive System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 23 cases
 WoofWare.PosixKernel.WakePrimitive+AcceptQueueHasRoom inherit WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive+AcceptQueueHasRoom.get_listener [method]: unit -> WoofWare.PosixKernel.SocketId
 WoofWare.PosixKernel.WakePrimitive+AcceptQueueHasRoom.listener [property]: [read-only] WoofWare.PosixKernel.SocketId
@@ -9083,6 +9105,9 @@ WoofWare.PosixKernel.WakePrimitive+ConnectionWritable.get_remaining [method]: un
 WoofWare.PosixKernel.WakePrimitive+ConnectionWritable.get_writer [method]: unit -> WoofWare.PosixKernel.OpenFileDescriptionId
 WoofWare.PosixKernel.WakePrimitive+ConnectionWritable.remaining [property]: [read-only] int
 WoofWare.PosixKernel.WakePrimitive+ConnectionWritable.writer [property]: [read-only] WoofWare.PosixKernel.OpenFileDescriptionId
+WoofWare.PosixKernel.WakePrimitive+DatagramReceivable inherit WoofWare.PosixKernel.WakePrimitive
+WoofWare.PosixKernel.WakePrimitive+DatagramReceivable.get_reader [method]: unit -> WoofWare.PosixKernel.OpenFileDescriptionId
+WoofWare.PosixKernel.WakePrimitive+DatagramReceivable.reader [property]: [read-only] WoofWare.PosixKernel.OpenFileDescriptionId
 WoofWare.PosixKernel.WakePrimitive+DeadlinePassed inherit WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive+DeadlinePassed.get_nanosecondsSinceBoot [method]: unit -> System.Int64
 WoofWare.PosixKernel.WakePrimitive+DeadlinePassed.nanosecondsSinceBoot [property]: [read-only] System.Int64
@@ -9140,6 +9165,7 @@ WoofWare.PosixKernel.WakePrimitive+Tags.AcceptQueueNonEmpty [static field]: int 
 WoofWare.PosixKernel.WakePrimitive+Tags.AwaitedSignalPending [static field]: int = 19
 WoofWare.PosixKernel.WakePrimitive+Tags.ConnectionReadable [static field]: int = 12
 WoofWare.PosixKernel.WakePrimitive+Tags.ConnectionWritable [static field]: int = 13
+WoofWare.PosixKernel.WakePrimitive+Tags.DatagramReceivable [static field]: int = 22
 WoofWare.PosixKernel.WakePrimitive+Tags.DeadlinePassed [static field]: int = 15
 WoofWare.PosixKernel.WakePrimitive+Tags.DescriptorReady [static field]: int = 4
 WoofWare.PosixKernel.WakePrimitive+Tags.EndedByClose [static field]: int = 14
@@ -9167,6 +9193,7 @@ WoofWare.PosixKernel.WakePrimitive.get_IsAcceptQueueNonEmpty [method]: unit -> b
 WoofWare.PosixKernel.WakePrimitive.get_IsAwaitedSignalPending [method]: unit -> bool
 WoofWare.PosixKernel.WakePrimitive.get_IsConnectionReadable [method]: unit -> bool
 WoofWare.PosixKernel.WakePrimitive.get_IsConnectionWritable [method]: unit -> bool
+WoofWare.PosixKernel.WakePrimitive.get_IsDatagramReceivable [method]: unit -> bool
 WoofWare.PosixKernel.WakePrimitive.get_IsDeadlinePassed [method]: unit -> bool
 WoofWare.PosixKernel.WakePrimitive.get_IsDescriptorReady [method]: unit -> bool
 WoofWare.PosixKernel.WakePrimitive.get_IsEndedByClose [method]: unit -> bool
@@ -9192,6 +9219,7 @@ WoofWare.PosixKernel.WakePrimitive.IsAcceptQueueNonEmpty [property]: [read-only]
 WoofWare.PosixKernel.WakePrimitive.IsAwaitedSignalPending [property]: [read-only] bool
 WoofWare.PosixKernel.WakePrimitive.IsConnectionReadable [property]: [read-only] bool
 WoofWare.PosixKernel.WakePrimitive.IsConnectionWritable [property]: [read-only] bool
+WoofWare.PosixKernel.WakePrimitive.IsDatagramReceivable [property]: [read-only] bool
 WoofWare.PosixKernel.WakePrimitive.IsDeadlinePassed [property]: [read-only] bool
 WoofWare.PosixKernel.WakePrimitive.IsDescriptorReady [property]: [read-only] bool
 WoofWare.PosixKernel.WakePrimitive.IsEndedByClose [property]: [read-only] bool
@@ -9215,6 +9243,7 @@ WoofWare.PosixKernel.WakePrimitive.NewAcceptQueueNonEmpty [static method]: WoofW
 WoofWare.PosixKernel.WakePrimitive.NewAwaitedSignalPending [static method]: WoofWare.PosixKernel.SignalMask -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.NewConnectionReadable [static method]: WoofWare.PosixKernel.OpenFileDescriptionId -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.NewConnectionWritable [static method]: (WoofWare.PosixKernel.OpenFileDescriptionId, int) -> WoofWare.PosixKernel.WakePrimitive
+WoofWare.PosixKernel.WakePrimitive.NewDatagramReceivable [static method]: WoofWare.PosixKernel.OpenFileDescriptionId -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.NewDeadlinePassed [static method]: System.Int64 -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.NewDescriptorReady [static method]: (WoofWare.PosixKernel.OpenFileDescriptionId, System.UInt32) -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.NewEpollEventDeliverable [static method]: WoofWare.PosixKernel.OpenFileDescriptionId -> WoofWare.PosixKernel.WakePrimitive

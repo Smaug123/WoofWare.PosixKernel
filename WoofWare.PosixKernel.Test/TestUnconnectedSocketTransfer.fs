@@ -509,7 +509,8 @@ module TestUnconnectedSocketTransfer =
                 bytes.IsEmpty && after = system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after), Seen.Failed seen ->
                 error = seen && after = system
-            | Error (ReadRefusal.DatagramSleep _), Seen.Sleeps -> true
+            | Ok (ReadOutcome.WouldBlock _, _), Seen.Sleeps -> true
+            | Error (ReadRefusal.UnixDomainDatagramSleep _), Seen.Sleeps -> true
             | _ -> false
         | Call.Write count ->
             let admitted = Lone.UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system

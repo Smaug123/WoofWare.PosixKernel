@@ -43,6 +43,8 @@ module TestUnixWaitFinish =
         | InotifyRead
         | SigSuspend
         | Pause
+        | DatagramReceive
+        | DatagramRecvFrom
 
     /// The kinds of call a thread of `flavour` can sleep in.
     let private sleepsOn (flavour : SimulatedUnixFlavour) : Sleep list =
@@ -57,6 +59,8 @@ module TestUnixWaitFinish =
                 Sleep.ConnectionWrite
                 Sleep.SigSuspend
                 Sleep.Pause
+                Sleep.DatagramReceive
+                Sleep.DatagramRecvFrom
             ]
 
         match flavour with
@@ -157,6 +161,9 @@ module TestUnixWaitFinish =
             Far : int option
             /// How many directories the leader has made, for an inotify read.
             Made : int
+            /// The port of the UDP socket a datagram receive sleeps on, which
+            /// outlives the descriptor under Linux.
+            ReceiverPort : uint16
         }
 
     let private usr1 (system : UnixSystem<int, string>) : int32 =
@@ -257,6 +264,37 @@ module TestUnixWaitFinish =
         let system = KeventWorld.closeAs leader listener system
         client, server, nonBlocking server system
 
+    /// A UDP socket bound to loopback, made by the leader, and its port.
+    let private udpBound (system : UnixSystem<int, string>) : int * uint16 * UnixSystem<int, string> =
+        let leader = Callers.leader system
+
+        let fd, system =
+            match
+                UnixSystem.step leader (Syscall.Socket (SimulatedUnixPlatform.internetAddressFamily, 2, 0)) system
+            with
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, returned system
+            | other -> failwith $"socket: %A{other}"
+
+        let address =
+            CopyIn.blob
+                (UnixSystem.platform system)
+                SimulatedUnixPlatform.internetAddressFamily
+                (Ipv4Endpoint.ofParts Ipv4Address.loopback 0us)
+
+        let system =
+            match
+                UnixSystem.step
+                    leader
+                    (Syscall.Bind (fd, CopiedArgument.Readable (ImmutableArray.Create<byte> address), 16u))
+                    system
+            with
+            | SteppedCall.Bind (BindAnswer.Bound _, system) -> returned system
+            | other -> failwith $"bind: %A{other}"
+
+        match UnixSystem.step leader (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
+        | SteppedCall.GetSockName (GetSockNameAnswer.Reported (copied, _)) -> fd, (CopyOut.endpoint copied).Port, system
+        | other -> failwith $"getsockname: %A{other}"
+
     let private sleeps<'Answer, 'Refusal>
         (what : string)
         (isPark : 'Answer -> bool)
@@ -287,6 +325,7 @@ module TestUnixWaitFinish =
                 Through = through
                 Far = far
                 Made = 0
+                ReceiverPort = 0us
             }
 
         match case.Sleep with
@@ -501,6 +540,46 @@ module TestUnixWaitFinish =
                     | _ -> false
                 )
             |> world None None
+        | Sleep.DatagramReceive ->
+            let receiver, port, system = udpBound system
+            let sender, _, system = udpBound system
+
+            let asleep =
+                UnixReadWrite.tryRecv (s system) receiver UserBuffer.Mapped 16UL 0 system
+                |> sleeps
+                    "UDP recv"
+                    (fun outcome ->
+                        match outcome with
+                        | ReadOutcome.WouldBlock _ -> true
+                        | _ -> false
+                    )
+                |> world (Some receiver) (Some sender)
+
+            { asleep with
+                ReceiverPort = port
+            }
+        | Sleep.DatagramRecvFrom ->
+            let receiver, port, system = udpBound system
+            let sender, _, system = udpBound system
+
+            match
+                UnixSystem.tryStep
+                    (s system)
+                    (Syscall.RecvFrom (
+                        receiver,
+                        UserBuffer.Mapped,
+                        16UL,
+                        0,
+                        UserBuffer.Mapped,
+                        CopiedArgument.Readable 16u
+                    ))
+                    system
+            with
+            | Ok (SteppedCall.RecvFrom (RecvFromOutcome.WouldBlock _, system)) ->
+                { world (Some receiver) (Some sender) system with
+                    ReceiverPort = port
+                }
+            | other -> failwith $"expected the recvfrom to sleep, got %A{other}"
 
     /// The sleeper's return to user mode after its call answered or was
     /// interrupted, each handler it takes running and returning: the system
@@ -560,11 +639,14 @@ module TestUnixWaitFinish =
             answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.SigSuspend (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.Futex (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
+        | Ok (FinishedCall.DatagramReceive (FinishedDatagramReceive.Read (outcome, after))) ->
+            answered (UnionCaseName.ofValue outcome = "WouldBlock") after
+        | Ok (FinishedCall.DatagramReceive (FinishedDatagramReceive.RecvFrom (outcome, after))) ->
+            answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.Sleep _)
         | Ok (FinishedCall.FifoOpen _)
         | Ok (FinishedCall.Select _)
         | Ok (FinishedCall.SignalWait _)
-        | Ok (FinishedCall.DatagramReceive _)
         | Ok (FinishedCall.DatagramSend _)
         | Ok (FinishedCall.Connect _) -> failwith "finish answered a reserved park, which nothing parks a thread in"
 
@@ -620,6 +702,34 @@ module TestUnixWaitFinish =
                             System = system
                         }
                     )
+                | Sleep.DatagramReceive, Some sender
+                | Sleep.DatagramRecvFrom, Some sender ->
+                    let port = world.ReceiverPort
+                    let bytes = ImmutableArray.Create<byte> [| 1uy ; 2uy ; 3uy |]
+
+                    let address =
+                        CopyIn.blob
+                            (UnixSystem.platform system)
+                            SimulatedUnixPlatform.internetAddressFamily
+                            (Ipv4Endpoint.ofParts Ipv4Address.loopback port)
+
+                    match
+                        UnixSystem.step
+                            leader
+                            (Syscall.SendTo (
+                                sender,
+                                CopiedArgument.Readable bytes,
+                                3UL,
+                                0,
+                                CopiedArgument.Readable (ImmutableArray.Create<byte> address),
+                                16u
+                            ))
+                            system
+                    with
+                    | SteppedCall.SendTo (ProcessFate.Continues (_, system)) -> withSystem (returned system)
+                    | other -> failwith $"sendto: %A{other}"
+                | Sleep.DatagramReceive, None
+                | Sleep.DatagramRecvFrom, None
                 | Sleep.PipeRead, None
                 | Sleep.Poll, None
                 | Sleep.PipeWrite, None
@@ -742,6 +852,7 @@ module TestUnixWaitFinish =
                 "Accept", 18, Some 71
                 "ConnectionRead", 6, Some 47
                 "ConnectionWrite", 24, Some 38
+                "DatagramReceive", 23, Some 55
                 "EpollWait", 11, Some 19
                 "Flock", 11, Some 37
                 "InotifyRead", 8, Some 22
@@ -769,14 +880,20 @@ module TestUnixWaitFinish =
         labelled "NeedsCopyIn" |> shouldBeGreaterThan 45
         labelled "refused" |> shouldBeGreaterThan 27
 
-        // Every kind of call, given a Syscall of another kind; and a write,
-        // given a buffer it cannot copy from, both where it copies and where it
-        // does not.
+        // Every kind of call, given a Syscall of another kind; a write, given a
+        // buffer it cannot copy from, and a recvfrom, given a length cell it
+        // cannot read, both where it copies or reads and where it does not.
         for kind, _, _ in floors do
             labelled $"misuse: %s{kind} given another call" |> shouldBeGreaterThan 0
 
         labelled "misuse: a write that copies given" |> shouldBeGreaterThan 0
         labelled "misuse: a write that copies nothing given" |> shouldBeGreaterThan 0
+
+        labelled "misuse: a recvfrom that reads its length cell given"
+        |> shouldBeGreaterThan 0
+
+        labelled "misuse: a recvfrom that reads no length cell given"
+        |> shouldBeGreaterThan 0
 
     /// A thread parked in each of the reserved calls, which nothing parks a
     /// thread in yet, as the tests of each reserved park forge one, the
@@ -811,10 +928,6 @@ module TestUnixWaitFinish =
                     Deadline = None
                     Destination = None
                 }
-            ParkedSyscall.DatagramReceive
-                {
-                    ParkedDatagramReceive.Socket = stdin
-                }
             ParkedSyscall.DatagramSend
                 {
                     ParkedDatagramSend.Socket = stdin
@@ -841,16 +954,7 @@ module TestUnixWaitFinish =
 
             parks
             |> List.map UnionCaseName.ofValue
-            |> shouldEqual
-                [
-                    "Sleep"
-                    "FifoOpen"
-                    "Select"
-                    "SignalWait"
-                    "DatagramReceive"
-                    "DatagramSend"
-                    "Connect"
-                ]
+            |> shouldEqual [ "Sleep" ; "FifoOpen" ; "Select" ; "SignalWait" ; "DatagramSend" ; "Connect" ]
 
             for parked in parks do
                 let woken = awake |> Lone.Parking.park sleeper parked |> ForgedPark.woken sleeper

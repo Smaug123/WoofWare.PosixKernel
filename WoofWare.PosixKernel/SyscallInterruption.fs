@@ -423,7 +423,8 @@ module SyscallInterruption =
             | FutexTimeout.At _
             | FutexTimeout.Unbounded -> UnhandledInterruption.Ends InterruptedCall.Restarts
             | FutexTimeout.Until _ -> UnhandledInterruption.RestartsWithRemainingTime
-        // A park the flavour never makes, and the reserved parks.
+        // A park the flavour never makes, the reserved parks, and a datagram
+        // receive, which `disposition-before-return` did not measure.
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.InotifyRead _
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.Poll _
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.EpollWait _

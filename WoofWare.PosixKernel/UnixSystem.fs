@@ -590,11 +590,12 @@ type UnixSystemDefect<'Thread> =
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wake` crashes.
     | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
-    /// A thread is asleep in an `accept`, or a read or write of a connection,
-    /// on a socket a close has drained (`SocketDescription.Drained`): the close
-    /// that drains a socket ends every such call asleep on it, `accept`
-    /// refuses to sleep on a drained listener, and a read or write that would
-    /// sleep on a drained end answers `EBADF` instead.
+    /// A thread is asleep in an `accept`, a read or write of a connection, or
+    /// a receive on a UDP socket, on a socket a close has drained
+    /// (`SocketDescription.Drained`): the close that drains a socket ends
+    /// every such call asleep on it, `accept` refuses to sleep on a drained
+    /// listener, and a read, write or receive that would sleep on a drained
+    /// socket answers `EBADF` instead.
     | ParkedOnDrainedSocket of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// Under Darwin, a thread is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
@@ -921,6 +922,23 @@ type UnixSystemDefect<'Thread> =
     /// to is not what its sockets say, so a datagram would miss a socket
     /// that should take it.
     | StaleDatagramPortIndex
+    /// A thread is asleep in a receive on a UDP socket through the open file
+    /// description `description`, which names something other than a UDP
+    /// socket, or, for a `recvfrom`, other than an IPv4 one.
+    | ParkedDatagramReceiveOnNonDatagramSocket of thread : Caller<'Thread> * description : OpenFileDescriptionId
+    /// A thread is asleep in a receive on a UDP socket of `count` bytes, which
+    /// no receive that sleeps asks for: only a Linux `recv` or `recvfrom`
+    /// sleeps asking for nothing.
+    | ParkedDatagramReceiveCount of thread : Caller<'Thread> * count : int
+    /// A thread is asleep in a receive on a UDP socket that an arrival has
+    /// chosen to wake (`ParkedDatagramReceive.Chosen`), under Darwin, which
+    /// wakes every receive and chooses none.
+    | ParkedDatagramReceiveChosenUnderDarwin of thread : Caller<'Thread>
+    /// A thread is asleep in a `recvfrom` whose park says it read its length
+    /// cell before it slept when its flavour does not (Linux), or did not
+    /// when its flavour does, to copy a source (Darwin, a cell that is real
+    /// storage and a source that is not NULL).
+    | ParkedRecvFromLengthRead of thread : Caller<'Thread> * lengthRead : uint32 option
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -3529,7 +3547,6 @@ module UnixSystem =
                 | Some (ParkedSyscall.FifoOpen _ as parked)
                 | Some (ParkedSyscall.Select _ as parked)
                 | Some (ParkedSyscall.SignalWait _ as parked)
-                | Some (ParkedSyscall.DatagramReceive _ as parked)
                 | Some (ParkedSyscall.DatagramSend _ as parked)
                 | Some (ParkedSyscall.Connect _ as parked) -> [ UnixSystemDefect.ReservedPark (caller thread, parked) ]
                 | Some (ParkedSyscall.InotifyRead read) ->
@@ -3852,6 +3869,79 @@ module UnixSystem =
                                 ]
 
                     progress @ target
+                | Some (ParkedSyscall.DatagramReceive receive) ->
+                    let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+                    // Only a Linux `recv` or `recvfrom` sleeps asking for
+                    // nothing: a `read` of nothing answers 0, as does every
+                    // Darwin receive of nothing.
+                    let count =
+                        match flavour, receive.Call with
+                        | _, _ when receive.Count > 0 -> []
+                        | SimulatedUnixFlavour.Linux, ParkedDatagramReceiveCall.Receive _
+                        | SimulatedUnixFlavour.Linux, ParkedDatagramReceiveCall.ReceiveFrom _ when receive.Count = 0 ->
+                            []
+                        | _ -> [ UnixSystemDefect.ParkedDatagramReceiveCount (caller thread, receive.Count) ]
+
+                    let chosen =
+                        match flavour with
+                        | SimulatedUnixFlavour.Darwin when receive.Chosen ->
+                            [ UnixSystemDefect.ParkedDatagramReceiveChosenUnderDarwin (caller thread) ]
+                        | SimulatedUnixFlavour.Darwin
+                        | SimulatedUnixFlavour.Linux -> []
+
+                    let lengthRead =
+                        match flavour, receive.Call with
+                        | SimulatedUnixFlavour.Linux, ParkedDatagramReceiveCall.ReceiveFrom (_, _, _, _, Some read) ->
+                            [ UnixSystemDefect.ParkedRecvFromLengthRead (caller thread, Some read) ]
+                        | SimulatedUnixFlavour.Darwin,
+                          ParkedDatagramReceiveCall.ReceiveFrom (_, _, source, UserBuffer.Mapped, None) when
+                            source <> UserBuffer.Unmapped 0UL
+                            ->
+                            [ UnixSystemDefect.ParkedRecvFromLengthRead (caller thread, None) ]
+                        | _ -> []
+
+                    let target =
+                        match receive.Socket with
+                        | SleepTarget.EndedByClose _ -> endedByClose thread
+                        | SleepTarget.Waiting (description, fd) ->
+
+                        match Map.tryFind description descriptions with
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, description) ]
+                        | Some found ->
+                            let socket =
+                                match found.Target with
+                                | OpenFileTarget.Socket socketId ->
+                                    SocketTable.tryFind socketId system.Machine.Sockets
+                                    |> Option.filter SocketTable.receivesDatagrams
+                                    |> Option.filter (fun socket ->
+                                        match receive.Call with
+                                        | ParkedDatagramReceiveCall.ReceiveFrom _ -> socket.Domain = SocketDomain.Inet
+                                        | ParkedDatagramReceiveCall.Read
+                                        | ParkedDatagramReceiveCall.Receive _ -> true
+                                    )
+                                | OpenFileTarget.File _
+                                | OpenFileTarget.Directory _
+                                | OpenFileTarget.CharacterDevice _
+                                | OpenFileTarget.Fifo _
+                                | OpenFileTarget.Inotify _
+                                | OpenFileTarget.Pipe _
+                                | OpenFileTarget.Kqueue _
+                                | OpenFileTarget.Epoll _ -> None
+
+                            match socket with
+                            | None ->
+                                [
+                                    UnixSystemDefect.ParkedDatagramReceiveOnNonDatagramSocket (
+                                        caller thread,
+                                        description
+                                    )
+                                ]
+                            | Some socket when socket.Drained ->
+                                [ UnixSystemDefect.ParkedOnDrainedSocket (caller thread, description) ]
+                            | Some _ -> enteredThrough thread fd description
+
+                    count @ chosen @ lengthRead @ target
                 | Some (ParkedSyscall.ConnectionRead read) ->
                     // Only a Linux `recv` sleeps asking for nothing.
                     let mayAskNothing =
