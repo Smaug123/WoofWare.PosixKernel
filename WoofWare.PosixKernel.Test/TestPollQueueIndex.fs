@@ -9,7 +9,8 @@ open WoofWare.PosixKernel
 /// `PollQueueTable` keeps a record of the sleeping Darwin polls' kqueues that
 /// registered through each descriptor of each process, which
 /// `PollQueueTable.registeringThrough` and
-/// `PollQueueTable.dropRegistrationsThrough` read. Over random walks of the
+/// `PollQueueTable.dropRegistrationsThrough` read, and of those registering
+/// each socket, which `PollQueueTable.registeringOnSocket` reads. Over random walks of the
 /// table's own changes, each answers what a scan of every queue answers.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -33,12 +34,20 @@ module TestPollQueueIndex =
 
     let private filters : KqueueFilter list = [ KqueueFilter.Read ; KqueueFilter.Write ]
 
-    let private registration : PollRegistration =
+    /// The sockets a walk's filters are attached to, and one none is.
+    let private sockets : SocketId list = [ SocketId 0L ; SocketId 1L ; SocketId 9L ]
+
+    /// A registration attached to one of the first two sockets, or to none,
+    /// as a pipe's or a file's is.
+    let private registration (rng : System.Random) : PollRegistration =
         {
             Entry = 0
             OutOfBand = false
             RegisteredAt = 0
-            Socket = None
+            Socket =
+                match rng.Next 3 with
+                | 0 -> None
+                | which -> Some sockets.[which - 1]
         }
 
     /// A queue of `owner`'s, registering a random few filters, some active.
@@ -53,7 +62,7 @@ module TestPollQueueIndex =
 
         {
             Owner = owner
-            Registrations = keys |> List.map (fun key -> key, registration) |> Map.ofList
+            Registrations = keys |> List.map (fun key -> key, registration rng) |> Map.ofList
             Active = keys |> List.filter (fun _ -> rng.Next 2 = 0)
         }
 
@@ -140,6 +149,22 @@ module TestPollQueueIndex =
         )
 
     let private agree (table : PollQueueTable) : unit =
+        for socket in sockets do
+            let scanned =
+                PollQueueTable.all table
+                |> Map.toList
+                |> List.choose (fun (id, queue) ->
+                    let keys =
+                        queue.Registrations
+                        |> Map.filter (fun _ registration -> registration.Socket = Some socket)
+                        |> Map.keys
+                        |> Set.ofSeq
+
+                    if Set.isEmpty keys then None else Some (id, keys)
+                )
+
+            PollQueueTable.registeringOnSocket socket table |> shouldEqual scanned
+
         for owner in owners do
             for fd in 9 :: fds do
                 let scanned =
@@ -161,7 +186,10 @@ module TestPollQueueIndex =
         PollQueueTable.indexFresh table |> shouldEqual true
 
     [<Test>]
-    let ``the index of registrations by descriptor answers what a scan of the queues answers`` () : unit =
+    let ``the indexes of registrations by descriptor and by socket answer what a scan of the queues answers``
+        ()
+        : unit
+        =
         let property (seed : int) : unit =
             let rng = System.Random seed
 

@@ -833,10 +833,12 @@ it touches.
   - The machine's sockets become a `SocketTable`, whose private
     representation keeps the UDP sockets indexed by port, and
     `DatagramDelivery.receiverOf` reads only those at the destination port.
-  - A send still costs time linear in the machine's open file descriptions:
-    every socket wake (`SocketWake.signal`, TCP's too) walks them all to
-    signal epoll instances and activate kqueues. That is the leftover of the
-    per-call cost work, not a cost of delivery, and is its own change.
+  - A send still cost time linear in the machine's open file descriptions
+    after that: every socket wake (`SocketWake.signal`, TCP's too) walked them
+    all to signal epoll instances and activate kqueues. Its own change after
+    U2 indexes the descriptions of each socket and pipe end and the kqueues
+    and sleeping polls registering each socket, and `TestWakeSignalCost`
+    holds a whole send to that.
 - **U3. `sendto` and `recvfrom`** (3.6): the argument and answer types, the
   destination ladder of 2.10 (sharing `connect`'s decoding and autobind), and
   the source writes of 2.11.
