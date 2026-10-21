@@ -413,10 +413,13 @@ module TestDatagramSendToProbe =
             | "trunc" -> number MessageFlag.Truncate
             | _ -> number MessageFlag.Peek ||| number MessageFlag.Truncate
 
+        // `opaque` and `addressless`, which the probe cannot make, are the
+        // tests' own.
         let source =
             match inputs.["address"] with
             | "null" -> UserBuffer.Unmapped 0UL
             | "mapped" -> UserBuffer.Mapped
+            | "addressless" -> UserBuffer.Addressless
             | _ -> UserBuffer.Unmapped 1UL
 
         let cell =
@@ -424,6 +427,8 @@ module TestDatagramSendToProbe =
             | "null" -> CopiedArgument.Unmapped 0UL
             | "unmapped" -> CopiedArgument.Unmapped 1UL
             | "ffffffff" -> CopiedArgument.Readable 0xFFFFFFFFu
+            | "opaque" -> CopiedArgument.Opaque
+            | "addressless" -> CopiedArgument.Addressless
             | value -> CopiedArgument.Readable (uint32 value)
 
         let made =
@@ -570,6 +575,37 @@ module TestDatagramSendToProbe =
         seen.Add ("left", left)
         Map.ofSeq seen
 
+    /// What the model saw of a Z5 row: a `recvfrom` with an unmapped length
+    /// cell through a closed descriptor, a pipe, or an empty UDP socket.
+    let private z5 (platform : SimulatedUnixPlatform) (inputs : Map<string, string>) : Map<string, string> =
+        let system = boot platform
+
+        let fd, system =
+            match inputs.["fd"] with
+            | "closed" -> 77, system
+            | "pipe" -> 0, system
+            | _ ->
+                let fd, _, system = boundAt Ipv4Address.loopback system
+                fd, system
+
+        let source =
+            if inputs.["address"] = "null" then
+                UserBuffer.Unmapped 0UL
+            else
+                UserBuffer.Mapped
+
+        let dontWait =
+            MessageFlag.number (SimulatedUnixPlatform.flavour platform) MessageFlag.DontWait
+            |> Option.get
+
+        let call =
+            Syscall.RecvFrom (fd, UserBuffer.Mapped, 4UL, dontWait, source, CopiedArgument.Unmapped 1UL)
+
+        match step call system with
+        | Ok (SteppedCall.RecvFrom (RecvFromOutcome.Answered (RecvFromAnswer.Failed error), _)) ->
+            Map.ofList [ "answer", $"-1 %O{error}" ]
+        | other -> failwith $"recvfrom: %A{other}"
+
     /// What the model saw of a Z4 row (Darwin): what a datagram of 10 bytes
     /// costs a socket after one sendto, or `refused`.
     let private z4 (platform : SimulatedUnixPlatform) (inputs : Map<string, string>) : Map<string, string> =
@@ -674,7 +710,8 @@ module TestDatagramSendToProbe =
             | "Z1" -> z1
             | "Z2" -> z2
             | "Z3" -> z3
-            | _ -> z4
+            | "Z4" -> z4
+            | _ -> z5
 
         replayThrough observe refuses (fun _ -> true) section name
 
@@ -698,9 +735,177 @@ module TestDatagramSendToProbe =
             "Z2"
             name
 
+    /// The Z2 rows of `name` with a length cell holding 16, each made again
+    /// with the cell `cell` instead, and what the model saw of each.
+    let private withCell (cell : string) (name : string) : (Row * Map<string, string>) list =
+        let recording = recordings.[name]
+
+        rows recording
+        |> List.filter (fun row -> row.Section = "Z2" && row.Inputs.["cell"] = "16")
+        |> List.map (fun row -> row, z2 recording.Platform (Map.add "cell" cell row.Inputs))
+
+    /// Whether the receive of a Z2 row took or peeked at a datagram, copying
+    /// it to the buffer without a fault.
+    let private receivedADatagram (row : Row) : bool =
+        match row.Inputs.["queue"] with
+        | "zero" -> true
+        | "abc" -> not (row.Inputs.["buffer"] = "unmapped" && row.Inputs.["count"] <> "0")
+        | _ -> false
+
+    /// Whether the call of a Z2 row used what its length cell held: a
+    /// datagram was received, for a source that is not NULL.
+    let private usesTheCell (platform : SimulatedUnixPlatform) (row : Row) : bool =
+        row.Inputs.["address"] <> "null"
+        && receivedADatagram row
+        && not (refuses platform row)
+
+    /// A cell whose contents the client cannot produce is real storage, which
+    /// each flavour reads without a fault, and what it holds matters only
+    /// where the call uses it: anywhere else, the call answers as the cell
+    /// holding 16 did, but for what it writes to the cell.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``a recvfrom answers whatever an opaque length cell holds, unless it uses it`` (name : string) : unit =
+        let platform = recordings.[name].Platform
+
+        for row, seen in withCell "opaque" name do
+            if refuses platform row || usesTheCell platform row then
+                seen |> shouldEqual (Map.ofList [ "refused", "" ])
+            else
+                seen |> Map.remove "len" |> shouldEqual (row.Seen |> Map.remove "len")
+
+    /// A cell that is no address may be NULL, or fault. Linux reads it only
+    /// where it uses it, so it answers anywhere else as the cell holding 16
+    /// did; Darwin reads it before anything else (Z5), so it refuses.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``a recvfrom answers whatever a length cell that is no address is, unless it reads it`` (name : string) : unit =
+        let platform = recordings.[name].Platform
+
+        for row, seen in withCell "addressless" name do
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> seen |> shouldEqual (Map.ofList [ "refused", "" ])
+            | SimulatedUnixFlavour.Linux ->
+                if refuses platform row || usesTheCell platform row then
+                    seen |> shouldEqual (Map.ofList [ "refused", "" ])
+                else
+                    seen |> Map.remove "len" |> shouldEqual (row.Seen |> Map.remove "len")
+
+    /// A source that is no address cannot be told from NULL, nor from a
+    /// real buffer or one that faults, and which it is decides what a
+    /// `recvfrom` writes. Wherever those answer differently the call is
+    /// refused; where they agree it may still be, but where the receive
+    /// itself failed, so that no source is written, it answers.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``a recvfrom whose source is no address answers only where every source would agree`` (name : string) : unit =
+        let recording = recordings.[name]
+        let platform = recording.Platform
+        let all = rows recording |> List.filter (fun row -> row.Section = "Z2")
+
+        let find (row : Row) (address : string) : Row =
+            all
+            |> List.find (fun other -> other.Inputs = Map.add "address" address row.Inputs)
+
+        for row in all |> List.filter (fun row -> row.Inputs.["address"] = "null") do
+            if not (refuses platform row) then
+                let seen = z2 platform (Map.add "address" "addressless" row.Inputs)
+
+                let answers =
+                    [ row ; find row "mapped" ; find row "unmapped" ]
+                    |> List.map (fun row -> row.Seen |> Map.remove "addr")
+                    |> List.distinct
+
+                // With the source NULL, the answer is the receive's own.
+                let receiveFailed = row.Seen.["answer"].StartsWith "-1"
+
+                match answers with
+                | [ only ] when receiveFailed -> seen |> shouldEqual (only |> Map.add "addr" "-")
+                | [ only ] ->
+                    if seen <> Map.ofList [ "refused", "" ] then
+                        seen |> shouldEqual (only |> Map.add "addr" "-")
+                | _ -> seen |> shouldEqual (Map.ofList [ "refused", "" ])
+
+    /// A model of `recvfrom` with nothing to receive, and of `sendto`, on a
+    /// descriptor that is not open: `EBADF`, whatever the call could not
+    /// have read of its other arguments.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``a closed descriptor is EBADF whatever the length cell or destination is`` (name : string) : unit =
+        let system = boot recordings.[name].Platform
+
+        // Darwin reads a cell that is not NULL first (Z5), and whether one
+        // that is no address faults is not known.
+        let cells =
+            match SimulatedUnixPlatform.flavour recordings.[name].Platform with
+            | SimulatedUnixFlavour.Linux -> [ CopiedArgument.Opaque ; CopiedArgument.Addressless ]
+            | SimulatedUnixFlavour.Darwin -> [ CopiedArgument.Opaque ]
+
+        for cell in cells do
+            match step (Syscall.RecvFrom (77, UserBuffer.Mapped, 4UL, 0, UserBuffer.Mapped, cell)) system with
+            | Ok (SteppedCall.RecvFrom (RecvFromOutcome.Answered (RecvFromAnswer.Failed UnixError.EBADF), _)) -> ()
+            | other -> failwith $"recvfrom: %A{other}"
+
+        for destination in [ CopiedArgument.Opaque ; CopiedArgument.Addressless ] do
+            match step (Syscall.SendTo (77, CopiedArgument.Readable (payload 1), 1UL, 0, destination, 16u)) system with
+            | Ok (SteppedCall.SendTo (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EBADF),
+                                                             _))) -> ()
+            | other -> failwith $"sendto: %A{other}"
+
+    /// A destination that is no address cannot be told from NULL, which makes
+    /// the call a `send`: refused.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``a sendto whose destination is no address is refused`` (name : string) : unit =
+        let system = boot recordings.[name].Platform
+        let s, system = udp system
+
+        for length in [ 0u ; 16u ] do
+            let call =
+                Syscall.SendTo (s, CopiedArgument.Readable (payload 1), 1UL, 0, CopiedArgument.Addressless, length)
+
+            match step call system with
+            | Error _ -> ()
+            | Ok other -> failwith $"sendto through an addressless destination: %A{other}"
+
+    /// This kernel makes no IPv6 binding, and `sendto` with a destination and
+    /// `recvfrom` read and write only a `struct sockaddr_in`.
+    [<TestCaseSource(nameof recordingNames)>]
+    let ``an IPv6 UDP socket's sendto with a destination, and its recvfrom, are refused`` (name : string) : unit =
+        let platform = recordings.[name].Platform
+        let system = boot platform
+
+        let fd, system =
+            match stepped (Syscall.Socket (SimulatedUnixPlatform.internetV6AddressFamily platform, 2, 0)) system with
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, system
+            | other -> failwith $"socket: %A{other}"
+
+        let toLoopback =
+            CopiedArgument.Readable (
+                ImmutableArray.Create<byte> (
+                    CopyIn.inet6Mapped platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us)
+                )
+            )
+
+        match step (Syscall.SendTo (fd, CopiedArgument.Readable (payload 1), 1UL, 0, toLoopback, 28u)) system with
+        | Error _ -> ()
+        | Ok other -> failwith $"sendto: %A{other}"
+
+        match
+            step
+                (Syscall.RecvFrom (fd, UserBuffer.Mapped, 4UL, 0, UserBuffer.Mapped, CopiedArgument.Readable 28u))
+                system
+        with
+        | Error _ -> ()
+        | Ok other -> failwith $"recvfrom: %A{other}"
+
     [<Test>]
     let ``a Darwin send that only takes a pending error marks the socket as having sent`` () : unit =
         replay "Z3" "darwin 27.0"
+
+    /// The runners' recordings predate Z5.
+    [<TestCase("darwin 27.0")>]
+    [<TestCase("6.18.5 container")>]
+    let ``a recvfrom reads a length cell before the descriptor on Darwin and after the receive on Linux``
+        (name : string)
+        : unit
+        =
+        replay "Z5" name
 
     [<Test>]
     let ``a Darwin sendto marks the socket as having sent unless copying its destination failed`` () : unit =

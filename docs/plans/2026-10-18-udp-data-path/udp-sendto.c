@@ -34,6 +34,9 @@
 //   Z4  (Darwin, as Z3) whether each sendto of Z1 that fails marks a socket
 //       that has neither sent nor received as having sent: FIONREAD after a
 //       datagram of 10 bytes, 26 unmarked and 42 marked.
+//   Z5  whether recvfrom reads a length cell before it looks the descriptor
+//       up: an unmapped cell through a closed descriptor, a pipe, and an
+//       empty UDP socket, with the address NULL and not.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -71,6 +74,8 @@ static const char *ename(int e)
     case ENAMETOOLONG: return "ENAMETOOLONG";
     case EOPNOTSUPP: return "EOPNOTSUPP";
     case EPIPE: return "EPIPE";
+    case EBADF: return "EBADF";
+    case ENOTSOCK: return "ENOTSOCK";
     case 0: return "0";
     default: {
         static char buf[32];
@@ -520,6 +525,32 @@ static void z4(void)
         for (size_t d = 0; d < NDESTS; d++) z4_row(calls[c], dests[d]);
 }
 
+// ---------------------------------------------------------------- Z5
+
+static void z5(void)
+{
+    int fds[2];
+    if (pipe(fds) != 0) { perror("pipe"); exit(1); }
+    int empty = bound_to(INADDR_LOOPBACK);
+    nonblocking(empty);
+    int closed = udp();
+    close(closed);
+    struct { const char *name; int fd; } targets[] = { { "closed", closed }, { "pipe", fds[0] }, { "empty", empty } };
+    static unsigned char addr[32];
+    char data[4];
+    for (size_t i = 0; i < sizeof targets / sizeof *targets; i++)
+        for (int null_address = 0; null_address <= 1; null_address++) {
+            ssize_t got = recvfrom(targets[i].fd, data, sizeof data, MSG_DONTWAIT,
+                                   null_address ? NULL : (struct sockaddr *)addr, unmapped);
+            int e = errno;
+            printf("Z5 fd=%s address=%s cell=unmapped: answer=%s\n", targets[i].name, null_address ? "null" : "mapped",
+                   res(got, e));
+        }
+    close(fds[0]);
+    close(fds[1]);
+    close(empty);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -528,5 +559,6 @@ int main(void)
     z2();
     z3();
     z4();
+    z5();
     return 0;
 }

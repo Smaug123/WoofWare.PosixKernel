@@ -5955,7 +5955,11 @@ module UnixReadWrite =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
-        if not (SocketTable.receivesDatagrams socket) then
+        // A destination that is no address may be NULL, which makes the call
+        // a `send`: everything before here, a `send` asks the same way.
+        if destination = UserBuffer.Addressless then
+            Error (SendRefusal.DestinationBuffer BufferRefusal.AddresslessAtScreen)
+        elif not (SocketTable.receivesDatagrams socket && socket.Domain = SocketDomain.Inet) then
             Error (SendRefusal.UnmodelledSendTo (socketId, socket.Domain, socket.Kind))
         else
 
@@ -6137,6 +6141,12 @@ module UnixReadWrite =
         | Holds of length : uint32
         /// The cell is real storage the call has not read yet.
         | Unread
+        /// The cell is real storage whose contents the client cannot
+        /// produce: reading it succeeds, and what it held is not known.
+        | Opaque
+        /// The pointer is no address, so whether it is NULL, and whether
+        /// reading it faults, is not known.
+        | Addressless
 
     /// `tryRecvFrom` once `Entry` has admitted its caller, given the value of
     /// the length cell if the call has read it.
@@ -6179,21 +6189,23 @@ module UnixReadWrite =
             |> CallProgress.NeedsCopyIn
             |> Ok
 
-        let cell : Result<LengthCell, ReceiveRefusal> =
+        let cell : LengthCell =
             match sourceLength, read with
-            | UserBuffer.Mapped, Some length -> Ok (LengthCell.Holds length)
-            | UserBuffer.Mapped, None -> Ok LengthCell.Unread
-            | UserBuffer.Unmapped 0UL, None -> Ok LengthCell.Null
-            | UserBuffer.Unmapped _, None -> Ok LengthCell.Faults
-            | UserBuffer.Opaque, None -> Error (ReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
-            | UserBuffer.Addressless, None -> Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+            | UserBuffer.Mapped, Some length -> LengthCell.Holds length
+            | UserBuffer.Mapped, None -> LengthCell.Unread
+            | UserBuffer.Unmapped 0UL, None -> LengthCell.Null
+            | UserBuffer.Unmapped _, None -> LengthCell.Faults
+            | UserBuffer.Opaque, None -> LengthCell.Opaque
+            | UserBuffer.Addressless, None -> LengthCell.Addressless
             | _, Some _ ->
                 failwith
                     $"UnixReadWrite.recvfromWithLength: the call was given the value of a length cell at %A{sourceLength}, which it never reads (this is a bug in this library)."
 
-        match cell with
-        | Error refusal -> Error refusal
-        | Ok cell ->
+        // A source that is no address, where whether it is NULL decides the
+        // answer.
+        let sourceUnknown = Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen)
+
+        let sourceIsNull = source = UserBuffer.Unmapped 0UL
 
         match ReceiveFlags.decode flavour flags with
         | Error unmodelled -> Error (ReceiveRefusal.UnmodelledFlags unmodelled)
@@ -6204,6 +6216,24 @@ module UnixReadWrite =
         else
 
         let count = oneCallsWorth platform count
+
+        // Measured (`udp-sendto.c` Z5, in
+        // docs/plans/2026-10-18-udp-data-path): Darwin reads a length cell
+        // that is not NULL before it looks the descriptor up, so one that
+        // faults is EFAULT through a closed descriptor or a pipe too. Only
+        // the read's fault comes so early: what the cell held matters only
+        // once a datagram is received.
+        let readFirst =
+            match flavour, cell with
+            | SimulatedUnixFlavour.Darwin, LengthCell.Faults ->
+                Some (answered (RecvFromAnswer.Failed UnixError.EFAULT) system)
+            | SimulatedUnixFlavour.Darwin, LengthCell.Addressless ->
+                Some (Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen))
+            | _ -> None
+
+        match readFirst with
+        | Some answer -> answer
+        | None ->
 
         match screenedFirst buffer count system with
         | Error refusal -> Error (ReceiveRefusal.Buffer refusal)
@@ -6216,7 +6246,7 @@ module UnixReadWrite =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
-        if not (SocketTable.receivesDatagrams socket) then
+        if not (SocketTable.receivesDatagrams socket && socket.Domain = SocketDomain.Inet) then
             Error (ReceiveRefusal.UnmodelledReceiveFrom (socketId, socket.Domain, socket.Kind))
         else
 
@@ -6242,10 +6272,7 @@ module UnixReadWrite =
             | UserBuffer.Mapped
             | UserBuffer.Unmapped _ -> None
 
-        let sourceIsNull = source = UserBuffer.Unmapped 0UL
-
-        // Measured on both (`udp-sendto.c` Z2, in
-        // docs/plans/2026-10-18-udp-data-path; the plan's section 2.15).
+        // Measured on both (`udp-sendto.c` Z2; the plan's section 2.15).
         match flavour with
         | SimulatedUnixFlavour.Linux ->
             // The receive comes first; the source's length cell and buffer
@@ -6267,10 +6294,14 @@ module UnixReadWrite =
 
             if sourceIsNull then
                 received PeerAddressCopy.NotRequested
+            elif source = UserBuffer.Addressless then
+                sourceUnknown
             else
 
             match cell with
             | LengthCell.Unread -> stopsForTheCell ()
+            | LengthCell.Opaque -> Error (ReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+            | LengthCell.Addressless -> Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen)
             | LengthCell.Null
             | LengthCell.Faults -> failedAfter UnixError.EFAULT None
             // The cell is an `int`.
@@ -6295,18 +6326,6 @@ module UnixReadWrite =
             | UserBuffer.Opaque
             | UserBuffer.Addressless -> Error (sourceRefusal source |> Option.get)
         | SimulatedUnixFlavour.Darwin ->
-            // A length cell that is not NULL is read before anything else.
-            match cell with
-            | LengthCell.Unread -> stopsForTheCell ()
-            | LengthCell.Faults -> answered (RecvFromAnswer.Failed UnixError.EFAULT) system
-            | LengthCell.Null
-            | LengthCell.Holds _ ->
-
-            let length =
-                match cell with
-                | LengthCell.Holds length -> length
-                | _ -> 0u
-
             match receive () with
             | Error refusal -> Error refusal
             | Ok (DatagramTaken.Failed error, system) -> answered (RecvFromAnswer.Failed error) system
@@ -6325,8 +6344,20 @@ module UnixReadWrite =
                 received PeerAddressCopy.NotRequested
             else
 
-            match from with
-            | Some from when length <> 0u ->
+            match cell with
+            // A NULL cell copies no address, wherever the source points.
+            | LengthCell.Null -> received PeerAddressCopy.NotRequested
+            | _ when source = UserBuffer.Addressless -> sourceUnknown
+            | _ ->
+
+            // A length of 0, or no datagram, writes 0 to the cell and nothing
+            // to the address.
+            match from, cell with
+            | None, _
+            | Some _, LengthCell.Holds 0u -> received (PeerAddressCopy.Written (ImmutableArray.Empty, 0))
+            | Some _, LengthCell.Unread -> stopsForTheCell ()
+            | Some _, LengthCell.Opaque -> Error (ReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+            | Some from, LengthCell.Holds length ->
                 match source with
                 | UserBuffer.Mapped ->
                     received (
@@ -6340,12 +6371,11 @@ module UnixReadWrite =
                 | UserBuffer.Unmapped _ -> received PeerAddressCopy.NotRequested
                 | UserBuffer.Opaque
                 | UserBuffer.Addressless -> Error (sourceRefusal source |> Option.get)
-            // A length of 0, or no datagram, writes 0 to a cell that is not
-            // NULL and nothing to the address.
-            | _ ->
-                match cell with
-                | LengthCell.Holds _ -> received (PeerAddressCopy.Written (ImmutableArray.Empty, 0))
-                | _ -> received PeerAddressCopy.NotRequested
+            | Some _, LengthCell.Null
+            | Some _, LengthCell.Faults
+            | Some _, LengthCell.Addressless ->
+                failwith
+                    $"UnixReadWrite.recvfrom: Darwin's length cell %A{cell} reached the copy of the source, past where it answers (this is a bug in this library)."
 
     /// `recvfrom`, with a refusal answered as the `Error` rather than raised.
     let internal tryRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -6380,10 +6410,12 @@ module UnixReadWrite =
     /// <remarks>
     /// A NULL `source` or `sourceLength` is `UserBuffer.Unmapped 0UL`.
     ///
-    /// The call stops to read the length cell, if it reads it, and
-    /// `recvfromWithLength` takes what the cell holds and makes the call
-    /// again with it: Darwin reads a cell that is not NULL first, and Linux
-    /// only once a datagram is received for a source that is not NULL.
+    /// The call stops for what the length cell holds only where that decides
+    /// the answer, once a datagram is received for a source that is not NULL,
+    /// and `recvfromWithLength` takes it and makes the call again with it.
+    /// Darwin reads a cell that is not NULL before anything else, so one
+    /// that faults is `EFAULT` ahead of even a closed descriptor's `EBADF`;
+    /// Linux reads it only once it uses it.
     ///
     /// It is `recv` but for the source and `MSG_TRUNC`, which Linux answers
     /// with the datagram's whole length (`RecvFromAnswer.Received`'s
@@ -6403,7 +6435,10 @@ module UnixReadWrite =
     ///
     /// A blocking call with nothing to receive is refused, as `recv`'s is, as
     /// is a socket that is not an IPv4 UDP one, and every flag but
-    /// `MSG_PEEK`, `MSG_DONTWAIT`, `MSG_TRUNC` and `MSG_NOSIGNAL`.
+    /// `MSG_PEEK`, `MSG_DONTWAIT`, `MSG_TRUNC` and `MSG_NOSIGNAL`. So is a
+    /// `UserBuffer.Opaque` cell where the call uses what it holds, and a
+    /// `UserBuffer.Addressless` source or cell where whether it is NULL, or
+    /// faults, decides the answer.
     ///
     /// Fails loudly if `caller` is not a thread of one of the system's
     /// processes, or is already asleep in a syscall.

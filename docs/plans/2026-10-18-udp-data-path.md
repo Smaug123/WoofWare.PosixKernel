@@ -522,11 +522,18 @@ Sections N and O vary one argument at a time. `udp-sendto.c` crosses them:
 Z1 is every `sendto` of six sender states, two buffers, five counts, two flag
 words and seventeen destinations (2040 calls), and Z2 every `recvfrom` of four
 queues, six length cells, three address buffers, two data buffers, three
-counts and four flag words (1728). Each ran on Darwin 27.0.0 twice, with the
-same answers, on Linux 6.18.5 in the container, and on GitHub's runners
-(6.17.0 and 7.0.0, x86-64 and aarch64). A script holding the ladders below
-predicted every call on every kernel, but the 60 Darwin receives into an
-unmapped buffer that 3.6 refuses.
+counts and four flag words (1728). Z5 puts an unmapped length cell through a
+closed descriptor, a pipe and an empty socket. Each ran on Darwin 27.0.0 three
+times, on Linux 6.18.5 in the container, and on GitHub's runners (6.17.0 and
+7.0.0, x86-64 and aarch64), Z5 apart, which ran on the first two alone. A
+script holding the ladders below predicted every call on every kernel, but the
+60 Darwin receives into an unmapped buffer that 3.6 refuses.
+
+The Darwin runs agreed but for one call in one run: of the 510 `MSG_OOB` sends
+from a socket an `AF_UNSPEC` connect had disconnected with the error pending,
+one found the error gone afterwards, which nothing in the row takes. The
+recording is a run where it stayed. `MSG_OOB` is refused, so no test reads
+those rows.
 
 **`sendto` on Linux**, each rung ahead of the next:
 
@@ -585,8 +592,10 @@ unmapped buffer that 3.6 refuses.
 
 **`recvfrom` on Darwin**:
 
-1. the descriptor;
-2. a length cell that is not NULL is read first (`EFAULT`, taking nothing);
+1. a length cell that is not NULL is read first (`EFAULT`, taking nothing),
+   ahead of even the descriptor (Z5: through a closed descriptor and a pipe
+   too);
+2. the descriptor;
 3. the receive: the queue first, then the error, which `MSG_PEEK` leaves
    pending; with neither, 0 for a count of 0 and `EAGAIN` otherwise;
 4. if the receive succeeded and the address is not NULL: a datagram's address

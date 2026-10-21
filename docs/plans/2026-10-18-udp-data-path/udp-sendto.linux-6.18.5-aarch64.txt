@@ -3847,3 +3847,9 @@ Z4 call=oob dest=any: answer=-1 EOPNOTSUPP fionread=10
 Z4 call=oob dest=broadcast: answer=-1 EOPNOTSUPP fionread=10
 Z4 call=oob dest=alias: answer=-1 EOPNOTSUPP fionread=10
 Z4 call=oob dest=unheld: answer=-1 EOPNOTSUPP fionread=10
+Z5 fd=closed address=mapped cell=unmapped: answer=-1 EBADF
+Z5 fd=closed address=null cell=unmapped: answer=-1 EBADF
+Z5 fd=pipe address=mapped cell=unmapped: answer=-1 ENOTSOCK
+Z5 fd=pipe address=null cell=unmapped: answer=-1 ENOTSOCK
+Z5 fd=empty address=mapped cell=unmapped: answer=-1 EAGAIN
+Z5 fd=empty address=null cell=unmapped: answer=-1 EAGAIN
