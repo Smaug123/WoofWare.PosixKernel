@@ -40,9 +40,8 @@ type internal CapacityRefusal =
     | Apfs
     /// The filesystem is an NFS mount, whose counts are the server's.
     | Nfs
-    /// The filesystem is the device filesystem, whose file count counts every
-    /// node a real one holds, and whose block counts are a share of the
-    /// machine's memory.
+    /// The filesystem is the device filesystem, whose block and file limits
+    /// are shares of the machine's memory.
     | DeviceFileSystem
 
 [<RequireQualifiedAccess>]
@@ -55,7 +54,7 @@ module internal CapacityRefusal =
         | CapacityRefusal.Nfs ->
             "the filesystem is an NFS mount, whose block and file counts are the server's, which nothing in this machine determines."
         | CapacityRefusal.DeviceFileSystem ->
-            "the filesystem is the device filesystem. Its free-file count is its inode limit less every node a real one holds, and this kernel's holds only the nodes of the devices it has drivers for; its block counts are a share of the machine's memory, which this machine does not describe."
+            "the filesystem is the device filesystem, whose block and file limits are shares of the machine's memory, which this machine does not describe."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : CapacityRefusal) : RefusalKind =
@@ -375,6 +374,9 @@ module FileSystemStatistics =
                         | AccessTimeUpdate.WhenBeforeModification ->
                             failwith
                                 "FileSystemStatistics.ofMount: a Linux tmpfs whose reads move an access time as APFS's do, which no Linux mount option makes (this is a bug in this library)."
+                        | AccessTimeUpdate.Relative ->
+                            failwith
+                                "FileSystemStatistics.ofMount: the root tmpfs is mounted relatime, which EmulatedMount does not describe (this is a bug in this library)."
                 }
         | FileSystemTypeFields.Darwin (fType, name), EmulatedMount.Apfs apfs ->
             // Measured 2026-09-26 on Darwin 27.0.0, nine APFS volumes in three
@@ -418,6 +420,9 @@ module FileSystemStatistics =
                                         match AccessTimeUpdate.ofMount mount with
                                         | AccessTimeUpdate.Never -> darwinNoAccessTime
                                         | AccessTimeUpdate.WhenBeforeModification -> 0u
+                                        | AccessTimeUpdate.Relative ->
+                                            failwith
+                                                "FileSystemStatistics.ofMount: an APFS volume mounted relatime, which Darwin has no option for (this is a bug in this library)."
                                     )
                                 // 0 on every volume measured but the root data
                                 // volume, which this filesystem is not.

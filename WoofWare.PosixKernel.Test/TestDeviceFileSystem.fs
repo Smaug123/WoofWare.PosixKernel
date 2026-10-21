@@ -7,13 +7,15 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// The device filesystem the kernel mounts over the root's `dev` at boot: a
-/// devtmpfs holding `/dev/null` and `/dev/urandom` on Linux, and Darwin's devfs,
-/// which is not modelled and so refuses every path that reaches it.
+/// The device filesystem the kernel mounts over the root's `dev` at boot: on
+/// Linux a devtmpfs holding what `UnixBootImage.withDeviceFileSystem`
+/// configures, by default the memory-device driver's five nodes, and on Darwin
+/// devfs, which is not modelled and so refuses every path that reaches it.
 ///
 /// The constants are the rows `devices.c` and `mountpoint.c` measured on Linux
 /// 6.18.5 (a devtmpfs at `/dev`, as root and as uid 1000) and Darwin 27.0 (uid
-/// 501), in `docs/plans/2026-08-23-posix-kernel-extraction/`.
+/// 501), in `docs/plans/2026-08-23-posix-kernel-extraction/`, and the probes
+/// `docs/probes/devtmpfs-contents` and `docs/probes/devtmpfs-listing`.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestDeviceFileSystem =
@@ -110,8 +112,12 @@ module TestDeviceFileSystem =
         | DescriptorAnswer.Failed error -> Some error
         | DescriptorAnswer.Returned _ -> None
 
-    /// A name that is no device's: generated, so that no particular unlisted
-    /// name is all that is checked.
+    /// The names the default devtmpfs holds.
+    let private defaultNames : string list =
+        [ "full" ; "null" ; "random" ; "urandom" ; "zero" ]
+
+    /// A name the default devtmpfs does not hold: generated, so that no
+    /// particular unlisted name is all that is checked.
     let private unknownNameGen : Gen<string> =
         gen {
             let! length = Gen.choose (1, 20)
@@ -122,26 +128,22 @@ module TestDeviceFileSystem =
 
             return System.String (Array.ofList characters)
         }
-        |> Gen.filter (fun text -> text <> "." && text <> ".." && text <> "null" && text <> "urandom")
+        |> Gen.filter (fun text -> text <> "." && text <> ".." && not (List.contains text defaultNames))
 
     // ------------------------------------------------------------------ stat
 
     [<Test>]
-    let ``every device's name, mode and Linux st_rdev are the measured ones, whether or not it has a driver``
-        ()
-        : unit
-        =
-        // Measured on Linux 6.18.5 and Darwin 27.0.0: mode 020666 for every
-        // node (`devices.c` and `darwin-devfs.c`, STAT rows); Linux's mem
-        // driver's 1,3, 1,5, 1,8 and 1,9, and `/dev/tty`'s 5,0, encoded by
-        // glibc's `makedev`.
-        let measured (device : CharacterDevice) : string * int * int64 =
+    let ``every device's Linux st_rdev is the measured one, whether or not it has a driver`` () : unit =
+        // Measured on Linux 6.18.5 (`devices.c` and `darwin-devfs.c`, STAT
+        // rows): the mem driver's 1,3, 1,5, 1,8 and 1,9, and `/dev/tty`'s 5,0,
+        // encoded by glibc's `makedev`.
+        let measured (device : CharacterDevice) : int64 =
             match device with
-            | CharacterDevice.Null -> "null", 0o666, 0x103L
-            | CharacterDevice.URandom -> "urandom", 0o666, 0x109L
-            | CharacterDevice.Zero -> "zero", 0o666, 0x105L
-            | CharacterDevice.Random -> "random", 0o666, 0x108L
-            | CharacterDevice.Tty -> "tty", 0o666, 0x500L
+            | CharacterDevice.Null -> 0x103L
+            | CharacterDevice.URandom -> 0x109L
+            | CharacterDevice.Zero -> 0x105L
+            | CharacterDevice.Random -> 0x108L
+            | CharacterDevice.Tty -> 0x500L
 
         let everyDevice =
             Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<CharacterDevice>
@@ -151,15 +153,9 @@ module TestDeviceFileSystem =
             )
 
         for device in everyDevice do
-            let expectedName, expectedMode, expectedDevice = measured device
-            CharacterDevice.name device |> shouldEqual (name expectedName)
-
-            CharacterDevice.permissions device
-            |> shouldEqual (PermissionBits.parseOrFail context expectedMode)
-
             CharacterDevice.number SimulatedUnixFlavour.Linux device
             |> DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux
-            |> shouldEqual expectedDevice
+            |> shouldEqual (measured device)
 
     /// Any device number, weighted towards the small majors and minors real
     /// drivers register, so that the drivers' own numbers come up, and towards
@@ -331,10 +327,7 @@ module TestDeviceFileSystem =
         | Some inode -> inode.Times
         | None -> failwith $"inode %O{inode} is not in the filesystem"
 
-    let private deviceRoot (system : UnixSystem<int, string>) : InodeNumber =
-        match stat "/dev" system with
-        | Error (StatRefusal.DeviceFileSystemRoot root) -> root
-        | other -> failwith $"stat /dev: expected the device root's refusal, got %A{other}"
+    let private deviceRoot (system : UnixSystem<int, string>) : InodeNumber = (reported "/dev" system).Inode
 
     let private atEpoch : InodeTimes =
         {
@@ -487,32 +480,77 @@ module TestDeviceFileSystem =
         rootTimes.Birth |> shouldEqual UnixTimestamp.epoch
 
     [<Test>]
-    let ``the device filesystem's root is refused, for its size and link count`` () : unit =
+    let ``the device filesystem's root reports a tmpfs directory's size and link count for what it holds`` () : unit =
         let system = booted linux
 
-        for path in [ "/dev" ; "/dev/" ; "/dev/." ; "/d/../dev" ] do
-            match stat path system with
-            | Error (StatRefusal.DeviceFileSystemRoot _) -> ()
-            | other -> failwith $"stat %s{path}: expected the device root's refusal, got %A{other}"
+        // Five names and no subdirectory: tmpfs's 40 bytes for the dots and 20
+        // per name, and 2 links. The measured devtmpfs's root, holding 135
+        // names of which 5 were directories, reported 2740 and 7
+        // (`docs/probes/devtmpfs-contents`), by the same rule.
+        let status = reported "/dev" system
+        status.Mode |> shouldEqual 0o040755
+        status.Size |> shouldEqual 140L
+        status.LinkCount |> shouldEqual 2L
+        status.UserId |> shouldEqual UserId.root
+        status.DeviceId |> shouldEqual DevtmpfsMount.defaults.DeviceId
+
+        for path in [ "/dev/" ; "/dev/." ; "/d/../dev" ; "/dev/null/.." ] do
+            match path with
+            | "/dev/null/.." -> stat path system |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOTDIR))
+            | _ -> reported path system |> shouldEqual status
 
     [<Test>]
-    let ``a name the device filesystem does not hold is refused, final or not`` () : unit =
-        let system = booted linux
+    let ``a name the device filesystem does not hold is ENOENT, and creating it is refused once its checks pass``
+        ()
+        : unit
+        =
+        let unprivileged = booted linux
+        let root = bootedAsRoot linux
 
         let property (unknown : string) : unit =
-            for path in [ $"/dev/%s{unknown}" ; $"/dev/%s{unknown}/x" ; $"/d/../dev/%s{unknown}" ] do
-                match stat path system with
-                | Error (StatRefusal.Path (PathRefusal.UnmodelledDeviceName (_, refused))) ->
+            for system in [ unprivileged ; root ] do
+                for path in [ $"/dev/%s{unknown}" ; $"/dev/%s{unknown}/x" ; $"/d/../dev/%s{unknown}" ] do
+                    stat path system |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
+
+            let path = PathArg.ofText $"/dev/%s{unknown}"
+
+            // `/dev` is root's, mode 0755, so the default user may not bind a
+            // name in it, as on a real devtmpfs.
+            match OpenFlagWords.openPath path creating 0o644 unprivileged with
+            | Ok answer -> openFailed answer |> shouldEqual (Some UnixError.EACCES)
+            | Error refusal -> failwith $"refused: %s{OpenRefusal.describe refusal}"
+
+            match UnixNamespace.tryMkdir (Callers.leader unprivileged) path 0o755 unprivileged with
+            | Ok answer -> failed answer |> shouldEqual (Some UnixError.EACCES)
+            | Error refusal -> failwith $"refused: %s{PathRefusal.describe refusal}"
+
+            // Root may, and the binding is refused, naming the name.
+            let refusedName (refusal : PathRefusal) : unit =
+                match refusal with
+                | PathRefusal.DeviceFileSystemNewName (directory, refused) ->
+                    directory |> shouldEqual (deviceRoot root)
                     refused |> shouldEqual (name unknown)
-                | other -> failwith $"stat %s{path}: expected a refusal, got %A{other}"
+                | other -> failwith $"expected the device filesystem's refusal, got %A{other}"
 
-            match OpenFlagWords.openPath (PathArg.ofText $"/dev/%s{unknown}") creating 0o644 system with
-            | Error (OpenRefusal.Path (PathRefusal.UnmodelledDeviceName _)) -> ()
-            | other -> failwith $"open(O_CREAT) /dev/%s{unknown}: expected a refusal, got %A{other}"
+            match OpenFlagWords.openPath path creating 0o644 root with
+            | Error (OpenRefusal.Path refusal) -> refusedName refusal
+            | other -> failwith $"open(O_CREAT) as root: expected a refusal, got %A{other}"
 
-            match UnixNamespace.tryMkdir (Callers.leader system) (PathArg.ofText $"/dev/%s{unknown}") 0o755 system with
-            | Error (PathRefusal.UnmodelledDeviceName _) -> ()
-            | other -> failwith $"mkdir /dev/%s{unknown}: expected a refusal, got %A{other}"
+            match UnixNamespace.tryMkdir (Callers.leader root) path 0o755 root with
+            | Error refusal -> refusedName refusal
+            | other -> failwith $"mkdir as root: expected a refusal, got %A{other}"
+
+            match UnixNamespace.tryMknod (Callers.leader root) path 0o100644 0u root with
+            | Error (MkNodRefusal.Path refusal) -> refusedName refusal
+            | other -> failwith $"mknod as root: expected a refusal, got %A{other}"
+
+            match Eager.trySymlink (PathArg.ofText "/f") path root with
+            | Error (SymlinkRefusal.Path refusal) -> refusedName refusal
+            | other -> failwith $"symlink as root: expected a refusal, got %A{other}"
+
+            match Eager.tryLink (PathArg.ofText "/dev/null") path root with
+            | Error (LinkRefusal.Path refusal) -> refusedName refusal
+            | other -> failwith $"link within /dev as root: expected a refusal, got %A{other}"
 
         Check.One (config, Prop.forAll (Arb.fromGen unknownNameGen) property)
 
@@ -612,69 +650,11 @@ module TestDeviceFileSystem =
             dev.Kind |> shouldEqual DirectoryEntryKind.Directory
 
             match SimulatedUnixPlatform.flavour platform with
-            | SimulatedUnixFlavour.Linux ->
-                // `stat("/dev")` names the mounted root, which is refused, but
-                // the refusal names the inode it would have reported.
-                match stat "/dev" system with
-                | Error (StatRefusal.DeviceFileSystemRoot mountedRoot) -> dev.Inode |> shouldNotEqual mountedRoot
-                | other -> failwith $"stat /dev: expected the device root's refusal, got %A{other}"
+            | SimulatedUnixFlavour.Linux -> dev.Inode |> shouldNotEqual (deviceRoot system)
             | SimulatedUnixFlavour.Darwin -> ()
 
     [<Test>]
-    let ``the device filesystem holds a node for each device CharacterDevice.all lists, and no other device has one``
-        ()
-        : unit
-        =
-        // Read from the inode graph, since a listing of `/dev` is refused on
-        // both flavours.
-        for platform, expected in [ linux, CharacterDevice.all ; darwin, [] ] do
-            let vfs = UnixSystem.fileSystem (booted platform)
-
-            let mountedRoot =
-                match VirtualFileSystem.tryGetContent (VirtualFileSystem.root vfs) vfs with
-                | Some (InodeContent.Directory root) -> root.Entries.[name "dev"]
-                | other -> failwith $"the root is not a directory: %A{other}"
-
-            let entries =
-                match VirtualFileSystem.tryGetContent mountedRoot vfs with
-                | Some (InodeContent.Directory dev) ->
-                    dev.Entries
-                    |> Map.toList
-                    |> List.map (fun (entry, inode) -> entry, VirtualFileSystem.tryGetContent inode vfs)
-                | other -> failwith $"/dev is not a directory: %A{other}"
-
-            entries
-            |> shouldEqual (
-                expected
-                |> List.map (fun device ->
-                    CharacterDevice.name device,
-                    Some (
-                        InodeContent.CharacterDevice (
-                            CharacterDevice.number SimulatedUnixFlavour.Linux device,
-                            CharacterDevice.permissions device
-                        )
-                    )
-                )
-                |> List.sortBy fst
-            )
-
-            VirtualFileSystem.inodes vfs
-            |> Map.toList
-            |> List.choose (fun (_, inode) ->
-                match inode.Content with
-                | InodeContent.CharacterDevice (number, _) ->
-                    CharacterDevice.driverOf SimulatedUnixFlavour.Linux number
-                | InodeContent.RegularFile _
-                | InodeContent.Directory _
-                | InodeContent.Symlink _
-                | InodeContent.Socket _
-                | InodeContent.Fifo _ -> None
-            )
-            |> List.sort
-            |> shouldEqual (List.sort expected)
-
-    [<Test>]
-    let ``a listing of the device filesystem is refused, and so is its status`` () : unit =
+    let ``a listing of the default device filesystem is its five nodes, and dot-dot is its own root`` () : unit =
         let system = booted linux
 
         let fd, system =
@@ -682,13 +662,104 @@ module TestDeviceFileSystem =
             | Ok fd, system -> fd, system
             | Error error, _ -> failwith $"opening /dev: %O{error}"
 
-        match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
-        | Error (ReadDirectoryRefusal.DeviceFileSystem _) -> ()
-        | other -> failwith $"reading /dev: expected a refusal, got %A{other}"
+        let records, system = DirectoryReading.drain fd system
+        let root = deviceRoot system
 
-        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
-        | Error (FStatRefusal.DeviceFileSystemRoot _) -> ()
-        | other -> failwith $"fstat of /dev: expected a refusal, got %A{other}"
+        records
+        |> List.map (fun record -> record.Name, record.Kind, record.Inode)
+        |> List.sort
+        |> shouldEqual (
+            [
+                yield PathComponent.Current, DirectoryEntryKind.Directory, root
+                // A mounted filesystem's root is its own parent within it
+                // (`docs/probes/devtmpfs-listing`).
+                yield PathComponent.Parent, DirectoryEntryKind.Directory, root
+                for text in defaultNames do
+                    yield
+                        PathComponent.Name (name text),
+                        DirectoryEntryKind.CharacterDevice,
+                        (reported $"/dev/%s{text}" system).Inode
+            ]
+            |> List.sort
+        )
+
+        // Through a descriptor, the root reports what `stat` of its path does.
+        UnixPathResolution.tryFstat (Callers.leader system) fd system
+        |> shouldEqual (Ok (FileStatusAnswer.Reported (reported "/dev" system)))
+
+    [<Test>]
+    let ``the default device filesystem's nodes are the memory-device driver's, as measured`` () : unit =
+        use stream =
+            System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream
+                "WoofWare.PosixKernel.Test.devtmpfs-contents.linux.txt"
+
+        if isNull stream then
+            failwith $"%s{context}: no embedded devtmpfs-contents probe output"
+
+        use reader = new System.IO.StreamReader (stream)
+
+        // ENTRY rows: path, type, mode, uid:gid, inode, nlink, size,
+        // major:minor, atime, mtime, ctime, birth, symlink target.
+        let rows =
+            reader.ReadToEnd().Split ('\n', System.StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun line -> line.Split '\t')
+            |> Array.filter (fun fields -> fields.[0] = "ENTRY")
+            |> Array.map (fun fields -> fields.[1], fields)
+            |> Map.ofArray
+
+        // The probe saw a devtmpfs holding far more than the default.
+        rows.Count |> shouldEqual 138
+
+        let system = booted linux
+
+        for text in defaultNames do
+            let row = rows.[$"/dev/%s{text}"]
+            let status = reported $"/dev/%s{text}" system
+
+            row.[2] |> shouldEqual "character special file"
+            status.Mode |> shouldEqual (0o020000 ||| System.Convert.ToInt32 (row.[3], 8))
+
+            $"%d{UserId.toUInt32 status.UserId}:%d{GroupId.toUInt32 status.GroupId}"
+            |> shouldEqual row.[4]
+
+            string<int64> status.LinkCount |> shouldEqual row.[6]
+            string<int64> status.Size |> shouldEqual row.[7]
+
+            let major, minor =
+                match row.[8].Split ':' with
+                | [| major ; minor |] -> uint32 major, uint32 minor
+                | other -> failwith $"%s{context}: a device number %A{other}"
+
+            status.SpecialFileDevice
+            |> shouldEqual (DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux (DeviceNumber (major, minor)))
+
+            // Made before the realtime clock was set, as the model's epoch
+            // says.
+            for time in row.[9..12] do
+                System.Decimal.Parse (time, System.Globalization.CultureInfo.InvariantCulture)
+                |> shouldBeSmallerThan 0.01m
+
+        // Of the five, this kernel has drivers for two; the others are
+        // listed and reported, and opening them is refused.
+        for text, driver in
+            [
+                "null", Some CharacterDevice.Null
+                "urandom", Some CharacterDevice.URandom
+                "zero", None
+                "full", None
+                "random", None
+            ] do
+            match
+                VirtualFileSystem.tryGetContent (reported $"/dev/%s{text}" system).Inode (UnixSystem.fileSystem system)
+            with
+            | Some (InodeContent.CharacterDevice (number, _)) ->
+                CharacterDevice.driverOf SimulatedUnixFlavour.Linux number |> shouldEqual driver
+
+                match OpenFlagWords.openPath (PathArg.ofText $"/dev/%s{text}") reading 0 system, driver with
+                | Ok (DescriptorAnswer.Returned _, _), Some _ -> ()
+                | Error (OpenRefusal.UndrivenDevice (_, refused)), None -> refused |> shouldEqual number
+                | other, _ -> failwith $"opening /dev/%s{text}: %A{other}"
+            | other -> failwith $"/dev/%s{text} is not a device node: %A{other}"
 
     // ---------------------------------------------------- the mount boundary
 
@@ -1076,10 +1147,7 @@ module TestDeviceFileSystem =
         let system = booted linux
         let vfs = UnixSystem.fileSystem system
 
-        let mountedRoot =
-            match stat "/dev" system with
-            | Error (StatRefusal.DeviceFileSystemRoot root) -> root
-            | other -> failwith $"stat /dev: %A{other}"
+        let mountedRoot = deviceRoot system
 
         let mount =
             match VirtualFileSystem.mountOf mountedRoot vfs with
@@ -1089,6 +1157,12 @@ module TestDeviceFileSystem =
         let null' = (reported "/dev/null" system).Inode
         let file = (reported "/f" system).Inode
 
+        let members =
+            defaultNames
+            |> List.map (fun text -> (reported $"/dev/%s{text}" system).Inode)
+            |> Set.ofList
+            |> Set.add mountedRoot
+
         VirtualFileSystem.checkInvariants Set.empty vfs |> shouldEqual []
 
         // A node recorded as on the root filesystem.
@@ -1096,11 +1170,7 @@ module TestDeviceFileSystem =
         |> VirtualFileSystem.checkInvariants Set.empty
         |> shouldEqual
             [
-                VirtualFileSystemDefect.MountMembershipMismatch (
-                    mountedRoot,
-                    Set.ofList [ mountedRoot ; (reported "/dev/urandom" system).Inode ],
-                    Set.ofList [ mountedRoot ; null' ; (reported "/dev/urandom" system).Inode ]
-                )
+                VirtualFileSystemDefect.MountMembershipMismatch (mountedRoot, Set.remove null' members, members)
             ]
 
         // A covered number that an inode has.
@@ -1132,6 +1202,674 @@ module TestDeviceFileSystem =
         |> VirtualFileSystem.checkInvariants Set.empty
         |> List.contains (VirtualFileSystemDefect.MountRootNotDirectory file)
         |> shouldEqual true
+
+    // ------------------------------------------------ configured contents
+
+    let private ownerGen : Gen<InodeOwner> =
+        Gen.map2
+            (fun (user : int) (group : int) ->
+                {
+                    User = UserId.parseOrFail context (uint32 user)
+                    Group = GroupId.parseOrFail context (uint32 group)
+                }
+            )
+            (Gen.choose (0, 2000))
+            (Gen.choose (0, 2000))
+
+    let private entryNameGen : Gen<DirectoryEntryName> =
+        gen {
+            let! length = Gen.choose (1, 12)
+
+            let! characters =
+                Gen.elements ([ 'a' .. 'z' ] @ [ '0' .. '9' ] @ [ '-' ; '_' ; '.' ])
+                |> Gen.listOfLength length
+
+            return System.String (Array.ofList characters)
+        }
+        |> Gen.filter (fun text -> text <> "." && text <> "..")
+        |> Gen.map name
+
+    /// A devtmpfs's contents: device nodes holding any number, with any mode
+    /// and owner, and the directories holding them, `depth` deep at most.
+    let rec private deviceContentsGen (depth : int) : Gen<Map<DirectoryEntryName, SeedEntry>> =
+        let bits = Gen.choose (0, 0o7777) |> Gen.map (PermissionBits.parseOrFail context)
+
+        let node =
+            Gen.map3
+                (fun number permissions owner -> SeedEntry.CharacterDevice (number, permissions, owner))
+                deviceNumberGen
+                bits
+                (Gen.optionOf ownerGen)
+
+        let entry =
+            if depth <= 0 then
+                node
+            else
+                let directory =
+                    Gen.map3
+                        (fun children permissions owner -> SeedEntry.Directory (children, permissions, owner))
+                        (deviceContentsGen (depth - 1))
+                        bits
+                        (Gen.optionOf ownerGen)
+
+                Gen.frequency [ 3, node ; 1, directory ]
+
+        Gen.zip entryNameGen entry
+        |> Gen.listOf
+        |> Gen.map (List.truncate 8 >> Map.ofList)
+
+    /// A root seed holding no device: a file, a directory, an empty `dev`, as
+    /// chosen.
+    let private rootSeedGen : Gen<Map<DirectoryEntryName, SeedEntry>> =
+        gen {
+            let! file = Gen.elements [ false ; true ]
+            let! directory = Gen.elements [ false ; true ]
+            let! emptyDev = Gen.elements [ false ; true ]
+
+            return
+                [
+                    if file then
+                        yield name "f", SeedEntry.file ImmutableArray.Empty
+                    if directory then
+                        yield name "d", SeedEntry.directory Map.empty
+                    if emptyDev then
+                        yield name "dev", SeedEntry.directory Map.empty
+                ]
+                |> Map.ofList
+        }
+
+    let private configured
+        (seed : Map<DirectoryEntryName, SeedEntry>)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        (image : UnixBootImage<int, string>)
+        : UnixBootImage<int, string>
+        =
+        image
+        |> Launched.fileSystem UnixTimestamp.epoch rootOwner seed
+        |> UnixBootImage.tryWithDeviceFileSystem contents
+        |> Configured.expectOk DeviceFileSystemFault.describe
+
+    /// A Linux machine whose root holds `seed` and whose devtmpfs holds
+    /// `contents`, its process root.
+    let private bootedWith
+        (seed : Map<DirectoryEntryName, SeedEntry>)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        : UnixSystem<int, string>
+        =
+        UnixSystem.initial linux
+        |> configured seed contents
+        |> Launched.bootWith
+            (Launched.credentials (Credentials.ofIds UserId.root (GroupId.parseOrFail context 0u) []))
+            UnixSystem.pipedStandardStreams
+            0
+            (CpuId 0)
+
+    /// What `lstat` and a listing report of one entry.
+    type private Observed =
+        {
+            Mode : int
+            Owner : uint32 * uint32
+            LinkCount : int64
+            Size : int64
+            SpecialFileDevice : int64
+            DeviceId : int64
+            Kind : DirectoryEntryKind
+        }
+
+    /// What a configured entry should report, worked out from the
+    /// configuration alone.
+    let private expectedOf (entry : SeedEntry) : Observed =
+        let ownerOf (owner : InodeOwner option) : uint32 * uint32 =
+            let owner = owner |> Option.defaultValue rootOwner
+            UserId.toUInt32 owner.User, GroupId.toUInt32 owner.Group
+
+        match entry with
+        | SeedEntry.CharacterDevice (number, permissions, owner) ->
+            {
+                Mode = 0o020000 ||| PermissionBits.toInt permissions
+                Owner = ownerOf owner
+                LinkCount = 1L
+                Size = 0L
+                SpecialFileDevice = DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux number
+                DeviceId = DevtmpfsMount.defaults.DeviceId
+                Kind = DirectoryEntryKind.CharacterDevice
+            }
+        | SeedEntry.Directory (children, permissions, owner) ->
+            let subdirectories =
+                children
+                |> Map.filter (fun _ child ->
+                    match child with
+                    | SeedEntry.Directory _ -> true
+                    | _ -> false
+                )
+                |> Map.count
+
+            {
+                Mode = 0o040000 ||| PermissionBits.toInt permissions
+                Owner = ownerOf owner
+                // tmpfs's rules: 2 plus the subdirectories, and 40 bytes plus
+                // 20 per name.
+                LinkCount = 2L + int64 subdirectories
+                Size = 40L + 20L * int64 children.Count
+                SpecialFileDevice = 0L
+                DeviceId = DevtmpfsMount.defaults.DeviceId
+                Kind = DirectoryEntryKind.Directory
+            }
+        | SeedEntry.File _
+        | SeedEntry.Symlink _ -> failwith $"%s{context}: a generated devtmpfs holds only nodes and directories"
+
+    /// Every path the configuration puts below `prefix`, with what it should
+    /// report.
+    let rec private expectedBelow
+        (prefix : string)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        : (string * Observed) list
+        =
+        contents
+        |> Map.toList
+        |> List.collect (fun (entryName, entry) ->
+            let path = $"%s{prefix}/%s{PathText.ofName entryName}"
+
+            match entry with
+            | SeedEntry.Directory (children, _, _) -> (path, expectedOf entry) :: expectedBelow path children
+            | _ -> [ path, expectedOf entry ]
+        )
+
+    /// `find /dev`, as root: every entry below `/dev`, reached by listing each
+    /// directory and `lstat`-ing each name it lists, with what those report.
+    /// Each listing's dots are checked as it goes: `.` is the directory
+    /// itself, and `..` its parent, but `/dev`'s own `..` is `/dev`.
+    let private findDev (system : UnixSystem<int, string>) : (string * Observed) list * UnixSystem<int, string> =
+        let observe (path : string) (kind : DirectoryEntryKind) (system : UnixSystem<int, string>) : Observed =
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofText path)
+                    system
+            with
+            | Ok (FileStatusAnswer.Reported status) ->
+                {
+                    Mode = status.Mode
+                    Owner = UserId.toUInt32 status.UserId, GroupId.toUInt32 status.GroupId
+                    LinkCount = status.LinkCount
+                    Size = status.Size
+                    SpecialFileDevice = status.SpecialFileDevice
+                    DeviceId = status.DeviceId
+                    Kind = kind
+                }
+            | other -> failwith $"lstat %s{path}: %A{other}"
+
+        let rec visit
+            (path : string)
+            (parent : InodeNumber)
+            (system : UnixSystem<int, string>)
+            : (string * Observed) list * UnixSystem<int, string>
+            =
+            let self = (reported path system).Inode
+
+            let fd, system =
+                match DirectoryReading.openDirectory (UnixPath.parseOrFail context path) system with
+                | Ok fd, system -> fd, system
+                | Error error, _ -> failwith $"opening %s{path}: %O{error}"
+
+            let records, system = DirectoryReading.drain fd system
+
+            let found, system =
+                records
+                |> List.fold
+                    (fun (found, system) record ->
+                        match record.Name with
+                        | PathComponent.Current ->
+                            record.Inode |> shouldEqual self
+                            found, system
+                        | PathComponent.Parent ->
+                            record.Inode |> shouldEqual parent
+                            found, system
+                        | PathComponent.Name entryName ->
+                            let child = $"%s{path}/%s{PathText.ofName entryName}"
+                            let observed = observe child record.Kind system
+                            record.Inode |> shouldEqual (reported child system).Inode
+
+                            match record.Kind with
+                            | DirectoryEntryKind.Directory ->
+                                let below, system = visit child self system
+                                found @ ((child, observed) :: below), system
+                            | _ -> found @ [ child, observed ], system
+                    )
+                    ([], system)
+
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
+            | Ok (SyscallAnswer.Completed 0L, system) -> found, system
+            | other -> failwith $"closing %s{path}: %A{other}"
+
+        let dev = deviceRoot system
+        let found, system = visit "/dev" dev system
+        ("/dev", observe "/dev" DirectoryEntryKind.Directory system) :: found, system
+
+    [<Test>]
+    let ``find /dev lists and reports exactly what the devtmpfs was configured with`` () : unit =
+        let property (seed : Map<DirectoryEntryName, SeedEntry>, contents : Map<DirectoryEntryName, SeedEntry>) =
+            let system = bootedWith seed contents
+
+            let sound (system : UnixSystem<int, string>) : unit =
+                UnixSystem.checkInvariants system |> shouldEqual []
+
+                VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
+                |> shouldEqual []
+
+            sound system
+
+            let found, after = findDev system
+
+            let expected =
+                ("/dev",
+                 { expectedOf (SeedEntry.Directory (contents, PermissionBits.parseOrFail context 0o755, None)) with
+                     Owner = 0u, 0u
+                 })
+                :: expectedBelow "/dev" contents
+
+            found |> List.sortBy fst |> shouldEqual (List.sortBy fst expected)
+            sound after
+
+            // Every directory is on the device filesystem, however deep: root
+            // may not bind a name in any of them. The name is outside
+            // `entryNameGen`'s alphabet, so it is free in each.
+            for path, observed in expected do
+                if observed.Kind = DirectoryEntryKind.Directory then
+                    match
+                        UnixNamespace.tryMkdir (Callers.leader system) (PathArg.ofText $"%s{path}/New") 0o755 system
+                    with
+                    | Error (PathRefusal.DeviceFileSystemNewName (_, refused)) -> refused |> shouldEqual (name "New")
+                    | other -> failwith $"mkdir %s{path}/New as root: expected a refusal, got %A{other}"
+
+            // Opening each node reaches its driver, or is refused for having
+            // none; root passes every check an open makes.
+            for path, observed in expected do
+                if observed.Kind = DirectoryEntryKind.CharacterDevice then
+                    match OpenFlagWords.openPath (PathArg.ofText path) reading 0 system with
+                    | Ok (DescriptorAnswer.Returned _, _) -> ()
+                    | Error (OpenRefusal.UndrivenDevice (_, number)) ->
+                        CharacterDevice.driverOf SimulatedUnixFlavour.Linux number |> shouldEqual None
+                    | other -> failwith $"opening %s{path}: %A{other}"
+
+        Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip rootSeedGen (deviceContentsGen 2))) property)
+
+    [<Test>]
+    let ``the root filesystem and the device filesystem may be set in either order`` () : unit =
+        let property
+            (
+                seed : Map<DirectoryEntryName, SeedEntry>,
+                first : Map<DirectoryEntryName, SeedEntry>,
+                contents : Map<DirectoryEntryName, SeedEntry>
+            )
+            =
+            let image : UnixBootImage<int, string> = UnixSystem.initial linux
+
+            let devicesLast = configured seed contents image
+
+            let devicesFirst =
+                image
+                |> UnixBootImage.tryWithDeviceFileSystem contents
+                |> Configured.expectOk DeviceFileSystemFault.describe
+                |> Launched.fileSystem UnixTimestamp.epoch rootOwner seed
+
+            // A later setting replaces an earlier one, leaving nothing of it.
+            let replaced =
+                image
+                |> UnixBootImage.tryWithDeviceFileSystem first
+                |> Configured.expectOk DeviceFileSystemFault.describe
+                |> configured seed contents
+
+            let fileSystemOf (image : UnixBootImage<int, string>) : VirtualFileSystem =
+                Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
+                |> UnixSystem.fileSystem
+
+            fileSystemOf devicesFirst |> shouldEqual (fileSystemOf devicesLast)
+            fileSystemOf replaced |> shouldEqual (fileSystemOf devicesLast)
+
+        Check.One (
+            config,
+            Prop.forAll (Arb.fromGen (Gen.zip3 rootSeedGen (deviceContentsGen 2) (deviceContentsGen 2))) property
+        )
+
+    [<Test>]
+    let ``a device filesystem holding a file or a link, or a name past NAME_MAX, is refused`` () : unit =
+        let property (contents : Map<DirectoryEntryName, SeedEntry>, offender : SeedEntry, depth : int) =
+            // The offender's name is outside `entryNameGen`'s alphabet, so it
+            // is the only one.
+            let offenderName = name "Offender"
+
+            // `offender` bound `depth` directories down, below the first
+            // generated name.
+            let rec plant (depth : int) (contents : Map<DirectoryEntryName, SeedEntry>) =
+                if depth = 0 then
+                    Map.add offenderName offender contents
+                else
+                    Map.add (name "Holder") (SeedEntry.directory (plant (depth - 1) Map.empty)) contents
+
+            let image : UnixBootImage<int, string> = UnixSystem.initial linux
+
+            UnixBootImage.tryWithDeviceFileSystem (plant depth contents) image
+            |> Result.map ignore
+            |> shouldEqual (Error (DeviceFileSystemFault.NotMadeByDevtmpfs offenderName))
+
+        let offenderGen =
+            Gen.elements
+                [
+                    SeedEntry.file ImmutableArray.Empty
+                    SeedEntry.Symlink (SymlinkTarget.parseOrFail context "/proc/self/fd", None)
+                ]
+
+        Check.One (
+            config,
+            Prop.forAll (Arb.fromGen (Gen.zip3 (deviceContentsGen 1) offenderGen (Gen.choose (0, 3)))) property
+        )
+
+        let image : UnixBootImage<int, string> = UnixSystem.initial linux
+        let long = name (System.String ('a', 256))
+
+        UnixBootImage.tryWithDeviceFileSystem (Map.ofList [ long, SeedEntry.directory Map.empty ]) image
+        |> Result.map ignore
+        |> shouldEqual (Error (DeviceFileSystemFault.NameTooLong long))
+
+        // 255 bytes is Linux's NAME_MAX, which a devtmpfs holds.
+        UnixBootImage.tryWithDeviceFileSystem
+            (Map.ofList [ name (System.String ('a', 255)), SeedEntry.directory Map.empty ])
+            image
+        |> Result.isOk
+        |> shouldEqual true
+
+        // Darwin's devfs is not modelled, so has no contents to set.
+        UnixBootImage.tryWithDeviceFileSystem Map.empty (UnixSystem.initial<int, string> darwin)
+        |> Result.map ignore
+        |> shouldEqual (Error DeviceFileSystemFault.Devfs)
+
+    [<Test>]
+    let ``a root seed holding a device node is refused, wherever it holds it`` () : unit =
+        let property (number : DeviceNumber, depth : int) =
+            let node =
+                SeedEntry.CharacterDevice (number, PermissionBits.parseOrFail context 0o666, None)
+
+            let rec plant (depth : int) : Map<DirectoryEntryName, SeedEntry> =
+                if depth = 0 then
+                    Map.ofList [ name "node", node ; name "f", SeedEntry.file ImmutableArray.Empty ]
+                else
+                    Map.ofList [ name "d", SeedEntry.directory (plant (depth - 1)) ]
+
+            for platform in [ linux ; darwin ] do
+                UnixBootImage.tryWithFileSystem
+                    UnixTimestamp.epoch
+                    rootOwner
+                    (plant depth)
+                    (UnixSystem.initial<int, string> platform)
+                |> Result.map ignore
+                |> shouldEqual (Error (FileSystemSeedFault.SeedHoldsDeviceNode (name "node")))
+
+        Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip deviceNumberGen (Gen.choose (0, 3)))) property)
+
+    // ---------------------------------------------------------- access times
+
+    [<Test>]
+    let ``a listing moves a devtmpfs directory's access time as the probe measured relatime moving it`` () : unit =
+        use stream =
+            System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream
+                "WoofWare.PosixKernel.Test.devtmpfs-listing.linux.txt"
+
+        if isNull stream then
+            failwith $"%s{context}: no embedded devtmpfs-listing probe output"
+
+        use reader = new System.IO.StreamReader (stream)
+
+        let timestamp (text : string) : UnixTimestamp =
+            match text.Split '.' with
+            | [| seconds ; nanoseconds |] -> UnixTimestamp.createOrFail context (int64 seconds) (int nanoseconds)
+            | _ -> failwith $"%s{context}: not a timestamp: %s{text}"
+
+        let field (label : string) (text : string) : UnixTimestamp =
+            if not (text.StartsWith (label + "=")) then
+                failwith $"%s{context}: expected %s{label}= in %s{text}"
+
+            timestamp (text.Substring (label.Length + 1))
+
+        // Each row: the clock just before a listing, or the directory's times.
+        let rows =
+            reader.ReadToEnd().Split ('\n', System.StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun line -> line.Split ' ')
+            |> Array.choose (fun fields ->
+                match fields with
+                | [| "LIST-AT" ; now |] -> Some (Choice1Of2 (timestamp now))
+                | [| _ ; atime ; mtime ; ctime |] when atime.StartsWith "atime=" ->
+                    Some (
+                        Choice2Of2 (
+                            fields.[0],
+                            {
+                                Access = field "atime" atime
+                                Modification = field "mtime" mtime
+                                StatusChange = field "ctime" ctime
+                                Birth = UnixTimestamp.epoch
+                            }
+                        )
+                    )
+                | _ -> None
+            )
+            |> List.ofArray
+
+        // Each listing, with the times before it, the clock, and the times after.
+        let rec listings (rows : Choice<UnixTimestamp, string * InodeTimes> list) =
+            match rows with
+            | Choice2Of2 (_, before) :: Choice1Of2 now :: (Choice2Of2 (label, after) :: _ as rest) ->
+                (label, before, now, after) :: listings rest
+            | _ :: rest -> listings rest
+            | [] -> []
+
+        let replayed = listings rows
+        replayed |> List.length |> shouldEqual 6
+
+        let moved =
+            replayed
+            |> List.map (fun (label, before, now, after) ->
+                match AccessTimeUpdate.afterRead AccessTimeUpdate.Relative now before with
+                | Some times ->
+                    // Linux moves it to its coarse clock, which lags the
+                    // clock the probe read by a few milliseconds at most.
+                    let lag =
+                        (UnixTimestamp.seconds now - UnixTimestamp.seconds after.Access)
+                        * 1_000_000_000L
+                        + int64 (UnixTimestamp.nanoseconds now - UnixTimestamp.nanoseconds after.Access)
+
+                    (label, abs lag < 10_000_000L) |> shouldEqual (label, true)
+
+                    { times with
+                        Access = after.Access
+                    }
+                    |> shouldEqual after
+
+                    label, true
+                | None ->
+                    after |> shouldEqual before
+                    label, false
+            )
+
+        moved
+        |> shouldEqual
+            [
+                "LISTED-ATIME-EQUAL-MTIME", true
+                "LISTED-ATIME-AFTER-MTIME", false
+                "LISTED-AFTER-CHMOD", true
+                "LISTED-86399S-LATER", false
+                "LISTED-86400S-LATER", true
+                "LISTED-AFTER-MKNOD", true
+            ]
+
+    [<Test>]
+    let ``relatime moves the access time exactly when Linux's relatime_need_update says`` () : unit =
+        // `relatime_need_update`, in `fs/inode.c`, as its comparisons are
+        // written there.
+        let needsUpdate (now : UnixTimestamp) (times : InodeTimes) : bool =
+            compare times.Modification times.Access >= 0
+            || compare times.StatusChange times.Access >= 0
+            || UnixTimestamp.seconds now - UnixTimestamp.seconds times.Access
+               >= 24L * 60L * 60L
+
+        // Times close to one another, so that every comparison goes each way.
+        let near =
+            Gen.map2
+                (fun (seconds : int) (nanoseconds : int) ->
+                    UnixTimestamp.createOrFail context (1_000_000L + int64 seconds) nanoseconds
+                )
+                (Gen.elements [ 0 ; 1 ; 86_398 ; 86_399 ; 86_400 ; 86_401 ; 200_000 ])
+                (Gen.elements [ 0 ; 1 ; 500_000_000 ; 999_999_999 ])
+
+        let property
+            ((access : UnixTimestamp, modification : UnixTimestamp), (change : UnixTimestamp, now : UnixTimestamp))
+            =
+            let times =
+                {
+                    Access = access
+                    Modification = modification
+                    StatusChange = change
+                    Birth = UnixTimestamp.epoch
+                }
+
+            AccessTimeUpdate.afterRead AccessTimeUpdate.Relative now times
+            |> shouldEqual (
+                if needsUpdate now times then
+                    Some
+                        { times with
+                            Access = now
+                        }
+                else
+                    None
+            )
+
+        Check.One (
+            config.WithMaxTest 1000,
+            Prop.forAll (Arb.fromGen (Gen.zip (Gen.zip near near) (Gen.zip near near))) property
+        )
+
+    [<Test>]
+    let ``listing a devtmpfs directory moves its access time by relatime, and reading a node moves nothing`` () : unit =
+        let contents =
+            UnixSystem.defaultDevtmpfsContents
+            |> Map.add (name "net") (SeedEntry.directory Map.empty)
+
+        let system = bootedWith Map.empty contents
+        let second = 1_000_000_000L
+
+        let list (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match DirectoryReading.openDirectory (UnixPath.parseOrFail context path) system with
+            | Ok fd, system ->
+                let _, system = DirectoryReading.drain fd system
+
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
+                | Ok (_, system) -> system
+                | Error refusal -> failwith $"closing %s{path}: %A{refusal}"
+            | Error error, _ -> failwith $"opening %s{path}: %O{error}"
+
+        let atime (path : string) (system : UnixSystem<int, string>) : UnixTimestamp = (reported path system).AccessTime
+
+        let at (seconds : int64) = UnixTimestamp.ofSeconds seconds
+
+        for path in [ "/dev" ; "/dev/net" ] do
+            // Every time starts at the epoch: an atime not after the mtime.
+            let system = system |> UnixSystem.advanceClock (5L * second) |> list path
+            atime path system |> shouldEqual (at 5L)
+
+            // After the mtime and the ctime, and less than a day old.
+            let system = system |> UnixSystem.advanceClock (86_399L * second) |> list path
+            atime path system |> shouldEqual (at 5L)
+
+            // A day old.
+            let system = system |> UnixSystem.advanceClock second |> list path
+            atime path system |> shouldEqual (at 86_405L)
+
+            // A chmod puts the ctime after it.
+            let system = system |> UnixSystem.advanceClock second
+
+            let system =
+                match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText path) 0o750 system with
+                | Ok (SyscallAnswer.Completed 0L, system) -> system
+                | other -> failwith $"chmod %s{path}: %A{other}"
+
+            let system = system |> UnixSystem.advanceClock second |> list path
+            atime path system |> shouldEqual (at 86_407L)
+
+        // A node's times move for no read.
+        let fd, system =
+            match
+                OpenFlagWords.openPath (PathArg.ofText "/dev/null") reading 0 (UnixSystem.advanceClock second system)
+            with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | other -> failwith $"opening /dev/null: %A{other}"
+
+        let before = reported "/dev/null" system
+
+        let system =
+            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 16UL system with
+            | Ok (ReadOutcome.Answered _, system) -> system
+            | other -> failwith $"reading /dev/null: %A{other}"
+
+        reported "/dev/null" system |> shouldEqual before
+
+    /// `docs/probes/atime`'s `read-older getdents-eof` row, on a `relatime`
+    /// tmpfs: a directory read to its end, its atime then put an hour before
+    /// its mtime, and one more call at the end, which moved the atime to now.
+    [<Test>]
+    let ``a call at the end of a devtmpfs directory moves its access time by relatime too`` () : unit =
+        let contents =
+            UnixSystem.defaultDevtmpfsContents
+            |> Map.add (name "net") (SeedEntry.directory Map.empty)
+
+        let second = 1_000_000_000L
+        let now = 864_000L
+        let system = bootedWith Map.empty contents |> UnixSystem.advanceClock (now * second)
+
+        let fd, system =
+            match DirectoryReading.openDirectory (UnixPath.parseOrFail context "/dev/net") system with
+            | Ok fd, system -> fd, system
+            | Error error, _ -> failwith $"opening /dev/net: %O{error}"
+
+        let _, system = DirectoryReading.drain fd system
+
+        let system =
+            match
+                UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
+                    -100
+                    (NullablePathArgument.NotNull (PathArg.ofText "/dev/net"))
+                    (TimesArgument.Fields (
+                        {
+                            Seconds = now - 7200L
+                            Nanoseconds = 0L
+                        },
+                        {
+                            Seconds = now - 3600L
+                            Nanoseconds = 0L
+                        }
+                    ))
+                    0
+                    system
+            with
+            | Ok (SyscallAnswer.Completed 0L, system) -> system
+            | other -> failwith $"utimensat /dev/net: %A{other}"
+
+        let atEnd (system : UnixSystem<int, string>) : UnixTimestamp * UnixSystem<int, string> =
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> (reported "/dev/net" system).AccessTime, system
+            | other -> failwith $"reading /dev/net at its end: %A{other}"
+
+        // Before the mtime: moved.
+        let atime, system = atEnd system
+        atime |> shouldEqual (UnixTimestamp.ofSeconds now)
+
+        // Equal to the ctime the utimensat set: moved again, a second later.
+        let atime, system = atEnd (UnixSystem.advanceClock second system)
+        atime |> shouldEqual (UnixTimestamp.ofSeconds (now + 1L))
+
+        // After both, and recent: left alone.
+        let atime, _ = atEnd (UnixSystem.advanceClock second system)
+        atime |> shouldEqual (UnixTimestamp.ofSeconds (now + 1L))
 
     // -------------------------------------------------------------- Darwin
 

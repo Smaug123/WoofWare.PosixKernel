@@ -332,12 +332,8 @@ module TestInodeOwner =
                 (name "dev")
                 (mode 0o755)
                 (owner 0u 0u)
-                (CharacterDevice.all
-                 |> List.map (fun device ->
-                     CharacterDevice.name device,
-                     CharacterDevice.number SimulatedUnixFlavour.Linux device,
-                     CharacterDevice.permissions device
-                 ))
+                (mode 0o777)
+                UnixSystem.defaultDevtmpfsContents
                 epoch
                 vfs
             |> ok

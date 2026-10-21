@@ -95,6 +95,7 @@ module TestBootImage =
             <| List.sort
                 [
                     "withBootTime"
+                    "withDeviceFileSystem"
                     "withEntropySeed"
                     "withEphemeralPortRange"
                     "withFileSystem"

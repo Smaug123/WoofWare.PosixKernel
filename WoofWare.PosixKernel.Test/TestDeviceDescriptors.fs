@@ -376,7 +376,7 @@ module TestDeviceDescriptors =
                     urandom
                     (InodeContent.CharacterDevice (
                         CharacterDevice.number SimulatedUnixFlavour.Linux device,
-                        CharacterDevice.permissions device
+                        PermissionBits.parseOrFail "TestDeviceDescriptors" 0o666
                     ))
                     (UnixSystem.fileSystem system)
 

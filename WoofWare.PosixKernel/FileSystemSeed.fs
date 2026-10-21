@@ -25,7 +25,8 @@ open System.Collections.Immutable
 ///
 /// Every entry has an optional owner. `None` means the owner the seed is
 /// realised with, which whoever realises it states explicitly
-/// (`UnixBootImage.withFileSystem`'s `defaultOwner`); it does not mean
+/// (`UnixBootImage.withFileSystem`'s `defaultOwner`, and root for the device
+/// filesystem's contents, as devtmpfs makes its own nodes); it does not mean
 /// "the same owner as the directory holding this entry".
 [<RequireQualifiedAccess ; NoComparison>]
 type SeedEntry =
@@ -38,6 +39,11 @@ type SeedEntry =
     /// target is a string to the kernel, so it may dangle, may be absolute, and
     /// may point outside anything the seed declares.
     | Symlink of target : SymlinkTarget * owner : InodeOwner option
+    /// A character device node holding `number`, which `open(2)` looks the
+    /// driver up by. Only the device filesystem's contents may hold one
+    /// (`UnixBootImage.withDeviceFileSystem`): `UnixBootImage.withFileSystem`
+    /// refuses a seed that does.
+    | CharacterDevice of number : DeviceNumber * permissions : PermissionBits * owner : InodeOwner option
 
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]

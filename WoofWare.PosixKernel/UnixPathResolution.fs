@@ -114,10 +114,6 @@ type internal StatRefusal =
     /// `st_nlink` are what the NFS server's GETATTR reports, and nothing in
     /// this machine determines them.
     | NfsDirectorySize of inode : InodeNumber
-    /// The path names the root of the device filesystem. Its `st_size` and
-    /// `st_nlink` count every node and subdirectory a real one holds, and this
-    /// kernel's holds only the nodes of the devices it has drivers for.
-    | DeviceFileSystemRoot of inode : InodeNumber
     /// This kernel will not resolve the path.
     | Path of PathRefusal
 
@@ -129,15 +125,12 @@ module internal StatRefusal =
         match refusal with
         | StatRefusal.NfsDirectorySize inode ->
             $"inode %O{inode} is a directory on an NFS mount. Its st_size and st_nlink are what the NFS server's GETATTR reports, which nothing in this machine determines, so this kernel will not state them."
-        | StatRefusal.DeviceFileSystemRoot inode ->
-            $"inode %O{inode} is the root of the device filesystem. Its st_size and st_nlink count every node and subdirectory a real one holds, and this kernel's holds only the nodes of the devices it has drivers for, so it will not state them."
         | StatRefusal.Path refusal -> PathRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : StatRefusal) : RefusalKind =
         match refusal with
         | StatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
-        | StatRefusal.DeviceFileSystemRoot _ -> RefusalKind.Unmodelled
         | StatRefusal.Path inner -> PathRefusal.kind inner
 
 /// <summary>
@@ -174,14 +167,6 @@ type internal FStatRefusal =
     /// this machine determines them.
     /// </remarks>
     | NfsDirectorySize of inode : InodeNumber
-    /// <summary>
-    /// The root of the device filesystem.
-    /// </summary>
-    /// <remarks>
-    /// Its <c>st_size</c> and <c>st_nlink</c> count every node and subdirectory a real one holds, and this
-    /// kernel's holds only the nodes of the devices it has drivers for.
-    /// </remarks>
-    | DeviceFileSystemRoot of inode : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal FStatRefusal =
@@ -195,7 +180,6 @@ module internal FStatRefusal =
         | FStatRefusal.Socket socket ->
             $"the descriptor is socket %O{socket}, for which this kernel holds no inode — a `SocketId` is a contention key rather than an inode number. Measured, only Linux gives a socket an inode at all (`st_dev` 8 and a distinct `st_ino` per socket, on `sockfs`), a Darwin AF_INET socket reporting 0 for both; and the rest would be invented either way — `st_mode` is S_IFSOCK|0777 on Linux against S_IFSOCK|0666 on Darwin, `st_nlink` 1 against 0, and Darwin's `st_blksize` varies with the socket itself (131072 for TCP, 9216 for UDP, 8192 for a Unix-domain socket)."
         | FStatRefusal.NfsDirectorySize inode -> StatRefusal.describe (StatRefusal.NfsDirectorySize inode)
-        | FStatRefusal.DeviceFileSystemRoot inode -> StatRefusal.describe (StatRefusal.DeviceFileSystemRoot inode)
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FStatRefusal) : RefusalKind =
@@ -204,7 +188,6 @@ module internal FStatRefusal =
         | FStatRefusal.EventQueue -> RefusalKind.Unmodelled
         | FStatRefusal.Socket _ -> RefusalKind.Unmodelled
         | FStatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
-        | FStatRefusal.DeviceFileSystemRoot _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer an `fstatat(2)`.
 [<RequireQualifiedAccess>]
@@ -790,9 +773,8 @@ module UnixPathResolution =
     /// only in how they reach the inode. `fstat` is this plus a descriptor
     /// lookup, and `stat`/`lstat` are this plus a path resolution.
     ///
-    /// Refuses for a directory on an NFS mount, and for the root of a
-    /// devtmpfs, whose size and link count this kernel cannot state; see
-    /// `StatRefusal`.
+    /// Refuses for a directory on an NFS mount, whose size and link count this
+    /// kernel cannot state; see `StatRefusal`.
     ///
     /// Throws for an inode on Darwin's devfs, which this kernel does not model.
     /// No path or descriptor reaches one: a walk refuses at the mount. Internal
@@ -832,8 +814,6 @@ module UnixPathResolution =
             // Measured 0 on both flavours, through the path and through either
             // end, whatever the FIFO holds.
             | InodeContent.Fifo _ -> Ok (0L, int64 (VirtualFileSystem.bindingCount inode fileSystem))
-            | InodeContent.Directory _ when (VirtualFileSystem.mountOf inode fileSystem).IsSome ->
-                Error (StatRefusal.DeviceFileSystemRoot inode)
             // `readlink` reports the target's byte length as the link's size,
             // and a process can see it through `lstat`.
             | InodeContent.Symlink (target, _) ->
@@ -1099,7 +1079,6 @@ module UnixPathResolution =
         match statOf inode system with
         | Some (Ok status) -> Ok (FileStatusAnswer.Reported status)
         | Some (Error (StatRefusal.NfsDirectorySize inode)) -> Error (FStatRefusal.NfsDirectorySize inode)
-        | Some (Error (StatRefusal.DeviceFileSystemRoot inode)) -> Error (FStatRefusal.DeviceFileSystemRoot inode)
         | Some (Error (StatRefusal.Path refusal)) ->
             failwith
                 $"UnixPathResolution.fstat: reporting the status of inode %O{inode} refused a path, though fstat resolves none: %s{PathRefusal.describe refusal} (this is a bug in this library)."

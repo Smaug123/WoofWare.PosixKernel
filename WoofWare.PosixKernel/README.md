@@ -88,7 +88,7 @@ In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left
 ## Booting a machine
 
 `UnixSystem.initial` builds the *boot image* of a machine of the given `SimulatedUnixPlatform` that has not done anything yet: a `UnixBootImage`, which no syscall takes.
-Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
+Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withDeviceFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
 Sysctls are configuration too: `UnixBootImage.withInotifyLimits` sets Linux's `fs.inotify` limits (`InotifyLimits`), which default to `UnixSystem.defaultInotifyLimits` (128 instances and 8192 watches per user, 16384 records per instance).
 `UnixBootImage.withUnprivilegedPortStart` sets Linux's `net.ipv4.ip_unprivileged_port_start`, the lowest port a process without privilege may bind, which defaults to `UnixSystem.defaultUnprivilegedPortStart` (1024, where Darwin's privileged ports always end); and `UnixBootImage.withEphemeralPortRange` sets the range `bind` of port 0 draws from. Linux's sysctls keep the range at or above the unprivileged port start, so `UnixBootImage.boot` refuses a Linux image whose range starts below it, whichever setter ran first. Darwin's keep both ends within 1024 to 65535, so the setter refuses a Darwin range that starts below 1024; Darwin also takes a low end above the high end and searches downwards, which the setter refuses as unmodelled.
 Since no setter takes a booted system, configuration can only describe the machine from the moment it booted.
@@ -147,10 +147,11 @@ system |> mkdir |> mkdir |> ignore
 
 A machine boots with an empty filesystem, apart from the device filesystem the kernel mounts over `/dev` (see "Flavours and divergence from host platforms").
 `UnixBootImage.withFileSystem (createdAt : UnixTimestamp) (defaultOwner : InodeOwner) (seed : Map<DirectoryEntryName, SeedEntry>)` replaces it with the tree `seed` describes, created at `createdAt`.
-A `SeedEntry` is a file, a directory or a symbolic link, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
+A `SeedEntry` is a file, a directory, a symbolic link or a character device node, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
 `SeedEntry.file` and `SeedEntry.directory` give the modes a `umask 022` process would have created; the `SeedEntry.File` and `SeedEntry.Directory` cases take a mode and an owner of their own.
 It throws `ArgumentException` for a name the flavour could never have created, for a symbolic link whose target is longer than the flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux, whatever the filesystem's type), and for anything at `/dev` but an empty directory.
-On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
+On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem"), and on either flavour for a device node, which this kernel holds only in the device filesystem.
+The device filesystem keeps what `UnixBootImage.withDeviceFileSystem` set, whichever of the two setters ran first.
 
 The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size`, every file's `st_blksize` and `st_blocks`, and where `lseek(2)` with `SEEK_END` lands on a directory.
 `FileStatus` states each of those two as `None` where nothing in the machine determines it: both on NFS, where they are the mount's and the server's, and the `st_blocks` of an APFS regular file holding any bytes, which APFS allocates as it writes the file back, by when and how quickly the writes came. A client filling a `struct stat` chooses what to report for `None`.
@@ -160,6 +161,7 @@ Path resolution keeps its flavour's limits whichever type is chosen.
 
 Whether a read moves an access time is a mount option, and each type is mounted with one, which `statfs(2)` reports.
 The Linux tmpfs is mounted `noatime`, so only `utimensat(2)` moves an access time there.
+Linux's devtmpfs at `/dev` is mounted `relatime`: a directory read, whether it yields an entry or is at the end, moves a directory's access time to now when it is not after the modification time or the change time, or is at least 86400 whole seconds old; nothing moves a device node's.
 The Darwin APFS volume has APFS's default options: a `read(2)` or `pread(2)` of at least one byte from a file, even one that answers 0 at end-of-file or `EFAULT`, and a directory read that yields an entry, move the access time to now when it is before the modification time, and nothing else moves it (`readlink(2)` and a path through a symbolic link included).
 On NFS no read moves it, which is unmeasured: an NFS file's times are the server's.
 
@@ -1369,12 +1371,14 @@ Where the flavours disagree, the platform says which answer applies, down to who
 The filesystem type is chosen separately (see "Giving the machine files"), from those its flavour has been seen to report.
 
 The kernel mounts a device filesystem over `/dev` at boot, as a real one does.
-On Linux it is a devtmpfs holding a node for each device the kernel has a driver for (`/dev/null` and `/dev/urandom`); since a real devtmpfs holds hundreds, any other name in it is refused rather than answered ENOENT, and so are listing it and adding or removing a name in it.
+On Linux it is a devtmpfs, which holds what the machine's configuration says: `UnixBootImage.withDeviceFileSystem` takes a seed of device nodes (`SeedEntry.CharacterDevice`) and the directories holding them, and without it the devtmpfs holds `UnixSystem.defaultDevtmpfsContents`, the five nodes Linux's memory-device driver makes on every kernel: `null`, `zero`, `full`, `random` and `urandom`.
+A real machine's devtmpfs holds many more, according to its kernel's configuration and its hardware, and a client describing one configures them.
+Listing `/dev` and `stat(2)` of anything in it answer from that configuration, and a name it does not hold is ENOENT. A call that would create, remove or rename a name in it is refused once every check that could fail it has passed: an unprivileged process is EACCES there, as on a real machine, and root is refused.
 A node holds nothing but its device's number (`DeviceNumber`, the `(major, minor)` pair `stat` reports in the flavour's encoding as `st_rdev`), and opening it reaches the driver this kernel has registered under that number, as a real kernel's does.
 Opening a node gives a descriptor whose syscalls are the driver's: `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
 Opening a node whose number this kernel has no driver for is refused, once every check that could fail the open has passed.
-Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. No read or write moves them, and mounting `/dev` moves none of the root directory's times.
-`CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so no node can be opened as any of them.
+Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. A node a real kernel registers later in boot has a later time, which this kernel does not distinguish. No read or write of a node moves its times, and mounting `/dev` moves none of the root directory's times.
+`CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so a node holding one of their numbers, `/dev/zero` and `/dev/random` among them, is listed and reported but cannot be opened.
 On Darwin it is devfs, which is not modelled, so any path that reaches `/dev` is refused.
 
 Some interfaces are one flavour's alone, and the other flavour refuses every call of them rather than answering: no kernel of that flavour has the call, so there is no answer to measure.

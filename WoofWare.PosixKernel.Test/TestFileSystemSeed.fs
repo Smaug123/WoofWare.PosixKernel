@@ -211,7 +211,8 @@ module TestFileSystemSeed =
             match entry with
             | SeedEntry.Directory (children, _, _) -> (here, entry) :: declared here children
             | SeedEntry.File _
-            | SeedEntry.Symlink (_, _) -> [ here, entry ]
+            | SeedEntry.Symlink (_, _)
+            | SeedEntry.CharacterDevice _ -> [ here, entry ]
         )
 
     /// What the declared paths of generated seeds resolve to.

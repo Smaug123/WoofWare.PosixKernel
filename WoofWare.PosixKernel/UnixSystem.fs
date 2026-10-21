@@ -960,6 +960,10 @@ type internal FileSystemSeedFault =
     /// its NUL: 1023 bytes on Darwin, 4095 on Linux), so no process of that
     /// flavour could have created it.
     | SeedSymlinkTargetTooLong of name : DirectoryEntryName * flavour : SimulatedUnixFlavour
+    /// The seed holds a device node, bound under `name`. This kernel holds
+    /// device nodes only in the device filesystem
+    /// (`UnixBootImage.withDeviceFileSystem`). Unmodelled.
+    | SeedHoldsDeviceNode of name : DirectoryEntryName
 
 [<RequireQualifiedAccess>]
 module internal FileSystemSeedFault =
@@ -977,6 +981,8 @@ module internal FileSystemSeedFault =
             $"the seed has a directory holding both %s{DirectoryEntryName.toEscaped first} and %s{DirectoryEntryName.toEscaped second}. A %O{flavour} filesystem takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it, so it holds at most one spelling of a name in a directory, and this library holds no Unicode tables to decide whether these two are spellings of one name. Keep one of them in that directory."
         | FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour) ->
             $"the seed holds a symbolic link named %s{DirectoryEntryName.toEscaped name} whose target is longer than a %O{flavour} kernel's symlink(2) copies in (PATH_MAX less its NUL), so no process of that flavour could have created it. Shorten the target, or simulate a flavour whose PATH_MAX admits it."
+        | FileSystemSeedFault.SeedHoldsDeviceNode name ->
+            $"the seed holds a device node named %s{DirectoryEntryName.toEscaped name}, and this kernel holds device nodes only in the device filesystem. Configure it there instead, with UnixBootImage.withDeviceFileSystem."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FileSystemSeedFault) : RefusalKind =
@@ -986,6 +992,43 @@ module internal FileSystemSeedFault =
         | FileSystemSeedFault.SeedCoversDeviceFileSystem _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedNamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
         | FileSystemSeedFault.SeedSymlinkTargetTooLong _ -> RefusalKind.Contradictory "seed"
+        | FileSystemSeedFault.SeedHoldsDeviceNode _ -> RefusalKind.Unmodelled
+
+/// Why `UnixBootImage.withDeviceFileSystem` refuses the contents it was given.
+[<RequireQualifiedAccess>]
+type internal DeviceFileSystemFault =
+    /// The machine's device filesystem is Darwin's devfs, which this kernel
+    /// does not model. Unmodelled.
+    | Devfs
+    /// The contents hold an entry whose name is past Linux's `NAME_MAX`, so
+    /// no devtmpfs could hold it. Contradictory.
+    | NameTooLong of name : DirectoryEntryName
+    /// The contents hold a regular file or a symbolic link, bound under
+    /// `name`. A devtmpfs makes only device nodes and the directories holding
+    /// them, at boot; anything else in it was made by a process afterwards,
+    /// at a time and with an access-time history this configuration does not
+    /// describe. Unmodelled.
+    | NotMadeByDevtmpfs of name : DirectoryEntryName
+
+[<RequireQualifiedAccess>]
+module internal DeviceFileSystemFault =
+    /// What this library knows about why it refused the contents, for a
+    /// client composing a diagnostic that names its own knob.
+    let describe (fault : DeviceFileSystemFault) : string =
+        match fault with
+        | DeviceFileSystemFault.Devfs ->
+            "the machine's device filesystem is Darwin's devfs, which this kernel does not model, so it has no contents to configure."
+        | DeviceFileSystemFault.NameTooLong name ->
+            $"the device filesystem's contents hold an entry named %s{DirectoryEntryName.toEscaped name}, which is past Linux's NAME_MAX, so no devtmpfs could hold it. Shorten the name."
+        | DeviceFileSystemFault.NotMadeByDevtmpfs name ->
+            $"the device filesystem's contents hold %s{DirectoryEntryName.toEscaped name}, which is a regular file or a symbolic link. A devtmpfs makes only device nodes and the directories holding them, at boot; anything else in it was made by a process afterwards, at a time and with an access-time history this configuration does not describe, so this kernel does not hold one."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (fault : DeviceFileSystemFault) : RefusalKind =
+        match fault with
+        | DeviceFileSystemFault.Devfs -> RefusalKind.Unmodelled
+        | DeviceFileSystemFault.NameTooLong _ -> RefusalKind.Contradictory "contents"
+        | DeviceFileSystemFault.NotMadeByDevtmpfs _ -> RefusalKind.Unmodelled
 
 /// Why `UnixSystem.launch` will not start a process.
 [<RequireQualifiedAccess>]
@@ -1029,15 +1072,16 @@ module internal ProcessCreationRefusal =
 [<RequireQualifiedAccess>]
 module UnixSystem =
 
-    /// Mount `mount` over the root's `dev`, as the kernel does at boot, with a
-    /// node for each device it has a driver for, all made at the epoch and
-    /// owned by root. The root directory's times do not move.
+    /// Mount `mount` over the root's `dev`, as the kernel does at boot,
+    /// holding `contents`, made at the epoch and owned by root unless an
+    /// entry says otherwise. The root directory's times do not move.
     ///
-    /// The directory and its nodes have the modes a measured devtmpfs and devfs
-    /// report: 0755 and 0555 respectively for the directory, 0666 for each
-    /// node.
+    /// The directory has the mode a measured devtmpfs and devfs report: 0755
+    /// and 0555 respectively. A devfs holds nothing this kernel models, so
+    /// `contents` must be empty for one.
     let internal mountDeviceFileSystem
         (mount : DeviceFileSystemMount)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
         (filesystem : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
         =
@@ -1047,34 +1091,64 @@ module UnixSystem =
                 Group = GroupId.parseOrFail "UnixSystem.mountDeviceFileSystem" 0u
             }
 
-        let permissions, devices =
+        let permissions =
             match mount with
-            | DeviceFileSystemMount.Devtmpfs _ ->
-                PermissionBits 0o755,
-                CharacterDevice.all
-                |> List.map (fun device ->
-                    CharacterDevice.name device,
-                    CharacterDevice.number SimulatedUnixFlavour.Linux device,
-                    CharacterDevice.permissions device
-                )
-            | DeviceFileSystemMount.Devfs -> PermissionBits 0o555, []
+            | DeviceFileSystemMount.Devtmpfs _ -> PermissionBits 0o755
+            | DeviceFileSystemMount.Devfs ->
+                if not (Map.isEmpty contents) then
+                    failwith
+                        $"UnixSystem.mountDeviceFileSystem: asked to mount Darwin's devfs holding %d{Map.count contents} entries, where this kernel models none (this is a bug in the caller)."
+
+                PermissionBits 0o555
 
         // Measured by `docs/probes/devtmpfs-times` over three boots of Linux
-        // 6.18.5 aarch64: devtmpfs makes its root and these nodes before the
-        // realtime clock is first set, so every one of their times is the
+        // 6.18.5 aarch64: devtmpfs makes its root and its first nodes before
+        // the realtime clock is first set, so every one of their times is the
         // uptime then, 0 to 4 ms past the epoch, whatever the clock later
         // reads and whenever the root filesystem was made. The exact
         // milliseconds depend on how fast the kernel booted, which nothing
-        // here states, so this is the epoch itself. An x86 kernel, which reads
-        // a CMOS clock before devtmpfs runs, has not been measured.
+        // here states, so this is the epoch itself. Nodes a driver registers
+        // later in boot have later times (`docs/probes/devtmpfs-contents`:
+        // 72 ms for the virtio consoles, and the realtime clock's time for
+        // vsock, registered after it was set), which this kernel does not
+        // distinguish. An x86 kernel, which reads a CMOS clock before
+        // devtmpfs runs, has not been measured.
         VirtualFileSystem.mountAtRoot
             (DeviceFileSystemMount.mounted mount)
             (DirectoryEntryName.parseOrFail "UnixSystem.mountDeviceFileSystem" "dev")
             permissions
             root
-            devices
+            // No symbolic link reaches here (`DeviceFileSystemFault`); this is
+            // what Linux, the one flavour with contents, gives every link.
+            (PermissionBits 0o777)
+            contents
             UnixTimestamp.epoch
             filesystem
+
+    /// The filesystem a machine on `platform` boots with: `seed` realised, and
+    /// `mount` mounted over its `dev` holding `deviceContents`.
+    let internal realiseFileSystem
+        (platform : SimulatedUnixPlatform)
+        (mount : DeviceFileSystemMount)
+        (seed : RootFileSystemSeed)
+        (deviceContents : Map<DirectoryEntryName, SeedEntry>)
+        : Result<VirtualFileSystem, MountFault>
+        =
+        VirtualFileSystem.ofFileSystemSeed
+            (SimulatedUnixPlatform.entryNameMatching platform)
+            seed.SeedCreatedAt
+            seed.SeedOwner
+            (SimulatedUnixPlatform.symlinkCreationPermissions platform SeedEntry.symlinkCreatorsUmask)
+            seed.SeedEntries
+        |> mountDeviceFileSystem mount deviceContents
+
+    /// What a Linux machine's devtmpfs holds when a client expresses no
+    /// preference: the nodes Linux's memory-device driver makes whatever the
+    /// kernel was configured with, which are `null` (1,3), `zero` (1,5),
+    /// `full` (1,7), `random` (1,8) and `urandom` (1,9), each 0666 and owned
+    /// by root. A starting point for `UnixBootImage.withDeviceFileSystem`.
+    let defaultDevtmpfsContents : Map<DirectoryEntryName, SeedEntry> =
+        DevtmpfsMount.defaultContents
 
     /// The first thread of the process `pid`, which it started with: its
     /// thread-group leader.
@@ -4263,14 +4337,20 @@ module UnixSystem =
 
         let deviceMount = DeviceFileSystemMount.defaultFor flavour
 
+        let rootSeed : RootFileSystemSeed =
+            {
+                SeedCreatedAt = UnixTimestamp.epoch
+                SeedOwner = InodeOwner.ofProcess (defaultCredentials flavour)
+                SeedEntries = FileSystemSeed.empty
+            }
+
+        let deviceContents =
+            match deviceMount with
+            | DeviceFileSystemMount.Devtmpfs _ -> defaultDevtmpfsContents
+            | DeviceFileSystemMount.Devfs -> Map.empty
+
         let filesystem =
-            match
-                VirtualFileSystem.empty
-                    (SimulatedUnixPlatform.entryNameMatching platform)
-                    UnixTimestamp.epoch
-                    (InodeOwner.ofProcess (defaultCredentials flavour))
-                |> mountDeviceFileSystem deviceMount
-            with
+            match realiseFileSystem platform deviceMount rootSeed deviceContents with
             | Ok filesystem -> filesystem
             | Error fault ->
                 failwith
@@ -4336,6 +4416,8 @@ module UnixSystem =
                     ProtectedFiles = ProtectedFiles.off
                 }
             ProcessId = defaultProcessId
+            RootSeed = rootSeed
+            DeviceContents = deviceContents
         }
 
     /// The machine's administrator writes Linux's `kernel.pid_max` sysctl
