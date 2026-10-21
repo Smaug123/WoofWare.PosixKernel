@@ -378,14 +378,14 @@ module TestDeviceDescriptors =
                         CharacterDevice.number SimulatedUnixFlavour.Linux device,
                         CharacterDevice.permissions device
                     ))
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
 
-            { system with
-                Machine =
-                    { system.Machine with
-                        CommittedFileSystem = CommittedFileSystem.initial ownNumber
-                    }
-            }
+            system
+            |> Kernel.mapMachine (fun machine ->
+                { machine with
+                    CommittedFileSystem = CommittedFileSystem.initial ownNumber
+                }
+            )
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 

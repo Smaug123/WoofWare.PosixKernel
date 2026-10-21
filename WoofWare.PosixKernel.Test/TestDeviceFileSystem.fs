@@ -913,15 +913,16 @@ module TestDeviceFileSystem =
             VirtualFileSystem.Unchecked.setContent
                 inode
                 (InodeContent.CharacterDevice (number, permissions))
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
 
         inode,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial fileSystem
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``a node whose number has no driver reports it, and opening it is refused once every check has passed``
