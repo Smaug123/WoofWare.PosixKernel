@@ -1312,6 +1312,7 @@ module TestDeviceFileSystem =
             LinkCount : int64
             Size : int64
             SpecialFileDevice : int64
+            DeviceId : int64
             Kind : DirectoryEntryKind
         }
 
@@ -1330,6 +1331,7 @@ module TestDeviceFileSystem =
                 LinkCount = 1L
                 Size = 0L
                 SpecialFileDevice = DeviceNumber.specialFileDevice SimulatedUnixFlavour.Linux number
+                DeviceId = DevtmpfsMount.defaults.DeviceId
                 Kind = DirectoryEntryKind.CharacterDevice
             }
         | SeedEntry.Directory (children, permissions, owner) ->
@@ -1350,6 +1352,7 @@ module TestDeviceFileSystem =
                 LinkCount = 2L + int64 subdirectories
                 Size = 40L + 20L * int64 children.Count
                 SpecialFileDevice = 0L
+                DeviceId = DevtmpfsMount.defaults.DeviceId
                 Kind = DirectoryEntryKind.Directory
             }
         | SeedEntry.File _
@@ -1392,6 +1395,7 @@ module TestDeviceFileSystem =
                     LinkCount = status.LinkCount
                     Size = status.Size
                     SpecialFileDevice = status.SpecialFileDevice
+                    DeviceId = status.DeviceId
                     Kind = kind
                 }
             | other -> failwith $"lstat %s{path}: %A{other}"
@@ -1447,7 +1451,14 @@ module TestDeviceFileSystem =
     let ``find /dev lists and reports exactly what the devtmpfs was configured with`` () : unit =
         let property (seed : Map<DirectoryEntryName, SeedEntry>, contents : Map<DirectoryEntryName, SeedEntry>) =
             let system = bootedWith seed contents
-            UnixSystem.checkInvariants system |> shouldEqual []
+
+            let sound (system : UnixSystem<int, string>) : unit =
+                UnixSystem.checkInvariants system |> shouldEqual []
+
+                VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
+                |> shouldEqual []
+
+            sound system
 
             let found, after = findDev system
 
@@ -1459,7 +1470,18 @@ module TestDeviceFileSystem =
                 :: expectedBelow "/dev" contents
 
             found |> List.sortBy fst |> shouldEqual (List.sortBy fst expected)
-            UnixSystem.checkInvariants after |> shouldEqual []
+            sound after
+
+            // Every directory is on the device filesystem, however deep: root
+            // may not bind a name in any of them. The name is outside
+            // `entryNameGen`'s alphabet, so it is free in each.
+            for path, observed in expected do
+                if observed.Kind = DirectoryEntryKind.Directory then
+                    match
+                        UnixNamespace.tryMkdir (Callers.leader system) (PathArg.ofText $"%s{path}/New") 0o755 system
+                    with
+                    | Error (PathRefusal.DeviceFileSystemNewName (_, refused)) -> refused |> shouldEqual (name "New")
+                    | other -> failwith $"mkdir %s{path}/New as root: expected a refusal, got %A{other}"
 
             // Opening each node reaches its driver, or is refused for having
             // none; root passes every check an open makes.
