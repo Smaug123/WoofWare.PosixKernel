@@ -144,7 +144,7 @@ module TestBindUidsMeasured =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let protocol =
             match kind with
@@ -156,7 +156,7 @@ module TestBindUidsMeasured =
 
         let fd, system =
             match step pid (Syscall.Socket (domain, rawKind, rawProtocol)) system with
-            | SteppedCall.Socket (Ok made) -> made
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket by %O{pid}: %A{Stepped.view other}"
 
         if not reuse then
@@ -184,7 +184,7 @@ module TestBindUidsMeasured =
         (system : UnixSystem<int, string>)
         : BindAnswer * UnixSystem<int, string>
         =
-        let blob = CopyIn.inetCopy system.Machine.UnixPlatform endpoint
+        let blob = CopyIn.inetCopy (UnixSystem.platform system) endpoint
 
         match step pid (Syscall.Bind (fd, CopiedArgument.Readable blob, uint32 blob.Length)) system with
         | SteppedCall.Bind (answer, system) -> answer, system

@@ -43,6 +43,7 @@ module TestDeviceDescriptors =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -89,8 +90,8 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofText path) 0o644 system with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        match OpenFlagWords.openPath (PathArg.ofText path) flags 0o644 system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"open(%s{path}, %A{flags}): expected a descriptor, got %A{other}"
 
     let private openDevice
@@ -228,8 +229,8 @@ module TestDeviceDescriptors =
                     Exclusive = true
                 }
 
-            match OpenFlagWords.openPath flags (PathArg.ofText (pathOf device)) 0o644 booted with
-            | Ok (SyscallAnswer.Failed UnixError.EEXIST, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0o644 booted with
+            | Ok (DescriptorAnswer.Failed UnixError.EEXIST, _) -> ()
             | other -> failwith $"%O{device}: expected EEXIST, got %A{other}"
 
             let flags =
@@ -237,8 +238,8 @@ module TestDeviceDescriptors =
                     Directory = true
                 }
 
-            match OpenFlagWords.openPath flags (PathArg.ofText (pathOf device)) 0 booted with
-            | Ok (SyscallAnswer.Failed UnixError.ENOTDIR, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0 booted with
+            | Ok (DescriptorAnswer.Failed UnixError.ENOTDIR, _) -> ()
             | other -> failwith $"%O{device}: expected ENOTDIR, got %A{other}"
 
     [<Test>]
@@ -261,8 +262,8 @@ module TestDeviceDescriptors =
                 FileAccessMode.WriteOnly
                 FileAccessMode.ReadWrite
             ] do
-            match OpenFlagWords.openPath (opening access) (PathArg.ofText "/dev/null") 0 unprivileged with
-            | Ok (SyscallAnswer.Failed UnixError.EACCES, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText "/dev/null") (opening access) 0 unprivileged with
+            | Ok (DescriptorAnswer.Failed UnixError.EACCES, _) -> ()
             | other -> failwith $"%A{access} as uid 1000: expected EACCES, got %A{other}"
 
             openDevice CharacterDevice.Null access narrowed
@@ -286,24 +287,27 @@ module TestDeviceDescriptors =
         for registry in
             [
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -314,8 +318,9 @@ module TestDeviceDescriptors =
             | other -> failwith $"expected one kind mismatch, got %A{other}"
 
         FileDescriptorRegistry.openCharacterDevice
-            (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-            (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            false
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -344,8 +349,9 @@ module TestDeviceDescriptors =
         for device in [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ] do
             let fd, registry =
                 FileDescriptorRegistry.openCharacterDevice
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device
@@ -362,7 +368,7 @@ module TestDeviceDescriptors =
             UnixSystem.checkInvariants system
             |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
             |> shouldEqual []
 
             let ownNumber =
@@ -602,6 +608,8 @@ module TestDeviceDescriptors =
                 match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 count) 0L returned with
                 | Ok (PWriteAdmission.Transfer (transfer, _)) -> transfer |> shouldEqual count
                 | Ok (PWriteAdmission.Answered answer) -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                | Ok (PWriteAdmission.DeviceAnswered _ as answered) ->
+                    failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
                 | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                 | Error other -> failwith $"admitPWrite: %A{other}"
             else
@@ -922,9 +930,12 @@ module TestDeviceDescriptors =
             | CharacterDevice.Zero, _
             | CharacterDevice.Random, _
             | CharacterDevice.Tty, _ -> failwith $"%O{device} has no node, so it cannot have been opened"
-            | CharacterDevice.Null, _ ->
-                admission
-                |> shouldEqual (PWriteAdmission.Answered (WriteAnswer.Completed (int64 count)))
+            | CharacterDevice.Null, PWriteAdmission.Answered answer ->
+                count |> shouldEqual 0UL
+                answer |> shouldEqual (WriteAnswer.Completed 0L)
+            | CharacterDevice.Null, PWriteAdmission.DeviceAnswered (answer, _, _) ->
+                answer |> shouldEqual (WriteAnswer.Completed (int64 count))
+            | CharacterDevice.Null, other -> failwith $"/dev/null's pwrite reached %A{other}"
             | CharacterDevice.URandom, PWriteAdmission.Answered answer ->
                 count |> shouldEqual 0UL
                 answer |> shouldEqual (WriteAnswer.Completed 0L)
@@ -939,6 +950,8 @@ module TestDeviceDescriptors =
                 | Error refusal -> failwith $"pwrite refused: %A{refusal}"
             | CharacterDevice.URandom, (PWriteAdmission.Faults _ as faults) ->
                 failwith $"a mapped buffer faulted: %A{faults}"
+            | CharacterDevice.URandom, (PWriteAdmission.DeviceAnswered _ as answered) ->
+                failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
 
         let offsetGen =
             Gen.oneof
@@ -1047,6 +1060,7 @@ module TestDeviceDescriptors =
 
                 for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Opaque ] do
                     UnixDescriptor.tryBytesAvailable (Callers.leader system) fd destination system
+                    |> Result.map fst
                     |> shouldEqual (Ok (BytesAvailableAnswer.Failed expected))
 
                 UnixDescriptor.terminalAttributes (Callers.leader system) fd system
@@ -1061,16 +1075,16 @@ module TestDeviceDescriptors =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
         UnixDescriptor.tryFileClone (Callers.leader system) nullFd fileFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) fileFd nullFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) urandomFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
         UnixDescriptor.tryFileClone (Callers.leader system) nullFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
     [<Test>]
     let ``copy_file_range to, from or between devices is EINVAL`` () : unit =
@@ -1165,7 +1179,7 @@ module TestDeviceDescriptors =
 
             let queueFd, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
@@ -1192,7 +1206,7 @@ module TestDeviceDescriptors =
 
             let copy, system =
                 match Answered.dup (Callers.leader system) fd system with
-                | SyscallAnswer.Completed copy, system -> int copy, system
+                | DescriptorAnswer.Returned copy, system -> copy, system
                 | other -> failwith $"dup: %A{other}"
 
             let closed =
@@ -1207,4 +1221,4 @@ module TestDeviceDescriptors =
             |> Result.map (fun bytes -> bytes.Length)
             |> shouldEqual (Ok (if device = CharacterDevice.Null then 0 else 8))
 
-            closed.Machine.FileSystem |> shouldEqual booted.Machine.FileSystem
+            UnixSystem.fileSystem closed |> shouldEqual (UnixSystem.fileSystem booted)

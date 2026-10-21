@@ -43,12 +43,13 @@ module TestPoll =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
     let private linux : UnixSystem<int, string> =
         systemOn SimulatedUnixPlatform.linuxX64
@@ -100,7 +101,7 @@ module TestPoll =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
 
         let (SocketId raw) = socketId
 
@@ -121,18 +122,20 @@ module TestPoll =
 
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// An idle IPv4 stream socket.
@@ -146,8 +149,9 @@ module TestPoll =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 accessMode
@@ -524,7 +528,7 @@ module TestPoll =
     let ``an entry naming an epoll instance is refused`` () : unit =
         let queueFd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
                 (Lone.fileDescriptors linux)
 
         let system = Lone.withFileDescriptors registry linux
@@ -545,7 +549,7 @@ module TestPoll =
     let ``the refusal names the first unmeasured entry in list order`` () : unit =
         let firstEpoll, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
                 (Lone.fileDescriptors linux)
 
         let secondEpoll, registry =

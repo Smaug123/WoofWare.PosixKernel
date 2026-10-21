@@ -234,6 +234,11 @@ module TestAttributeChangeAt =
         | SyscallAnswer.Completed _ -> "ok"
         | SyscallAnswer.Failed error -> $"%A{error}"
 
+    let private descriptorErrno (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned _ -> "ok"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
+
     /// The pathname a NOFOLLOW or LCHOWN cell names.
     let private pathOf (caller : Caller) (label : string) : string =
         match label, SimulatedUnixPlatform.flavour caller.Platform with
@@ -391,6 +396,7 @@ module TestAttributeChangeAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -411,8 +417,8 @@ module TestAttributeChangeAt =
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"%s{context}: symlink(f, %s{name}): %A{other}"
             | Subject.File ->
-                match Answered.openPath creating (UnixPath.parseOrFail context name) 0o644 system with
-                | SyscallAnswer.Completed _, system -> system
+                match Answered.openPath (UnixPath.parseOrFail context name) creating 0o644 system with
+                | DescriptorAnswer.Returned _, system -> system
                 | other -> failwith $"%s{context}: open(%s{name}, O_CREAT): %A{other}"
             | Subject.Directory ->
                 match Answered.mkdir (Callers.leader system) (PathArg.ofText name) 0o755 system with
@@ -759,12 +765,13 @@ module TestAttributeChangeAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -802,7 +809,7 @@ module TestAttributeChangeAt =
             | "socket" -> Some (NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system)
             | "epoll" ->
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok created) -> Some created
+                | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
                 | other -> failwith $"%s{context}: epoll_create1: %A{other}"
             | "devnull" -> Some (opened "/dev/null" system)
             | "orphan" ->
@@ -1085,9 +1092,9 @@ module TestAttributeChangeAt =
     // ------------------------------------------------------------ a Darwin link's own mode, in use
 
     let private openAnswer (path : string) (system : UnixSystem<int, string>) : string =
-        Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 system
+        Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 system
         |> fst
-        |> errno
+        |> descriptorErrno
 
     let private statAnswer (policy : SymlinkPolicy) (path : string) (system : UnixSystem<int, string>) : string =
         match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) system with

@@ -48,7 +48,7 @@ module TestPeerName =
     let private endpointOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint
             | None -> failwith $"fd %d{fd} is not bound"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
@@ -81,8 +81,8 @@ module TestPeerName =
         | other -> failwith $"listen answered %A{other}"
 
     let private accept (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept answered %A{other}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

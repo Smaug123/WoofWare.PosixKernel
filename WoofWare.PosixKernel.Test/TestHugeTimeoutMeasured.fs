@@ -263,7 +263,12 @@ module TestHugeTimeoutMeasured =
 
     let private timespecOf (row : Row) : TimespecArgument =
         match row.Timeout with
-        | Timeout.Timespec (seconds, nanoseconds) -> TimespecArgument.Readable (seconds, nanoseconds)
+        | Timeout.Timespec (seconds, nanoseconds) ->
+            TimespecArgument.Readable
+                {
+                    Seconds = seconds
+                    Nanoseconds = nanoseconds
+                }
         | Timeout.Null -> TimespecArgument.Null
         | Timeout.Milliseconds _ -> failwith $"a futex row with a timeout in milliseconds: %s{row.Line}"
 
@@ -283,11 +288,11 @@ module TestHugeTimeoutMeasured =
 
         let system =
             match UnixSignal.sigaction (Caller.make pid 0) (usr1 system) (Some restarting) system with
-            | Ok (_, system) -> system
-            | Error error -> failwith $"sigaction failed with %O{error}"
+            | SigactionAnswer.Completed _, system -> system
+            | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
         let call =
-            Syscall.Futex (address, UnixFutex.FutexWaitPrivate, 0, CopiedArgument.Readable 0u, timespecOf row)
+            Syscall.Futex (address, UnixFutex.FutexWaitPrivate, 0, CopiedArgument.Readable 0u, timespecOf row, 0u)
 
         match step pid 1 call system with
         | SteppedCall.Futex (outcome, system) -> pid, outcome, system
@@ -330,7 +335,8 @@ module TestHugeTimeoutMeasured =
                                 UnixFutex.FutexWakePrivate,
                                 1,
                                 CopiedArgument.Addressless,
-                                TimespecArgument.Null
+                                TimespecArgument.Null,
+                                0u
                             ))
                             system
                     with
@@ -350,7 +356,7 @@ module TestHugeTimeoutMeasured =
             | "restart" ->
                 let system =
                     match UnixSignal.pthreadKill (Caller.make pid 0) 1 (usr1 system) system with
-                    | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+                    | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
                     | other -> failwith $"pthread_kill answered %A{other}"
 
                 let woken, system = sweep pid system
@@ -440,7 +446,7 @@ module TestHugeTimeoutMeasured =
 
             let epfd, system =
                 match step pid 0 (Syscall.EpollCreate1 0) system with
-                | SteppedCall.EpollCreate1 (Ok (epfd, system)) -> epfd, system
+                | SteppedCall.EpollCreate1 (DescriptorAnswer.Returned epfd, system) -> epfd, system
                 | other -> failwith $"epoll_create1 answered %A{Stepped.view other}"
 
             let started =
@@ -459,13 +465,18 @@ module TestHugeTimeoutMeasured =
 
             let kq, system =
                 match step pid 0 Syscall.Kqueue system with
-                | SteppedCall.Kqueue (kq, system) -> kq, system
+                | SteppedCall.Kqueue (DescriptorAnswer.Returned kq, system) -> kq, system
                 | other -> failwith $"kqueue answered %A{Stepped.view other}"
 
             let timeout =
                 match row.Timeout with
-                | Timeout.Timespec (seconds, nanoseconds) -> KeventTimeout.Readable (seconds, nanoseconds)
-                | Timeout.Null -> KeventTimeout.Null
+                | Timeout.Timespec (seconds, nanoseconds) ->
+                    TimespecArgument.Readable
+                        {
+                            Seconds = seconds
+                            Nanoseconds = nanoseconds
+                        }
+                | Timeout.Null -> TimespecArgument.Null
                 | Timeout.Milliseconds _ -> failwith $"a kevent row with a timeout in milliseconds: %s{row.Line}"
 
             let started =

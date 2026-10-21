@@ -58,6 +58,7 @@ module TestNameEquivalence =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -82,13 +83,13 @@ module TestNameEquivalence =
     [<Test>]
     let ``Darwin refuses an exclusive create of the NFD spelling of a name bound in NFC`` () : unit =
         let system =
-            match OpenFlagWords.openPath (openFlags true true) (arg nfc) 0o644 darwin with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            match OpenFlagWords.openPath (arg nfc) (openFlags true true) 0o644 darwin with
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"creating the NFC spelling: expected a descriptor, got %A{other}"
 
         // Measured on APFS (`docs/probes/name-equivalence`): EEXIST, since the
         // NFD spelling reaches the entry bound in NFC.
-        match OpenFlagWords.openPath (openFlags true true) (arg nfd) 0o644 system with
+        match OpenFlagWords.openPath (arg nfd) (openFlags true true) 0o644 system with
         | Error (OpenRefusal.Path (PathRefusal.UndecidedNameEquivalence (_, name, bound))) ->
             DirectoryEntryName.toByteString name |> shouldEqual (byteString nfd)
             DirectoryEntryName.toByteString bound |> shouldEqual (byteString nfc)
@@ -98,8 +99,8 @@ module TestNameEquivalence =
     [<Test>]
     let ``Linux creates the NFD spelling of a name bound in NFC as a second name`` () : unit =
         let created (system : UnixSystem<int, string>) (name : byte list) : UnixSystem<int, string> =
-            match OpenFlagWords.openPath (openFlags true true) (arg name) 0o644 system with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            match OpenFlagWords.openPath (arg name) (openFlags true true) 0o644 system with
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"creating %s{hexOf name}: expected a descriptor, got %A{other}"
 
         let system = created (created linux nfc) nfd
@@ -271,6 +272,11 @@ module TestNameEquivalence =
         | SyscallAnswer.Completed _ -> "OK"
         | SyscallAnswer.Failed error -> string<UnixError> error
 
+    let private descriptorErrnoOf (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned _ -> "OK"
+        | DescriptorAnswer.Failed error -> string<UnixError> error
+
     let private completed (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
         match answer with
         | SyscallAnswer.Completed _, system -> system
@@ -287,10 +293,10 @@ module TestNameEquivalence =
 
     let private create (name : byte list) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
         let answer, system =
-            OpenFlagWords.openPath (openFlags true true) (arg name) 0o644 system
+            OpenFlagWords.openPath (arg name) (openFlags true true) 0o644 system
             |> answered OpenRefusal.describe
 
-        errnoOf answer, system
+        descriptorErrnoOf answer, system
 
     let private statOf (policy : SymlinkPolicy) (path : byte list) (system : UnixSystem<int, string>) =
         UnixPathResolution.tryStat (Callers.leader system) policy (arg path) system
@@ -388,38 +394,38 @@ module TestNameEquivalence =
             elif inode = sourceInode then "src"
             else "other"
 
-        let answer, extra, system =
+        let errno, extra, system =
             match operation with
             | "mkdir(second)" ->
                 let answer, system =
                     UnixNamespace.tryMkdir (Callers.leader system) (arg second) 0o755 system
                     |> answered PathRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "link(src,second)" ->
                 let answer, system =
                     Eager.tryLink (arg (ascii "src")) (arg second) system
                     |> answered LinkRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "symlink(t,second)" ->
                 let answer, system =
                     Eager.trySymlink (arg (ascii "t")) (arg second) system
                     |> answered SymlinkRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "unlink(second)" ->
                 let answer, system =
                     UnixNamespace.tryUnlink (Callers.leader system) (arg second) system
                     |> answered RemovalRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "rmdir(second)" ->
                 let answer, system =
                     UnixNamespace.tryRmdir (Callers.leader system) (arg second) system
                     |> answered RemovalRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "rename(src,second)"
             | "rename(first,second)"
             | "rename(firstdir,second)"
@@ -434,7 +440,7 @@ module TestNameEquivalence =
                     Eager.tryRename (arg source) (arg destination) system
                     |> answered RenameRefusal.describe
 
-                answer, "", system
+                errnoOf answer, "", system
             | "chdir(second)" ->
                 match
                     UnixPathResolution.tryChdir (Callers.leader system) (arg second) system
@@ -451,24 +457,24 @@ module TestNameEquivalence =
                         |> answered PathRefusal.describe
                         |> completed
 
-                    answer, $"\tcwd=%s{which here}", back
-                | answer, system -> answer, "", system
+                    errnoOf answer, $"\tcwd=%s{which here}", back
+                | answer, system -> errnoOf answer, "", system
             | "open(second,O_CREAT)" ->
                 match
-                    OpenFlagWords.openPath (openFlags true false) (arg second) 0o644 system
+                    OpenFlagWords.openPath (arg second) (openFlags true false) 0o644 system
                     |> answered OpenRefusal.describe
                 with
-                | SyscallAnswer.Completed fd as answer, system ->
+                | DescriptorAnswer.Returned fd as answer, system ->
                     let opened =
                         match
-                            UnixPathResolution.tryFstat (Callers.leader system) (int fd) system
+                            UnixPathResolution.tryFstat (Callers.leader system) fd system
                             |> answered FStatRefusal.describe
                         with
                         | FileStatusAnswer.Reported status -> which status.Inode
                         | FileStatusAnswer.Failed error -> failwith $"fstat: %O{error}"
 
-                    answer, $"\topened=%s{opened}", system
-                | answer, system -> answer, "", system
+                    descriptorErrnoOf answer, $"\topened=%s{opened}", system
+                | answer, system -> descriptorErrnoOf answer, "", system
             | other -> failwith $"the probe's operation %s{other} is not one this replay makes"
 
         let kinds =
@@ -483,7 +489,7 @@ module TestNameEquivalence =
             )
             |> listed
 
-        $"O\t%s{what}\t%s{hexOf first}\t%s{hexOf second}\t%s{operation}=%s{errnoOf answer}%s{extra}\tnames=%s{kinds}"
+        $"O\t%s{what}\t%s{hexOf first}\t%s{hexOf second}\t%s{operation}=%s{errno}%s{extra}\tnames=%s{kinds}"
 
     /// The line this library prints for the probe's row `measured`, made on a
     /// fresh directory of `system`'s, or the refusal it gives instead.
@@ -678,7 +684,7 @@ module TestNameEquivalence =
                     | "OK", system -> system
                     | failed, _ -> failwith $"creating %s{hexOf first}: %s{failed}"
 
-                match OpenFlagWords.openPath (openFlags true true) (arg second) 0o644 system with
+                match OpenFlagWords.openPath (arg second) (openFlags true true) 0o644 system with
                 | Error (OpenRefusal.Path (PathRefusal.UndecidedNameEquivalence (_, name, bound))) ->
                     bytesOfName name |> shouldEqual second
                     bytesOfName bound |> shouldEqual first
@@ -1424,7 +1430,9 @@ module TestNameEquivalence =
                     | defects -> fail $"the system is defective: %A{defects}"
 
                     match
-                        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+                        VirtualFileSystem.checkInvariants
+                            (ObjectLifetime.pinnedInodes system)
+                            (UnixSystem.fileSystem system)
                     with
                     | [] -> ()
                     | defects -> fail $"the filesystem is defective: %A{defects}"

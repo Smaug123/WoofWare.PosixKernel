@@ -84,14 +84,14 @@ module TestBlockingAccept =
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Listening listenState -> listenState.Queue |> List.map (fun queued -> queued.Connection)
             | phase -> failwith $"fd %d{fd} is %A{phase}, not listening"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup (Callers.leader system) fd system with
-        | SyscallAnswer.Completed newFd, system -> int newFd, system
+        | DescriptorAnswer.Returned newFd, system -> newFd, system
         | other, _ -> failwith $"dup of %d{fd} answered %A{other}"
 
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -99,7 +99,7 @@ module TestBlockingAccept =
 
     /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
@@ -109,7 +109,7 @@ module TestBlockingAccept =
         let system = Woken.thread thread system
 
         match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"expected thread %d{thread}'s accept to finish with a connection, got %A{other}"
 
     /// The threads `UnixWait.wake` wakes in `system`.
@@ -124,8 +124,21 @@ module TestBlockingAccept =
                 Gen.constant UserBuffer.Mapped
                 Gen.constant UserBuffer.Opaque
                 Gen.constant UserBuffer.Addressless
-                Gen.choose (0, 0x10000) |> Gen.map (uint64 >> UserBuffer.Unmapped)
+                Gen.constant (UserBuffer.Unmapped 0UL)
+                Gen.choose (1, 0x10000) |> Gen.map (uint64 >> UserBuffer.Unmapped)
             ]
+
+    /// A destination, and the length its call declares: none for NULL, whose
+    /// length cell no kernel reads.
+    let private destinations : Gen<UserBuffer * uint32 option> =
+        gen {
+            let! destination = userBuffers
+            let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+
+            match destination with
+            | UserBuffer.Unmapped 0UL -> return destination, None
+            | _ -> return destination, Some declaredLength
+        }
 
     let private platformGen : Gen<SimulatedUnixPlatform> = Gen.elements platforms
 
@@ -142,8 +155,7 @@ module TestBlockingAccept =
         let gen =
             gen {
                 let! platform = platformGen
-                let! destination = userBuffers
-                let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+                let! destination, declaredLength = destinations
                 let! throughDup = ArbMap.defaults |> ArbMap.generate<bool>
                 let! thread = Gen.choose (1, 6)
                 return platform, destination, declaredLength, throughDup, thread
@@ -153,7 +165,7 @@ module TestBlockingAccept =
             (
                 platform : SimulatedUnixPlatform,
                 destination : UserBuffer,
-                declaredLength : uint32,
+                declaredLength : uint32 option,
                 throughDup : bool,
                 thread : int
             )
@@ -165,7 +177,7 @@ module TestBlockingAccept =
 
             let listener = idOf fd system
 
-            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength system with
+            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength 0 system with
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
@@ -182,24 +194,27 @@ module TestBlockingAccept =
                                         Listener = SleepTarget.Waiting (listener, fd)
                                         Destination = destination
                                         DeclaredLength = declaredLength
+                                        NewSocketNonBlocking = false
+                                        NewSocketCloseOnExec = false
                                     }
-                            Ordinal = system.Machine.NextParkOrdinal
+                            Ordinal = (Kernel.machine system).NextParkOrdinal
                             State = ParkState.Asleep
                         }
                 )
 
                 // The park holds the listener, and with that hold let go of,
                 // nothing else has changed.
-                OpenFileTable.holdCount listener parked.Machine.OpenFiles
+                OpenFileTable.holdCount listener (UnixSystem.openFiles parked)
                 |> shouldEqual (Some 1)
 
-                { parked with
-                    Machine =
-                        { parked.Machine with
-                            NextParkOrdinal = system.Machine.NextParkOrdinal
-                            OpenFiles = OpenFileTable.releaseHold listener parked.Machine.OpenFiles
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            NextParkOrdinal = (Kernel.machine system).NextParkOrdinal
+                            OpenFiles = OpenFileTable.releaseHold listener machine.OpenFiles
                         }
-                }
+                    )
+                    parked
                 |> ForgedThread.threadsAsIn (Lone.pid system) system
                 |> shouldEqual system
 
@@ -239,7 +254,7 @@ module TestBlockingAccept =
         let parked = parkIn 1 fd system
 
         Assert.Throws<System.InvalidOperationException> (fun () ->
-            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped 16u parked
+            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped (Some 16u) 0 parked
             |> ignore<_>
         )
         |> ignore<System.InvalidOperationException>
@@ -288,21 +303,25 @@ module TestBlockingAccept =
         let gen =
             gen {
                 let! platform = platformGen
-                let! destination = userBuffers
-                let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+                let! destination, declaredLength = destinations
                 let! actions = Gen.listOf midWait |> Gen.map (List.truncate 6)
                 return platform, destination, declaredLength, actions
             }
 
         let property
-            (platform : SimulatedUnixPlatform, destination : UserBuffer, declaredLength : uint32, actions : MidWait list)
+            (
+                platform : SimulatedUnixPlatform,
+                destination : UserBuffer,
+                declaredLength : uint32 option,
+                actions : MidWait list
+            )
             : unit
             =
             let fd, system = world platform
             let listener = idOf fd system
 
             let system =
-                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength system with
+                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength 0 system with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
@@ -319,7 +338,13 @@ module TestBlockingAccept =
                             system
                         else
                             match
-                                UnixConnection.tryAccept (Callers.thread 2 system) fd UserBuffer.Mapped 16u system
+                                UnixConnection.tryAccept
+                                    (Callers.thread 2 system)
+                                    fd
+                                    UserBuffer.Mapped
+                                    (Some 16u)
+                                    0
+                                    system
                             with
                             | Ok (AcceptOutcome.Accepted _, system) -> system
                             | other -> failwith $"expected the steal to succeed, got %A{other}"
@@ -357,7 +382,7 @@ module TestBlockingAccept =
                         |> Option.map (fun syscall ->
                             {
                                 Syscall = syscall
-                                Ordinal = system.Machine.NextParkOrdinal
+                                Ordinal = (Kernel.machine system).NextParkOrdinal
                                 State = ParkState.Asleep
                             }
                         )
@@ -368,7 +393,7 @@ module TestBlockingAccept =
             else
                 let oracle =
                     let unparked = Lone.UnixParkState.unpark 1 system
-                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength unparked
+                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength 0 unparked
 
                 finished |> shouldEqual oracle
 
@@ -457,7 +482,7 @@ module TestBlockingAccept =
         let system = setNonBlocking fd true system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted _, system) -> system
             | other -> failwith $"expected thread 3 to take the connection, got %A{other}"
 
@@ -578,7 +603,9 @@ module TestBlockingAccept =
                             {
                                 Listener = SleepTarget.Waiting listeners.[park.Listener]
                                 Destination = UserBuffer.Mapped
-                                DeclaredLength = 16u
+                                DeclaredLength = (Some 16u)
+                                NewSocketNonBlocking = false
+                                NewSocketCloseOnExec = false
                             })
                         system
                 )
@@ -686,14 +713,14 @@ module TestBlockingAccept =
         awake system |> shouldEqual []
         UnixSystem.checkInvariants system |> shouldEqual []
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
         let system = connectTo 5000us system |> waking [ 1 ]
         let accepted, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual false
 
@@ -724,7 +751,7 @@ module TestBlockingAccept =
         let system = connectTo 5000us system
         let _, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
@@ -748,7 +775,7 @@ module TestBlockingAccept =
         // No descriptor names the listener any more, so it is found by its
         // phase.
         let taken, left =
-            system.Machine.Sockets
+            (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.pick (fun (_, socket) ->
                 match socket.Phase with
@@ -765,7 +792,7 @@ module TestBlockingAccept =
         let resetAt (connection : ConnectionId) : bool =
             TcpTransfer.hasBeenReset
                 ConnectionEnd.Client
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
         resetAt taken |> shouldEqual false
         resetAt left |> shouldEqual true
@@ -803,11 +830,11 @@ module TestBlockingAccept =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -830,7 +857,7 @@ module TestBlockingAccept =
         | other -> failwith $"expected thread %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
-        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped 16u system
+        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped (Some 16u) 0 system
 
     /// Measured (`close-ends-call.c`, sections A1-A4, and `blocking-accept.c`
     /// section C): on Darwin, closing the descriptor an accept was made
@@ -854,7 +881,7 @@ module TestBlockingAccept =
             UnixSystem.checkInvariants system |> shouldEqual []
             let system = waking parked system
 
-            OpenFileTable.descriptions system.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles system)
             |> Map.containsKey listener
             |> shouldEqual keepDup
 
@@ -1158,7 +1185,7 @@ module TestBlockingAccept =
     let private clientFate (fd : int) (system : UnixSystem<int, string>) : ClientFate =
         let socket =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
+            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
             | other -> failwith $"client fd %d{fd} names %A{other}"
 
         match SocketPhase.connectionEnd socket.Phase with
@@ -1167,7 +1194,7 @@ module TestBlockingAccept =
             let towardsClient =
                 TcpTransfer.towards
                     ConnectionEnd.Client
-                    (UnixMachineState.connection connection system.Machine).Transfer
+                    (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
             match towardsClient.Receiver, towardsClient.Fin with
             | TcpEndState.Open _, TcpFin.NotSent -> ClientFate.Queued
@@ -1179,7 +1206,7 @@ module TestBlockingAccept =
     /// The clients of the connections `queue` holds, in its order.
     let private queuedClients (queue : QueuedConnection list) (system : UnixSystem<int, string>) : int list =
         let clientOf (connection : ConnectionId) : int =
-            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client system.Machine with
+            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client (Kernel.machine system) with
             | None -> failwith $"queued connection %O{connection} has no client"
             | Some socket ->
                 FileDescriptorRegistry.fds (Lone.fileDescriptors system)
@@ -1270,7 +1297,7 @@ module TestBlockingAccept =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1343,7 +1370,7 @@ module TestBlockingAccept =
             let dropAccepted (where : unit -> string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
+                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
                     | other -> failwith $"%s{where ()}: the accepted fd %d{fd} names %A{other}"
 
                 let held =
@@ -1426,11 +1453,11 @@ module TestBlockingAccept =
                 match op with
                 | AcceptOp.Accept (thread, fd) ->
                     let answer =
-                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped 16u system
+                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system
 
                     match Map.tryFind fd reference.Fds, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> cover $"%s{flavourName} accept: EBADF"
-                    | Some _, Ok (AcceptOutcome.Accepted (accepted, _, _), after) when not reference.Queue.IsEmpty ->
+                    | Some _, Ok (AcceptOutcome.Accepted (accepted, _), after) when not reference.Queue.IsEmpty ->
                         cover $"%s{flavourName} accept: a queued connection"
                         system <- dropAccepted where (List.head reference.Queue) accepted after
                         reference <- acceptedHead reference
@@ -1553,10 +1580,10 @@ module TestBlockingAccept =
                     let answer, after = Answered.dup (Callers.leader system) fd system
 
                     match Map.tryFind fd reference.Fds with
-                    | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+                    | None -> answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
                     | Some named ->
                         let lowest = lowestFree reference
-                        answer |> shouldEqual (SyscallAnswer.Completed (int64 lowest))
+                        answer |> shouldEqual (DescriptorAnswer.Returned lowest)
 
                         if reference.Parks |> Map.exists (fun _ park -> park.Through.IsNone) then
                             cover $"%s{flavourName} dup: a number an ended accept was made through"
@@ -1574,7 +1601,7 @@ module TestBlockingAccept =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (Lone.UnixSystemState.signalNumbering system)
+                                        (Kernel.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1684,7 +1711,7 @@ module TestBlockingAccept =
                         cover "Darwin finish: refused, a signal beside a connection's wake, another accepter asleep"
                     | Some _, _ when not reference.Queue.IsEmpty && not (signalled && not linux) ->
                         match answer with
-                        | Ok (AcceptOutcome.Accepted (accepted, _, _), after) ->
+                        | Ok (AcceptOutcome.Accepted (accepted, _), after) ->
                             cover $"%s{flavourName} finish: a connection"
 
                             settle
@@ -1767,7 +1794,7 @@ module TestBlockingAccept =
                         failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
-                    system.Machine.Sockets
+                    (Kernel.machine system).Sockets
                     |> Map.tryPick (fun _ socket ->
                         match socket.Phase with
                         | SocketPhase.Listening listenState -> Some listenState
@@ -1883,7 +1910,9 @@ module TestBlockingAccept =
                     {
                         Listener = SleepTarget.Waiting (listener, fd)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = 16u
+                        DeclaredLength = (Some 16u)
+                        NewSocketNonBlocking = false
+                        NewSocketCloseOnExec = false
                     })
                 system
 
@@ -1905,7 +1934,9 @@ module TestBlockingAccept =
                 {
                     Listener = SleepTarget.Waiting (absent, 1_000)
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 })
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault 1, absent) ]
@@ -1936,14 +1967,14 @@ module TestBlockingAccept =
     let private drainedByHand (fd : int) (system : UnixSystem<int, string>) : SocketId * UnixSystem<int, string> =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            let socket = UnixMachineState.socket socketId system.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Phase with
             | SocketPhase.Listening listenState ->
                 socketId,
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.add
                                     socketId
@@ -1954,9 +1985,10 @@ module TestBlockingAccept =
                                                     Drained = true
                                                 }
                                     }
-                                    system.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    system
             | phase -> failwith $"fd %d{fd} is %A{phase}"
         | other -> failwith $"fd %d{fd} names %A{other}"
 

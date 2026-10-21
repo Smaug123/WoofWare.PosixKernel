@@ -325,8 +325,16 @@ type ParkedAccept =
         /// This is the length the call was entered with. Darwin reads the
         /// caller's cell then; Linux reads it only when it copies the address
         /// out, after the wait, so under Linux this is right for a caller whose
-        /// cell nothing writes while the call sleeps.
-        DeclaredLength : uint32
+        /// cell nothing writes while the call sleeps. `None` for a NULL
+        /// destination, whose cell neither flavour reads.
+        DeclaredLength : uint32 option
+        /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
+        /// the socket it makes is non-blocking. Never under Darwin, which has
+        /// no `accept4`.
+        NewSocketNonBlocking : bool
+        /// Whether the call's flags carried Linux's `SOCK_CLOEXEC`, so that the
+        /// descriptor it makes has `FD_CLOEXEC`. Never under Darwin.
+        NewSocketCloseOnExec : bool
     }
 
 /// One thread's in-flight blocking `read(2)` of a pipe that held nothing while a
@@ -626,33 +634,47 @@ type ParkedConnect =
             Socket : OpenFileDescriptionId
         }
 
-/// When a Linux `futex(2)` `FUTEX_WAIT_PRIVATE` times out.
+/// When a Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+/// `FUTEX_WAIT_BITSET_PRIVATE`) times out.
 [<RequireQualifiedAccess>]
 type FutexTimeout =
     /// The wait was made with no timeout: only a wake or a signal ends it.
     | Untimed
-    /// The wait answers `ETIMEDOUT` at this instant, in nanoseconds since boot.
+    /// The wait was made with a relative timeout (`FUTEX_WAIT_PRIVATE`), and
+    /// answers `ETIMEDOUT` at this instant, in nanoseconds since boot. The call
+    /// made again would time out later, so a restart that keeps this instant
+    /// is not the call made again.
     | Until of nanosecondsSinceBoot : int64
     /// The wait was made with a timeout so long that Linux saturates it: at
-    /// least `KTIME_SEC_MAX` (9223372036) seconds, or one that ends past the
-    /// last instant the clock can represent (`Int64.MaxValue` nanoseconds since
-    /// boot). It never times out, so `UnixWait.deadlines` holds no deadline for
-    /// it, but it is a wait with a timeout: a signal whose handler was
-    /// installed with `SA_RESTART` still ends it with `EINTR`.
+    /// least `KTIME_SEC_MAX` (9223372036) seconds, or a relative one that ends
+    /// past the last instant the clock can represent (`Int64.MaxValue`
+    /// nanoseconds since boot). It never times out, so `UnixWait.deadlines`
+    /// holds no deadline for it, but it is a wait with a timeout: a signal
+    /// whose handler was installed with `SA_RESTART` still ends it with
+    /// `EINTR`.
     | Unbounded
+    /// The wait was made with an absolute timeout (`FUTEX_WAIT_BITSET_PRIVATE`),
+    /// and answers `ETIMEDOUT` at this instant, in nanoseconds since boot,
+    /// which may be before boot. A deadline on the realtime clock is converted
+    /// as the call is made, which is exact because this kernel's realtime clock
+    /// never steps (`UnixBootImage.withBootTime`). The call made again names
+    /// the same instant.
+    | At of nanosecondsSinceBoot : int64
 
 [<RequireQualifiedAccess>]
 module internal FutexTimeout =
     /// The instant a wait with `timeout` times out, if it ever does.
     let deadline (timeout : FutexTimeout) : int64 option =
         match timeout with
-        | FutexTimeout.Until deadline -> Some deadline
+        | FutexTimeout.Until deadline
+        | FutexTimeout.At deadline -> Some deadline
         | FutexTimeout.Untimed
         | FutexTimeout.Unbounded -> None
 
-/// One thread's in-flight Linux `futex(2)` `FUTEX_WAIT_PRIVATE`: the address
-/// it waits on, when it times out, and whether a `FUTEX_WAKE_PRIVATE` has
-/// taken it off the queue of that address.
+/// One thread's in-flight Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+/// `FUTEX_WAIT_BITSET_PRIVATE`): the address it waits on, when it times out,
+/// the bitset it waits with, and whether a wake has taken it off the queue of
+/// that address.
 ///
 /// A process's waiters on one address form one queue, in the order they
 /// parked (`ThreadPark.Ordinal`). No other process's wake reaches it.
@@ -662,8 +684,14 @@ type ParkedFutex =
         FutexAddress : uint64
         /// When the wait times out.
         FutexTimeout : FutexTimeout
-        /// Whether a `FUTEX_WAKE_PRIVATE` has taken the thread off its queue,
-        /// so that the wait answers 0, whatever else has woken it.
+        /// The bitset the thread waits with: a wake takes it only if the
+        /// wake's own bitset shares a bit with this one. Never 0; a
+        /// `FUTEX_WAIT_PRIVATE` waits with `FUTEX_BITSET_MATCH_ANY`
+        /// (`0xFFFFFFFF`).
+        FutexBitset : uint32
+        /// Whether a `FUTEX_WAKE_PRIVATE` or `FUTEX_WAKE_BITSET_PRIVATE` has
+        /// taken the thread off its queue, so that the wait answers 0, whatever
+        /// else has woken it.
         TakenByWake : bool
     }
 
@@ -759,10 +787,10 @@ type ParkedSyscall =
     /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Connect of ParkedConnect
-    /// A Linux `futex(2)` `FUTEX_WAIT_PRIVATE`, waiting for a
-    /// `FUTEX_WAKE_PRIVATE` on its address to take it, for its deadline if it
-    /// has one, or for a signal with a handler. Holds no open file
-    /// description.
+    /// A Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+    /// `FUTEX_WAIT_BITSET_PRIVATE`), waiting for a wake on its address to take
+    /// it, for its deadline if it has one, or for a signal with a handler.
+    /// Holds no open file description.
     | Futex of ParkedFutex
 
 [<RequireQualifiedAccess>]

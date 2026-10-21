@@ -53,7 +53,7 @@ module DualModeProbe =
 
     let private socket (libc : Libc) (domain : int) : int =
         match UnixSocket.trySocket (Callers.leader libc.System) domain sockStream ipProtoTcp libc.System with
-        | Ok (Ok (fd, system)) ->
+        | Ok (DescriptorAnswer.Returned fd, system) ->
             libc.System <- system
             fd
         | other -> failwith $"DualModeProbe: socket(%d{domain}) answered %A{other}"
@@ -194,8 +194,10 @@ module DualModeProbe =
     /// A non-blocking accept, as every accept in the probe is by the time the
     /// listener has nothing queued: the new descriptor, or the errno.
     let private accept (libc : Libc) (fd : int) (cell : uint32) : Result<int * ImmutableArray<byte> * int, Answer> =
-        match UnixConnection.tryAccept (Callers.thread 0 libc.System) fd UserBuffer.Mapped cell libc.System with
-        | Result.Ok (AcceptOutcome.Accepted (accepted, copied, reported), system) ->
+        match
+            UnixConnection.tryAccept (Callers.thread 0 libc.System) fd UserBuffer.Mapped (Some cell) 0 libc.System
+        with
+        | Result.Ok (AcceptOutcome.Accepted (accepted, PeerAddressCopy.Written (copied, reported)), system) ->
             libc.System <- system
             Result.Ok (accepted, copied, reported)
         | Result.Ok (AcceptOutcome.Failed error, system) ->
@@ -1072,7 +1074,7 @@ module DualModeProbe =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering libc.System)
+                            (Kernel.signalNumbering libc.System)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals

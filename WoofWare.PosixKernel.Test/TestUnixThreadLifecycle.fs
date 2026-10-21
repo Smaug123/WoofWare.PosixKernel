@@ -34,7 +34,7 @@ module TestUnixThreadLifecycle =
     /// `system` with `entry` generated, without deciding whether it takes
     /// effect at once (`SignalState.enqueue`).
     let private enqueueIn (entry : PendingSignal<int>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        mapSignals (SignalState.enqueue (Lone.UnixSystemState.signalNumbering system) entry) system
+        mapSignals (SignalState.enqueue (Kernel.signalNumbering system) entry) system
 
     /// A system with one epoll instance (a kqueue on Darwin), which a thread can park on
     /// in `flock`, and that instance's description.
@@ -44,7 +44,7 @@ module TestUnixThreadLifecycle =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let create =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
             | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
             | SimulatedUnixFlavour.Darwin ->
                 FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
@@ -553,7 +553,7 @@ module TestUnixThreadLifecycle =
 
                     match
                         HandlerFrames.tryEnter
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             "h"
                             (Lone.leader system)
                             threads
@@ -572,8 +572,8 @@ module TestUnixThreadLifecycle =
                     live thread && not (Set.contains thread model.Parked)
                     ->
                     match UnixSystem.tryStep (Callers.thread thread system) call system with
-                    | Ok (SteppedCall.PthreadSigMask (Ok (_, after))) -> after, model
-                    | Ok (SteppedCall.PthreadSigMask (Error errno)) ->
+                    | Ok (SteppedCall.PthreadSigMask (SignalMaskAnswer.Completed _, after)) -> after, model
+                    | Ok (SteppedCall.PthreadSigMask (SignalMaskAnswer.Failed errno, _)) ->
                         failwith $"pthread_sigmask(SIG_BLOCK) failed with %O{errno}"
                     | other -> failwith $"pthread_sigmask(SIG_BLOCK) answered %A{Result.map Stepped.view other}"
                 | Op.EnqueueOnThread (thread, signal) when live thread ->
@@ -716,17 +716,17 @@ module TestUnixThreadLifecycle =
 
                         // The thread's ID is freed, and nothing else on the
                         // machine moves.
-                        ThreadIdAllocator.live after.Machine.ThreadIds
+                        ThreadIdAllocator.live (Kernel.machine after).ThreadIds
                         |> shouldEqual (
                             Set.remove
                                 (UnixThreadState.osThreadId (Lone.thread thread system))
-                                (ThreadIdAllocator.live system.Machine.ThreadIds)
+                                (ThreadIdAllocator.live (Kernel.machine system).ThreadIds)
                         )
 
-                        { after.Machine with
-                            ThreadIds = system.Machine.ThreadIds
+                        { (Kernel.machine after) with
+                            ThreadIds = (Kernel.machine system).ThreadIds
                         }
-                        |> shouldEqual system.Machine
+                        |> shouldEqual (Kernel.machine system)
 
                         { (Lone.proc after) with
                             Signals = signalsBefore

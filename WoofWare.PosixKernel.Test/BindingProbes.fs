@@ -122,6 +122,7 @@ module BindingProbes =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -141,6 +142,11 @@ module BindingProbes =
         | SyscallAnswer.Failed error -> Some error
         | SyscallAnswer.Completed _ -> None
 
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : UnixError option =
+        match answer with
+        | DescriptorAnswer.Failed error -> Some error
+        | DescriptorAnswer.Returned _ -> None
+
     /// What the model answers to `call`: its errno, or `None` for success.
     let runModel (call : BindingProbeCall) (system : UnixSystem<int, string>) : UnixError option =
         match call with
@@ -148,8 +154,12 @@ module BindingProbes =
             Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o777 system
             |> fst
             |> ofAnswer
-        | BindingProbeCall.OpenCreate path -> Answered.openPath creating (rooted path) 0o666 system |> fst |> ofAnswer
-        | BindingProbeCall.OpenRead path -> Answered.openPath reading (rooted path) 0 system |> fst |> ofAnswer
+        | BindingProbeCall.OpenCreate path ->
+            Answered.openPath (rooted path) creating 0o666 system
+            |> fst
+            |> ofDescriptorAnswer
+        | BindingProbeCall.OpenRead path ->
+            Answered.openPath (rooted path) reading 0 system |> fst |> ofDescriptorAnswer
         | BindingProbeCall.Exists path ->
             match
                 UnixPathResolution.tryStat

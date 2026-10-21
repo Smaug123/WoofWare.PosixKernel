@@ -52,6 +52,12 @@ jobs:
     # finished, in which no other test host is running.
     - name: Test (large-memory fixtures)
       run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --blame-hang-timeout 10m --blame-hang-dump-type none --logger "trx;LogFilePrefix=large" --results-directory TestResults
+    # A skipped test leaves `dotnet test` exiting 0, so a host comparison whose guard stopped
+    # matching this runner, or a tool that left the devshell, would stop checking anything
+    # unseen. Every test that neither step above ran must be in the allowlist, with the
+    # message it skips with and why; an allowlisted test that runs fails this too.
+    - name: Check every skipped test is expected
+      run: nix develop --command python3 scripts/check-skipped-tests.py .github/expected-skips.json TestResults/*.trx
     - name: Upload test results
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

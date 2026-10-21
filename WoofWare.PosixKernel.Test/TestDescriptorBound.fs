@@ -29,7 +29,7 @@ module TestDescriptorBound =
         ([ 4..last ], system)
         ||> List.foldBack (fun target system ->
             match UnixDescriptor.tryDup2 (Callers.leader system) 3 target system with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"filling the table at %d{target}: %A{other}"
         )
 
@@ -140,7 +140,9 @@ module TestDescriptorBound =
             let listening, system = FcntlWorld.listener 5000us false system
 
             let system =
-                match UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u system with
+                match
+                    UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped (Some 16u) 0 system
+                with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"accept on an empty listener: %A{other}"
 
@@ -153,7 +155,7 @@ module TestDescriptorBound =
                 ([ client + 1 .. bound - 1 ], system)
                 ||> List.foldBack (fun target system ->
                     match UnixDescriptor.tryDup2 (Callers.leader system) file target system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system
+                    | Ok (DescriptorAnswer.Returned _, system) -> system
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 
@@ -191,7 +193,7 @@ module TestDescriptorBound =
                 ([ client + 1 .. bound - 1 ], system)
                 ||> List.foldBack (fun target system ->
                     match UnixDescriptor.tryDup2 (Callers.leader system) file target system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system
+                    | Ok (DescriptorAnswer.Returned _, system) -> system
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 
@@ -234,7 +236,7 @@ module TestDescriptorBound =
                     (SimulatedUnixPlatform.flavour run.Platform)
                     (FileDescriptorRegistry.fds (Lone.fileDescriptors system)
                      |> Map.add bound (Map.find 3 (FileDescriptorRegistry.fds (Lone.fileDescriptors system))))
-                    (OpenFileTable.descriptions system.Machine.OpenFiles)
+                    (OpenFileTable.descriptions (UnixSystem.openFiles system))
                     (OpenFileDescriptionId 1000L)
 
             let broken = Lone.withFileDescriptors registry system

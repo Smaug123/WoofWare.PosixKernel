@@ -73,13 +73,17 @@ module TestSocketSyscall =
                     $"socket(%d{domain}, 0x%x{socketType}, %d{protocol}): measured %A{answer}, %s{message}"
 
             match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system, answer with
-            | Ok (Error error), MeasuredSocketAnswer.Failed measured ->
+            | Ok (DescriptorAnswer.Failed error, after), MeasuredSocketAnswer.Failed measured ->
                 if errno error <> measured then
                     describe $"library %O{error}"
-            | Ok (Ok (fd, after)), MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
+
+                if after <> system then
+                    describe $"library %O{error}, changing the system"
+            | Ok (DescriptorAnswer.Returned fd, after),
+              MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
-                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId after.Machine
+                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine after)
                     | other -> failwith $"socket(%A{arguments}) made descriptor %d{fd} onto %A{other}"
 
                 if soType socket.Kind <> measuredType then
@@ -152,8 +156,8 @@ module TestSocketSyscall =
 
                 if not consistent then
                     describe $"library refused: %s{SocketRefusal.describe refusal}"
-            | Ok (Ok _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
-            | Ok (Error error), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
+            | Ok (DescriptorAnswer.Returned _, _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
+            | Ok (DescriptorAnswer.Failed error, _), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
 
         List.ofSeq disagreements, refusals
 
@@ -281,21 +285,22 @@ module TestSocketSyscall =
 
         let property (domain : int, socketType : int, protocol : int) : unit =
             match UnixSocket.trySocket (Callers.leader before) domain socketType protocol before with
-            | Ok (Ok (fd, after)) ->
+            | Ok (DescriptorAnswer.Returned fd, after) ->
                 fd |> shouldEqual hole
 
-                let socketId = before.Machine.NextSocketId
+                let socketId = (Kernel.machine before).NextSocketId
 
                 FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after)
                 |> shouldEqual (Some (OpenFileTarget.Socket socketId))
 
-                let socket = UnixMachineState.socket socketId after.Machine
+                let socket = UnixMachineState.socket socketId (Kernel.machine after)
                 socket.Ipv4Binding |> shouldEqual None
                 socket.Phase |> shouldEqual SocketPhase.Idle
                 socket.ReuseAddress |> shouldEqual false
 
-                Map.remove socketId after.Machine.Sockets |> shouldEqual before.Machine.Sockets
-            | Ok (Error _)
+                Map.remove socketId (Kernel.machine after).Sockets
+                |> shouldEqual (Kernel.machine before).Sockets
+            | Ok (DescriptorAnswer.Failed _, after) -> after |> shouldEqual before
             | Error _ -> ()
 
         Prop.forAll (Arb.fromGen arguments) property |> Check.QuickThrowOnFailure
@@ -311,8 +316,9 @@ module TestSocketSyscall =
 
             let answer (socketType : int) =
                 match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system with
-                | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
-                | Ok (Error error) -> Ok (Error error)
+                | Ok (DescriptorAnswer.Returned fd, after) ->
+                    Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
+                | Ok (DescriptorAnswer.Failed error, _) -> Ok (Error error)
                 | Error refusal -> Error (refusalKind refusal)
 
             let plain = answer baseType

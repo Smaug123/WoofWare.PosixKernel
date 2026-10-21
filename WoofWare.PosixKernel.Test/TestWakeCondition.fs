@@ -46,7 +46,7 @@ module TestWakeCondition =
 
         let lockerFd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         let blockedFd, registry =
@@ -140,11 +140,11 @@ module TestWakeCondition =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -162,7 +162,7 @@ module TestWakeCondition =
 
         let created (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             match UnixInotify.tryInotifyInit1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"creating an inotify instance: %A{other}"
 
         let queuedFd, system = created system
@@ -195,12 +195,12 @@ module TestWakeCondition =
     /// The open file description of the listener's connected client, the
     /// connection's client end: nothing has been written either way.
     let private connectedClient : OpenFileDescriptionId =
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.toList
         |> List.pick (fun (id, description) ->
             match description.Target with
             | OpenFileTarget.Socket socket ->
-                match SocketPhase.connectionEnd (UnixMachineState.socket socket system.Machine).Phase with
+                match SocketPhase.connectionEnd (UnixMachineState.socket socket (Kernel.machine system)).Phase with
                 | Some (_, ConnectionEnd.Client) -> Some id
                 | _ -> None
             | _ -> None
@@ -244,10 +244,7 @@ module TestWakeCondition =
             WakePrimitive.InotifyRecordQueued (let _, _, empty = withInotify in empty), false
         ]
 
-    let private at (clock : int64) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock clock system.Scheduling
-        }
+    let private at (clock : int64) : UnixSystem<int, string> = UnixSystem.advanceClock clock system
 
     /// The thread with a caught signal pending; the other, 0, has none.
     let private signalled : int = 1

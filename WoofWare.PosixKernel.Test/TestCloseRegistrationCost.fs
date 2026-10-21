@@ -36,8 +36,8 @@ module TestCloseRegistrationCost =
     let private socket (caller : Caller<int>) (system : UnixSystem<int, unit>) : int * UnixSystem<int, unit> =
         // `AF_INET`, `SOCK_STREAM`, on both flavours.
         match UnixSocket.socket caller 2 1 0 system with
-        | Ok (fd, system) -> fd, resume caller system
-        | Error error -> failwith $"expected socket to make a socket: %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, resume caller system
+        | DescriptorAnswer.Failed error, _ -> failwith $"expected socket to make a socket: %O{error}"
 
     /// `caller`'s process makes an epoll instance and registers `fd` in it.
     let private epollWatching
@@ -48,8 +48,8 @@ module TestCloseRegistrationCost =
         =
         let epfd, system =
             match UnixPoll.epollCreate1 caller 0 system with
-            | Ok (epfd, system) -> epfd, resume caller system
-            | Error error -> failwith $"expected epoll_create1 to make an instance: %O{error}"
+            | DescriptorAnswer.Returned epfd, system -> epfd, resume caller system
+            | DescriptorAnswer.Failed error, _ -> failwith $"expected epoll_create1 to make an instance: %O{error}"
 
         // `EPOLL_CTL_ADD`.
         match
@@ -71,8 +71,10 @@ module TestCloseRegistrationCost =
         (system : UnixSystem<int, unit>)
         : UnixSystem<int, unit>
         =
-        let kq, system = UnixKqueue.kqueue caller system
-        let system = resume caller system
+        let kq, system =
+            match UnixKqueue.kqueue caller system with
+            | DescriptorAnswer.Returned kq, system -> kq, resume caller system
+            | DescriptorAnswer.Failed error, _ -> failwith $"expected kqueue to make an instance: %O{error}"
 
         let change : Kevent =
             {
@@ -84,7 +86,21 @@ module TestCloseRegistrationCost =
                 UserData = 0UL
             }
 
-        match UnixKqueue.kevent caller kq 1 [ change ] 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system with
+        match
+            UnixKqueue.kevent
+                caller
+                kq
+                1
+                [ change ]
+                0
+                UserBuffer.Mapped
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
+                system
+        with
         | KeventOutcome.Failed error, _ -> failwith $"expected kevent to register fd %d{fd}: %O{error}"
         | KeventOutcome.WouldBlock _, _ -> failwith "expected kevent with no room for events not to wait"
         | _, system -> resume caller system
@@ -262,7 +278,19 @@ module TestCloseRegistrationCost =
                 UserData = 0UL
             }
 
-        UnixKqueue.kevent caller kq 1 [ change ] 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+        UnixKqueue.kevent
+            caller
+            kq
+            1
+            [ change ]
+            0
+            UserBuffer.Mapped
+            (TimespecArgument.Readable
+                {
+                    Seconds = 0L
+                    Nanoseconds = 0L
+                })
+            system
 
     /// The fewest bytes one registration of a socket allocates, of several,
     /// in an epoll instance (Linux) or a kqueue (Darwin) that registers
@@ -275,11 +303,12 @@ module TestCloseRegistrationCost =
         let instance, system =
             if linux then
                 match UnixPoll.epollCreate1 leader 0 booted with
-                | Ok (epfd, system) -> epfd, resume leader system
-                | Error error -> failwith $"expected epoll_create1 to make an instance: %O{error}"
+                | DescriptorAnswer.Returned epfd, system -> epfd, resume leader system
+                | DescriptorAnswer.Failed error, _ -> failwith $"expected epoll_create1 to make an instance: %O{error}"
             else
-                let kq, system = UnixKqueue.kqueue leader booted
-                kq, resume leader system
+                match UnixKqueue.kqueue leader booted with
+                | DescriptorAnswer.Returned kq, system -> kq, resume leader system
+                | DescriptorAnswer.Failed error, _ -> failwith $"expected kqueue to make an instance: %O{error}"
 
         let register (fd : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
             if linux then
@@ -315,7 +344,11 @@ module TestCloseRegistrationCost =
                         []
                         (count + 1)
                         UserBuffer.Mapped
-                        (KeventTimeout.Readable (0L, 0L))
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
                         system
                 with
                 | KeventOutcome.Failed error, _ -> failwith $"expected kevent to answer at once: %O{error}"
@@ -368,14 +401,14 @@ module TestCloseRegistrationCost =
 
         let epfd, system =
             match UnixPoll.epollCreate1 leader 0 system with
-            | Ok (epfd, system) -> epfd, resume leader system
-            | Error error -> failwith $"expected epoll_create1 to make an instance: %O{error}"
+            | DescriptorAnswer.Returned epfd, system -> epfd, resume leader system
+            | DescriptorAnswer.Failed error, _ -> failwith $"expected epoll_create1 to make an instance: %O{error}"
 
         let copies, system =
             (([], system), [ 2..aliases ])
             ||> List.fold (fun (copies, system) _ ->
                 match UnixDescriptor.dup leader fd system with
-                | SyscallAnswer.Completed copy, system -> int copy :: copies, resume leader system
+                | DescriptorAnswer.Returned copy, system -> copy :: copies, resume leader system
                 | answer, _ -> failwith $"expected dup to copy fd %d{fd}: %A{answer}"
             )
 

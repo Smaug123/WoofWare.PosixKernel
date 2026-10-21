@@ -175,7 +175,7 @@ module TestPipeAgainstHost =
                         { proc with
                             Signals =
                                 SignalState.setDisposition
-                                    (Lone.UnixSystemState.signalNumbering system)
+                                    (Kernel.signalNumbering system)
                                     Signal.SIGPIPE
                                     SignalDisposition.Ignore
                                     proc.Signals
@@ -184,9 +184,7 @@ module TestPipeAgainstHost =
 
                 // Up a second before the pipe is made, so that its creation is
                 // not the epoch that Darwin reports as its birth.
-                { system with
-                    Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L system.Scheduling
-                }
+                (UnixSystem.advanceClock 1_000_000_000L system)
 
             let property (startNonBlocking : bool, ops : HostPipeOp list) : unit =
                 let flags =
@@ -260,10 +258,7 @@ module TestPipeAgainstHost =
                     for i, op in List.indexed ops do
                         let where () : string = $"%O{platform}, call %d{i} (%A{op})"
 
-                        system <-
-                            { system with
-                                Scheduling = UnixSchedulingState.advanceClock 1000L system.Scheduling
-                            }
+                        system <- UnixSystem.advanceClock 1000L system
 
                         let liveSlots = List.toArray slots
 
@@ -426,7 +421,7 @@ module TestPipeAgainstHost =
                                     failwith $"%s{where ()}: host dup failed"
 
                                 match Answered.dup (Callers.leader system) modelFd system with
-                                | SyscallAnswer.Completed modelNew, after ->
+                                | DescriptorAnswer.Returned modelNew, after ->
                                     slots <- slots @ [ int modelNew, hostNew, pipeEnd, group ]
                                     system <- after
                                 | other -> failwith $"%s{where ()}: model dup %A{other}"
@@ -450,6 +445,7 @@ module TestPipeAgainstHost =
                                 failwith $"%s{where ()}: host FIONREAD failed"
 
                             UnixDescriptor.tryBytesAvailable (Callers.leader system) modelFd UserBuffer.Mapped system
+                            |> Result.map fst
                             |> shouldEqual (Ok (BytesAvailableAnswer.Reported available))
 
                             let h = hostStatus hostFd
@@ -485,7 +481,7 @@ module TestPipeAgainstHost =
                                         | Some (OpenFileTarget.Pipe (pipeId, _)) -> pipeId
                                         | other -> failwith $"%s{where ()}: fd %d{modelFd} is %A{other}"
 
-                                    let buffer = (UnixMachineState.pipe pipeId system.Machine).Buffer
+                                    let buffer = (UnixMachineState.pipe pipeId (Kernel.machine system)).Buffer
 
                                     let modelReady =
                                         match pipeEnd with

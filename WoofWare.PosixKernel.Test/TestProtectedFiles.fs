@@ -458,12 +458,13 @@ module TestProtectedFiles =
             |> Configured.expectOk ProtectedFilesRefusal.describe
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -475,6 +476,11 @@ module TestProtectedFiles =
         match answer with
         | SyscallAnswer.Completed _ -> "ok"
         | SyscallAnswer.Failed error -> $"%A{error}"
+
+    let private descriptorText (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned _ -> "ok"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
 
     let private statText (policy : SymlinkPolicy) (p : string) (system : UnixSystem<int, string>) : string =
         match
@@ -494,6 +500,7 @@ module TestProtectedFiles =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -503,27 +510,29 @@ module TestProtectedFiles =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofPath (path p)) 0o644 system with
-        | Ok (answer, after) -> answerText answer, after
+        match OpenFlagWords.openPath (PathArg.ofPath (path p)) flags 0o644 system with
+        | Ok (answer, after) -> descriptorText answer, after
         | Error refusal -> failwith $"open(%s{p}) was refused: %A{refusal}"
 
     let private exists (p : string) (system : UnixSystem<int, string>) : bool =
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
-                (VirtualFileSystem.root system.Machine.FileSystem)
+                (VirtualFileSystem.root (UnixSystem.fileSystem system))
                 SymlinkPolicy.NoFollowFinal
                 (path p)
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
         with
         | Ok _ -> true
         | Error (PathFailure.Errno UnixError.ENOENT) -> false
         | Error error -> failwith $"%s{p}: %O{error}"
 
     let private contentsOf (p : string) (system : UnixSystem<int, string>) : int64 =
-        match VirtualFileSystem.tryGetContent (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match
+            VirtualFileSystem.tryGetContent (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system)
+        with
         | Some (InodeContent.RegularFile (contents, _)) -> FileContents.length contents
         | other -> failwith $"%s{p} is not a regular file: %A{other}"
 
@@ -790,6 +799,11 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> WalkOutcome.Answered None
         | SyscallAnswer.Failed error -> WalkOutcome.Answered (Some error)
 
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : WalkOutcome =
+        match answer with
+        | DescriptorAnswer.Returned _ -> WalkOutcome.Answered None
+        | DescriptorAnswer.Failed error -> WalkOutcome.Answered (Some error)
+
     let private ofStep (result : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : WalkOutcome =
         match result with
         | Ok stepped ->
@@ -817,9 +831,9 @@ module TestProtectedFiles =
         | Error (ReadLinkRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
-    let private ofOpen (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
+    let private ofOpen (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
         match result with
-        | Ok (answer, _) -> ofSyscallAnswer answer
+        | Ok (answer, _) -> ofDescriptorAnswer answer
         | Error (OpenRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
@@ -873,8 +887,8 @@ module TestProtectedFiles =
                 step (Syscall.SymlinkAt (bytes target, atFdCwd, bytes $"/a/c%d{i}")) system
             )
 
-        let stickyDirectory = inodeAt system.Machine.FileSystem "/t"
-        let protectedLink = inodeAt system.Machine.FileSystem "/t/p"
+        let stickyDirectory = inodeAt (UnixSystem.fileSystem system) "/t"
+        let protectedLink = inodeAt (UnixSystem.fileSystem system) "/t/p"
 
         let calls : (string * (string -> WalkOutcome)) list =
             [
@@ -908,7 +922,7 @@ module TestProtectedFiles =
                     | Ok (FileSystemStatisticsAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error refusal -> WalkOutcome.Refused refusal
                 )
-                "open", (fun p -> OpenOutcomes.openPath 0 (bytes p) 0 system |> ofOpen)
+                "open", (fun p -> OpenOutcomes.openPath (bytes p) 0 0 system |> ofOpen)
                 "openat", (fun p -> OpenOutcomes.openat atFdCwd (bytes p) 0 0 system |> ofOpen)
                 "chdir",
                 (fun p ->
@@ -1251,7 +1265,7 @@ module TestProtectedFiles =
 
         let system = Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
-        system.Machine.ProtectedFiles |> shouldEqual ProtectedFiles.off
+        UnixSystem.protectedFiles system |> shouldEqual ProtectedFiles.off
 
         UnixBootImage.tryWithProtectedFiles ProtectedFiles.off image
         |> Configured.expectOk ProtectedFilesRefusal.describe
@@ -1278,12 +1292,13 @@ module TestProtectedFiles =
                             )
 
                             let forged =
-                                { system with
-                                    Machine =
-                                        { system.Machine with
+                                Kernel.mapMachine
+                                    (fun machine ->
+                                        { machine with
                                             ProtectedFiles = protection
                                         }
-                                }
+                                    )
+                                    system
 
                             UnixSystem.checkInvariants forged
                             |> shouldContain (
@@ -1294,7 +1309,7 @@ module TestProtectedFiles =
     let ``a Linux machine starts with every sysctl Off and admits any setting`` () =
         let image : UnixBootImage<int, string> = UnixSystem.initial linux
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.ProtectedFiles
+        UnixSystem.protectedFiles (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
         |> shouldEqual ProtectedFiles.off
 
         for symlinks in allSymlinkProtections do
@@ -1314,5 +1329,5 @@ module TestProtectedFiles =
                             |> Configured.expectOk ProtectedFilesRefusal.describe
                             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-                        set.Machine.ProtectedFiles |> shouldEqual protection
+                        UnixSystem.protectedFiles set |> shouldEqual protection
                         UnixSystem.checkInvariants set |> shouldEqual []

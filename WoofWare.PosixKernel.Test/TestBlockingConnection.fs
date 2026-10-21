@@ -1016,11 +1016,11 @@ module TestBlockingConnection =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -1051,7 +1051,7 @@ module TestBlockingConnection =
     let private connectionOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase with
+            match SocketPhase.connectionEnd (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | Some (connection, _) -> connection
             | None -> failwith $"fd %d{fd} is not connected"
         | other -> failwith $"fd %d{fd} names %A{other}"
@@ -1073,7 +1073,7 @@ module TestBlockingConnection =
         =
         let fresh, system = KeventWorld.streamAs caller false system
         let system = if reuse then ReuseAddress.set true fresh system else system
-        let address = CopyIn.inet system.Machine.UnixPlatform (KeventWorld.loopback port)
+        let address = CopyIn.inet (UnixSystem.platform system) (KeventWorld.loopback port)
 
         match CopyIn.bindAs caller fresh UserBuffer.Mapped 16u address system with
         | Ok (BindAnswer.Bound _, _) -> false
@@ -1091,7 +1091,7 @@ module TestBlockingConnection =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string> option
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -1150,13 +1150,14 @@ module TestBlockingConnection =
             let connection = connectionOf client start
 
             let clientPort =
-                match (UnixMachineState.socket (socketOf client start) start.Machine).Ipv4Binding with
+                match (UnixMachineState.socket (socketOf client start) (Kernel.machine start)).Ipv4Binding with
                 | Some binding -> binding.Endpoint.Port
                 | None -> failwith "the connecting socket is unbound"
 
             let mutable system = start
 
-            let transfer = (UnixMachineState.connection connection start.Machine).Transfer
+            let transfer =
+                (UnixMachineState.connection connection (Kernel.machine start)).Transfer
 
             let mutable reference =
                 {
@@ -1668,7 +1669,7 @@ module TestBlockingConnection =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (Lone.UnixSystemState.signalNumbering system)
+                                        (Kernel.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1862,7 +1863,7 @@ module TestBlockingConnection =
                     // The socket of an end goes exactly when nothing references
                     // its description.
                     let socketsLeft =
-                        system.Machine.Sockets
+                        (Kernel.machine system).Sockets
                         |> Map.filter (fun _ socket -> (SocketPhase.connectionEnd socket.Phase).IsSome)
                         |> Map.count
 
@@ -2177,7 +2178,7 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -2189,7 +2190,7 @@ module TestBlockingConnection =
     /// The connection's bytes in the client's send buffer, still to reach the
     /// server's receive buffer.
     let private clientQueued (connection : ConnectionId) (system : UnixSystem<int, string>) : int =
-        ByteQueue.length (UnixMachineState.connection connection system.Machine).Transfer.ToServer.Sending
+        ByteQueue.length (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer.Sending
 
     let private pendingError
         (connection : ConnectionId)
@@ -2197,7 +2198,7 @@ module TestBlockingConnection =
         (system : UnixSystem<int, string>)
         : TcpError option
         =
-        TcpTransfer.pendingError connectionEnd (UnixMachineState.connection connection system.Machine).Transfer
+        TcpTransfer.pendingError connectionEnd (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
     /// Read through `fd` by thread 0 until nothing is left to read.
     let rec private drained (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -2206,12 +2207,14 @@ module TestBlockingConnection =
         let connectionEnd =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase
+                SocketPhase.connectionEnd (UnixMachineState.socket socketId (Kernel.machine system)).Phase
                 |> Option.get
                 |> snd
             | other -> failwith $"fd %d{fd} names %A{other}"
 
-        if TcpTransfer.readable connectionEnd (UnixMachineState.connection connection system.Machine).Transfer = 0 then
+        if
+            TcpTransfer.readable connectionEnd (UnixMachineState.connection connection (Kernel.machine system)).Transfer = 0
+        then
             system
         else
             readNow fd 65536 system |> snd |> drained fd
@@ -2333,8 +2336,8 @@ module TestBlockingConnection =
                         (Some usr1)
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
             let client, server, system = pair (systemOn platform false)
             let system = system |> blocking 1 |> blocking 2
@@ -2379,11 +2382,7 @@ module TestBlockingConnection =
             let system = asleepWriting 2 server (payload 2 1000) system |> signalled 2
             wokenNow system |> shouldEqual []
 
-            SignalState.pendingBlocked
-                (Lone.UnixSystemState.signalNumbering system)
-                (Lone.leader system)
-                2
-                (Lone.proc system).Signals
+            SignalState.pendingBlocked (Kernel.signalNumbering system) (Lone.leader system) 2 (Lone.proc system).Signals
             |> shouldEqual usr1
 
             UnixSystem.checkInvariants system |> shouldEqual []
@@ -2426,7 +2425,7 @@ module TestBlockingConnection =
             let connection = connectionOf client system
 
             let transfer () =
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
             let sendCapacity = (transfer ()).ToServer.SendCapacity
             let total = 600000
@@ -2448,7 +2447,8 @@ module TestBlockingConnection =
                     if linux then
                         sendCapacity - queued >= queued / 2 && queued < sendCapacity
                     else
-                        let flow = (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+                        let flow =
+                            (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
                         let free =
                             sendCapacity - queued + flow.ReceiveCapacity - ByteQueue.length flow.Receiving
@@ -2808,7 +2808,8 @@ module TestBlockingConnection =
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                     bytes.Length |> shouldEqual 100
                     // The call's return let go of the socket's last reference.
-                    after.Machine.Sockets.Count |> shouldEqual (system.Machine.Sockets.Count - 1)
+                    (Kernel.machine after).Sockets.Count
+                    |> shouldEqual ((Kernel.machine system).Sockets.Count - 1)
                 | other -> failwith $"%O{platform}: %A{other}"
             else
                 let system = Lone.waking [ 1 ] system
@@ -3002,7 +3003,10 @@ module TestBlockingConnection =
             match UnixReadWrite.tryFinishRead (Callers.thread 1 system) (Woken.thread 1 system) with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 bytes.Length |> shouldEqual 100
-                after.Machine.Sockets.Count |> shouldEqual (system.Machine.Sockets.Count - 1)
+
+                (Kernel.machine after).Sockets.Count
+                |> shouldEqual ((Kernel.machine system).Sockets.Count - 1)
+
                 UnixSystem.checkInvariants after |> shouldEqual []
             | other -> failwith $"read, time %d{seconds}: %A{other}"
 
@@ -3045,11 +3049,11 @@ module TestBlockingConnection =
 
         for seconds in [ 0L ; 100L ] do
             let lingering =
-                let held = UnixMachineState.socket socket system.Machine
+                let held = UnixMachineState.socket socket (Kernel.machine system)
 
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.add
                                     socket
@@ -3063,9 +3067,10 @@ module TestBlockingConnection =
                                                     }
                                             }
                                     }
-                                    system.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants lingering
             |> shouldEqual [ UnixSystemDefect.LingeringSocketHeldOnlyByCalls (description, socket) ]
@@ -3332,7 +3337,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
@@ -3383,7 +3388,7 @@ module TestBlockingConnection =
         let connection = connectionOf client system
 
         let toServer =
-            (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+            (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
         let fits = toServer.SendCapacity + toServer.ReceiveCapacity
         let written, system = wrote client fits system
@@ -3391,7 +3396,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         // Registered while the socket is not writable, so with no edge of
@@ -3439,7 +3444,7 @@ module TestBlockingConnection =
                  - clientQueued connection system
                  - TcpTransfer.readable
                      ConnectionEnd.Server
-                     (UnixMachineState.connection connection system.Machine).Transfer)
+                     (UnixMachineState.connection connection (Kernel.machine system)).Transfer)
                 system
 
         written |> shouldBeGreaterThan 0L
@@ -3471,7 +3476,7 @@ module TestBlockingConnection =
 
         let epoll, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
@@ -3530,7 +3535,7 @@ module TestBlockingConnection =
         let connection = connectionOf client system
 
         let toServer =
-            (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+            (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
         let room = toServer.SendCapacity + toServer.ReceiveCapacity
         let system = asleepWriting 1 client (payload 13 (room + 100)) system
@@ -3571,7 +3576,7 @@ module TestBlockingConnection =
         let connection = connectionOf client system
 
         let toServer =
-            (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+            (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
         let room = toServer.SendCapacity + toServer.ReceiveCapacity
         let system = asleepWriting 1 client (payload 14 (room + 1)) system
@@ -3599,7 +3604,7 @@ module TestBlockingConnection =
                 fd
                 UserBuffer.Mapped
                 (uint64 count)
-                (flagWord system.Machine.UnixPlatform flags)
+                (flagWord (UnixSystem.platform system) flags)
                 system
         with
         | Ok outcome -> outcome
@@ -3620,7 +3625,7 @@ module TestBlockingConnection =
                 fd
                 UserBuffer.Mapped
                 (ImmutableArray.CreateRange bytes)
-                (flagWord system.Machine.UnixPlatform flags)
+                (flagWord (UnixSystem.platform system) flags)
                 system
         with
         | Ok outcome -> outcome
@@ -3628,7 +3633,7 @@ module TestBlockingConnection =
 
     let private available (fd : int) (system : UnixSystem<int, string>) : int =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD of fd %d{fd}: %A{other}"
 
     /// The server end full, written to non-blocking until `EAGAIN`, and the
@@ -3851,7 +3856,7 @@ module TestBlockingConnection =
             let system =
                 match outcome with
                 | WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system) when linux ->
-                    match (UnixMachineState.connection connection system.Machine).Transfer.Rules with
+                    match (UnixMachineState.connection connection (Kernel.machine system)).Transfer.Rules with
                     | TcpTransferRules.Linux armed -> Set.contains ConnectionEnd.Client armed |> shouldEqual true
                     | TcpTransferRules.Darwin _ -> failwith "a Linux connection with Darwin's rules"
 
@@ -3908,7 +3913,7 @@ module TestBlockingConnection =
                     let system = if tookSome then system else filled client system
 
                     let toServer =
-                        (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+                        (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
                     let bytes =
                         payload
@@ -3986,7 +3991,7 @@ module TestBlockingConnection =
             let copy, system = KeventWorld.dup client system
 
             let toServer =
-                (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
             let bytes = payload 4 (toServer.SendCapacity + toServer.ReceiveCapacity + 5000)
 
@@ -4015,7 +4020,7 @@ module TestBlockingConnection =
             let connection = connectionOf client system
 
             let toServer =
-                (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer.ToServer
 
             let bytes = payload 6 (toServer.SendCapacity + toServer.ReceiveCapacity + 5000)
 

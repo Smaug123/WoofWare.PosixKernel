@@ -28,12 +28,13 @@ module TestSocketWait =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
 
     let private platforms : SimulatedUnixPlatform list =
@@ -62,14 +63,15 @@ module TestSocketWait =
     /// A system with the flavour's event queue open -- an epoll instance or a
     /// kqueue -- and the descriptor onto it.
     let private withEventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"expected an epoll instance, got %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok (fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
             | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     /// A system with a socket open, and the descriptor onto it. The "wrong kind
@@ -88,18 +90,20 @@ module TestSocketWait =
 
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (SocketId 0L)
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add (SocketId 0L) socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add (SocketId 0L) socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers (SocketId 0L) socket machine
                     NextSocketId = SocketId 1L
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// How a wait with nothing to deliver ended up.
@@ -123,7 +127,7 @@ module TestSocketWait =
             | Some (ParkedSyscall.Kevent wait) -> Waited.Parked (wait.Kqueue, wait.MaxEvents)
             | other -> failwith $"expected a wait's park, got %A{other}"
 
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             match UnixPoll.tryEpollWait (Callers.thread thread system) fd maxEvents buffer -1 system with
             | Ok (EpollWaitOutcome.Failed error, after) ->
@@ -134,7 +138,15 @@ module TestSocketWait =
             | other -> failwith $"unexpected epoll_wait answer %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             match
-                UnixKqueue.tryKevent (Callers.thread thread system) fd 0 [] maxEvents buffer KeventTimeout.Null system
+                UnixKqueue.tryKevent
+                    (Callers.thread thread system)
+                    fd
+                    0
+                    []
+                    maxEvents
+                    buffer
+                    TimespecArgument.Null
+                    system
             with
             | Ok (KeventOutcome.Failed error, after) ->
                 after |> shouldEqual system
@@ -183,8 +195,9 @@ module TestSocketWait =
 
             let fileFd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly

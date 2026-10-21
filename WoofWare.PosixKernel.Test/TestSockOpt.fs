@@ -64,11 +64,11 @@ module TestSockOpt =
                     }
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            system.Machine.Sockets
+                            machine.Sockets
                             |> Map.change
                                 (SocketId 0L)
                                 (Option.map (fun socket ->
@@ -78,17 +78,18 @@ module TestSockOpt =
                                     }
                                 ))
                     }
-            }
+                )
+                system
 
         let queueFd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         socketFd, queueFd, Lone.withFileDescriptors registry system
 
     let private reuseFlag (system : UnixSystem<int, string>) : bool =
-        (UnixMachineState.socket (SocketId 0L) system.Machine).ReuseAddress
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).ReuseAddress
 
     /// The whole `setsockopt(2)` a client makes, stopping at the copy and
     /// reading the value only if the kernel does.
@@ -486,11 +487,11 @@ module TestSockOpt =
                             NewSocket.arguments platform domain kind protocol
 
                         match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
-                        | Ok (Ok (fd, system)) ->
+                        | Ok (DescriptorAnswer.Returned fd, system) ->
                             created <- created + 1
                             let system = ReuseAddress.set true fd system
                             reuseFlag system |> shouldEqual true
-                        | Ok (Error _)
+                        | Ok (DescriptorAnswer.Failed _, _)
                         | Error _ -> ()
 
         // Linux's ten and its seqpacket socket, and Darwin's ten.

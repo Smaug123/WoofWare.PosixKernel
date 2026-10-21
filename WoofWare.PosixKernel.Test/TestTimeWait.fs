@@ -33,16 +33,16 @@ module TestTimeWait =
             | other, _ -> failwith $"connect: %A{other}"
 
         let port =
-            match FileDescriptorRegistry.tryFindTarget client (Lone.UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget client (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
-                match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+                match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
                 | Some binding -> binding.Endpoint.Port
                 | None -> failwith "the client is unbound"
             | other -> failwith $"the client is %A{other}"
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let system = system |> KeventWorld.close client |> KeventWorld.close accepted
@@ -57,7 +57,7 @@ module TestTimeWait =
         let fd, system = KeventWorld.stream false system
         let system = if reuse then ReuseAddress.set true fd system else system
 
-        CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system
+        CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system
         |> Result.map fst
 
     /// `docs/probes/time-wait`, rows B: once both sockets have closed, the
@@ -94,8 +94,8 @@ module TestTimeWait =
         // The first connection: its server closes over a byte it never read,
         // which resets the client.
         let accept (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let first, system = boundClient system
@@ -113,7 +113,7 @@ module TestTimeWait =
         let secondServer, system = accept system
         let system = system |> KeventWorld.close second |> KeventWorld.close secondServer
 
-        system.Machine.TimeWaits
+        (Kernel.machine system).TimeWaits
         |> Map.keys
         |> List.ofSeq
         |> shouldEqual
@@ -133,12 +133,13 @@ module TestTimeWait =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Machine =
-                { system.Machine with
-                    TimeWaits = Map.add key timeWait system.Machine.TimeWaits
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    TimeWaits = Map.add key timeWait machine.TimeWaits
                 }
-        }
+            )
+            system
 
     let private timeWaitAt (local : uint16) (remote : uint16) (enteredAt : int64) : TcpTimeWait =
         {
@@ -151,13 +152,11 @@ module TestTimeWait =
         }
 
     let private advanced (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     let private acceptOn (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
         | other -> failwith $"accept: %A{other}"
 
     let private shutWrite (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -214,7 +213,7 @@ module TestTimeWait =
         let _, _, system = connected (systemOn platform)
 
         let connection, clientPort =
-            match Map.toList system.Machine.Connections with
+            match Map.toList (Kernel.machine system).Connections with
             | [ connection, tcp ] -> connection, tcp.ClientAddress.Port
             | other -> failwith $"connections: %A{other}"
 
@@ -238,12 +237,13 @@ module TestTimeWait =
             | SimulatedUnixFlavour.Linux -> UnixMachineState.defaultTcpTimeWait SimulatedUnixFlavour.Darwin
             | SimulatedUnixFlavour.Darwin -> UnixMachineState.defaultTcpTimeWait SimulatedUnixFlavour.Linux
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     TcpTimeWait = other
                 }
-        }
+            )
+            system
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.TimeWaitSysctlsNotOfFlavour flavour ]
 
@@ -257,12 +257,12 @@ module TestTimeWait =
         let client, accepted, system =
             connected (systemOn platform |> advanced 3_000_000_000L)
 
-        let connection = system.Machine.Connections |> Map.keys |> Seq.exactlyOne
+        let connection = (Kernel.machine system).Connections |> Map.keys |> Seq.exactlyOne
 
         let stamped (stamp : int64 option) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Connections =
                             Map.change
                                 connection
@@ -271,11 +271,13 @@ module TestTimeWait =
                                         FinsExchangedAt = stamp
                                     }
                                 ))
-                                system.Machine.Connections
+                                machine.Connections
                     }
-            }
+                )
+                system
 
-        system.Machine.Connections.[connection].FinsExchangedAt |> shouldEqual None
+        (Kernel.machine system).Connections.[connection].FinsExchangedAt
+        |> shouldEqual None
 
         stamped (Some 1L) system
         |> UnixSystem.checkInvariants
@@ -283,7 +285,7 @@ module TestTimeWait =
 
         let system = system |> shutWrite client |> advanced 1_000_000L |> shutWrite accepted
 
-        system.Machine.Connections.[connection].FinsExchangedAt
+        (Kernel.machine system).Connections.[connection].FinsExchangedAt
         |> shouldEqual (Some 3_001_000_000L)
 
         UnixSystem.checkInvariants system |> shouldEqual []
@@ -306,7 +308,7 @@ module TestTimeWait =
             connected (systemOn platform |> advanced 3_000_000_000L)
 
         let clientPort =
-            (Seq.exactlyOne system.Machine.Connections.Values).ClientAddress.Port
+            (Seq.exactlyOne (Kernel.machine system).Connections.Values).ClientAddress.Port
 
         let system =
             system
@@ -316,7 +318,7 @@ module TestTimeWait =
             |> KeventWorld.close client
             |> KeventWorld.close accepted
 
-        system.Machine.TimeWaits
+        (Kernel.machine system).TimeWaits
         |> Map.toList
         |> List.map (fun (_, timeWait) -> timeWait.Local.Port, timeWait.EnteredAt)
         |> shouldEqual [ clientPort, 3_000_000_000L ]
@@ -383,7 +385,7 @@ module TestTimeWait =
         |> shouldEqual (Ok TimeWaitTakeover.AddressInUse)
 
     let private lingerZero (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -429,8 +431,8 @@ module TestTimeWait =
                 else
                     system |> KeventWorld.close accepted |> KeventWorld.close client
 
-            system.Machine.Connections |> shouldEqual Map.empty
-            system.Machine.TimeWaits.Count |> shouldEqual expected
+            (Kernel.machine system).Connections |> shouldEqual Map.empty
+            (Kernel.machine system).TimeWaits.Count |> shouldEqual expected
 
     /// Linux's `listen(2)` asks `bind(2)`'s question again (`relisten-held.c`
     /// in docs/plans/2026-10-08-tcp-shutdown-linger), so a socket that bound
@@ -451,7 +453,7 @@ module TestTimeWait =
                 | other, _ -> failwith $"connect: %A{other}"
 
             let clientPort =
-                (Seq.exactlyOne system.Machine.Connections.Values).ClientAddress.Port
+                (Seq.exactlyOne (Kernel.machine system).Connections.Values).ClientAddress.Port
 
             let accepted, system = acceptOn listener system
 
@@ -489,7 +491,7 @@ module TestTimeWait =
             | other, _ -> failwith $"connect: %A{other}"
 
         let clientPort =
-            (Seq.exactlyOne system.Machine.Connections.Values).ClientAddress.Port
+            (Seq.exactlyOne (Kernel.machine system).Connections.Values).ClientAddress.Port
 
         let accepted, system = acceptOn listener system
 
@@ -513,9 +515,9 @@ module TestTimeWait =
             | SyscallAnswer.Failed UnixError.EADDRINUSE, system -> system
             | other, _ -> failwith $"connect: %A{other}"
 
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            (UnixMachineState.socket socketId system.Machine).Ipv4Binding
+            (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
             |> shouldEqual (Some wildcard)
         | other -> failwith $"fd %d{fd} is %A{other}"

@@ -274,6 +274,7 @@ module TestUmask =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -315,7 +316,7 @@ module TestUmask =
                 let stored = mask &&& measuredWidth platform
 
                 for requested in [ 0o7777 ; 0o666 ; 0o2775 ; 0o4755 ] do
-                    let _, afterOpen = Answered.openPath creatingOpen target requested system
+                    let _, afterOpen = Answered.openPath target creatingOpen requested system
                     let opened = created "/e" afterOpen
                     let expectedOpen = requested &&& openMask platform &&& ~~~stored
 

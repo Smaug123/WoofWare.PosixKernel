@@ -61,21 +61,23 @@ module TestListen =
         =
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     let private boundAt (endpoint : Ipv4Endpoint) : Ipv4Binding option =
@@ -93,7 +95,7 @@ module TestListen =
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{ListenRefusal.describe refusal}"
 
     let private phaseOf (socketId : SocketId) (system : UnixSystem<int, string>) : SocketPhase =
-        (UnixMachineState.socket socketId system.Machine).Phase
+        (UnixMachineState.socket socketId (Kernel.machine system)).Phase
 
     // ------------------------------------------------------------------
     // The happy path
@@ -136,10 +138,10 @@ module TestListen =
 
         where.Address |> shouldEqual Ipv4Address.any
 
-        let low, high = system.Machine.EphemeralPortRange
+        let low, high = UnixSystem.ephemeralPortRange system
         (where.Port >= low && where.Port <= high) |> shouldEqual true
 
-        let socket = UnixMachineState.socket (SocketId 0L) system.Machine
+        let socket = UnixMachineState.socket (SocketId 0L) (Kernel.machine system)
 
         socket.Ipv4Binding
         |> shouldEqual (
@@ -217,8 +219,9 @@ module TestListen =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -474,13 +477,14 @@ module TestListen =
         let system = systemOn platform
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         EphemeralPortRange = (40000us, 40000us)
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                system
 
         // A socket already holding the only port in the range, at the wildcard
         // so that the implicit bind's candidate collides with it.

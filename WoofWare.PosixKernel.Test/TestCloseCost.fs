@@ -29,6 +29,7 @@ module TestCloseCost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -69,8 +70,8 @@ module TestCloseCost =
                 | Pipe2Answer.Created (readFd, _), system -> readFd, resume leader system
                 | answer, _ -> failwith $"expected pipe2 to make a pipe: %A{answer}"
             | "file" ->
-                match OpenFlagWords.openPath creating (PathArg.ofText "/closed") 0o600 paused with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, resume leader system
+                match OpenFlagWords.openPath (PathArg.ofText "/closed") creating 0o600 paused with
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, resume leader system
                 | other -> failwith $"expected the open to make a file: %A{other}"
             | target -> failwith $"no target %s{target}"
 

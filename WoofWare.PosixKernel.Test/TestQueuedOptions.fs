@@ -139,7 +139,7 @@ module TestQueuedOptions =
     /// kernel and printed as the probe prints it.
     let private kernelO (flavour : SimulatedUnixFlavour) (name : string) (values : string list) : string =
         let system = systemOn (platformOf flavour)
-        let level, option, linger = optionNamed system.Machine.UnixPlatform name
+        let level, option, linger = optionNamed (UnixSystem.platform system) name
 
         let v0, v1, v2 =
             match values with
@@ -211,13 +211,21 @@ module TestQueuedOptions =
     /// listener's socket.
     let private kernelD (completed : string) (accepted : string) : Result<string, AcceptRefusal * SocketId> =
         let system = systemOn SimulatedUnixPlatform.linuxX64
-        let level, option, _ = optionNamed system.Machine.UnixPlatform "SO_LINGER"
+        let level, option, _ = optionNamed (UnixSystem.platform system) "SO_LINGER"
         let listener, system = KeventWorld.listenerAt port system
         let system = set listener (level, option) (valueOf completed) system
         let client, system = connectTo system
         let system = set listener (level, option) (valueOf accepted) system
 
-        match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped UInt32.MaxValue system with
+        match
+            UnixConnection.tryAccept
+                (Callers.thread 1 system)
+                listener
+                UserBuffer.Mapped
+                (Some UInt32.MaxValue)
+                0
+                system
+        with
         | Error refusal ->
             match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socket) -> Error (refusal, socket)

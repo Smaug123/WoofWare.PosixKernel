@@ -561,7 +561,7 @@ module TestConnectedTransferAgainstHost =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -595,8 +595,8 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"connect: %A{other}"
 
         let server, system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let system = kernelClose listener system
@@ -687,7 +687,7 @@ module TestConnectedTransferAgainstHost =
         (system : UnixSystem<int, string>)
         : Readiness * string * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let revents, system =
@@ -708,7 +708,7 @@ module TestConnectedTransferAgainstHost =
 
         let readable =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         let socketId =
@@ -732,7 +732,7 @@ module TestConnectedTransferAgainstHost =
                     | Some error -> UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
 
                 let render (name : string) (filter : KqueueFilter) : string =
-                    match DarwinReadiness.ofSocket filter socketId system.Machine with
+                    match DarwinReadiness.ofSocket filter socketId (Kernel.machine system) with
                     | None -> $"%s{name}(-)"
                     | Some (KqueueFilterReport.Ready data) -> $"%s{name}(data=%d{data} fflags=0)"
                     | Some (KqueueFilterReport.EndOfFile (data, error)) ->
@@ -768,7 +768,7 @@ module TestConnectedTransferAgainstHost =
 
         match operation with
         | Operation.Readiness ->
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
 
             let level = SimulatedUnixPlatform.socketOptionLevel platform
             let optionName = SimulatedUnixPlatform.socketErrorOption platform

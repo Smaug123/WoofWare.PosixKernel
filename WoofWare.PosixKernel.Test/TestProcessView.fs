@@ -45,7 +45,7 @@ module TestProcessView =
             [
                 2, Gen.map2 (fun p port -> Op.Listener (p, port)) small small
                 3, Gen.map2 (fun p port -> Op.Client (p, port)) small small
-                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Accept (fd, UserBuffer.Mapped, 16u))) small fd
+                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Accept (fd, UserBuffer.Mapped, (Some 16u), 0))) small fd
                 2, Gen.map (fun p -> Op.Call (p, Syscall.Pipe2 (UserBuffer.Mapped, 0))) small
                 2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Dup fd)) small fd
                 3, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Close fd)) small fd
@@ -102,7 +102,7 @@ module TestProcessView =
         | Op.Call (proc, call) ->
             match UnixSystem.tryStep (leaderOf proc) call system with
             | Ok stepped ->
-                match Stepped.carriedOn stepped with
+                match Stepped.carriedOn (leaderOf proc) system stepped with
                 | Some system -> system
                 | None -> failwith $"%A{call} answered %A{Stepped.view stepped}, leaving no system to walk on from"
             // Outside what the kernel models, so the step changes nothing.
@@ -130,15 +130,15 @@ module TestProcessView =
         let property (cover : HeldLabel -> unit) (platform : SimulatedUnixPlatform, ops : Op list) : unit =
             let system = List.fold apply (world platform) ops
 
-            if not system.Machine.Connections.IsEmpty then
+            if not (Kernel.machine system).Connections.IsEmpty then
                 cover HeldLabel.Connection
 
-            if system.Machine.Pipes.Count > 3 * (UnixSystem.processIds system).Count then
+            if (UnixSystem.pipes system).Count > 3 * (UnixSystem.processIds system).Count then
                 cover HeldLabel.Pipe
 
             if
-                OpenFileTable.descriptions system.Machine.OpenFiles
-                |> Map.exists (fun id _ -> OpenFileTable.descriptorCount id system.Machine.OpenFiles > Some 1)
+                OpenFileTable.descriptions (UnixSystem.openFiles system)
+                |> Map.exists (fun id _ -> OpenFileTable.descriptorCount id (UnixSystem.openFiles system) > Some 1)
             then
                 cover HeldLabel.DuplicatedDescriptor
 
@@ -270,7 +270,7 @@ module TestProcessView =
                 // A call that does change something answers a new kernel, in
                 // which only the caller's process has moved.
                 match UnixDescriptor.tryDup (Caller.make pid 0) 1 system with
-                | Ok (SyscallAnswer.Completed _, after) ->
+                | Ok (DescriptorAnswer.Returned _, after) ->
                     obj.ReferenceEquals (after, system) |> shouldEqual false
 
                     for other in pids do
@@ -322,7 +322,7 @@ module TestProcessView =
             // The launched pipes' three descriptions are each named once by the
             // machine's record and twice by the two tables.
             let counts =
-                OpenFileTable.descriptions system.Machine.OpenFiles
+                OpenFileTable.descriptions (UnixSystem.openFiles system)
                 |> Map.keys
                 |> Seq.map (fun id ->
                     UnixSystemDefect.OpenFiles (FileDescriptorRegistryDefect.DescriptorCountMismatch (id, 1, 2))
@@ -379,12 +379,13 @@ module TestProcessView =
         let withOwner (owner : ProcessId) =
             Lone.mapOpenFiles (OpenFileTable.setKqueueState id (state owner)) system
             |> fun system ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             NextEventRegistrationOrdinal = 1L
                         }
-                }
+                    )
+                    system
             |> UnixSystem.checkInvariants
 
         withOwner pid

@@ -169,6 +169,7 @@ module TestNamespaceSequence =
     [<RequireQualifiedAccess>]
     type private Outcome =
         | Answered of SyscallAnswer
+        | Descriptor of DescriptorAnswer
         | Status of FileStatusAnswer
         | Directory of ReadDirectoryAnswer
         | WorkingDirectory of GetCwdAnswer
@@ -759,7 +760,6 @@ module TestNamespaceSequence =
         | SteppedCall.SymlinkAt (answer, after)
         | SteppedCall.CloneFile (answer, after)
         | SteppedCall.ChDir (answer, after)
-        | SteppedCall.Dup (answer, after)
         | SteppedCall.Close (answer, after)
         | SteppedCall.ChMod (answer, after)
         | SteppedCall.FChMod (answer, after)
@@ -767,12 +767,12 @@ module TestNamespaceSequence =
         | SteppedCall.FChOwn (answer, after)
         | SteppedCall.FChOwnAt (answer, after)
         | SteppedCall.UTimensAt (answer, after) -> Outcome.Answered answer, after
+        | SteppedCall.Dup (answer, after) -> Outcome.Descriptor answer, after
         | SteppedCall.Open (outcome, after)
         | SteppedCall.OpenAt (outcome, after) ->
             match outcome with
-            | SyscallOutcome.Answered answer -> Outcome.Answered answer, after
-            | SyscallOutcome.WouldBlock _
-            | SyscallOutcome.Interrupted ->
+            | OpenOutcome.Answered answer -> Outcome.Descriptor answer, after
+            | OpenOutcome.WouldBlock _ ->
                 failwith $"an open answered %A{outcome}, though the filesystem holds nothing an open can sleep on"
         | SteppedCall.Pipe2 (Pipe2Answer.Failed error, after) -> Outcome.Answered (SyscallAnswer.Failed error), after
         | SteppedCall.Pipe2 (Pipe2Answer.Created _, after) -> Outcome.Answered (SyscallAnswer.Completed 0L), after
@@ -811,9 +811,9 @@ module TestNamespaceSequence =
             { world with
                 Slots = Map.remove slot world.Slots
             }
-        | _, SteppedCall.Open (SyscallOutcome.Answered (SyscallAnswer.Completed fd), _)
-        | _, SteppedCall.OpenAt (SyscallOutcome.Answered (SyscallAnswer.Completed fd), _)
-        | _, SteppedCall.Dup (SyscallAnswer.Completed fd, _) -> keep world (int fd)
+        | _, SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Returned fd), _)
+        | _, SteppedCall.OpenAt (OpenOutcome.Answered (DescriptorAnswer.Returned fd), _)
+        | _, SteppedCall.Dup (DescriptorAnswer.Returned fd, _) -> keep world fd
         | _, SteppedCall.Pipe2 (Pipe2Answer.Created (readFd, writeFd), _) -> keep (keep world readFd) writeFd
         | _ -> world
 
@@ -837,7 +837,7 @@ module TestNamespaceSequence =
     /// Every defect the system's, its descriptor table's and its
     /// filesystem's invariants find.
     let private defects (system : UnixSystem<int, string>) : string list =
-        let fileSystem = system.Machine.FileSystem
+        let fileSystem = UnixSystem.fileSystem system
 
         (UnixSystem.checkInvariants system |> List.map (sprintf "%A"))
         @ (FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors (Lone.pid system) system)
@@ -864,6 +864,8 @@ module TestNamespaceSequence =
             match outcome with
             | Outcome.Answered (SyscallAnswer.Completed _) -> failedOrSucceeded None
             | Outcome.Answered (SyscallAnswer.Failed error) -> failedOrSucceeded (Some error)
+            | Outcome.Descriptor (DescriptorAnswer.Returned _) -> failedOrSucceeded None
+            | Outcome.Descriptor (DescriptorAnswer.Failed error) -> failedOrSucceeded (Some error)
             | Outcome.Status (FileStatusAnswer.Reported _) -> failedOrSucceeded None
             | Outcome.Status (FileStatusAnswer.Failed error) -> failedOrSucceeded (Some error)
             | Outcome.Directory (ReadDirectoryAnswer.Entry _)
@@ -874,7 +876,7 @@ module TestNamespaceSequence =
             | Outcome.Unmodelled -> Some (Label.Unmodelled call)
             | Outcome.Skipped -> None
 
-        let fileSystem = after.Machine.FileSystem
+        let fileSystem = UnixSystem.fileSystem after
         let root = VirtualFileSystem.root fileSystem
 
         let state =
@@ -908,7 +910,7 @@ module TestNamespaceSequence =
             let survivors = VirtualFileSystem.inodes fileSystem
 
             if
-                VirtualFileSystem.inodes before.Machine.FileSystem
+                VirtualFileSystem.inodes (UnixSystem.fileSystem before)
                 |> Map.exists (fun inode _ -> not (Map.containsKey inode survivors))
             then
                 [ Label.Freed call ]

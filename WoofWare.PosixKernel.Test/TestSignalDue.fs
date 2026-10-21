@@ -28,7 +28,7 @@ module TestSignalDue =
         | other -> failwith $"%O{caller}'s return to user mode: expected it to take nothing, got %A{other}"
 
     let private signo (system : UnixSystem<int, string>) (signal : Signal) : int =
-        Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signal
+        Signal.toRawSignoUnder (Kernel.signalNumbering system) signal
 
     /// `sigaction(signal, disposition)` by `caller`, followed by its return to
     /// user mode.
@@ -40,8 +40,8 @@ module TestSignalDue =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction caller (signo system signal) (Some disposition) system with
-        | Ok (_, system) -> resumes caller system
-        | Error error -> failwith $"sigaction of %O{signal} by %O{caller}: %O{error}"
+        | SigactionAnswer.Completed _, system -> resumes caller system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction of %O{signal} by %O{caller}: %O{error}"
 
     let private caught : SignalDisposition<string> =
         SignalDisposition.Catch (SignalCatch.ofHandler "h")
@@ -55,7 +55,7 @@ module TestSignalDue =
         : UnixSystem<int, string>
         =
         match UnixSignal.pthreadKill sender target (signo system signal) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
         | other -> failwith $"pthread_kill of %d{target} with %O{signal} by %O{sender}: %A{other}"
 
     /// `kill(getpid(), signal)` by `sender`, which runs on.
@@ -68,7 +68,7 @@ module TestSignalDue =
         let pid = ProcessId.toInt32 (Caller.processId sender)
 
         match UnixSignal.kill sender pid (signo system signal) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
         | other -> failwith $"kill of the process with %O{signal} by %O{sender}: %A{other}"
 
     /// `pthread_sigmask(SIG_SETMASK, signals)` by `caller`.
@@ -78,7 +78,7 @@ module TestSignalDue =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
 
         match
             UnixSignal.pthreadSigmask
@@ -87,8 +87,8 @@ module TestSignalDue =
                 (Some (SignalMask.ofSignals numbering signals))
                 system
         with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"pthread_sigmask by %O{caller}: %O{error}"
+        | SignalMaskAnswer.Completed _, system -> system
+        | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask by %O{caller}: %O{error}"
 
     /// That `caller`'s next call throws, because it owes a return to user mode
     /// for a signal deliverable to it.
@@ -133,7 +133,7 @@ module TestSignalDue =
                     dispose receiver Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h")) system
 
                 match UnixSignal.pthreadKill sender 0 usr1 caught with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> resumes sender system
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> resumes sender system
                 | other -> failwith $"%O{platform}: pthread_kill of thread 0: %A{other}"
 
             let getpid =
@@ -214,7 +214,7 @@ module TestSignalDue =
                 | CallProgress.Answered (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system)) -> system
                 | CallProgress.NeedsCopyIn paused ->
                     match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 0uy) paused with
-                    | ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system) -> system
+                    | ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system), None -> system
                     | other -> failwith $"%O{platform}: the write: %A{other}"
                 | other -> failwith $"%O{platform}: the write: %A{other}"
 
@@ -258,7 +258,7 @@ module TestSignalDue =
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
                 with
-                | ProcessFate.Continues (WriteOutcome.WouldBlock _, system) -> system
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, system), None -> system
                 | other -> failwith $"the write: expected it to sleep, got %A{other}"
             | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
 
@@ -288,8 +288,8 @@ module TestSignalDue =
                 | "rt_sigprocmask" -> UnixSignal.rtSigprocmask caller unblockHow (Some usr1) 8UL system
                 | other -> failwith $"unknown mask call %s{other}"
                 |> function
-                    | Ok (_, system) -> system
-                    | Error error -> failwith $"%O{platform} %s{how}: %O{error}"
+                    | SignalMaskAnswer.Completed _, system -> system
+                    | SignalMaskAnswer.Failed error, _ -> failwith $"%O{platform} %s{how}: %O{error}"
 
             let calls =
                 match numbering with
@@ -474,7 +474,7 @@ module TestSignalDue =
             match UnixReadWrite.write leader writeFd UserBuffer.Mapped 1UL asleep with
             | CallProgress.NeedsCopyIn paused ->
                 match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 7uy) paused with
-                | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 1L), system) -> system
+                | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 1L), system), None -> system
                 | other -> failwith $"the write: %A{other}"
             | CallProgress.Answered other -> failwith $"the write: %A{other}"
             |> resumes leader
@@ -740,24 +740,24 @@ module TestSignalDue =
     /// ended or stopped the process.
     let private left (stepped : SteppedCall<int, string>) : Result<UnixSystem<int, string>, UnixError> option =
         match stepped with
-        | SteppedCall.Kill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after)))
-        | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after)))
-        | SteppedCall.PthreadSigMask (Ok (_, after))
-        | SteppedCall.SigProcMask (Ok (_, after))
-        | SteppedCall.SigAction (Ok (_, after))
+        | SteppedCall.Kill (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after))
+        | SteppedCall.PthreadKill (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after))
+        | SteppedCall.PthreadSigMask (SignalMaskAnswer.Completed _, after)
+        | SteppedCall.SigProcMask (SignalMaskAnswer.Completed _, after)
+        | SteppedCall.SigAction (SigactionAnswer.Completed _, after)
         | SteppedCall.SigSuspend (_, after)
         | SteppedCall.Read (_, after)
-        | SteppedCall.Write (ProcessFate.Continues (_, after)) -> Some (Ok after)
-        | SteppedCall.Kill (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _)))
-        | SteppedCall.Kill (Ok (ProcessFate.ProcessEnded _))
-        | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _)))
-        | SteppedCall.PthreadKill (Ok (ProcessFate.ProcessEnded _))
-        | SteppedCall.Write (ProcessFate.ProcessEnded _) -> None
-        | SteppedCall.Kill (Error errno)
-        | SteppedCall.PthreadKill (Error errno)
-        | SteppedCall.PthreadSigMask (Error errno)
-        | SteppedCall.SigProcMask (Error errno)
-        | SteppedCall.SigAction (Error errno) -> Some (Error errno)
+        | SteppedCall.Write (ProcessFate.Continues (_, after), _) -> Some (Ok after)
+        | SteppedCall.Kill (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped _), _))
+        | SteppedCall.Kill (ProcessFate.ProcessEnded _)
+        | SteppedCall.PthreadKill (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped _), _))
+        | SteppedCall.PthreadKill (ProcessFate.ProcessEnded _)
+        | SteppedCall.Write (ProcessFate.ProcessEnded _, _) -> None
+        | SteppedCall.Kill (ProcessFate.Continues (KillAnswer.Failed errno, _))
+        | SteppedCall.PthreadKill (ProcessFate.Continues (KillAnswer.Failed errno, _))
+        | SteppedCall.PthreadSigMask (SignalMaskAnswer.Failed errno, _)
+        | SteppedCall.SigProcMask (SignalMaskAnswer.Failed errno, _)
+        | SteppedCall.SigAction (SigactionAnswer.Failed errno, _) -> Some (Error errno)
         | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call TestSignalDue's runs make"
 
     /// A client's run: before each step, the thread making it returns to user

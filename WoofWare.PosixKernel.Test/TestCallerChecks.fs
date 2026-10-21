@@ -141,20 +141,20 @@ module TestCallerChecks =
             }
 
         let socketOption (system : UnixSystem<int, string>) : int * int =
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
             SimulatedUnixPlatform.socketOptionLevel platform, SimulatedUnixPlatform.reuseAddressOption platform
 
         [
             running
-                "UnixDescriptor.effectiveUserId"
-                (fun caller system -> UnixDescriptor.effectiveUserId caller system |> ignore<UserId>)
+                "UnixCredentials.geteuid"
+                (fun caller system -> UnixCredentials.geteuid caller system |> ignore<UserId>)
             running
-                "UnixDescriptor.effectiveGroupId"
-                (fun caller system -> UnixDescriptor.effectiveGroupId caller system |> ignore<GroupId>)
+                "UnixCredentials.getegid"
+                (fun caller system -> UnixCredentials.getegid caller system |> ignore<GroupId>)
             running
-                "UnixDescriptor.getgroups"
+                "UnixCredentials.getgroups"
                 (fun caller system ->
-                    UnixDescriptor.getgroups caller UserBuffer.Mapped 0 system
+                    UnixCredentials.getgroups caller UserBuffer.Mapped 0 system
                     |> ignore<GetGroupsAnswer>
                 )
             running "UnixDescriptor.dup" (fun caller system -> UnixDescriptor.dup caller 0 system |> ignore)
@@ -183,11 +183,11 @@ module TestCallerChecks =
                 "UnixDescriptor.bytesAvailable"
                 (fun caller system ->
                     UnixDescriptor.bytesAvailable caller 0 UserBuffer.Mapped system
-                    |> ignore<BytesAvailableAnswer>
+                    |> ignore<BytesAvailableAnswer * UnixSystem<int, string>>
                 )
             running
                 "UnixDescriptor.fileClone"
-                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore<UnixError>)
+                (fun caller system -> UnixDescriptor.fileClone caller 0 1 system |> ignore)
             running
                 "UnixDescriptor.terminalAttributes"
                 (fun caller system ->
@@ -239,7 +239,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixConnection.connect caller 0 UserBuffer.Mapped 16u system |> ignore)
             running
                 "UnixConnection.accept"
-                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u system |> ignore)
+                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped (Some 16u) 0 system |> ignore)
             running "UnixConnection.shutdown" (fun caller system -> UnixConnection.shutdown caller 0 2 system |> ignore)
             finishing
                 "UnixConnection.finishAccept"
@@ -275,7 +275,19 @@ module TestCallerChecks =
             running
                 "UnixKqueue.kevent"
                 (fun caller system ->
-                    UnixKqueue.kevent caller 0 0 [] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        caller
+                        0
+                        0
+                        []
+                        1
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                     |> ignore
                 )
             finishing
@@ -413,10 +425,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixClock.gettimeofday caller system |> ignore<UnixTimestamp>)
             running
                 "UnixClock.clockGettime"
-                (fun caller system ->
-                    UnixClock.clockGettime caller 0 system
-                    |> ignore<Result<UnixTimestamp, UnixError>>
-                )
+                (fun caller system -> UnixClock.clockGettime caller 0 system |> ignore<ClockGettimeAnswer>)
             running
                 "UnixEntropy.getRandom"
                 (fun caller system -> UnixEntropy.getRandom caller UserBuffer.Mapped 8UL 0u system |> ignore)
@@ -425,7 +434,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
             running
                 "UnixNamespace.openPath"
-                (fun caller system -> UnixNamespace.openPath caller 0 root 0 system |> ignore)
+                (fun caller system -> UnixNamespace.openPath caller root 0 0 system |> ignore)
             running
                 "UnixNamespace.openat"
                 (fun caller system -> UnixNamespace.openat caller 0 root 0 0 system |> ignore)
@@ -728,10 +737,10 @@ module TestCallerChecks =
             // Out of the way of the descriptors the calls above name.
             let view =
                 match UnixDescriptor.dup2 leader listener listenerFd view with
-                | SyscallAnswer.Completed _, view -> UnixDescriptor.close leader listener view |> snd
+                | DescriptorAnswer.Returned _, view -> UnixDescriptor.close leader listener view |> snd
                 | other -> failwith $"dup2 of the listener: %A{other}"
 
-            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
+            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped (Some 16u) 0 view with
             | AcceptOutcome.WouldBlock _, view -> view
             | other -> failwith $"the accept: expected it to sleep, got %A{other}"
 
@@ -748,15 +757,18 @@ module TestCallerChecks =
             match SimulatedUnixPlatform.flavour platform with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.epollCreate1 leader 0 view with
-                | Ok (epoll, view) ->
+                | DescriptorAnswer.Returned epoll, view ->
                     match UnixPoll.epollWait waiter epoll 1 UserBuffer.Mapped -1 view with
                     | EpollWaitOutcome.WouldBlock _, view -> view
                     | other -> failwith $"the epoll_wait: expected it to sleep, got %A{other}"
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
             | SimulatedUnixFlavour.Darwin ->
-                let kq, view = UnixKqueue.kqueue leader view
+                let kq, view =
+                    match UnixKqueue.kqueue leader view with
+                    | DescriptorAnswer.Returned kq, view -> kq, view
+                    | DescriptorAnswer.Failed error, _ -> failwith $"kqueue: %O{error}"
 
-                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null view with
+                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped TimespecArgument.Null view with
                 | KeventOutcome.WouldBlock _, view -> view
                 | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
 
@@ -787,7 +799,7 @@ module TestCallerChecks =
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
                 with
-                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view) -> view
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view), None -> view
                 | other -> failwith $"the write: expected it to sleep, got %A{other}"
             | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
 
@@ -814,15 +826,15 @@ module TestCallerChecks =
 
             let send (sender : Caller<int>) (target : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadKill sender target usr1 view with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view)) -> view
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, view) -> view
                 | other -> failwith $"pthread_kill of %d{target}: %A{other}"
 
             let view =
                 match
                     UnixSignal.sigaction leader usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"sigaction: %O{error}"
+                | SigactionAnswer.Completed _, view -> view
+                | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
             let view =
                 let usr1Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
@@ -834,8 +846,8 @@ module TestCallerChecks =
                         (Some usr1Mask)
                         view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"pthread_sigmask: %O{error}"
+                | SignalMaskAnswer.Completed _, view -> view
+                | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
             let view =
                 send leader interruptedDebtor view

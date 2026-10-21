@@ -34,12 +34,13 @@ module TestEpollCtl =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
     let private linux : UnixSystem<int, string> =
         systemOn SimulatedUnixPlatform.linuxX64
@@ -54,7 +55,7 @@ module TestEpollCtl =
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
@@ -66,7 +67,7 @@ module TestEpollCtl =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let socket =
@@ -86,18 +87,20 @@ module TestEpollCtl =
 
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> withRegistry registry
 
     let private idleSocket (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
@@ -106,8 +109,9 @@ module TestEpollCtl =
     let private withFile (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite
@@ -118,7 +122,7 @@ module TestEpollCtl =
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match
             FileDescriptorRegistry.dup
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 fd
                 (Lone.fileDescriptors system)
         with
@@ -327,12 +331,8 @@ module TestEpollCtl =
             None
         elif events &&& EpollEvents.Exclusive <> 0u then
             Some EpollCtlRefusal.Exclusive
-        elif events &&& EpollEvents.OneShot <> 0u then
-            Some EpollCtlRefusal.OneShot
         elif events &&& EpollEvents.WakeUp <> 0u then
             Some EpollCtlRefusal.WakeUp
-        elif events &&& EpollEvents.EdgeTriggered = 0u then
-            Some EpollCtlRefusal.LevelTriggered
         else
             None
 
@@ -632,11 +632,11 @@ module TestEpollCtl =
         if delivered <> expected then
             failwith $"mask 0x%08x{mask}: expected %A{expected}, reported %A{delivered}"
 
-    /// The events a mask is registered with here: edge-triggered, and without
-    /// the modes this library refuses, so that every mask is answered.
+    /// The events a mask is registered with here: without the modes this
+    /// library refuses, so that every mask is answered. The trigger modes it
+    /// keeps change nothing about a first wait.
     let private answerable (mask : uint32) : uint32 =
-        (mask ||| edge)
-        &&& ~~~(EpollEvents.Exclusive ||| EpollEvents.OneShot ||| EpollEvents.WakeUp)
+        mask &&& ~~~(EpollEvents.Exclusive ||| EpollEvents.WakeUp)
 
     /// Every single bit and every pair of bits, as the probe swept them.
     [<Test>]
@@ -764,26 +764,27 @@ module TestEpollCtl =
                 UnixPoll.tryEpollCtl (Callers.leader darwin) 99 op 99 argument darwin
                 |> shouldEqual expected
 
-    /// A level-triggered request is refused only where it would commit: a
-    /// failure that precedes the commit is still the kernel's answer.
+    /// `EPOLLWAKEUP` is refused only where the call would commit: a failure
+    /// that precedes the commit is still the kernel's answer.
     [<Test>]
-    let ``a level-triggered request is refused at the commit, and answered where it would fail`` () : unit =
+    let ``an EPOLLWAKEUP request is refused at the commit, and answered where it would fail`` () : unit =
         let queueFd, system = withEpoll linux
         let socketFd, system = idleSocket system
+        let wakeUp = EpollEvents.In ||| EpollEvents.WakeUp
 
-        ctl queueFd add socketFd EpollEvents.In system
-        |> shouldEqual (Error EpollCtlRefusal.LevelTriggered)
+        ctl queueFd add socketFd wakeUp system
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
-        ctl queueFd modify socketFd EpollEvents.In system
+        ctl queueFd modify socketFd wakeUp system
         |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, system))
 
-        let registered = applied queueFd add socketFd (EpollEvents.In ||| edge) system
+        let registered = applied queueFd add socketFd EpollEvents.In system
 
-        ctl queueFd add socketFd EpollEvents.In registered
+        ctl queueFd add socketFd wakeUp registered
         |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.AlreadyRegistered, registered))
 
-        ctl queueFd modify socketFd EpollEvents.In registered
-        |> shouldEqual (Error EpollCtlRefusal.LevelTriggered)
+        ctl queueFd modify socketFd wakeUp registered
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
     /// Linux registers an `AF_UNIX` `SOCK_SEQPACKET` socket, but what an epoll
     /// wait reports for one is not measured. The ADD is refused where it would
@@ -901,19 +902,19 @@ module TestEpollCtl =
     let ``only an ADD consumes an ordinal`` () : unit =
         let queueFd, system = withEpoll linux
         let socketFd, system = idleSocket system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 0L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 0L
 
         let system = applied queueFd add socketFd (EpollEvents.In ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd modify socketFd (EpollEvents.Out ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd del socketFd 0u system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 1L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 1L
 
         let system = applied queueFd add socketFd (EpollEvents.In ||| edge) system
-        system.Machine.NextEventRegistrationOrdinal |> shouldEqual 2L
+        (Kernel.machine system).NextEventRegistrationOrdinal |> shouldEqual 2L
 
     /// A failure or a refusal consumes nothing: the ordinal is taken by the
     /// commit, which did not happen.
@@ -928,8 +929,8 @@ module TestEpollCtl =
 
         let otherFd, system = idleSocket system
 
-        ctl queueFd add otherFd (EpollEvents.In ||| EpollEvents.OneShot ||| edge) system
-        |> shouldEqual (Error EpollCtlRefusal.OneShot)
+        ctl queueFd add otherFd (EpollEvents.In ||| EpollEvents.WakeUp ||| edge) system
+        |> shouldEqual (Error EpollCtlRefusal.WakeUp)
 
     // ------------------------------------------------------------------
     // Pending at registration time

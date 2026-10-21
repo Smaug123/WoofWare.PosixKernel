@@ -163,6 +163,7 @@ module TestReceiveSendMeasured =
                 match row with
                 | [ "p-fionread-after" ; count ] ->
                     UnixDescriptor.tryBytesAvailable (Callers.leader system) server UserBuffer.Mapped system
+                    |> Result.map fst
                     |> shouldEqual (Ok (BytesAvailableAnswer.Reported (int count)))
                 | [ targetName ; bufferName ; length ; recvText ; sendText ; sigpipe ] ->
                     let where = $"%O{flavour} %s{targetName} %s{bufferName} %s{length}"

@@ -95,7 +95,9 @@
           '';
         # Fails `nix flake check` when a test file outside a rule's allowlist names a kernel
         # internal that the test helpers hide: the thread table, which tests read through `Proc`
-        # and `Lone` and forge through `ForgedThread`. A test holding the representation must
+        # and `Lone` and forge through `ForgedThread`; the process table, views and
+        # `UnixSystemState`, behind `Proc` and `Lone`; and the `UnixSystem` record's machine and
+        # scheduling, behind `Kernel` and the public queries. A test holding the representation must
         # change whenever it does, though nothing the test asserts has. Runs the checker's own
         # contract first, so that a change to the checker cannot quietly retire it.
         test-boundaries =
@@ -106,6 +108,19 @@
             ${pkgs.bash}/bin/bash ${./scripts/test-test-boundaries.sh} \
               ${./scripts/check-test-boundaries.py}
             ${pkgs.python3}/bin/python3 ${./scripts/check-test-boundaries.py} ${testSources}
+            touch $out
+          '';
+        # CI's `build` job fails when its test steps skipped a test that
+        # `.github/expected-skips.json` does not expect skipped. The check reads the TRX files
+        # those steps write, so only its contract runs here: so that a change to the checker
+        # cannot quietly retire it.
+        skipped-tests =
+          pkgs.runCommand "skipped-tests" {
+            buildInputs = [pkgs.python3 pkgs.bash];
+          }
+          ''
+            ${pkgs.bash}/bin/bash ${./scripts/test-skipped-tests.sh} \
+              ${./scripts/check-skipped-tests.py}
             touch $out
           '';
         # The docstring-attachment check is the oracle a definition-moving commit is held

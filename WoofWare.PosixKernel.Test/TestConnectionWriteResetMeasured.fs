@@ -114,11 +114,11 @@ module TestConnectionWriteResetMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
             }
@@ -200,7 +200,7 @@ module TestConnectionWriteResetMeasured =
         | GetSockOptAnswer.Reported (OptionValue.Int 0), system -> "0", system
         | GetSockOptAnswer.Reported (OptionValue.Int raw), system ->
             match
-                UnixError.ofRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform) raw
+                UnixError.ofRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system)) raw
             with
             | Some error -> $"%A{error}", system
             | None -> failwith $"SO_ERROR read %d{raw}, which names no error"
@@ -364,7 +364,7 @@ module TestConnectionWriteResetMeasured =
                         { proc with
                             Signals =
                                 SignalState.enqueue
-                                    (Lone.UnixSystemState.signalNumbering system)
+                                    (Kernel.signalNumbering system)
                                     {
                                         Signal = Signal.SIGUSR1
                                         Target = ValueSome 1

@@ -55,7 +55,7 @@ module TestSignalReceiver =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             disposition
                             proc.Signals
@@ -92,7 +92,7 @@ module TestSignalReceiver =
             systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) blocking
 
         match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
             takenBy system
             |> List.indexed
             |> List.choose (fun (thread, delivery) ->
@@ -194,7 +194,7 @@ module TestSignalReceiver =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
 
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) ->
                 SignalState.pending (Lone.proc after).Signals
                 |> shouldEqual
                     [
@@ -215,7 +215,7 @@ module TestSignalReceiver =
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0 ; 2 ])
 
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+            | Ok (ProcessFate.ProcessEnded (ended, after)) ->
                 EndedProcess.termination ended
                 |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
 
@@ -232,7 +232,8 @@ module TestSignalReceiver =
             let system = systemWith flavour SignalDisposition.Ignore (Set.ofList [ 0 ; 2 ])
 
             match flavour, UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | SimulatedUnixFlavour.Darwin, Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
+            | SimulatedUnixFlavour.Darwin,
+              Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) ->
                 SignalState.pending (Lone.proc after).Signals |> shouldBeEmpty
             | SimulatedUnixFlavour.Linux, Error refusal ->
                 refusal
@@ -251,7 +252,7 @@ module TestSignalReceiver =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
 
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) ->
                 let after =
                     after
                     |> Lone.mapProc (fun proc ->
@@ -278,7 +279,7 @@ module TestSignalReceiver =
 
             let signals =
                 SignalState.enqueue
-                    (Lone.UnixSystemState.signalNumbering system)
+                    (Kernel.signalNumbering system)
                     {
                         Signal = Signal.SIGUSR1
                         Target = ValueSome 2
@@ -332,7 +333,7 @@ module TestSignalReceiver =
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0..3 ])
 
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) ->
                 let after =
                     after
                     |> Lone.mapProc (fun proc ->
@@ -465,8 +466,8 @@ module TestSignalReceiver =
                     (Some only)
                     system
             with
-            | Ok (_, system) -> system
-            | Error errno -> failwith $"%s{row.Line}: pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, system -> system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%s{row.Line}: pthread_sigmask: %O{errno}"
 
         let booted =
             UnixSystem.initial platform
@@ -481,8 +482,8 @@ module TestSignalReceiver =
                         (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
                         booted
                 with
-                | Ok (_, system) -> resumes 0 system
-                | Error errno -> failwith $"%s{row.Line}: sigaction: %O{errno}"
+                | SigactionAnswer.Completed _, system -> resumes 0 system
+                | SigactionAnswer.Failed errno, _ -> failwith $"%s{row.Line}: sigaction: %O{errno}"
             else
                 booted
 
@@ -493,7 +494,7 @@ module TestSignalReceiver =
 
         let sent =
             match UnixSignal.kill (Callers.leader blocked) (ProcessId.toInt32 (Lone.pid blocked)) signo blocked with
-            | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> resumes 0 system
+            | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> resumes 0 system
             | other -> failwith $"%s{row.Line}: kill: %A{other}"
 
         (UnixSignal.sigpending (Callers.thread 0 sent) sent |> SignalMask.toWord,

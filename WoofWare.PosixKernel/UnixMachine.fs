@@ -35,6 +35,14 @@ type internal UnixMachineState =
             /// connections waiting in some listener's accept queue. An entry is
             /// removed when nothing references it any more (`UnixDescriptor.close`).
             Connections : Map<ConnectionId, TcpConnection>
+            /// The receive side of every UDP socket on the machine: the
+            /// datagrams each holds, what they cost its receive buffer, and
+            /// its pending error. A socket's entry is made with it
+            /// (`UnixSocket.socket`) and goes with it
+            /// (`ObjectLifetime.releaseDestroyed`), and
+            /// `UnixSystem.checkInvariants` holds the keys to the UDP sockets
+            /// in `Sockets`.
+            DatagramReceivers : Map<SocketId, DatagramReceiver>
             /// Every TCP connection end in TIME_WAIT whose connection both
             /// sockets have closed, keyed by its own endpoint and its peer's.
             /// An entry is made as the connection is forgotten, for the end
@@ -156,6 +164,18 @@ type internal UnixMachineState =
             /// per-flavour default; see `UnixBootImage.withTcpSendSpaceMax`.
             /// Only the Linux flavour reads it, through `TcpBufferSizing`.
             TcpSendSpaceMax : int
+            /// The receive buffer a new UDP socket starts with, in bytes:
+            /// Linux's `net.core.rmem_default` sysctl, Darwin's
+            /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`); see
+            /// `UnixBootImage.withUdpReceiveSpace`.
+            UdpReceiveSpace : int
+            /// The send buffer a new UDP socket starts with, in bytes: Linux's
+            /// `net.core.wmem_default` sysctl, and Darwin's
+            /// `net.inet.udp.maxdgram`, which is also the largest datagram a
+            /// Darwin UDP socket sends. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpSendSpace`).
+            UdpSendSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
             LocalIpv4Addresses : Ipv4Address list
@@ -176,17 +196,6 @@ type internal UnixMachineState =
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
             NextPipeId : PipeId
-            /// Every write that reached a client draining a pipe, oldest first: the
-            /// bytes the outside world has received from the machine's processes.
-            ///
-            /// A client reads what its own ends received by filtering on
-            /// `Delivery.Endpoint`, which names the process the pipe was launched
-            /// into as well as the descriptor. One log rather than one per endpoint, so that
-            /// the order of writes across endpoints is kept: a process writing to
-            /// its output, then its error stream, then its output again is read
-            /// back in that order. It grows without bound: a process that writes
-            /// gigabytes costs that much memory.
-            Delivered : DeliveryLog
             /// The inode number the next pipe end will be given, as `fstat(2)`
             /// reports it. Monotonic and never reused: a process can compare the
             /// numbers two descriptors report to decide whether they name one pipe,
@@ -335,64 +344,27 @@ module UnixMachineState =
     /// `machine` with the filesystem `mutation` leaves, which must have been
     /// made from `machine.FileSystem`, and the records its changes raise
     /// queued on the inotify instances watching what they changed, the
-    /// syscall having reached it as `notice` says; or the refusal of a change
-    /// an inotify watch could hear of through a name this kernel does not
-    /// keep (`CommittedFileSystem.commit`). Every syscall that changes the
-    /// filesystem stores its change through here or `commitFileSystem`.
-    let internal tryCommitFileSystem
-        (notice : ChangeNotice)
-        (mutation : VfsMutation)
-        (machine : UnixMachineState)
-        : Result<UnixMachineState, UnplacedChangeRefusal>
-        =
-        CommittedFileSystem.commit
-            notice
-            machine.InotifyLimits.MaxQueuedEvents
-            mutation
-            machine.OpenFiles
-            machine.CommittedFileSystem
-        |> Result.map (fun (committed, openFiles) ->
-            { machine with
-                CommittedFileSystem = committed
-                OpenFiles = openFiles
-            }
-        )
-
-    /// `tryCommitFileSystem`, for a change no watch can make this kernel
-    /// refuse: a change of names (`ChangeNotice.Names`), the release of a
-    /// name (`ChangeNotice.NameReleased`), a read (`ChangeNotice.Read`), or
-    /// one that reached
-    /// what it changed through a name or none, rather than through a removed
-    /// directory (`ReachedThrough.RemovedDirectory`). A write and a
-    /// truncation are such changes, being of a regular file, which only a
-    /// name reaches. Loudly partial on a notice of a removed directory.
+    /// syscall having reached it as `notice` says
+    /// (`CommittedFileSystem.commit`). Every syscall that changes the
+    /// filesystem stores its change through here.
     let internal commitFileSystem
         (notice : ChangeNotice)
         (mutation : VfsMutation)
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        match notice with
-        | ChangeNotice.Names
-        | ChangeNotice.NameReleased _
-        | ChangeNotice.Read _
-        | ChangeNotice.SetAttributes (ReachedThrough.Name _, _)
-        | ChangeNotice.SetAttributes (ReachedThrough.Unnamed, _)
-        | ChangeNotice.Written (ReachedThrough.Name _)
-        | ChangeNotice.Written ReachedThrough.Unnamed
-        | ChangeNotice.FaultedWrite (ReachedThrough.Name _)
-        | ChangeNotice.FaultedWrite ReachedThrough.Unnamed -> ()
-        | ChangeNotice.SetAttributes (ReachedThrough.RemovedDirectory _, _)
-        | ChangeNotice.Written (ReachedThrough.RemovedDirectory _)
-        | ChangeNotice.FaultedWrite (ReachedThrough.RemovedDirectory _) ->
-            failwith
-                $"UnixMachineState.commitFileSystem: committed %A{notice}, which may be refused; commit it through tryCommitFileSystem (this is a bug in this library)."
+        let committed, openFiles =
+            CommittedFileSystem.commit
+                notice
+                machine.InotifyLimits.MaxQueuedEvents
+                mutation
+                machine.OpenFiles
+                machine.CommittedFileSystem
 
-        match tryCommitFileSystem notice mutation machine with
-        | Ok machine -> machine
-        | Error refusal ->
-            failwith
-                $"UnixMachineState.commitFileSystem: %A{notice} was refused, which reached no removed directory: %s{UnplacedChangeRefusal.describe refusal} (this is a bug in this library)."
+        { machine with
+            CommittedFileSystem = committed
+            OpenFiles = openFiles
+        }
 
     /// The type of filesystem `inode` is on: the root filesystem's mount, or,
     /// for an inode on the device filesystem, tmpfs, which a Linux devtmpfs
@@ -462,15 +434,6 @@ module UnixMachineState =
         let (CpuId.CpuId index) = cpu
         index >= 0 && index < machine.ProcessorCount
 
-    /// Every write that has reached a client draining one of this machine's
-    /// pipes, oldest first: what the outside world has received from the
-    /// process. See `UnixMachineState.Delivered`.
-    ///
-    /// The client that drains those pipes reads this through
-    /// `UnixSystem.delivered`. No process can read this back, because the bytes
-    /// have left the machine.
-    let internal delivered (machine : UnixMachineState) : DeliveryLog = machine.Delivered
-
     /// The socket `socketId` names.
     ///
     /// Total, and loudly partial rather than an option: every `SocketId` a
@@ -483,6 +446,40 @@ module UnixMachineState =
         | None ->
             failwith
                 $"UnixMachineState.socket: %O{socketId} names no socket in this kernel's socket table. Every SocketId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingSocket exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand, rather than anything the simulated process did."
+
+    /// Whether `socket` is a UDP socket, and so has a receive side in
+    /// `DatagramReceivers`: a datagram socket of an Internet domain.
+    let internal receivesDatagrams (socket : SocketDescription) : bool =
+        match socket.Kind, socket.Domain with
+        | SocketKind.Datagram, SocketDomain.Inet
+        | SocketKind.Datagram, SocketDomain.Inet6 -> true
+        | SocketKind.Datagram, SocketDomain.Unix
+        | SocketKind.Stream, _
+        | SocketKind.SeqPacket, _ -> false
+
+    /// The receive side of the UDP socket `socketId`. Loudly partial, as
+    /// `socket` is: `UnixSystem.checkInvariants` holds every UDP socket to
+    /// having one.
+    let internal datagramReceiver (socketId : SocketId) (machine : UnixMachineState) : DatagramReceiver =
+        match Map.tryFind socketId machine.DatagramReceivers with
+        | Some receiver -> receiver
+        | None ->
+            failwith
+                $"UnixMachineState.datagramReceiver: %O{socketId} has no receive side in this kernel. Every UDP socket is made with one, and UnixSystemDefect.UdpSocketWithoutReceiver exists to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
+
+    /// `machine` with the receive side of the UDP socket `socketId` replaced
+    /// by `receiver`. Loudly partial, as `datagramReceiver` is.
+    let internal withDatagramReceiver
+        (socketId : SocketId)
+        (receiver : DatagramReceiver)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        datagramReceiver socketId machine |> ignore
+
+        { machine with
+            DatagramReceivers = Map.add socketId receiver machine.DatagramReceivers
+        }
 
     /// A new kqueue for a Darwin `poll` about to sleep, holding `queue`: its
     /// identity, and the machine holding it.
@@ -746,6 +743,18 @@ module UnixMachineState =
                 { ReadinessLevel.none with
                     Out = true
                     Hup = true
+                }
+            | SocketKind.Datagram when receivesDatagrams target ->
+                // Measured (`udp-transfer.c` G1 to G4, L1 and L5, in
+                // docs/plans/2026-10-18-udp-data-path): OUT always, since a
+                // UDP send never waits; IN while a datagram is queued; ERR
+                // while an ICMP error is pending, whatever is queued.
+                let receiver = datagramReceiver socketId machine
+
+                { ReadinessLevel.none with
+                    In = not (DatagramReceiver.isEmpty receiver)
+                    Out = true
+                    Err = DatagramReceiver.errorPending receiver
                 }
             | SocketKind.Datagram ->
                 { ReadinessLevel.none with
@@ -1291,6 +1300,27 @@ module UnixMachineState =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 16384
         | SimulatedUnixFlavour.Darwin -> 131072
+
+    /// The UDP receive buffer sysctl's default on each flavour, measured on
+    /// the probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
+    /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    /// GitHub's `ubuntu-24.04` runners configure Linux's as 1048576.
+    let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 786896
+
+    /// The UDP send buffer sysctl's default on each flavour, measured on the
+    /// probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.wmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.maxdgram` 9216
+    /// on Darwin 27.0.0, as a fresh UDP socket's `SO_SNDBUF` reports.
+    let internal defaultUdpSendSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 9216
 
     /// The TCP receive buffer sysctl's default on each flavour, measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072

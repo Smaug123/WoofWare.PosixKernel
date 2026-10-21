@@ -88,6 +88,7 @@ module TestDeviceDescriptorsAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -98,14 +99,14 @@ module TestDeviceDescriptorsAgainstHost =
     let private modelOpen (access : FileAccessMode) (path : string) (system : UnixSystem<int, string>) =
         match
             OpenFlagWords.openPath
+                (PathArg.ofText path)
                 { reading with
                     Access = access
                 }
-                (PathArg.ofText path)
                 0
                 system
         with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"the model's open(%s{path}): %A{other}"
 
     let private ofSyscall (answer : SyscallAnswer) : Answer =
@@ -196,7 +197,8 @@ module TestDeviceDescriptorsAgainstHost =
                     $"pwrite 16@%d{offset}",
                     hostAnswer (int64 (hostPWrite (host, Array.zeroCreate 16, 16un, offset))),
                     (match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 16UL offset system with
-                     | Ok (PWriteAdmission.Answered answer) -> ofWrite answer
+                     | Ok (PWriteAdmission.Answered answer)
+                     | Ok (PWriteAdmission.DeviceAnswered (answer, _, _)) -> ofWrite answer
                      | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                      | Ok (PWriteAdmission.Transfer (count, into)) ->
                          match
@@ -234,14 +236,15 @@ module TestDeviceDescriptorsAgainstHost =
                 "FIONREAD",
                 hostFionread host,
                 (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-                 | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
-                 | Ok (BytesAvailableAnswer.Failed error) -> Error error
+                 | Ok (BytesAvailableAnswer.Reported count, _) -> Ok (int64 count)
+                 | Ok (BytesAvailableAnswer.Failed error, _) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",
                 hostAnswer (int64 (hostTcGetAttr (host, Array.zeroCreate 256))),
                 (match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
-                 | TerminalAttributesAnswer.NotATerminal error -> Error error)
+                 | TerminalAttributesAnswer.NotATerminal error -> Error error
+                 | TerminalAttributesAnswer.Attributes _ -> failwith "the model's tcgetattr found a terminal")
 
                 for events in [ 0s ; 1s ; 4s ; 0x7FFFs ] do
                     $"poll %d{events}",
@@ -274,7 +277,7 @@ module TestDeviceDescriptorsAgainstHost =
                      HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =
                     FileDescriptorRegistry.createEpoll
-                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                         (Lone.fileDescriptors system)
 
                  let system = Lone.withFileDescriptors registry system
@@ -314,7 +317,7 @@ module TestDeviceDescriptorsAgainstHost =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
                 for path in [ "/dev/null" ; "/dev/urandom" ] do
-                    match OpenFlagWords.openPath reading (PathArg.ofText path) 0 (booted flavour) with
+                    match OpenFlagWords.openPath (PathArg.ofText path) reading 0 (booted flavour) with
                     | Error (OpenRefusal.Path (PathRefusal.UnmodelledFileSystem _)) -> ()
                     | other -> failwith $"open %s{path} on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux ->

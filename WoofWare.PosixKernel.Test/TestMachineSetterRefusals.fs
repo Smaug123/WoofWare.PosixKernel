@@ -53,12 +53,69 @@ module TestMachineSetterRefusals =
 
     // ------------------------------------------------------------ somaxconn
 
+    // ------------------------------------------------------------ UDP receive space
+
+    /// The smallest and largest `withUdpReceiveSpace` admits on `platform`.
+    let private udpReceiveSpaceBounds (platform : SimulatedUnixPlatform) : int * int =
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> 212992, Int32.MaxValue >>> 1
+        | SimulatedUnixFlavour.Darwin -> 786896, 1048576
+
+    /// The receive buffer of a UDP socket made on `image` once it is booted.
+    let private udpSocketBuffer (image : UnixBootImage<int, string>) : int =
+        let fd, system =
+            Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
+            |> NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp
+
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
+        | Some (OpenFileTarget.Socket socketId) ->
+            match (Kernel.machine system).DatagramReceivers.[socketId] with
+            | DatagramReceiver.Linux linux -> linux.ReceiveBuffer
+            | DatagramReceiver.Darwin darwin -> darwin.ReceiveSpace
+        | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
+
+    [<Test>]
+    let ``withUdpReceiveSpace admits exactly the values from its flavour's default to its ceiling`` () : unit =
+        let property (platform : SimulatedUnixPlatform, value : int) : unit =
+            let floor, ceiling = udpReceiveSpaceBounds platform
+
+            match UnixBootImage.tryWithUdpReceiveSpace (Some value) (imageOn platform) with
+            | Ok image when floor <= value && value <= ceiling -> udpSocketBuffer image |> shouldEqual value
+            | Error refusal when value < floor ->
+                refusal |> shouldEqual (UdpReceiveSpaceRefusal.BelowMeasured (value, floor))
+            | Error refusal when value > ceiling ->
+                refusal |> shouldEqual (UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling))
+            | Ok _ -> failwith $"%d{value} was admitted on %O{platform}"
+            | Error refusal -> failwith $"%d{value} was refused on %O{platform}: %A{refusal}"
+
+        let value =
+            Gen.oneof
+                [
+                    anyInt
+                    Gen.elements [ 212991 ; 212992 ; 786895 ; 786896 ; 1048576 ; 1048577 ]
+                    Gen.elements [ (Int32.MaxValue >>> 1) ; (Int32.MaxValue >>> 1) + 1 ]
+                    Gen.choose (200000, 1100000)
+                ]
+
+        Check.One (propertyConfig, Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) value)) property)
+
+    [<Test>]
+    let ``withUdpReceiveSpace's default is its flavour's, and its bounds are admitted`` () : unit =
+        for platform in platforms do
+            let floor, ceiling = udpReceiveSpaceBounds platform
+
+            for value in [ None ; Some floor ; Some ceiling ] do
+                UnixBootImage.tryWithUdpReceiveSpace value (imageOn platform)
+                |> Configured.expectOk UdpReceiveSpaceRefusal.describe
+                |> udpSocketBuffer
+                |> shouldEqual (Option.defaultValue floor value)
+
     [<Test>]
     let ``withSoMaxConn admits exactly the positive values, and refuses the rest as not positive`` () : unit =
         let property (platform : SimulatedUnixPlatform, value : int) : unit =
             match UnixBootImage.tryWithSoMaxConn (Some value) (imageOn platform), value >= 1 with
             | Ok image, true ->
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.SoMaxConn
+                UnixSystem.soMaxConn (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
                 |> shouldEqual value
             | Error refusal, false -> refusal |> shouldEqual (SoMaxConnRefusal.NotPositive value)
             | Ok _, false -> failwith $"%d{value} was admitted on %O{platform}"
@@ -75,8 +132,8 @@ module TestMachineSetterRefusals =
 
             (UnixBootImage.tryWithSoMaxConn (Some 1) (imageOn platform)
              |> Configured.expectOk SoMaxConnRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.SoMaxConn
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> UnixSystem.soMaxConn)
             |> shouldEqual 1
 
     // ------------------------------------------------------ processor count
@@ -86,8 +143,9 @@ module TestMachineSetterRefusals =
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
             match UnixBootImage.tryWithProcessorCount count (imageOn platform), count >= 1 with
             | Ok image, true ->
-                UnixMachineState.processorCount
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine
+                UnixMachineState.processorCount (
+                    Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
+                )
                 |> shouldEqual count
             | Error refusal, false -> refusal |> shouldEqual (ProcessorCountRefusal.NotPositive count)
             | Ok _, false -> failwith $"%d{count} was admitted on %O{platform}"
@@ -105,7 +163,7 @@ module TestMachineSetterRefusals =
             UnixBootImage.tryWithProcessorCount 1 (imageOn platform)
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual 1
 
     // ------------------------------------------------ ephemeral port range
@@ -225,7 +283,7 @@ module TestMachineSetterRefusals =
                 UnixSystem.ephemeralPortRange system |> shouldEqual (low, high)
                 UnixSystem.unprivilegedPortStart system |> shouldEqual effectiveStart
                 // Rewound into the range, so the first ephemeral port is its low end.
-                system.Machine.NextEphemeralPort |> shouldEqual low
+                (Kernel.machine system).NextEphemeralPort |> shouldEqual low
             | SimulatedUnixFlavour.Linux, Error refusal ->
                 refusal
                 |> shouldEqual $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, effectiveStart)}"
@@ -308,7 +366,7 @@ module TestMachineSetterRefusals =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.PipeDevice
+                (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).PipeDevice
                 |> shouldEqual device
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -338,8 +396,9 @@ module TestMachineSetterRefusals =
         for platform in platforms do
             (UnixBootImage.tryWithPipeDevice None (imageOn platform)
              |> Configured.expectOk PipeDeviceRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.PipeDevice
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> Kernel.machine)
+                .PipeDevice
             |> shouldEqual (UnixMachineState.defaultPipeDevice (SimulatedUnixPlatform.flavour platform))
 
     // -------------------------------------------------------------- describe
@@ -394,6 +453,8 @@ module TestMachineSetterRefusals =
                 PipeDeviceRefusal.describe (PipeDeviceRefusal.DarwinReportsZero 31L), "31"
                 PipeDeviceRefusal.describe (PipeDeviceRefusal.Negative -31L), "-31"
                 SoMaxConnRefusal.describe (SoMaxConnRefusal.NotPositive -9), "-9"
+                UdpReceiveSpaceRefusal.describe (UdpReceiveSpaceRefusal.BelowMeasured (4321, 212992)), "4321"
+                UdpReceiveSpaceRefusal.describe (UdpReceiveSpaceRefusal.AboveMeasured (4321, 97)), "97"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.NotReadOn (SimulatedUnixFlavour.Linux, 4321)), "4321"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.AboveSocketBufferMax (4321, 99)), "99"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.BelowLoopbackSendPipe (4321, 98)), "98"

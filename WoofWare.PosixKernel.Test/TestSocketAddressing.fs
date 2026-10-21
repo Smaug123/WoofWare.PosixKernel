@@ -165,7 +165,7 @@ module TestSocketAddressing =
         | Ok (SteppedCall.SetSockOpt (SetSockOptAnswer.Set, after)) -> Answer.Succeeded, after
         | Ok (SteppedCall.SetSockOpt (SetSockOptAnswer.Failed error, after)) -> Answer.Failed error, after
         | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Reported bytes, after)) when bytes.Length = 4 ->
-            Answer.Read (SimulatedUnixPlatform.decodeCInt system.Machine.UnixPlatform bytes 0), after
+            Answer.Read (SimulatedUnixPlatform.decodeCInt (UnixSystem.platform system) bytes 0), after
         | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Reported bytes, _)) ->
             failwith $"getsockopt reported %d{bytes.Length} bytes"
         | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Failed (error, _), after)) -> Answer.Failed error, after
@@ -188,7 +188,7 @@ module TestSocketAddressing =
         (system : UnixSystem<int, string>)
         : unit
         =
-        let level, name = ipv6OnlyOption system.Machine.UnixPlatform
+        let level, name = ipv6OnlyOption (UnixSystem.platform system)
         let bytes = OptionValue.ofInt value
 
         let supplied =
@@ -222,7 +222,7 @@ module TestSocketAddressing =
         (system : UnixSystem<int, string>)
         : unit
         =
-        let level, name = ipv6OnlyOption system.Machine.UnixPlatform
+        let level, name = ipv6OnlyOption (UnixSystem.platform system)
 
         let read =
             match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
@@ -342,8 +342,9 @@ module TestSocketAddressing =
                 | Call.Socket (domain, kind) ->
                     let fd, system =
                         match stepped (socketCall platform domain kind) system with
-                        | Ok (SteppedCall.Socket (Ok created)) -> created
-                        | Ok (SteppedCall.Socket (Error error)) -> failwith $"%s{describe}: socket answered %O{error}"
+                        | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) -> fd, system
+                        | Ok (SteppedCall.Socket (DescriptorAnswer.Failed error, _)) ->
+                            failwith $"%s{describe}: socket answered %O{error}"
                         | Ok other ->
                             failwith $"%s{describe}: socket answered SteppedCall.%s{UnionCaseName.ofValue other}"
                         | Error refusal ->

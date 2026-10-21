@@ -152,12 +152,13 @@ module TestBindingCount =
     let private assertStatAgrees (context : unit -> string) (vfs : VirtualFileSystem) : unit =
         for platform, fsType, system in statSystems do
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 

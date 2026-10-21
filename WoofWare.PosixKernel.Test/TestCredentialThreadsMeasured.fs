@@ -289,7 +289,7 @@ module TestCredentialThreadsMeasured =
             | other -> failwith $"getresgid answered %A{other}"
 
         let supplementary =
-            match UnixDescriptor.getgroups caller UserBuffer.Mapped 8 system with
+            match UnixCredentials.getgroups caller UserBuffer.Mapped 8 system with
             | GetGroupsAnswer.Copied groups -> groups |> List.map GroupId.toUInt32
             | other -> failwith $"getgroups answered %A{other}"
 
@@ -364,8 +364,10 @@ module TestCredentialThreadsMeasured =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         match UnixSignal.sigaction (Callers.leader system) 33 None system with
-        | Error error -> error |> shouldEqual UnixError.EINVAL
-        | Ok _ -> failwith "sigaction(3) of 33 answered a disposition"
+        | SigactionAnswer.Failed error, after ->
+            error |> shouldEqual UnixError.EINVAL
+            after |> shouldEqual system
+        | SigactionAnswer.Completed _, _ -> failwith "sigaction(3) of 33 answered a disposition"
 
     [<Test>]
     let ``glibc's wrapper never returns while another thread blocks signal 33`` () : unit =
@@ -468,6 +470,7 @@ module TestCredentialThreadsMeasured =
                             FutexTimeout.Untimed
                         else
                             FutexTimeout.Until 400L
+                    FutexBitset = UnixFutex.FutexBitsetMatchAny
                     TakenByWake = false
                 }
         | "read-pipe" ->
@@ -482,7 +485,9 @@ module TestCredentialThreadsMeasured =
                 {
                     Listener = SleepTarget.Waiting (description, 3)
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 }
         | "nanosleep" ->
             ParkedSyscall.Sleep

@@ -184,7 +184,7 @@ module TestEntropyAgainstHost =
                                 | Ok (GetRandomAnswer.Failed error, _) ->
                                     Error (
                                         UnixError.toRawErrnoUnder
-                                            (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                                            (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                                             error
                                     )
                                 | Error refusal ->
@@ -284,7 +284,7 @@ module TestEntropyAgainstHost =
                         | Ok (GetEntropyAnswer.Failed error, _) ->
                             Error (
                                 UnixError.toRawErrnoUnder
-                                    (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                                    (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                                     error
                             )
                         | Error refusal -> failwith $"%A{where}, %d{length} bytes: refused, %O{refusal}"

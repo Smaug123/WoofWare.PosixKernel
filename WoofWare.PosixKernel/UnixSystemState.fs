@@ -623,6 +623,18 @@ type SyscallAnswer =
     /// descriptor table before it can discover the conflict that fails it.
     | Failed of error : UnixError
 
+/// What a call that makes a descriptor answered: `open(2)` and `openat(2)`
+/// (inside an `OpenOutcome`), `dup(2)`, `dup2(2)`, `dup3(2)`, `socket(2)`,
+/// `epoll_create1(2)`, `inotify_init1(2)` and `kqueue(2)`.
+[<RequireQualifiedAccess>]
+type DescriptorAnswer =
+    /// The entry point returns `fd`, which now names the open file
+    /// description the call made or duplicated.
+    | Returned of fd : int
+    /// The entry point returns its failure sentinel, and the client stores
+    /// `error` wherever its libc keeps errno.
+    | Failed of error : UnixError
+
 /// A process that has ended, and how. Only a syscall that ends the process
 /// makes one, and answers it beside the system without the process
 /// (`ProcessFate.ProcessEnded`, `UnixThreadLifecycle.exitGroup`).
@@ -651,7 +663,7 @@ module EndedProcess =
 /// outcome and the system it left the process in, or the process ended.
 ///
 /// `'Outcome` is what the call says besides, which never includes the process
-/// ending: a `WriteOutcome` for a write, a `KillOutcome` for `kill(2)`, a
+/// ending: a `WriteOutcome` for a write, a `KillAnswer` for `kill(2)`, a
 /// `ReturnToUserOutcome` for a return to user mode, and `unit` for a thread's
 /// exit, which says nothing more.
 [<RequireQualifiedAccess>]
@@ -690,8 +702,7 @@ type internal Unfocus<'View, 'Kernel> =
 
 /// Where the systems sit in a call's answer, built from the `Shape` module's
 /// functions, which nest as the answer's type does: `kill`'s
-/// `Result<Result<ProcessFate<_, _, _>, UnixError>, KillRefusal>` is
-/// `Shape.result (Shape.result Shape.fate)`.
+/// `Result<ProcessFate<_, _, _>, KillRefusal>` is `Shape.result Shape.fate`.
 ///
 /// `'InView` is the answer as a call's body gives it, each system in it a
 /// `'View`, and `'InKernel` is that answer with a `'Kernel` made of each of
@@ -757,6 +768,16 @@ module internal Shape =
             match result with
             | Ok answer -> Ok (map unfocus ok answer)
             | Error error -> Error error
+        )
+
+    /// A pair whose first part is shaped as `first` says. Its second part
+    /// holds no system.
+    let beside<'View, 'Kernel, 'InView, 'InKernel, 'Answer>
+        (first : Shape<'View, 'Kernel, 'InView, 'InKernel>)
+        : Shape<'View, 'Kernel, 'InView * 'Answer, 'InKernel * 'Answer>
+        =
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) ((part : 'InView), (answer : 'Answer)) ->
+            map unfocus first part, answer
         )
 
     /// A `CallProgress` whose `Answered` is shaped as `answered` says. Its

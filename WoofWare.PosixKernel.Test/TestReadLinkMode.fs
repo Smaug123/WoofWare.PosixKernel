@@ -176,12 +176,13 @@ module TestReadLinkMode =
 
         let vfs = populate cellInode cellOwner entries vfs
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = cellInode
@@ -199,12 +200,13 @@ module TestReadLinkMode =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private opened (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
     // ------------------------------------------------------------ what readlink answered
@@ -392,9 +394,9 @@ module TestReadLinkMode =
         | "lstat(l)" -> status SymlinkPolicy.NoFollowFinal
         | "stat(l)" -> status SymlinkPolicy.Follow
         | "open(l, O_RDONLY)" ->
-            match Answered.openPath readOnly (UnixPath.parseOrFail context "l") 0 system with
-            | SyscallAnswer.Completed _, _ -> "ok"
-            | SyscallAnswer.Failed error, _ -> $"%A{error}"
+            match Answered.openPath (UnixPath.parseOrFail context "l") readOnly 0 system with
+            | DescriptorAnswer.Returned _, _ -> "ok"
+            | DescriptorAnswer.Failed error, _ -> $"%A{error}"
         | other -> failwith $"%s{context}: the probe made no call %s{other}"
 
     [<Test>]

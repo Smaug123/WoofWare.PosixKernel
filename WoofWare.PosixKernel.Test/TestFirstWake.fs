@@ -134,8 +134,8 @@ module TestFirstWake =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (leader system) (signo signal system) (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     let private pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
         match UnixPipe.tryPipe2 (leader system) 0 UserBuffer.Mapped system with
@@ -268,7 +268,7 @@ module TestFirstWake =
             let listener, system = KeventWorld.listenerAt port system
 
             let park (thread : int) (system : UnixSystem<int, string>) =
-                UnixConnection.tryAccept (Callers.thread thread system) listener UserBuffer.Mapped 16u system
+                UnixConnection.tryAccept (Callers.thread thread system) listener UserBuffer.Mapped (Some 16u) 0 system
                 |> sleeps
                     "accept"
                     (fun outcome ->
@@ -296,8 +296,8 @@ module TestFirstWake =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"open: %A{other}"
 
             let holder, system = opened system
@@ -462,7 +462,7 @@ module TestFirstWake =
                 // this library does not model: see `divergent`.
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (leader system) 0 system with
-                    | Ok (Ok (fd, system)) -> fd, system
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 let system =
@@ -515,9 +515,13 @@ module TestFirstWake =
 
                 let timeout =
                     if timed then
-                        KeventTimeout.Readable (0L, 100_000_000L)
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 100_000_000L
+                            }
                     else
-                        KeventTimeout.Null
+                        TimespecArgument.Null
 
                 let park (thread : int) (system : UnixSystem<int, string>) =
                     UnixKqueue.tryKevent (Callers.thread thread system) kq 0 [] 1 UserBuffer.Mapped timeout system
@@ -580,7 +584,7 @@ module TestFirstWake =
             | Event.Drain -> w.Drain system
             | Event.Signal ->
                 match UnixSignal.tryPthreadKill (leader system) front (signo Signal.SIGUSR1 system) system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"pthread_kill: %A{other}"
             | Event.Deadline ->
                 match deadline with
@@ -684,8 +688,8 @@ module TestFirstWake =
             OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
         let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open: %A{other}"
 
         let holder, system = opened system
@@ -709,7 +713,7 @@ module TestFirstWake =
 
         let system =
             match UnixSignal.tryPthreadKill (leader system) 1 (signo Signal.SIGUSR1 system) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> wake system
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> wake system
             | other -> failwith $"pthread_kill: %A{other}"
 
         let system =

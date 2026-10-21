@@ -137,12 +137,13 @@ module TestStartingDirectory =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -221,11 +222,12 @@ module TestStartingDirectory =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok created) -> Some created
+                | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
                 match UnixKqueue.tryKqueue (Callers.leader system) system with
-                | Ok created -> Some created
+                | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+                | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | other -> failwith $"%s{context}: the probe has no dirfd kind called %s{other}"
 
@@ -888,10 +890,10 @@ module TestStartingDirectory =
         | SimulatedUnixFlavour.Linux -> 0x200
         | SimulatedUnixFlavour.Darwin -> 0x400
 
-    let private renderedOpen (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) : string =
+    let private renderedOpen (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) : string =
         match result with
-        | Ok (SyscallAnswer.Completed _, _) -> "ok"
-        | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
+        | Ok (DescriptorAnswer.Returned _, _) -> "ok"
+        | Ok (DescriptorAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"refused: %s{OpenRefusal.describe refusal}"
 
     let private replayOpenAt (envelope : Envelope) : unit =
@@ -966,8 +968,8 @@ module TestStartingDirectory =
             if opened > bound then
                 failwith $"%s{context}: %d{opened} opens and the table is still not full at the bound %d{bound}"
 
-            match OpenOutcomes.openPath 0 (PathArg.ofText "f") 0 system with
-            | Ok (SyscallAnswer.Completed _, system) -> fill (opened + 1) system
+            match OpenOutcomes.openPath (PathArg.ofText "f") 0 0 system with
+            | Ok (DescriptorAnswer.Returned _, system) -> fill (opened + 1) system
             | Error (OpenRefusal.DescriptorLimit _) -> system
             | other -> failwith $"%s{context}: filling the table: %A{other}"
 
@@ -1174,8 +1176,8 @@ module TestStartingDirectory =
         | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
         | Ok (SyscallAnswer.Completed _, after) ->
 
-        let vfs = after.Machine.FileSystem
-        let existed = VirtualFileSystem.inodes before.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem after
+        let existed = VirtualFileSystem.inodes (UnixSystem.fileSystem before)
 
         let created =
             VirtualFileSystem.inodes vfs
@@ -1585,7 +1587,7 @@ module TestStartingDirectory =
     /// Every path under the cell `/c`, relative to it, as `unlinkat-rules.c`
     /// collects them: a directory's entries, never following a link.
     let private cellPaths (system : UnixSystem<int, string>) : Set<string> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : string seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -1601,7 +1603,7 @@ module TestStartingDirectory =
         let cell =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -2072,7 +2074,7 @@ module TestStartingDirectory =
     /// names, never following a link, in byte order: each path is held one
     /// byte to a character, so that ordinal order is byte order.
     let private cellInodes (system : UnixSystem<int, string>) : (string * InodeNumber) list =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : (string * InodeNumber) seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -2089,7 +2091,7 @@ module TestStartingDirectory =
         let cell =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -2679,7 +2681,7 @@ module TestStartingDirectory =
         (system : UnixSystem<int, string>)
         : string option
         =
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
         match Lone.UnixPathResolution.copyIn path system with
         | Error error -> Some $"%A{error}"
@@ -2846,10 +2848,10 @@ module TestStartingDirectory =
                     (SimulatedUnixPlatform.pathLimits platform)
                     Owners.root
                     SymlinkProtection.Off
-                    (VirtualFileSystem.root system.Machine.FileSystem)
+                    (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     SymlinkPolicy.Follow
                     (UnixPath.parseOrFail context cwd)
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok inode -> inode
             | Error failure -> failwith $"%s{context}: %s{cwd} does not resolve: %A{failure}"
@@ -2934,8 +2936,8 @@ module TestStartingDirectory =
         let property (platform, credentials, cwd, path, policy, trailing) : unit =
             let system = walkSystem platform credentials cwd
             let limits = SimulatedUnixPlatform.pathLimits platform
-            let vfs = system.Machine.FileSystem
-            let protection = system.Machine.ProtectedFiles.Symlinks
+            let vfs = UnixSystem.fileSystem system
+            let protection = (UnixSystem.protectedFiles system).Symlinks
             let start = (Lone.proc system).CurrentDirectoryInode
 
             Lone.UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
@@ -2961,8 +2963,8 @@ module TestStartingDirectory =
             let asRoot = walkSystem platform Owners.root cwd
 
             let fd, held =
-                match Answered.openPath readOnly (UnixPath.parseOrFail context cwd) 0 asRoot with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                match Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 asRoot with
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -2970,7 +2972,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3018,12 +3020,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -3031,7 +3033,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3076,12 +3078,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
@@ -3089,7 +3091,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3148,7 +3150,7 @@ module TestStartingDirectory =
             let inCwd = walkSystem platform credentials cwd
 
             OpenOutcomes.openat (atFdCwd flavour) argument flags 0o644 inCwd
-            |> shouldEqual (OpenOutcomes.openPath flags argument 0o644 inCwd)
+            |> shouldEqual (OpenOutcomes.openPath argument flags 0o644 inCwd)
 
             // Opened as root, as the descriptor properties above do, and
             // compared with open from the same tree, whose unowned entries are
@@ -3157,12 +3159,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3175,17 +3177,17 @@ module TestStartingDirectory =
                 )
                 |> Lone.restand
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
-            let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) =
+            let outcome (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem, (Lone.fileDescriptors system))
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system, (Lone.fileDescriptors system))
                 | Error refusal -> Error refusal
 
             OpenOutcomes.openat fd argument flags 0o644 atRoot
             |> outcome
-            |> shouldEqual (OpenOutcomes.openPath flags argument 0o644 heldInCwd |> outcome)
+            |> shouldEqual (OpenOutcomes.openPath argument flags 0o644 heldInCwd |> outcome)
 
         Check.One (config, Prop.forAll (Arb.fromGen openCase) property)
 
@@ -3218,12 +3220,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3235,12 +3237,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, PathRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryMkdirat (Callers.leader atRoot) fd argument mode atRoot
@@ -3288,12 +3290,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3305,12 +3307,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, MkNodRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryMknodat (Callers.leader atRoot) fd argument mode dev atRoot
@@ -3365,12 +3367,12 @@ module TestStartingDirectory =
             let fd, held =
                 match
                     Answered.openPath
-                        readOnly
                         (UnixPath.parseOrFail context cwd)
+                        readOnly
                         0
                         (walkSystem platform Owners.root cwd)
                 with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
@@ -3382,12 +3384,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, UnlinkAtRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryUnlinkat (Callers.leader atRoot) fd argument flags atRoot
@@ -3442,8 +3444,8 @@ module TestStartingDirectory =
             let asRoot = walkSystem platform Owners.root cwd
 
             let openedAsRoot (directory : string) (system : UnixSystem<int, string>) =
-                match Answered.openPath readOnly (UnixPath.parseOrFail context directory) 0 system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                match Answered.openPath (UnixPath.parseOrFail context directory) readOnly 0 system with
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{directory}) did not open: %O{other}"
 
             let oldFd, held = openedAsRoot cwd asRoot
@@ -3458,12 +3460,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, RenameRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             // The same descriptor on both sides is rename from its directory
@@ -3488,7 +3490,7 @@ module TestStartingDirectory =
         : Result<SyscallAnswer * VirtualFileSystem, 'Refusal>
         =
         match result with
-        | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+        | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
         | Error refusal -> Error refusal
 
     /// `walkSystem`'s tree, built by root with the process holding a
@@ -3505,9 +3507,9 @@ module TestStartingDirectory =
         // by the same caller.
         let fd, held =
             match
-                Answered.openPath readOnly (UnixPath.parseOrFail context cwd) 0 (walkSystem platform Owners.root cwd)
+                Answered.openPath (UnixPath.parseOrFail context cwd) readOnly 0 (walkSystem platform Owners.root cwd)
             with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
         let withCaller (cwdInode : InodeNumber) =
@@ -3520,7 +3522,7 @@ module TestStartingDirectory =
             )
 
         fd,
-        withCaller (VirtualFileSystem.root held.Machine.FileSystem),
+        withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held)),
         withCaller (Lone.proc held).CurrentDirectoryInode
 
     [<Test>]
@@ -3750,13 +3752,13 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
             elif held = "epoll" then
                 match UnixPoll.tryEpollCreate1 (Callers.leader asRoot) 0 asRoot with
-                | Ok (Ok created) -> created
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             else
                 let path = held.Substring (held.IndexOf ':' + 1)
 
-                match Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 asRoot with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                match Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 asRoot with
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
         fd,

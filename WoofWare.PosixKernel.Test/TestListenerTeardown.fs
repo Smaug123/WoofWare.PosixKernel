@@ -72,7 +72,7 @@ module TestListenerTeardown =
         (system : UnixSystem<int, string>)
         : Result<SetSockOptAnswer * UnixSystem<int, string>, SocketOptionRefusal>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -145,7 +145,7 @@ module TestListenerTeardown =
         match KeventWorld.readSocketError fd system with
         | GetSockOptAnswer.Reported (OptionValue.Int 0), system -> "0", system
         | GetSockOptAnswer.Reported (OptionValue.Int raw), system ->
-            let numbering = SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform
+            let numbering = SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system)
 
             match UnixError.ofRawErrnoUnder numbering raw with
             | Some error -> errnoName error, system
@@ -162,7 +162,7 @@ module TestListenerTeardown =
                 fresh
                 UserBuffer.Mapped
                 16u
-                (CopyIn.inet system.Machine.UnixPlatform (KeventWorld.loopback port))
+                (CopyIn.inet (UnixSystem.platform system) (KeventWorld.loopback port))
                 system
         with
         | Ok (BindAnswer.Bound _, _) -> "bind-ok"
@@ -174,7 +174,7 @@ module TestListenerTeardown =
     /// a fresh kqueue's `EVFILT_READ` and `EVFILT_WRITE` (Darwin); then
     /// `FIONREAD`. What it creates is closed again.
     let private readiness (fd : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
         let events =
             match flavour with
@@ -202,7 +202,7 @@ module TestListenerTeardown =
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                    | Ok (Ok created) -> created
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 // The probe's registration is level-triggered, which this
@@ -270,7 +270,7 @@ module TestListenerTeardown =
 
         let readable =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         $"poll=0x%x{revents} %s{waiters} fionread=%d{readable}", system
@@ -305,7 +305,7 @@ module TestListenerTeardown =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals
@@ -414,7 +414,7 @@ module TestListenerTeardown =
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                    | Ok (Ok created) -> created
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 let interest =
@@ -524,7 +524,7 @@ module TestListenerTeardown =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals
@@ -535,7 +535,7 @@ module TestListenerTeardown =
         let client, system = connectTo system
 
         let clientPort =
-            match (UnixMachineState.socket (socketOf client system) system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith "the connected client is unbound"
 
@@ -577,8 +577,8 @@ module TestListenerTeardown =
         let bound = bindFree clientPort system
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"%s{row}: the accept answered %A{other}"
 
         let _, system =
@@ -639,7 +639,7 @@ module TestListenerTeardown =
         let listener, system = listenerAt system
         let client, system = KeventWorld.client port system
 
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the connect's report pending, got %A{other}"
 

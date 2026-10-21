@@ -306,14 +306,15 @@ module TestUTimensAt =
                         }
                         vfs
                 )
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial fileSystem
                 }
-        }
+            )
+            system
 
     /// `system` with the caller's credentials, as the probe's child had once it
     /// dropped.
@@ -335,6 +336,7 @@ module TestUTimensAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -344,8 +346,8 @@ module TestUTimensAt =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match Answered.openPath flags (UnixPath.parseOrFail context path) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context path) flags 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -449,11 +451,12 @@ module TestUTimensAt =
             match flavourOf caller with
             | SimulatedUnixFlavour.Linux ->
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (fd, system)) -> fd, None, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, None, system
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
                 match UnixKqueue.tryKqueue (Callers.leader system) system with
-                | Ok (fd, system) -> fd, None, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, None, system
+                | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | "devnull" ->
             let fd, system = opened readOnly "/dev/null" system
@@ -679,12 +682,9 @@ module TestUTimensAt =
         : Result<string * string, UTimensAtRefusal>
         =
         // The probe let the clock move on before it looked.
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock settling system.Scheduling
-            }
+        let system = UnixSystem.advanceClock settling system
 
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
         let paths = if reportObjects then objects caller else []
 
         let heldSnapshots (system : UnixSystem<int, string>) : (string * Snapshot option) list =
@@ -747,7 +747,6 @@ module TestUTimensAt =
         | UTimensAtRefusal.Socket _ -> "Socket"
         | UTimensAtRefusal.LaunchedPipe _ -> "LaunchedPipe"
         | UTimensAtRefusal.UnmeasuredFileSystem _ -> "UnmeasuredFileSystem"
-        | UTimensAtRefusal.UnplacedChange _ -> "UnplacedChange"
 
     /// One row, made ready to replay.
     type private Row =
@@ -1007,13 +1006,13 @@ module TestUTimensAt =
                 |> Launched.bootWith (Launched.credentials caller) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
-                            CommittedFileSystem = CommittedFileSystem.initial vfs
-                        }
-                    Scheduling = UnixSchedulingState.advanceClock settling system.Scheduling
-                }
+                system
+                |> UnixSystem.advanceClock settling
+                |> Kernel.mapMachine (fun machine ->
+                    { machine with
+                        CommittedFileSystem = CommittedFileSystem.initial vfs
+                    }
+                )
 
             let flags =
                 if row.[2].Contains "NOFOLLOW" then
@@ -1038,7 +1037,9 @@ module TestUTimensAt =
                         system
                 with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
-                    let times = (VirtualFileSystem.get context inode after.Machine.FileSystem).Times
+                    let times =
+                        (VirtualFileSystem.get context inode (UnixSystem.fileSystem after)).Times
+
                     let accessed = render before.Access times.Access (stored explicitAccess)
 
                     let modified =
@@ -1052,7 +1053,9 @@ module TestUTimensAt =
 
                     "-> ok", $"atime=%s{accessed} mtime=%s{modified} ctime=%s{changed}"
                 | Ok (SyscallAnswer.Failed error, after) ->
-                    let times = (VirtualFileSystem.get context inode after.Machine.FileSystem).Times
+                    let times =
+                        (VirtualFileSystem.get context inode (UnixSystem.fileSystem after)).Times
+
                     (times = before) |> shouldEqual true
                     $"-> %O{error}", "atime=same mtime=same ctime=same"
                 | other -> $"%A{other}", ""

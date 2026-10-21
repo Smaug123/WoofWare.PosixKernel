@@ -137,7 +137,7 @@ module TestSyscallInterruption =
 
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (fd, system)) -> fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"expected an epoll instance, got %A{other}"
 
             match
@@ -161,15 +161,16 @@ module TestSyscallInterruption =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -177,20 +178,22 @@ module TestSyscallInterruption =
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 registry
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> withRegistry registry
 
         let system =
@@ -236,7 +239,8 @@ module TestSyscallInterruption =
                     (Callers.thread thread world.System)
                     world.Listener
                     UserBuffer.Mapped
-                    16u
+                    (Some 16u)
+                    0
                     world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
@@ -405,7 +409,7 @@ module TestSyscallInterruption =
     /// `sent`, installed and then generated for `thread` alone: the system's
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let numbering = Lone.UnixSystemState.signalNumbering system
+        let numbering = Kernel.signalNumbering system
 
         let signals =
             ((Lone.proc system).Signals, sent)
@@ -623,11 +627,7 @@ module TestSyscallInterruption =
 
             let system =
                 match timeoutOf sleep with
-                | Some ms when pastDeadline ->
-                    { system with
-                        Scheduling =
-                            UnixSchedulingState.advanceClock (int64 ms * nanosecondsPerMillisecond) system.Scheduling
-                    }
+                | Some ms when pastDeadline -> UnixSystem.advanceClock (int64 ms * nanosecondsPerMillisecond) system
                 | _ -> system
 
             let expected = oracle flavour sleep sent ready pastDeadline
@@ -667,7 +667,7 @@ module TestSyscallInterruption =
                 if closedUnder then
                     seen <- Set.add $"closed under, then %A{ending}" seen
 
-                OpenFileTable.descriptions after.Machine.OpenFiles
+                OpenFileTable.descriptions (UnixSystem.openFiles after)
                 |> Map.containsKey held
                 |> shouldEqual survives
 
@@ -801,7 +801,9 @@ module TestSyscallInterruption =
                 {
                     Listener = waiting
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 }
             ParkedSyscall.PipeRead
                 {
@@ -876,6 +878,7 @@ module TestSyscallInterruption =
                 {
                     FutexAddress = 0x1000UL
                     FutexTimeout = FutexTimeout.Untimed
+                    FutexBitset = UnixFutex.FutexBitsetMatchAny
                     TakenByWake = false
                 }
         ]
@@ -924,6 +927,7 @@ module TestSyscallInterruption =
             match wait.FutexTimeout with
             | FutexTimeout.Untimed -> SignalRestartRule.RestartsUnderSaRestart
             | FutexTimeout.Until _
+            | FutexTimeout.At _
             | FutexTimeout.Unbounded -> SignalRestartRule.FailsWithEintr
 
     [<Test>]
@@ -950,13 +954,20 @@ module TestSyscallInterruption =
                 |> shouldEqual (flavour, caseName parked, measuredRule flavour parked)
 
             // A futex wait's rule turns on its timeout, of which
-            // `oneParkOfEach` holds one: here are the other two.
-            for timeout in [ FutexTimeout.Until 5L ; FutexTimeout.Unbounded ] do
+            // `oneParkOfEach` holds one: here are the others.
+            for timeout in
+                [
+                    FutexTimeout.Until 5L
+                    FutexTimeout.Unbounded
+                    FutexTimeout.At 5L
+                    FutexTimeout.At -5L
+                ] do
                 let parked =
                     ParkedSyscall.Futex
                         {
                             FutexAddress = 0x1000UL
                             FutexTimeout = timeout
+                            FutexBitset = UnixFutex.FutexBitsetMatchAny
                             TakenByWake = false
                         }
 
@@ -1012,7 +1023,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1026,7 +1037,7 @@ module TestSyscallInterruption =
 
             let system =
                 match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
             let woken, system = Lone.wake system
@@ -1060,7 +1071,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.enqueue
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 {
                                     Signal = Signal.SIGCONT
                                     Target = ValueSome 1

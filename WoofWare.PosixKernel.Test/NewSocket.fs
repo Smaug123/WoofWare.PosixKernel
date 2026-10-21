@@ -47,11 +47,11 @@ module NewSocket =
         : int * UnixSystem<'Thread, 'Handler>
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
         match UnixSocket.trySocket caller rawDomain rawKind rawProtocol system with
-        | Ok (Ok created) -> created
-        | Ok (Error error) ->
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) ->
             failwith $"NewSocket.create: socket(%d{rawDomain}, %d{rawKind}, %d{rawProtocol}) answered %O{error}"
         | Error refusal ->
             failwith
@@ -88,9 +88,9 @@ module NewSocket =
         : (int * UnixSystem<'Thread, 'Handler>) option
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
         match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
-        | Ok (Ok created) -> Some created
-        | Ok (Error _)
+        | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+        | Ok (DescriptorAnswer.Failed _, _)
         | Error _ -> None

@@ -215,12 +215,12 @@ module TestUnblockForAnotherThread =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
                 match UnixKqueue.tryKqueue (Callers.leader system) system with
-                | Ok (fd, system) -> fd, system
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"kqueue: %A{other}"
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
                     match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                    | Ok (Ok (fd, system)) -> fd, system
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
@@ -244,15 +244,16 @@ module TestUnblockForAnotherThread =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -260,20 +261,22 @@ module TestUnblockForAnotherThread =
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 registry
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
 
         let system =
@@ -360,7 +363,7 @@ module TestUnblockForAnotherThread =
                 system
             |> parkedOrNot "the poll"
         | Sleep.Accept ->
-            UnixConnection.tryAccept (Callers.thread thread system) world.Listener UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread thread system) world.Listener UserBuffer.Mapped (Some 16u) 0 system
             |> parkedOrNot "the accept"
         | Sleep.Flock ->
             UnixDescriptor.tryFlock (Callers.thread thread system) world.WaitingThrough 2 system
@@ -381,7 +384,7 @@ module TestUnblockForAnotherThread =
             | Ok _ -> None
             | Error refusal -> failwith $"the write was refused: %A{refusal}"
         | Sleep.EventPort ->
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
             | SimulatedUnixFlavour.Linux ->
                 UnixPoll.tryEpollWait (Callers.thread thread system) world.Port 8 UserBuffer.Mapped -1 system
                 |> parkedOrNot "the epoll_wait"
@@ -393,7 +396,7 @@ module TestUnblockForAnotherThread =
                     []
                     1
                     UserBuffer.Mapped
-                    KeventTimeout.Null
+                    TimespecArgument.Null
                     system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
@@ -405,10 +408,19 @@ module TestUnblockForAnotherThread =
             UnixSignal.tryPause (Callers.thread thread system) system
             |> parkedOrNot "the pause"
 
-    let private orFail (what : string) (result : Result<'a * UnixSystem<int, string>, 'e>) : UnixSystem<int, string> =
-        match result with
-        | Ok (_, system) -> system
-        | Error e -> failwith $"%s{what}: %A{e}"
+    let private sigactionOrFail (answer : SigactionAnswer<string> * UnixSystem<int, string>) : UnixSystem<int, string> =
+        match answer with
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed e, _ -> failwith $"sigaction: %A{e}"
+
+    let private maskOrFail
+        (what : string)
+        (answer : SignalMaskAnswer * UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match answer with
+        | SignalMaskAnswer.Completed _, system -> system
+        | SignalMaskAnswer.Failed e, _ -> failwith $"%s{what}: %A{e}"
 
     /// `system` with the case's signal generated, failing the test if the
     /// generation did anything but leave the process running.
@@ -429,7 +441,7 @@ module TestUnblockForAnotherThread =
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
 
         match outcome with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
         | other -> failwith $"%A{case}: generating the signal answered %A{other}"
 
     /// What the unblocker's call answered.
@@ -442,10 +454,10 @@ module TestUnblockForAnotherThread =
         let numbering = HostPlatform.signalNumberingOf case.Flavour
         let s = SignalMask.ofSignals numbering (Set.singleton (signalOf case.Disposition))
 
-        let answered (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : Unblocked =
-            match result with
-            | Ok (_, system) -> Unblocked.Answered system
-            | Error errno -> failwith $"%A{case}: the mask call failed with %O{errno}"
+        let answered (answer : SignalMaskAnswer * UnixSystem<int, string>) : Unblocked =
+            match answer with
+            | SignalMaskAnswer.Completed _, system -> Unblocked.Answered system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{case}: the mask call failed with %O{errno}"
 
         match case.Route with
         | Route.PthreadSigmaskUnblock ->
@@ -495,13 +507,13 @@ module TestUnblockForAnotherThread =
                     (signo case.Flavour signal)
                     (Some disposition)
                     world.System
-                |> orFail "sigaction"
+                |> sigactionOrFail
 
         let system =
             (system, threads)
             ||> List.fold (fun system thread ->
                 UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.setMask numbering) (Some s) system
-                |> orFail "pthread_sigmask"
+                |> maskOrFail "pthread_sigmask"
             )
 
         if case.GeneratedBeforeSleep then
@@ -563,7 +575,7 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
-                    (Lone.UnixSystemState.signalNumbering after)
+                    (Kernel.signalNumbering after)
                     (Lone.proc after).CoreDumps
                     (Lone.leader after)
                     threads

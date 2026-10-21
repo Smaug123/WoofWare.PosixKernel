@@ -46,11 +46,7 @@ module TestStreamReaderGone =
         |> Lone.mapProc (fun proc ->
             { proc with
                 Signals =
-                    SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
-                        Signal.SIGPIPE
-                        disposition
-                        proc.Signals
+                    SignalState.setDisposition (Kernel.signalNumbering system) Signal.SIGPIPE disposition proc.Signals
             }
         )
 
@@ -100,7 +96,6 @@ module TestStreamReaderGone =
             =
             let flavour = SimulatedUnixPlatform.flavour platform
             let mutable system = systemOn platform gone disposition
-            let mutable delivered : (int * byte list) list = []
             let mutable pending : Set<PendingSignal<int>> = Set.empty
             let mutable ended = false
 
@@ -110,10 +105,31 @@ module TestStreamReaderGone =
 
                 let bytes = payload i count
 
-                let actual = WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes system
+                let actual, delivery =
+                    match
+                        WriteOutcomes.admitThenWriteDeliveringAs
+                            (Callers.thread thread system)
+                            fd
+                            UserBuffer.Mapped
+                            bytes
+                            system
+                    with
+                    | Ok (step, delivery) -> Ok step, delivery
+                    | Error refusal -> Error refusal, None
+
+                // What the client received from the write, as the descriptor
+                // it was launched on and the bytes.
+                let received =
+                    delivery
+                    |> Option.map (fun delivery ->
+                        let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
+                        launchedInto |> shouldEqual (Lone.pid system)
+                        fd, List.ofSeq delivery.Bytes
+                    )
 
                 if Set.contains fd gone && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
                     let raised = sigPipeFrom flavour thread
+                    received |> shouldEqual None
 
                     match disposition, actual with
                     | SignalDisposition.Default, Ok (WriteStep.ProcessEnded (endedProcess, after)) ->
@@ -161,8 +177,9 @@ module TestStreamReaderGone =
                     | Ok (WriteStep.Returns (WriteAnswer.Completed written, after)) ->
                         written |> shouldEqual (int64 count)
 
-                        if count > 0 then
-                            delivered <- (fd, List.ofSeq bytes) :: delivered
+                        // A write that moved no bytes delivers nothing.
+                        received
+                        |> shouldEqual (if count > 0 then Some (fd, List.ofSeq bytes) else None)
 
                         system <- after
                     | other -> failwith $"%s{where}: expected the whole write, got %A{other}"
@@ -177,19 +194,6 @@ module TestStreamReaderGone =
                         system <- ReturnsToUser.untilResumed (Callers.thread returning system) system
 
                     pending <- Set.ofList (SignalState.pending (Lone.proc system).Signals)
-
-                let log =
-                    DeliveryLog.toList system.Machine.Delivered
-                    |> List.map (fun delivery ->
-                        let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
-                        launchedInto |> shouldEqual (Lone.pid system)
-                        fd, List.ofSeq delivery.Bytes
-                    )
-
-                // NUnit's comparison walks each byte reflectively, and the log
-                // grows every step, so it is asked only to describe a mismatch.
-                if log <> List.rev delivered then
-                    log |> shouldEqual (List.rev delivered)
 
         let gen =
             gen {
@@ -234,7 +238,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads
@@ -288,7 +292,7 @@ module TestStreamReaderGone =
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close 1: %A{other}"
 
-            Map.containsKey pipe closed.Machine.Pipes |> shouldEqual false
+            Map.containsKey pipe (UnixSystem.pipes closed) |> shouldEqual false
             assertSound "closed" closed
 
     /// A write is made by one of the process's threads, which the signal it may

@@ -846,14 +846,17 @@ type UnixSystemDefect<'Thread> =
     /// opened through no name, and `inode` is neither the root nor a mounted
     /// filesystem's root, the only inodes a walk reaches through none.
     | OpenedThroughNoNameNotRoot of description : OpenFileDescriptionId * inode : InodeNumber
-    /// The description `description`, onto `inode`, records that it was
-    /// opened through a directory removed while it was last named in
-    /// `oldParent`, and `inode` is not a directory whose ".." is `oldParent`
-    /// and which `oldParent` does not name.
-    | OpenedThroughRemovedDirectoryNamed of
+    /// The description `description`, onto the directory `inode`, records
+    /// that it was opened through the name `name` in `parent`, since
+    /// unlinked, and that is not the name the directory had when its last
+    /// name went, in the directory it was named in then
+    /// (`VirtualFileSystem.removedDirectoryName`): a directory has one name,
+    /// which a description's record follows until it goes.
+    | OpenedThroughRemovedDirectoryNameMismatch of
         description : OpenFileDescriptionId *
         inode : InodeNumber *
-        oldParent : InodeNumber
+        parent : InodeNumber *
+        name : DirectoryEntryName
     /// A socket is in a phase that nothing in this version puts a socket in,
     /// such as `SocketPhase.Connecting`: a case reserved for behaviour not yet
     /// modelled.
@@ -897,6 +900,15 @@ type UnixSystemDefect<'Thread> =
     /// (`UnixWait.wake`) would miss a sleeper or ask about a thread asleep in
     /// nothing.
     | StaleParkIndex
+    /// A UDP socket has no receive side, so a datagram sent to it, or a
+    /// receive made of it, has nowhere to go.
+    | UdpSocketWithoutReceiver of socket : SocketId
+    /// The machine holds a receive side for `socket`, which is not a UDP
+    /// socket in the socket table.
+    | ReceiverWithoutUdpSocket of socket : SocketId
+    /// A UDP socket's receive side breaks its flavour's accounting
+    /// (`DatagramReceiver.violations`), or was made for the other flavour.
+    | DatagramReceiverBroken of socket : SocketId * violations : string list
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -1076,20 +1088,6 @@ module UnixSystem =
             pid
             (fun (system : ProcessView<'Thread, 'Handler>) -> UnixThreadTable.byName system.Threads)
             system
-
-    /// Every write that has reached a client draining one of the machine's
-    /// pipes, oldest first: the bytes the outside world has received from the
-    /// machine's processes. No process can read them back.
-    ///
-    /// A client reads what its own ends received by filtering on
-    /// `Delivery.Endpoint`, which names the process the pipe was launched into
-    /// as well as the descriptor. The log is one for the whole machine, so the
-    /// order of writes across endpoints is kept. It grows without bound.
-    let delivered<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : DeliveryLog
-        =
-        UnixMachineState.delivered system.Machine
 
     /// The signal state of the process `pid`, which `SignalState`'s queries
     /// read.
@@ -1500,12 +1498,10 @@ module UnixSystem =
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.TerminalAttributes fd ->
             Ok (SteppedCall.TerminalAttributes (UnixDescriptor.terminalAttributes caller fd system))
-        | Syscall.GetEffectiveUserId ->
-            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId caller system))
-        | Syscall.GetEffectiveGroupId ->
-            Ok (SteppedCall.GetEffectiveGroupId (UnixDescriptor.effectiveGroupId caller system))
+        | Syscall.GetEffectiveUserId -> Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid caller system))
+        | Syscall.GetEffectiveGroupId -> Ok (SteppedCall.GetEffectiveGroupId (UnixCredentials.getegid caller system))
         | Syscall.GetGroups (size, destination) ->
-            UnixDescriptor.tryGetgroups caller destination size system
+            UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
         | Syscall.Stat (policy, path) ->
@@ -1576,7 +1572,7 @@ module UnixSystem =
             |> Result.map SteppedCall.FAccessAt
             |> Result.mapError SyscallRefusal.FAccessAt
         | Syscall.Open (path, flags, mode) ->
-            UnixNamespace.tryOpenPath caller flags path mode system
+            UnixNamespace.tryOpenPath caller path flags mode system
             |> Result.map SteppedCall.Open
             |> Result.mapError SyscallRefusal.Open
         | Syscall.OpenAt (dirfd, path, flags, mode) ->
@@ -1681,7 +1677,10 @@ module UnixSystem =
                 PausedWrite.copyRange
                 UnixReadWrite.tryWriteWithBytes
                 buffer
-                (fun buffer -> UnixReadWrite.tryWrite caller fd buffer count system)
+                (fun buffer ->
+                    UnixReadWrite.tryWrite caller fd buffer count system
+                    |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
+                )
             |> Result.map SteppedCall.Write
             |> Result.mapError SyscallRefusal.Write
         | Syscall.Send (fd, buffer, count, flags) ->
@@ -1738,8 +1737,8 @@ module UnixSystem =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength) ->
-            UnixConnection.tryAccept caller fd destination declaredLength system
+        | Syscall.Accept (fd, destination, declaredLength, flags) ->
+            UnixConnection.tryAccept caller fd destination declaredLength flags system
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -1902,12 +1901,12 @@ module UnixSystem =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | Syscall.Futex (address, op, value, word, timeout) ->
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
             CopiedArgument.copyValue
                 "UnixSystem.step of Syscall.Futex"
                 UnixFutex.tryFutexWithWord
                 word
-                (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout system)
+                (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout val3 system)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
 
@@ -2021,6 +2020,33 @@ module UnixSystem =
             |> List.filter (fun socketId -> not (Set.contains socketId namedIds))
             |> List.map UnixSystemDefect.UnreferencedSocket
 
+        let receivers =
+            let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+            [
+                for KeyValue (socketId, socket) in machine.Sockets do
+                    if UnixMachineState.receivesDatagrams socket then
+                        match Map.tryFind socketId machine.DatagramReceivers with
+                        | None -> UnixSystemDefect.UdpSocketWithoutReceiver socketId
+                        | Some receiver ->
+                            let violations =
+                                (if DatagramReceiver.flavour receiver <> flavour then
+                                     [
+                                         $"it is a %O{DatagramReceiver.flavour receiver} receiver on a %O{flavour} machine"
+                                     ]
+                                 else
+                                     [])
+                                @ DatagramReceiver.violations receiver
+
+                            if not violations.IsEmpty then
+                                UnixSystemDefect.DatagramReceiverBroken (socketId, violations)
+                for KeyValue (socketId, _) in machine.DatagramReceivers do
+                    match Map.tryFind socketId machine.Sockets with
+                    | Some socket when UnixMachineState.receivesDatagrams socket -> ()
+                    | Some _
+                    | None -> UnixSystemDefect.ReceiverWithoutUdpSocket socketId
+            ]
+
         // Against the table rather than against the descriptions: the table is
         // where a socket lives, so it is the table that must stay below the
         // counter even once a socket can outlive every descriptor of it.
@@ -2131,9 +2157,27 @@ module UnixSystem =
                     | Some _
                     | None -> Some (UnixSystemDefect.OpenedThroughNameUnbound (id, inode, dentry.Parent, dentry.Name))
                 | ReachedThrough.Name (dentry, true) ->
-                    match VirtualFileSystem.tryGetDirectory dentry.Parent graph with
-                    | Some _ -> None
-                    | None -> Some (UnixSystemDefect.OpenedThroughParentGone (id, dentry.Parent))
+                    match
+                        VirtualFileSystem.tryGetDirectory dentry.Parent graph,
+                        VirtualFileSystem.tryGetDirectory inode graph
+                    with
+                    | None, _ -> Some (UnixSystemDefect.OpenedThroughParentGone (id, dentry.Parent))
+                    | Some _, None -> None
+                    | Some _, Some directory ->
+                        if
+                            directory.Parent = dentry.Parent
+                            && VirtualFileSystem.removedDirectoryName inode graph = Some dentry.Name
+                        then
+                            None
+                        else
+                            Some (
+                                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (
+                                    id,
+                                    inode,
+                                    dentry.Parent,
+                                    dentry.Name
+                                )
+                            )
                 | ReachedThrough.Unnamed ->
                     if
                         inode = VirtualFileSystem.root graph
@@ -2142,16 +2186,6 @@ module UnixSystem =
                         None
                     else
                         Some (UnixSystemDefect.OpenedThroughNoNameNotRoot (id, inode))
-                | ReachedThrough.RemovedDirectory oldParent ->
-                    let named =
-                        match VirtualFileSystem.tryGetDirectory oldParent graph with
-                        | Some parent -> parent.Entries |> Map.exists (fun _ bound -> bound = inode)
-                        | None -> false
-
-                    match VirtualFileSystem.tryGetDirectory inode graph with
-                    | Some directory when directory.Parent = oldParent && not named -> None
-                    | Some _
-                    | None -> Some (UnixSystemDefect.OpenedThroughRemovedDirectoryNamed (id, inode, oldParent))
             )
             |> List.ofSeq
 
@@ -3140,6 +3174,7 @@ module UnixSystem =
 
         dangling
         @ unreferenced
+        @ receivers
         @ freshness
         @ foreignObjects
         @ danglingInodes
@@ -4209,12 +4244,12 @@ module UnixSystem =
                     Sockets = Map.empty
                     Pipes = Map.empty
                     NextPipeId = PipeId 0L
-                    Delivered = DeliveryLog.empty
                     // Any start would do; one, because no filesystem hands out
                     // inode 0.
                     NextPipeInode = InodeNumber 1L
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
+                    DatagramReceivers = Map.empty
                     TimeWaits = Map.empty
                     TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L
@@ -4235,6 +4270,8 @@ module UnixSystem =
                     Ipv6OnlyByDefault = false
                     TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace flavour
                     TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax flavour
+                    UdpReceiveSpace = UnixMachineState.defaultUdpReceiveSpace flavour
+                    UdpSendSpace = UnixMachineState.defaultUdpSendSpace flavour
                     LocalIpv4Addresses = defaultLocalIpv4Addresses
                     LocalRoutes = defaultLocalRoutes
                     BootTime = UnixTimestamp.epoch

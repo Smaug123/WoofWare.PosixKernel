@@ -43,10 +43,14 @@ type internal ReadRefusal =
     /// is not mapped. What the kernel does with the bytes it could not copy
     /// is not measured.
     | ConnectionFault of socket : SocketId
-    /// A blocking read of a datagram socket with no peer, which sleeps until a
-    /// datagram arrives. Nothing in this kernel sends one, and a sleep only a
-    /// signal could end is not modelled.
+    /// A blocking read of a datagram socket holding nothing, which sleeps
+    /// until a datagram arrives: that sleep is not modelled yet.
     | DatagramSleep of socket : SocketId * domain : SocketDomain
+    /// A Darwin read that would copy a datagram from the UDP socket into a
+    /// buffer that is not mapped. Darwin answers `EFAULT` and leaves the
+    /// datagram's bytes queued without its source address, a state this
+    /// kernel does not model.
+    | DatagramFault of socket : SocketId
     /// A directory this description has read part of the way through, on a
     /// filesystem whose position there this kernel cannot bound, and a count
     /// for which the answer depends on that position. On Linux that is EINVAL
@@ -72,7 +76,9 @@ module internal ReadRefusal =
         | ReadRefusal.ConnectionFault socket ->
             $"the descriptor is socket %O{socket}, a connected stream socket with bytes to read, and the buffer is not mapped. The copy would fault, and whether the kernel then answers EFAULT, and whether it keeps the bytes it could not copy, has not been measured."
         | ReadRefusal.DatagramSleep (socket, domain) ->
-            $"the descriptor is socket %O{socket} (%O{domain}, datagram), which has no peer, and the read is a blocking one. Such a read sleeps until a datagram arrives; nothing in this kernel sends one, and a sleep that only a signal could end is not modelled."
+            $"the descriptor is socket %O{socket} (%O{domain}, datagram), which holds no datagram, and the read is a blocking one. Such a read sleeps until a datagram arrives, and this kernel does not yet model that sleep."
+        | ReadRefusal.DatagramFault socket ->
+            $"the descriptor is socket %O{socket}, a UDP socket holding a datagram, and the buffer is not mapped. Measured, Darwin answers EFAULT and leaves the datagram's bytes queued with its source address and control record removed, which this kernel does not model."
         | ReadRefusal.ScannedDirectoryPosition (inode, fileSystem) ->
             $"the descriptor is directory %O{inode} on %O{fileSystem}, which this description has read part of the way through. Ahead of a directory's EISDIR, Linux answers EINVAL when position + count passes INT64_MAX and Darwin answers 0 when the position is INT64_MAX, and the position after a partial scan is %O{fileSystem}'s own cookie (on an NFS mount, whatever the server chose, up to INT64_MAX), which is not a number this kernel's position corresponds to. So whether this read is EISDIR or the position's answer is unknown here."
         | ReadRefusal.Interruption refusal ->
@@ -86,6 +92,7 @@ module internal ReadRefusal =
         | ReadRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
         | ReadRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
+        | ReadRefusal.DatagramFault _ -> RefusalKind.Unmodelled
         | ReadRefusal.ScannedDirectoryPosition _ -> RefusalKind.Unmodelled
         | ReadRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
 
@@ -161,12 +168,16 @@ type internal WriteInto =
     /// descriptor `fd` names, which moves past them; the change is reported
     /// under `through`, the name that description was opened through.
     | File of fd : int * inode : InodeNumber * offset : int64 * through : ReachedThrough
-    /// A character device, which takes every byte and keeps none.
-    | Device
+    /// The character device `inode`, which takes every byte and keeps none;
+    /// the write is reported under `through`, the name the description was
+    /// opened through.
+    | Device of inode : InodeNumber * through : ReachedThrough
     /// The pipe `pipe`.
     | Pipe of pipe : PipeId
     /// `connectionEnd` of `connection`.
     | Connection of connection : ConnectionId * connectionEnd : ConnectionEnd
+    /// A datagram from the UDP socket `sender` to `destination`, its peer.
+    | Datagram of sender : SocketId * destination : Ipv4Endpoint
 
 /// Where a blocking `write` or `send` with room for only the first of its
 /// bytes puts those, as the call decided before it read them:
@@ -212,8 +223,10 @@ type internal PWriteInto =
     /// The file `inode`, from the call's offset; the change is reported
     /// under `through`, the name its description was opened through.
     | File of inode : InodeNumber * through : ReachedThrough
-    /// A character device, which takes every byte and keeps none.
-    | Device
+    /// The character device `inode`, which takes every byte and keeps none;
+    /// the write is reported under `through`, the name its description was
+    /// opened through.
+    | Device of inode : InodeNumber * through : ReachedThrough
 
 /// Whether a `write` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitWrite` answers it: the step before the copy that
@@ -304,6 +317,8 @@ type internal WriteRefusal =
     | Inet6Binding of socket : SocketId
     /// The write would leave the file longer than this kernel can represent.
     | ExceedsRepresentableLength of inode : InodeNumber * offset : int64 * count : int
+    /// A datagram whose delivery this kernel does not model.
+    | Delivery of DeliveryRefusal
     /// A write asleep in a pipe or on a connected socket has an answer, and
     /// the library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
@@ -346,6 +361,7 @@ module internal WriteRefusal =
             $"the descriptor is socket %O{socket}, a Unix-domain datagram socket with no peer. Linux answers EMSGSIZE for a write larger than the socket's send buffer less 32 bytes, ahead of the ENOTCONN it gives otherwise, and the send buffer's size (SO_SNDBUF, and before that the net.core.wmem_default sysctl) is not modelled."
         | WriteRefusal.ExceedsRepresentableLength (inode, offset, count) ->
             describeExceedsRepresentableLength inode offset count
+        | WriteRefusal.Delivery refusal -> DeliveryRefusal.describe refusal
         | WriteRefusal.Interruption refusal ->
             $"the write was asleep in a pipe or on a connected socket: %s{SyscallInterruptionRefusal.describe refusal}"
         | WriteRefusal.InitProcess target ->
@@ -365,6 +381,7 @@ module internal WriteRefusal =
         | WriteRefusal.SendBuffer _ -> RefusalKind.Unmodelled
         | WriteRefusal.Inet6Binding _ -> RefusalKind.Unmodelled
         | WriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
+        | WriteRefusal.Delivery _ -> RefusalKind.Unmodelled
         | WriteRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | WriteRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | WriteRefusal.InitProcess _ -> RefusalKind.Unmodelled
@@ -390,6 +407,10 @@ type internal ReceiveRefusal =
     | UnmodelledSocketPhase of socket : SocketId * domain : SocketDomain * kind : SocketKind * phase : SocketPhase
     /// As `ReadRefusal.ConnectionFault`.
     | ConnectionFault of socket : SocketId
+    /// As `ReadRefusal.DatagramSleep`.
+    | DatagramSleep of socket : SocketId * domain : SocketDomain
+    /// As `ReadRefusal.DatagramFault`.
+    | DatagramFault of socket : SocketId
 
 [<RequireQualifiedAccess>]
 module internal ReceiveRefusal =
@@ -407,6 +428,9 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.UnmodelledSocketPhase (socket, domain, kind, phase) ->
             $"the descriptor is socket %O{socket} (%O{domain}, %O{kind}), in phase %A{phase}, which is not an end of a connection. This kernel answers recv(2) on a connected stream socket only; what it answers on any other socket has not been measured."
         | ReceiveRefusal.ConnectionFault socket -> ReadRefusal.describe (ReadRefusal.ConnectionFault socket)
+        | ReceiveRefusal.DatagramSleep (socket, domain) ->
+            ReadRefusal.describe (ReadRefusal.DatagramSleep (socket, domain))
+        | ReceiveRefusal.DatagramFault socket -> ReadRefusal.describe (ReadRefusal.DatagramFault socket)
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReceiveRefusal) : RefusalKind =
@@ -416,6 +440,8 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.DatagramFault _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `send(2)`.
 ///
@@ -442,6 +468,10 @@ type internal SendRefusal =
     | InitProcess of target : BrokenWriteTarget
     /// As `WriteRefusal.ProcessEnd`, for a `send` without `MSG_NOSIGNAL`.
     | ProcessEnd of target : BrokenWriteTarget * refusal : ProcessEndRefusal
+    /// As `WriteRefusal.Delivery`.
+    | Delivery of DeliveryRefusal
+    /// As `WriteRefusal.Inet6Binding`.
+    | Inet6Binding of socket : SocketId
 
 [<RequireQualifiedAccess>]
 module internal SendRefusal =
@@ -463,6 +493,8 @@ module internal SendRefusal =
             WriteRefusal.describe (WriteRefusal.SignalReceiver (target, refusal))
         | SendRefusal.InitProcess target -> WriteRefusal.describe (WriteRefusal.InitProcess target)
         | SendRefusal.ProcessEnd (target, refusal) -> WriteRefusal.describe (WriteRefusal.ProcessEnd (target, refusal))
+        | SendRefusal.Delivery refusal -> DeliveryRefusal.describe refusal
+        | SendRefusal.Inet6Binding socket -> WriteRefusal.describe (WriteRefusal.Inet6Binding socket)
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SendRefusal) : RefusalKind =
@@ -475,6 +507,8 @@ module internal SendRefusal =
         | SendRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | SendRefusal.InitProcess _ -> RefusalKind.Unmodelled
         | SendRefusal.ProcessEnd (_, inner) -> ProcessEndRefusal.kind inner
+        | SendRefusal.Delivery _ -> RefusalKind.Unmodelled
+        | SendRefusal.Inet6Binding _ -> RefusalKind.Unmodelled
 
 /// What a `write(2)` or `send(2)` did, if it did not end the process (see
 /// `ProcessFate`).
@@ -552,6 +586,10 @@ module internal WriteStep =
 type internal PWriteAdmission =
     /// Answered without the buffer being read at all.
     | Answered of answer : WriteAnswer
+    /// Answered by the driver of the character device `inode` without the
+    /// buffer being read: the call answers `answer`, the write reported under
+    /// `through` if it moved bytes (`UnixReadWrite.applyPWriteDeviceAnswer`).
+    | DeviceAnswered of answer : WriteAnswer * inode : InodeNumber * through : ReachedThrough
     /// The copy is reached: extract exactly `count` bytes and pass them to
     /// `UnixReadWrite.tryApplyPWrite` with `into`.
     | Transfer of count : int * into : PWriteInto
@@ -788,8 +826,9 @@ type private PReadTarget =
 type private PWriteTarget =
     /// A regular file, reached through `through`.
     | File of inode : InodeNumber * through : ReachedThrough
-    /// A character device, whose driver answers.
-    | CharacterDevice of device : CharacterDevice
+    /// The character device `inode`, reached through `through`, whose driver
+    /// answers.
+    | CharacterDevice of inode : InodeNumber * device : CharacterDevice * through : ReachedThrough
 
 /// What a `write` will operate on, once the descriptor's access mode has been
 /// checked and before its buffer is screened.
@@ -814,8 +853,9 @@ type private WriteTarget =
     /// The write end of a pipe, the open file description it was reached
     /// through, and whether that description carries `O_NONBLOCK`.
     | Pipe of pipe : PipeId * description : OpenFileDescriptionId * nonBlocking : bool
-    /// A character device, whose driver answers.
-    | CharacterDevice of device : CharacterDevice
+    /// The character device `inode`, reached through `through`, whose driver
+    /// answers.
+    | CharacterDevice of inode : InodeNumber * device : CharacterDevice * through : ReachedThrough
 
 /// How far a write into a pipe gets before it needs the caller's bytes.
 [<RequireQualifiedAccess>]
@@ -1276,19 +1316,82 @@ module UnixReadWrite =
         | TcpSendCall.Send false
         | TcpSendCall.Write -> broken answer thread target system
 
-    /// A write by `thread` of `count` bytes to `socketId`, a socket that is not an
-    /// end of a connection, past the buffer screen: the socket's own answer,
-    /// which the write gives without reading the buffer, because no such
-    /// socket this kernel answers for takes bytes.
+    /// A write of `count` bytes from `buffer`, past the buffer screen, as a
+    /// datagram from the UDP socket `socketId` to `peer`, its peer: the
+    /// answer it gives without the bytes, or how many to copy.
+    let private datagramWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (socketId : SocketId)
+        (peer : Ipv4Endpoint)
+        (buffer : UserBuffer)
+        (count : uint64)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+        =
+        let answered (answer : WriteAnswer) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (WriteStep.Returns (WriteAdmission.Answered answer, system))
+
+        // The largest datagram a send takes: 65535 less the IP and UDP
+        // headers on Linux, and on Darwin the send buffer
+        // (`net.inet.udp.maxdgram`).
+        let largest =
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux -> 65507UL
+            | SimulatedUnixFlavour.Darwin -> uint64 system.Machine.UdpSendSpace
+
+        // Measured (`udp-transfer.c` H1 and H3, in
+        // docs/plans/2026-10-18-udp-data-path): a datagram larger than that is
+        // EMSGSIZE, and sends nothing, ahead of a fault in its buffer.
+        if count > largest then
+            answered (WriteAnswer.Failed UnixError.EMSGSIZE) system
+        elif count = 0UL then
+            // Measured (K3, E4, E5): an empty datagram is sent whatever the
+            // buffer, which nothing reads.
+            match DatagramDelivery.deliver socketId peer ImmutableArray.Empty system with
+            | Ok (_, system) -> answered (WriteAnswer.Completed 0L) system
+            | Error refusal -> Error (WriteRefusal.Delivery refusal)
+        else
+
+        match buffer with
+        // Measured (H3, E6): EFAULT, and nothing sent. Linux faults copying
+        // into the datagram it has made for the bytes, and freeing that is an
+        // EPOLLOUT edge, as a send is (G9); an EMSGSIZE, above, makes none.
+        | UserBuffer.Unmapped _ ->
+            answered (WriteAnswer.Failed UnixError.EFAULT) (SocketWake.signal socketId SocketWake.DatagramSent system)
+        | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+        | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | UserBuffer.Mapped ->
+            Ok (WriteStep.Returns (WriteAdmission.Transfer (int count, WriteInto.Datagram (socketId, peer)), system))
+
+    /// A write by `thread` of `count` bytes from `buffer` to `socketId`, a
+    /// socket that is not an end of a connection, past the buffer screen: the
+    /// socket's own answer, which the write gives without reading the buffer,
+    /// or, for a connected UDP socket, how many bytes to copy.
     let private socketWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (socketId : SocketId)
+        (buffer : UserBuffer)
         (count : uint64)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        // Measured (`udp-mbufs.c` section 2, in
+        // docs/plans/2026-10-18-udp-data-path): every send call that reaches a
+        // Darwin UDP socket, whatever it answers, changes what the datagrams
+        // the socket receives from then on cost it.
+        let system =
+            if UnixMachineState.receivesDatagrams socket then
+                { system with
+                    Machine =
+                        UnixMachineState.withDatagramReceiver
+                            socketId
+                            (DatagramReceiver.sent (UnixMachineState.datagramReceiver socketId system.Machine))
+                            system.Machine
+                }
+            else
+                system
 
         match socket.Phase with
         | SocketPhase.Connecting _ -> ReservedConnecting.fail "UnixReadWrite.write" socketId
@@ -1398,6 +1501,12 @@ module UnixReadWrite =
         | SocketPhase.Established _ ->
             failwith
                 $"UnixReadWrite: socket %O{socketId} is in %A{socket.Phase}, an end of a connection, which the write's target names as WriteTarget.Connection (this is a bug in this library)."
+        // A Linux connect to port 0 leaves a peer no datagram can go to, and
+        // what a send there answers is unmeasured.
+        | SocketPhase.DatagramPeer (SocketAddress.Inet peer) when
+            UnixMachineState.receivesDatagrams socket && peer.Port <> 0us
+            ->
+            datagramWrite socketId peer buffer count system
         | SocketPhase.DatagramPeer _
         | SocketPhase.Refused _ ->
             // A refused socket is here too: measured, its write is EPIPE and
@@ -1518,6 +1627,76 @@ module UnixReadWrite =
             | UserBuffer.Unmapped _ -> Error (ConnectionCopyRefusal.Fault socketId)
             | UserBuffer.Opaque -> Error (ConnectionCopyRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
             | UserBuffer.Addressless -> Error (ConnectionCopyRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+
+    /// Why a receive from a UDP socket has no answer.
+    [<RequireQualifiedAccess>]
+    type private DatagramReceiveRefusal =
+        /// The receive is a blocking one, and the socket holds nothing.
+        | Sleep
+        /// A Darwin receive that would copy into an unmapped buffer.
+        | Fault
+        | Buffer of BufferRefusal
+
+    /// `call` of up to `count` bytes (one call's worth) from the UDP socket
+    /// `socketId` into `buffer`, through a description that is non-blocking
+    /// or not: the bytes, the pending error, or, with nothing to answer,
+    /// `EAGAIN` if `nonBlocking`. `DatagramReceiver.receive` states the
+    /// rules.
+    let private receiveDatagram<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (call : DatagramReceiveCall)
+        (count : int)
+        (nonBlocking : bool)
+        (buffer : UserBuffer)
+        (socketId : SocketId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, DatagramReceiveRefusal>
+        =
+        let receiver = UnixMachineState.datagramReceiver socketId system.Machine
+
+        let committed (after : DatagramReceiver) : ProcessView<'Thread, 'Handler> =
+            { system with
+                Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
+            }
+
+        let answered (answer : ReadAnswer) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (ReadOutcome.Answered answer, system)
+
+        let peeking =
+            match call with
+            | DatagramReceiveCall.Receive (peek, _) -> peek
+            | DatagramReceiveCall.Read -> false
+
+        match DatagramReceiver.receive call count receiver with
+        | DatagramReceiveAnswer.Datagram (bytes, returned, _), after ->
+            if returned <> bytes.Length then
+                failwith
+                    $"UnixReadWrite: a receive from socket %O{socketId} returns %d{returned} for %d{bytes.Length} bytes, which only MSG_TRUNC does, and ReceiveFlags does not admit MSG_TRUNC (this is a bug in this library)."
+
+            if bytes.IsEmpty then
+                answered (ReadAnswer.Completed bytes) (committed after)
+            else
+
+            match buffer with
+            | UserBuffer.Mapped -> answered (ReadAnswer.Completed bytes) (committed after)
+            | UserBuffer.Unmapped _ ->
+                // Measured (`udp-transfer.c` C8 and C10, in
+                // docs/plans/2026-10-18-udp-data-path): a Linux receive takes
+                // the datagram and answers EFAULT; a peek answers EFAULT on
+                // both and leaves the datagram whole; a Darwin receive leaves
+                // the datagram stripped of its source, which is refused.
+                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, peeking with
+                | SimulatedUnixFlavour.Linux, _ -> answered (ReadAnswer.Failed UnixError.EFAULT) (committed after)
+                | SimulatedUnixFlavour.Darwin, true -> answered (ReadAnswer.Failed UnixError.EFAULT) system
+                | SimulatedUnixFlavour.Darwin, false -> Error DatagramReceiveRefusal.Fault
+            | UserBuffer.Opaque -> Error (DatagramReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+            | UserBuffer.Addressless -> Error (DatagramReceiveRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | DatagramReceiveAnswer.Zero, after -> answered (ReadAnswer.Completed ImmutableArray.Empty) (committed after)
+        | DatagramReceiveAnswer.Empty, _ ->
+            if nonBlocking then
+                answered (ReadAnswer.Failed UnixError.EAGAIN) system
+            else
+                Error DatagramReceiveRefusal.Sleep
+        | DatagramReceiveAnswer.Failed error, after -> answered (ReadAnswer.Failed error) (committed after)
 
     /// A read of up to `count` bytes taking them from `pipeId`, which holds
     /// some: the bytes, and the system after the read and whatever it set off.
@@ -1655,11 +1834,38 @@ module UnixReadWrite =
 
         Ok (Ok (FileContents.read offset transfer contents), accessed ())
 
+    /// `system` after a write to the character device `inode`, through a
+    /// description opened `through` a name, answered `answer`: one that moved
+    /// bytes is reported to the inotify instances watching the device
+    /// (`ChangeNotice.DeviceWritten`), and changes nothing else.
+    let private deviceWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (inode : InodeNumber)
+        (through : ReachedThrough)
+        (answer : WriteAnswer)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        match answer with
+        // Linux's `vfs_write` raises `fsnotify_modify` only for a write that
+        // returns a positive count: measured, an empty write and an EFAULT
+        // raise nothing (`docs/probes/inotify-device-write`, section D).
+        | WriteAnswer.Completed moved when moved > 0L ->
+            { system with
+                Machine =
+                    UnixMachineState.commitFileSystem
+                        (ChangeNotice.DeviceWritten (inode, through))
+                        (VirtualFileSystem.unchanged system.Machine.FileSystem)
+                        system.Machine
+            }
+        | WriteAnswer.Completed _
+        | WriteAnswer.Failed _ -> system
+
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
     /// passed; `None` where it copies them, which it then takes all of.
-    /// Neither device in `CharacterDevice.all` changes anything a later call
-    /// could see, so a write moves no timestamp, position or pool.
+    /// Neither device in `CharacterDevice.all` keeps what it is given, so a
+    /// write moves no timestamp, position or pool; the caller reports one that
+    /// moved bytes to inotify (`deviceWritten`).
     let private deviceWriteWithoutBytes
         (device : CharacterDevice)
         (buffer : UserBuffer)
@@ -1946,6 +2152,22 @@ module UnixReadWrite =
 
             let socket = UnixMachineState.socket socketId system.Machine
 
+            if UnixMachineState.receivesDatagrams socket then
+                receiveDatagram
+                    DatagramReceiveCall.Read
+                    (oneCallsWorth platform count)
+                    nonBlocking
+                    buffer
+                    socketId
+                    system
+                |> Result.mapError (fun refusal ->
+                    match refusal with
+                    | DatagramReceiveRefusal.Sleep -> ReadRefusal.DatagramSleep (socketId, socket.Domain)
+                    | DatagramReceiveRefusal.Fault -> ReadRefusal.DatagramFault socketId
+                    | DatagramReceiveRefusal.Buffer refusal -> ReadRefusal.Buffer refusal
+                )
+            else
+
             match socket.Phase with
             | SocketPhase.Connecting _ -> ReservedConnecting.fail "UnixReadWrite.read" socketId
             | SocketPhase.Idle
@@ -2159,16 +2381,24 @@ module UnixReadWrite =
     /// when it is before the modification time, even for a read that answers
     /// 0 at end-of-file or EFAULT; on Linux's tmpfs, mounted `noatime`, never.
     ///
-    /// A socket with no peer (fresh from `socket(2)`, bound, or listening)
-    /// answers without the buffer, with the errno its flavour gives its domain
-    /// and kind, except that a blocking read of a
+    /// A UDP socket, connected or not, answers from the datagrams it holds:
+    /// the oldest datagram's bytes, as many as fit, the rest of it discarded.
+    /// A zero-length read takes the datagram on Darwin, and on Linux answers 0
+    /// and takes nothing. Holding nothing, it answers `EAGAIN` through a
+    /// non-blocking description, and a blocking read is refused. A Linux read
+    /// into an unmapped buffer takes the datagram and answers `EFAULT`, and a
+    /// Darwin one is refused.
+    ///
+    /// Any other socket with no peer (fresh from `socket(2)`, bound, or
+    /// listening) answers without the buffer, with the errno its flavour gives
+    /// its domain and kind, except that a blocking read of a Unix-domain
     /// datagram socket, which sleeps until a datagram arrives, is refused. A
     /// connected stream socket answers from its connection: the bytes waiting, end of file, a reset's error,
     /// or `EAGAIN`; a blocking read with nothing to answer sleeps
     /// (`ReadOutcome.WouldBlock`), and `finishRead` finishes it. One that would
-    /// copy bytes into an unmapped buffer is refused. A socket
-    /// with a datagram peer, or with a refused connection's error, is refused,
-    /// except for Linux's zero-length read, which is 0 in every phase.
+    /// copy bytes into an unmapped buffer is refused. A socket with a refused
+    /// connection's error is refused, except for Linux's zero-length read,
+    /// which is 0 in every phase.
     ///
     /// A read by `caller` of a pipe that holds nothing while a write end is open,
     /// through a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
@@ -2655,6 +2885,22 @@ module UnixReadWrite =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
+        if UnixMachineState.receivesDatagrams socket then
+            receiveDatagram
+                (DatagramReceiveCall.Receive (flags.Peek, false))
+                count
+                (description.NonBlocking || flags.DontWait)
+                buffer
+                socketId
+                system
+            |> Result.mapError (fun refusal ->
+                match refusal with
+                | DatagramReceiveRefusal.Sleep -> ReceiveRefusal.DatagramSleep (socketId, socket.Domain)
+                | DatagramReceiveRefusal.Fault -> ReceiveRefusal.DatagramFault socketId
+                | DatagramReceiveRefusal.Buffer refusal -> ReceiveRefusal.Buffer refusal
+            )
+        else
+
         match SocketPhase.connectionEnd socket.Phase with
         | None -> Error (ReceiveRefusal.UnmodelledSocketPhase (socketId, socket.Domain, socket.Kind, socket.Phase))
         | Some (connectionId, connectionEnd) ->
@@ -2721,8 +2967,12 @@ module UnixReadWrite =
     ///   description says.
     /// - **`MSG_NOSIGNAL`** changes nothing.
     ///
-    /// Every other flag is refused, as is a count above `INT_MAX` and a socket
-    /// that is not an end of a connection.
+    /// On a UDP socket it is `read` but for those flags, and for a count of
+    /// zero, which takes the datagram on Linux too.
+    ///
+    /// Every other flag is refused, `MSG_TRUNC` among them, as is a count
+    /// above `INT_MAX` and a socket that is neither a UDP socket nor an end of
+    /// a connection.
     /// A call that sleeps is finished by `finishRead`, as a `read` is.
     ///
     /// Fails loudly if `caller` is not a thread of one of the system's processes, or is
@@ -3017,7 +3267,8 @@ module UnixReadWrite =
                     )
                 )
             | None -> Ok (WriteTarget.Socket socketId)
-        | OpenFileTarget.CharacterDevice (_, device, _) -> Ok (WriteTarget.CharacterDevice device)
+        | OpenFileTarget.CharacterDevice (inode, device, _) ->
+            Ok (WriteTarget.CharacterDevice (inode, device, ReachedDescription.through "UnixReadWrite.write" reached))
         | OpenFileTarget.File (inode, offset) ->
             Ok (WriteTarget.File (inode, offset, ReachedDescription.through "UnixReadWrite.write" reached))
         | OpenFileTarget.Pipe (pipeId, PipeEnd.Write) ->
@@ -3334,7 +3585,7 @@ module UnixReadWrite =
         // error rather than 0, and for a connected one a reset's error
         // (`tcp-transfer.c`, section S).
         match target with
-        | WriteTarget.Socket socketId -> socketWrite thread socketId count system
+        | WriteTarget.Socket socketId -> socketWrite thread socketId buffer count system
         | WriteTarget.Connection (socketId, connectionId, connectionEnd, descriptionId, nonBlocking) ->
             admitConnectionWrite
                 thread
@@ -3348,15 +3599,16 @@ module UnixReadWrite =
                 connectionId
                 connectionEnd
                 system
-        | WriteTarget.CharacterDevice device ->
+        | WriteTarget.CharacterDevice (inode, device, through) ->
             // No position check, as for a read: a device's position is always
             // 0.
             let count = oneCallsWorth platform count
 
             match deviceWriteWithoutBytes device buffer count with
             | Error refusal -> Error (WriteRefusal.Buffer refusal)
-            | Ok (Some answer) -> Ok (unchanged (WriteAdmission.Answered answer))
-            | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device)))
+            | Ok (Some answer) ->
+                Ok (WriteStep.Returns (WriteAdmission.Answered answer, deviceWritten inode through answer system))
+            | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device (inode, through))))
         | WriteTarget.Pipe (pipeId, descriptionId, nonBlocking) ->
             // A pipe has no position, and its own write decides the zero-length
             // case, which it answers differently from a file.
@@ -3436,18 +3688,28 @@ module UnixReadWrite =
     /// transfer (`WriteAdmission.Transfer`): `bytes`, exactly the ones it
     /// named, go into `into`, and the call returns their count. `system` must
     /// be the one the admission answered with.
+    ///
+    /// Beside the step, the `Delivery` the bytes made if `into` is a pipe a
+    /// client drains, which read them as they went in; `None` for any other.
     let internal tryApplyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
         =
-        let returns (system : ProcessView<'Thread, 'Handler>) =
-            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system))
+        let returnsDelivering (delivery : Delivery option) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system), delivery)
+
+        let returns (system : ProcessView<'Thread, 'Handler>) = returnsDelivering None system
 
         match into with
         // Both devices take every byte they are given and keep none of it.
-        | WriteInto.Device -> returns system
+        | WriteInto.Device (inode, through) ->
+            returns (deviceWritten inode through (WriteAnswer.Completed (int64 bytes.Length)) system)
+        | WriteInto.Datagram (sender, destination) ->
+            match DatagramDelivery.deliver sender destination bytes system with
+            | Ok (_, system) -> returns system
+            | Error refusal -> Error (WriteRefusal.Delivery refusal)
         | WriteInto.Connection (connectionId, connectionEnd) ->
             let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
             returns (intoConnection connectionId connectionEnd bytes transfer system)
@@ -3484,17 +3746,16 @@ module UnixReadWrite =
                                         Buffer = buffer
                                     }
                                     system.Machine.Pipes
-                            Delivered =
-                                DeliveryLog.append
-                                    {
-                                        Endpoint = endpoint
-                                        Bytes = bytes
-                                    }
-                                    system.Machine.Delivered
                         }
                 }
                 |> touchedByWrite pipeId
-                |> returns
+                |> returnsDelivering (
+                    Some
+                        {
+                            Endpoint = endpoint
+                            Bytes = bytes
+                        }
+                )
             | None ->
 
             let written, buffer = PipeBuffer.write bytes pipe.Buffer
@@ -4198,10 +4459,12 @@ module UnixReadWrite =
         | WriteRefusal.SignalReceiver (target, refusal) -> SendRefusal.SignalReceiver (target, refusal)
         | WriteRefusal.InitProcess target -> SendRefusal.InitProcess target
         | WriteRefusal.ProcessEnd (target, refusal) -> SendRefusal.ProcessEnd (target, refusal)
-        | WriteRefusal.UnmodelledSocketPhase _
+        | WriteRefusal.Delivery refusal -> SendRefusal.Delivery refusal
+        | WriteRefusal.Inet6Binding socket -> SendRefusal.Inet6Binding socket
+        | WriteRefusal.UnmodelledSocketPhase (socket, domain, kind, phase) ->
+            SendRefusal.UnmodelledSocketPhase (socket, domain, kind, phase)
         | WriteRefusal.ConnectionBecameNonBlocking _
         | WriteRefusal.SendBuffer _
-        | WriteRefusal.Inet6Binding _
         | WriteRefusal.ExceedsRepresentableLength _
         | WriteRefusal.Interruption _ ->
             failwith
@@ -4215,7 +4478,26 @@ module UnixReadWrite =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
-        tryApplyWrite into bytes system |> Result.mapError sendRefusalOf
+        match tryApplyWrite into bytes system with
+        | Error refusal -> Error (sendRefusalOf refusal)
+        | Ok (step, None) -> Ok step
+        | Ok (_, Some delivery) ->
+            failwith
+                $"UnixReadWrite: a send delivered %d{delivery.Bytes.Length} bytes to %O{delivery.Endpoint}, but a send's admission names only a connected socket, never a pipe (this is a bug in this library)."
+
+    /// What a `send` writes to, past its flag word and its descriptor.
+    [<RequireQualifiedAccess>]
+    type private SendTarget =
+        /// A connected stream socket, through the description it was reached
+        /// through, non-blocking or not.
+        | Connection of
+            description : OpenFileDescriptionId *
+            nonBlocking : bool *
+            socket : SocketId *
+            connection : ConnectionId *
+            connectionEnd : ConnectionEnd
+        /// A UDP socket.
+        | Datagram of socket : SocketId
 
     /// The connected socket a `send` through `fd` writes to, past the flag
     /// word and the descriptor: the description, whether the call is
@@ -4230,13 +4512,19 @@ module UnixReadWrite =
         (fd : int)
         (flags : SendFlags)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<OpenFileDescriptionId * bool * SocketId * ConnectionId * ConnectionEnd, UnixError>, SendRefusal>
+        : Result<Result<SendTarget, UnixError>, SendRefusal>
         =
         match socketOf fd system with
         | Error error -> Ok (Error error)
         | Ok (descriptionId, description, socketId) ->
 
         let socket = UnixMachineState.socket socketId system.Machine
+
+        // A UDP send never waits, so neither O_NONBLOCK nor MSG_DONTWAIT
+        // changes it (`docs/probes/datagram-park`, row S1).
+        if UnixMachineState.receivesDatagrams socket then
+            Ok (Ok (SendTarget.Datagram socketId))
+        else
 
         match SocketPhase.connectionEnd socket.Phase with
         | None -> Error (SendRefusal.UnmodelledSocketPhase (socketId, socket.Domain, socket.Kind, socket.Phase))
@@ -4247,7 +4535,17 @@ module UnixReadWrite =
             | SimulatedUnixFlavour.Linux -> flags.DontWait
             | SimulatedUnixFlavour.Darwin -> false
 
-        Ok (Ok (descriptionId, description.NonBlocking || dontWait, socketId, connectionId, connectionEnd))
+        Ok (
+            Ok (
+                SendTarget.Connection (
+                    descriptionId,
+                    description.NonBlocking || dontWait,
+                    socketId,
+                    connectionId,
+                    connectionEnd
+                )
+            )
+        )
 
     /// Every answer `send(2)` by `thread` gives without reading the caller's
     /// buffer, and otherwise how many bytes to extract and where they go, as
@@ -4286,7 +4584,13 @@ module UnixReadWrite =
         match sendTarget fd flags system with
         | Error refusal -> Error refusal
         | Ok (Error error) -> answered (WriteAnswer.Failed error)
-        | Ok (Ok (descriptionId, nonBlocking, socketId, connectionId, connectionEnd)) ->
+        // A send on a UDP socket answers as a write does: to its peer if it
+        // is connected, and as an unconnected socket's write otherwise
+        // (measured, `udp-transfer.c` K1 and W9).
+        | Ok (Ok (SendTarget.Datagram socketId)) ->
+            socketWrite thread socketId buffer (uint64 count) system
+            |> Result.mapError sendRefusalOf
+        | Ok (Ok (SendTarget.Connection (descriptionId, nonBlocking, socketId, connectionId, connectionEnd))) ->
 
         admitConnectionWrite
             thread
@@ -4415,7 +4719,10 @@ module UnixReadWrite =
             seekable (PWriteTarget.File (inode, ReachedDescription.through "UnixReadWrite.pwrite" reached))
         // Seekable as far as `pwrite` asks: measured on Linux, 16@0 answers as
         // `write` does (`devices.c`, PWRITE rows).
-        | OpenFileTarget.CharacterDevice (_, device, _) -> seekable (PWriteTarget.CharacterDevice device)
+        | OpenFileTarget.CharacterDevice (inode, device, _) ->
+            seekable (
+                PWriteTarget.CharacterDevice (inode, device, ReachedDescription.through "UnixReadWrite.pwrite" reached)
+            )
 
     /// Every answer `pwrite(2)` gives without reading the caller's buffer, and
     /// otherwise how many bytes to extract and where they go: the step before
@@ -4469,11 +4776,11 @@ module UnixReadWrite =
         else
 
         match target with
-        | PWriteTarget.CharacterDevice device ->
+        | PWriteTarget.CharacterDevice (inode, device, through) ->
             match deviceWriteWithoutBytes device buffer count with
             | Error refusal -> Error (PWriteRefusal.Buffer refusal)
-            | Ok (Some answer) -> Ok (PWriteAdmission.Answered answer)
-            | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device))
+            | Ok (Some answer) -> Ok (PWriteAdmission.DeviceAnswered (answer, inode, through))
+            | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device (inode, through)))
         | PWriteTarget.File (inode, through) ->
 
         match buffer with
@@ -4499,7 +4806,8 @@ module UnixReadWrite =
         let written =
             match into with
             // Both devices take every byte they are given and keep none of it.
-            | PWriteInto.Device -> Ok system
+            | PWriteInto.Device (inode, through) ->
+                Ok (deviceWritten inode through (WriteAnswer.Completed (int64 bytes.Length)) system)
             | PWriteInto.File (inode, through) ->
 
             let now = UnixMachineState.realtime system.Scheduling system.Machine
@@ -4561,6 +4869,20 @@ module UnixReadWrite =
         | Ok faulted -> Ok (WriteAnswer.Failed UnixError.EFAULT, faulted)
         | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
             Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
+
+    /// The step after a `pwrite` whose admission the driver of the character
+    /// device `inode` answered without the buffer
+    /// (`PWriteAdmission.DeviceAnswered`): `answer`, with the write reported
+    /// under `through` if it moved bytes. `system` must be the one the
+    /// admission was made against.
+    let internal applyPWriteDeviceAnswer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (answer : WriteAnswer)
+        (inode : InodeNumber)
+        (through : ReachedThrough)
+        (system : ProcessView<'Thread, 'Handler>)
+        : WriteAnswer * ProcessView<'Thread, 'Handler>
+        =
+        answer, deviceWritten inode through answer system
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4700,20 +5022,31 @@ module UnixReadWrite =
     /// Otherwise a write is short only when it is non-blocking, into a pipe or
     /// to a connected socket with room for part of it: this kernel's
     /// filesystem cannot run out of space. A write into a pipe the client
-    /// drains is read by the client as it is written, and recorded in
-    /// `UnixSystem.delivered`.
+    /// drains is read by the client as it is written, and `writeWithBytes`
+    /// answers what it read.
     ///
-    /// A socket with no peer (fresh from `socket(2)`, bound, or listening)
-    /// answers without the buffer, as its flavour does for its domain and
-    /// kind, at every length including zero; on Linux a stream socket's
-    /// `EPIPE` raises `SIGPIPE` as a pipe's does. A connected stream socket
+    /// A connected UDP socket sends the bytes as one datagram to its peer,
+    /// which the socket bound there holds if it has room, and which is lost
+    /// otherwise, the write succeeding all the same. A datagram larger than
+    /// the flavour sends is `EMSGSIZE`: above 65507 bytes on Linux, and on
+    /// Darwin above `net.inet.udp.maxdgram`, 9216 by default. That is judged
+    /// ahead of the buffer, which is `EFAULT` if it is not mapped; a
+    /// zero-length write sends an empty datagram whatever the buffer. A
+    /// datagram no socket takes, which a real kernel answers with an ICMP
+    /// error, is refused, as is one that two sockets are equally placed to
+    /// take.
+    ///
+    /// Any other socket with no peer (fresh from `socket(2)`, bound, or
+    /// listening) answers without the buffer, as its flavour does for its
+    /// domain and kind, at every length including zero; on Linux a stream
+    /// socket's `EPIPE` raises `SIGPIPE` as a pipe's does. A connected stream socket
     /// answers from its connection: how many bytes it takes now, `EAGAIN`, or
     /// a reset's error, whose `EPIPE` raises `SIGPIPE`. A blocking write it has
     /// no room for the whole of takes what fits and sleeps for the rest, as
     /// one into a pipe does; under Linux, if what it takes resets the
     /// connection, it returns their count instead. One that would copy from
-    /// an unmapped buffer is refused. A socket with a datagram peer, or with a
-    /// refused connection's error, is refused.
+    /// an unmapped buffer is refused. A socket with a refused connection's
+    /// error is refused.
     ///
     /// Fails loudly if `caller` is not a thread of one of the system's processes, or is
     /// already asleep in a syscall.
@@ -4858,34 +5191,41 @@ module UnixReadWrite =
     let private tryWriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, WriteRefusal>
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>> * Delivery option, WriteRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.writeWithBytes" "UnixReadWrite.write or finishWrite" paused
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
+        // Only a `PausedWriteCall.Write` can deliver: a blocking write into a
+        // pipe a client drains never sleeps, so neither a write that sleeps
+        // for its rest nor a woken one is ever into such a pipe.
         match paused.Call with
         | PausedWriteCall.Write (fd, into) ->
             tryApplyWrite into bytes paused.System
-            |> Result.map (markedThrough fd paused.System)
+            |> Result.map (fun (step, delivery) -> markedThrough fd paused.System step, delivery)
         | PausedWriteCall.WriteThenSleep (total, into) ->
             let fd =
                 match into with
                 | WriteIntoThenSleep.Pipe (_, _, fd)
                 | WriteIntoThenSleep.Connection (_, _, _, _, fd) -> fd
 
-            applyWriteThenSleep paused.Thread total into bytes paused.System
-            |> markedThrough fd paused.System
-            |> Ok
-        | PausedWriteCall.Finish into -> tryApplyResumedWrite paused.Thread into bytes paused.System
-        |> Result.map fateOf
+            Ok (
+                applyWriteThenSleep paused.Thread total into bytes paused.System
+                |> markedThrough fd paused.System,
+                None
+            )
+        | PausedWriteCall.Finish into ->
+            tryApplyResumedWrite paused.Thread into bytes paused.System
+            |> Result.map (fun step -> step, None)
+        |> Result.map (fun (step, delivery) -> fateOf step, delivery)
 
     /// `writeWithBytes`, with a refusal answered as the `Error` rather than raised.
     let internal tryWriteWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * Delivery option, WriteRefusal>
         =
-        Entry.resume (Shape.result Shape.fate) (tryWriteWithBytesIn bytes paused)
+        Entry.resume (Shape.result (Shape.beside Shape.fate)) (tryWriteWithBytesIn bytes paused)
 
     /// <summary>
     /// The rest of the write `paused` stopped: `bytes`, exactly the ones
@@ -4910,6 +5250,11 @@ module UnixReadWrite =
     /// connection, when it returns the count it has put in by now. A signal
     /// never reaches it here, `finishWrite` having answered one first.
     ///
+    /// Beside the fate is the `Delivery` the write made if it went into a pipe
+    /// that a client drains (`LaunchDescriptor.Drained`): the bytes the client
+    /// read, which have left the machine, so that no later system holds them.
+    /// It is `None` for a write into anything else.
+    ///
     /// Resuming the same paused call twice resumes it twice from the same
     /// system, which is what a value is.
     /// </remarks>
@@ -4917,7 +5262,7 @@ module UnixReadWrite =
     let writeWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * Delivery option
         =
         tryWriteWithBytes bytes paused
         |> Refusal.orRaise "UnixReadWrite.writeWithBytes" WriteRefusal.kind WriteRefusal.describe
@@ -5007,9 +5352,12 @@ module UnixReadWrite =
     /// - **No description is marked written** (Darwin's `FWASWRITTEN`, which
     ///   a `write` that moves bytes sets).
     ///
+    /// On a UDP socket it is `write`, which never waits, so `MSG_DONTWAIT`
+    /// changes nothing there.
+    ///
     /// Every other flag is refused, as is a count above `INT_MAX` and a socket
-    /// that is not an end of a connection. A call that sleeps is woken by
-    /// `finishWrite`, as a `write` is.
+    /// that is neither a UDP socket nor an end of a connection. A call that
+    /// sleeps is woken by `finishWrite`, as a `write` is.
     ///
     /// Fails loudly if `caller` is not a thread of one of the system's processes, or is
     /// already asleep in a syscall.
@@ -5087,6 +5435,8 @@ module UnixReadWrite =
         |> Result.bind (fun admission ->
             match admission with
             | PWriteAdmission.Answered answer -> Ok (CallProgress.Answered (answer, system))
+            | PWriteAdmission.DeviceAnswered (answer, inode, through) ->
+                Ok (CallProgress.Answered (applyPWriteDeviceAnswer answer inode through system))
             | PWriteAdmission.Faults (count, inode, through) ->
                 tryApplyPWriteFault offset count inode through system
                 |> Result.map CallProgress.Answered

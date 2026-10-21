@@ -31,9 +31,33 @@ module TestFutex =
         | [ pid ], system -> pid, system
         | pids, _ -> failwith $"expected one process, got %A{pids}"
 
-    let private seconds (s : int64) (ns : int64) : TimespecArgument = TimespecArgument.Readable (s, ns)
+    let private seconds (s : int64) (ns : int64) : TimespecArgument =
+        TimespecArgument.Readable
+            {
+                Seconds = s
+                Nanoseconds = ns
+            }
 
-    /// What `Syscall.Futex` answers for `thread` of `pid`.
+    /// What `Syscall.Futex` answers for `thread` of `pid`, with the sixth
+    /// argument `val3`.
+    let private futexWith
+        (pid : ProcessId)
+        (thread : int)
+        (at : uint64)
+        (op : int)
+        (value : int)
+        (word : CopiedArgument<uint32>)
+        (timeout : TimespecArgument)
+        (val3 : uint32)
+        (system : UnixSystem<int, string>)
+        : SyscallOutcome * UnixSystem<int, string>
+        =
+        match UnixSystem.step (Caller.make pid thread) (Syscall.Futex (at, op, value, word, timeout, val3)) system with
+        | SteppedCall.Futex (outcome, system) -> outcome, system
+        | other -> failwith $"step answered %A{Stepped.view other}"
+
+    /// What `Syscall.Futex` answers for `thread` of `pid`, for an operation
+    /// that does not read `val3`.
     let private futex
         (pid : ProcessId)
         (thread : int)
@@ -45,9 +69,7 @@ module TestFutex =
         (system : UnixSystem<int, string>)
         : SyscallOutcome * UnixSystem<int, string>
         =
-        match UnixSystem.step (Caller.make pid thread) (Syscall.Futex (at, op, value, word, timeout)) system with
-        | SteppedCall.Futex (outcome, system) -> outcome, system
-        | other -> failwith $"step answered %A{Stepped.view other}"
+        futexWith pid thread at op value word timeout 0u system
 
     /// A `FUTEX_WAIT_PRIVATE` by `thread` at `at`, expecting 0, of a word that
     /// holds `word`.
@@ -125,8 +147,8 @@ module TestFutex =
         : UnixSystem<int, string>
         =
         match UnixSignal.sigaction (Caller.make pid 0) signo (Some disposition) system with
-        | Ok (_, system) -> system
-        | Error error -> failwith $"sigaction failed with %O{error}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction failed with %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -144,7 +166,7 @@ module TestFutex =
         : UnixSystem<int, string>
         =
         match UnixSignal.pthreadKill (Caller.make pid sender) target signo system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system
         | other -> failwith $"pthread_kill answered %A{other}"
 
     let private owed (pid : ProcessId) (thread : int) (system : UnixSystem<int, string>) : OwedReturn option =
@@ -461,6 +483,7 @@ module TestFutex =
             match expected with
             | FutexTimeout.Until deadline -> (row, UnixWait.deadlines system) |> shouldEqual (row, [ deadline ])
             | FutexTimeout.Untimed -> failwith "no row here is untimed"
+            | FutexTimeout.At _ -> failwith "a relative wait has no absolute deadline"
             | FutexTimeout.Unbounded ->
                 (row, UnixWait.deadlines system) |> shouldEqual (row, [])
 
@@ -525,7 +548,8 @@ module TestFutex =
             | FutexTimeout.Until _ -> cover SaturationLabel.Kept
             | FutexTimeout.Unbounded when s >= ktimeSecondsMax -> cover SaturationLabel.TimeoutSaturates
             | FutexTimeout.Unbounded -> cover SaturationLabel.SumSaturates
-            | FutexTimeout.Untimed -> failwith "the reference made a timespec untimed"
+            | FutexTimeout.Untimed
+            | FutexTimeout.At _ -> failwith $"the reference made a relative timespec %A{expected}"
 
             let pid, system = boot 2
             let system = UnixSystem.advanceClock uptime system
@@ -535,7 +559,8 @@ module TestFutex =
             UnixWait.deadlines system
             |> shouldEqual (
                 match expected with
-                | FutexTimeout.Until deadline -> [ deadline ]
+                | FutexTimeout.Until deadline
+                | FutexTimeout.At deadline -> [ deadline ]
                 | FutexTimeout.Untimed
                 | FutexTimeout.Unbounded -> []
             )
@@ -694,8 +719,8 @@ module TestFutex =
             let mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             match UnixSignal.pthreadSigmask (Caller.make pid 1) (MaskHow.block numbering) (Some mask) system with
-            | Ok (_, system) -> pid, usr1 system, system
-            | Error error -> failwith $"pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> pid, usr1 system, system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
         for make in [ ignored ; defaulted ; blocked ] do
             let pid, signo, system = make ()
@@ -849,28 +874,104 @@ module TestFutex =
 
     // ------------------------------ Refusals ------------------------------- //
 
+    /// What `UnixFutex.futex` makes of `op` with no timeout and the bitset
+    /// `FUTEX_BITSET_MATCH_ANY`, from a fresh process.
+    let private directProgress
+        (platform : SimulatedUnixPlatform)
+        (op : int)
+        (at : uint64)
+        (word : UserBuffer)
+        : CallProgress<PausedFutexWait<int, string>, SyscallOutcome * UnixSystem<int, string>>
+        =
+        let system =
+            UnixSystem.initial<int, string> platform
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        UnixFutex.futex (Callers.leader system) at op 0 word TimespecArgument.Null UnixFutex.FutexBitsetMatchAny system
+
     let private direct (platform : SimulatedUnixPlatform) (op : int) (at : uint64) (word : UserBuffer) : unit -> unit =
         fun () ->
-            let system =
-                UnixSystem.initial<int, string> platform
-                |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-
-            UnixFutex.futex (Callers.leader system) at op 0 word TimespecArgument.Null system
+            directProgress platform op at word
             |> ignore<CallProgress<PausedFutexWait<int, string>, SyscallOutcome * UnixSystem<int, string>>>
 
     [<Test>]
     let ``Darwin has no futex`` () : unit =
-        for op in [ UnixFutex.FutexWaitPrivate ; UnixFutex.FutexWakePrivate ] do
+        for op in
+            [
+                UnixFutex.FutexWaitPrivate
+                UnixFutex.FutexWakePrivate
+                UnixFutex.FutexWaitBitsetPrivate
+                UnixFutex.FutexWakeBitsetPrivate
+                2
+            ] do
             direct SimulatedUnixPlatform.macOsArm64 op address UserBuffer.Mapped
             |> shouldFail<PlatformNotSupportedException>
 
     [<Test>]
-    let ``every other operation is refused`` () : unit =
-        // FUTEX_WAIT and FUTEX_WAKE without FUTEX_PRIVATE_FLAG, FUTEX_REQUEUE,
-        // FUTEX_WAIT_BITSET_PRIVATE, FUTEX_WAKE_BITSET_PRIVATE, FUTEX_LOCK_PI,
-        // FUTEX_WAIT_PRIVATE with FUTEX_CLOCK_REALTIME, and nonsense.
-        for op in [ 0 ; 1 ; 3 ; 9 ; 10 ; 137 ; 138 ; 6 ; 384 ; -1 ; 999 ] do
+    let ``every other command Linux has is refused`` () : unit =
+        // FUTEX_WAIT, FUTEX_WAKE, FUTEX_WAIT_BITSET and FUTEX_WAKE_BITSET
+        // without FUTEX_PRIVATE_FLAG; FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
+        // FUTEX_WAKE_OP, FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
+        // FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI and FUTEX_LOCK_PI2,
+        // private or not; and those FUTEX_CLOCK_REALTIME is not ENOSYS for.
+        for op in
+            [
+                0
+                1
+                9
+                10
+                265
+                3
+                4
+                5
+                6
+                7
+                8
+                11
+                12
+                13
+                139
+                141
+                267
+                269
+                395
+                397
+            ] do
             direct linux op address UserBuffer.Mapped |> shouldFail<UnmodelledException>
+
+    [<Test>]
+    let ``a command Linux does not have, or a realtime clock it does not take, is ENOSYS`` () : unit =
+        // The "decode" rows of `docs/probes/futex-bitset`, with no timeout:
+        // FUTEX_FD, commands past FUTEX_LOCK_PI2, stray bits, and
+        // FUTEX_CLOCK_REALTIME on every command but FUTEX_WAIT_BITSET,
+        // FUTEX_WAIT_REQUEUE_PI and FUTEX_LOCK_PI2. `TestFutexBitset` replays
+        // every decode row; these add commands the probe could not make
+        // without acting on the word.
+        for op in
+            [
+                2
+                130
+                14
+                15
+                127
+                511
+                512
+                649
+                1153
+                -1
+                Int32.MinValue
+                999
+                256
+                257
+                262
+                384
+                385
+                394
+                390
+            ] do
+            match directProgress linux op address UserBuffer.Opaque with
+            | CallProgress.Answered (outcome, _) -> (op, outcome) |> shouldEqual (op, failed UnixError.ENOSYS)
+            | CallProgress.NeedsCopyIn _ -> failwith $"op %d{op} read its word"
 
     [<Test>]
     let ``a wait whose word the caller cannot produce is refused`` () : unit =
@@ -899,6 +1000,7 @@ module TestFutex =
                     0
                     word
                     TimespecArgument.Null
+                    0u
                     system
             with
             | CallProgress.Answered (outcome, _) -> outcome |> shouldEqual (failed UnixError.EINVAL)
@@ -906,14 +1008,35 @@ module TestFutex =
 
     // ---------------------- The reference model ---------------------------- //
 
+    /// An absolute deadline a bitset wait names.
+    [<RequireQualifiedAccess>]
+    type private AbsoluteDeadline =
+        /// This many nanoseconds since boot, on the wait's clock: before boot
+        /// if negative, which only the realtime clock can name.
+        | SinceBoot of int64
+        /// `KTIME_SEC_MAX` seconds on the wait's clock, which Linux saturates.
+        | Saturated
+
+    /// Which wait a random run makes.
+    [<RequireQualifiedAccess>]
+    type private WaitKind =
+        /// `FUTEX_WAIT_PRIVATE`, with a relative timeout of this many
+        /// nanoseconds if any.
+        | Relative of timeout : int64 option
+        /// `FUTEX_WAIT_BITSET_PRIVATE` with the bitset `Bitset`, on the
+        /// realtime clock if `Realtime`, with a deadline if any.
+        | Bitset of Bitset : uint32 * Realtime : bool * Deadline : AbsoluteDeadline option
+
     /// One step of a random run, by a thread of process `Process` (0 or 1).
     [<RequireQualifiedAccess>]
     type private Op =
-        /// `Thread` waits at address `Address` (0 or 1), with a timeout of
-        /// `Timeout` nanoseconds if any, on a word that holds what it expects
-        /// if `Matches`.
-        | Wait of Process : int * Thread : int * Address : int * Timeout : int64 option * Matches : bool
-        | Wake of Process : int * Thread : int * Address : int * Count : int
+        /// `Thread` waits at address `Address` (0 or 1) as `Kind` says, on a
+        /// word that holds what it expects if `Matches`.
+        | Wait of Process : int * Thread : int * Address : int * Kind : WaitKind * Matches : bool
+        /// `Thread` wakes `Count` at address `Address`, with
+        /// `FUTEX_WAKE_BITSET_PRIVATE` and this bitset if `Bitset` is `Some`,
+        /// and `FUTEX_WAKE_PRIVATE` otherwise.
+        | Wake of Process : int * Thread : int * Address : int * Count : int * Bitset : uint32 option
         /// `Sender` sends USR1 to `Target`, both of process `Process`.
         | Kill of Process : int * Sender : int * Target : int
         | Advance of nanoseconds : int64
@@ -939,6 +1062,7 @@ module TestFutex =
         {
             Address : int
             Timeout : FutexTimeout
+            Bitset : uint32
             Ordinal : int64
             Taken : bool
             Woken : bool
@@ -980,11 +1104,49 @@ module TestFutex =
                     let! t = thread
                     let! a = addr
 
-                    let! timeout =
+                    let relative =
                         Gen.elements [ None ; None ; Some 0L ; Some 1_000L ; Some 10_000_000L ; Some Int64.MaxValue ]
+                        |> Gen.map WaitKind.Relative
 
+                    let bitset =
+                        gen {
+                            let! bitset =
+                                Gen.frequency
+                                    [
+                                        6, Gen.elements [ 1u ; 2u ; 3u ; UnixFutex.FutexBitsetMatchAny ]
+                                        1, Gen.constant 0u
+                                    ]
+
+                            let! realtime = Gen.elements [ false ; true ]
+
+                            let! deadline =
+                                Gen.elements
+                                    [
+                                        None
+                                        None
+                                        Some (AbsoluteDeadline.SinceBoot 0L)
+                                        Some (AbsoluteDeadline.SinceBoot 1_000L)
+                                        Some (AbsoluteDeadline.SinceBoot 10_000_000L)
+                                        Some (AbsoluteDeadline.SinceBoot 30_000_000L)
+                                        Some (AbsoluteDeadline.SinceBoot 1_000_000_000L)
+                                        Some AbsoluteDeadline.Saturated
+                                    ]
+
+                            // Only the realtime clock can name an instant before boot.
+                            let! beforeBoot = Gen.frequency [ 5, Gen.constant false ; 1, Gen.constant realtime ]
+
+                            let deadline =
+                                if beforeBoot then
+                                    Some (AbsoluteDeadline.SinceBoot -1_000_000_000L)
+                                else
+                                    deadline
+
+                            return WaitKind.Bitset (bitset, realtime, deadline)
+                        }
+
+                    let! kind = Gen.oneof [ relative ; bitset ]
                     let! matches = Gen.frequency [ 5, Gen.constant true ; 1, Gen.constant false ]
-                    return Op.Wait (p, t, a, timeout, matches)
+                    return Op.Wait (p, t, a, kind, matches)
                 }
                 4,
                 gen {
@@ -992,7 +1154,16 @@ module TestFutex =
                     let! t = thread
                     let! a = addr
                     let! n = Gen.choose (-2, 3)
-                    return Op.Wake (p, t, a, n)
+
+                    let! bitset =
+                        Gen.frequency
+                            [
+                                4, Gen.constant None
+                                6, Gen.elements [ 1u ; 2u ; 3u ; UnixFutex.FutexBitsetMatchAny ] |> Gen.map Some
+                                1, Gen.constant (Some 0u)
+                            ]
+
+                    return Op.Wake (p, t, a, n, bitset)
                 }
                 4,
                 gen {
@@ -1038,7 +1209,9 @@ module TestFutex =
             }
 
         match op with
-        | Op.Wait (p, t, a, timeout, matches) when running (p, t) ->
+        | Op.Wait (p, t, _, WaitKind.Bitset (0u, _, _), _) when running (p, t) ->
+            Some (RefAnswer.Outcome "Failed EINVAL", state)
+        | Op.Wait (p, t, a, kind, matches) when running (p, t) ->
             if not matches then
                 Some (RefAnswer.Outcome "EAGAIN", state)
             else
@@ -1046,9 +1219,17 @@ module TestFutex =
                     {
                         Address = a
                         Timeout =
-                            match timeout with
-                            | None -> FutexTimeout.Untimed
-                            | Some ns -> referenceTimeout state.Clock (ns / 1_000_000_000L) (ns % 1_000_000_000L)
+                            match kind with
+                            | WaitKind.Relative None
+                            | WaitKind.Bitset (_, _, None) -> FutexTimeout.Untimed
+                            | WaitKind.Relative (Some ns) ->
+                                referenceTimeout state.Clock (ns / 1_000_000_000L) (ns % 1_000_000_000L)
+                            | WaitKind.Bitset (_, _, Some AbsoluteDeadline.Saturated) -> FutexTimeout.Unbounded
+                            | WaitKind.Bitset (_, _, Some (AbsoluteDeadline.SinceBoot ns)) -> FutexTimeout.At ns
+                        Bitset =
+                            match kind with
+                            | WaitKind.Relative _ -> UnixFutex.FutexBitsetMatchAny
+                            | WaitKind.Bitset (bitset, _, _) -> bitset
                         Ordinal = state.NextOrdinal
                         Taken = false
                         Woken = false
@@ -1061,13 +1242,18 @@ module TestFutex =
                         Threads = Map.add (p, t) (RefThread.Parked park) state.Threads
                     }
                 )
-        | Op.Wake (p, t, a, n) when running (p, t) ->
+        | Op.Wake (p, t, _, _, Some 0u) when running (p, t) -> Some (RefAnswer.Outcome "Failed EINVAL", state)
+        | Op.Wake (p, t, a, n, bitset) when running (p, t) ->
+            let bitset = defaultArg bitset UnixFutex.FutexBitsetMatchAny
+
             let taken =
                 state.Threads
                 |> Map.toList
                 |> List.choose (fun ((p', t'), thread) ->
                     match thread with
-                    | RefThread.Parked park when p' = p && park.Address = a && not park.Taken ->
+                    | RefThread.Parked park when
+                        p' = p && park.Address = a && not park.Taken && park.Bitset &&& bitset <> 0u
+                        ->
                         Some (park.Ordinal, (p', t'))
                     | _ -> None
                 )
@@ -1120,7 +1306,8 @@ module TestFutex =
         | Op.Sweep ->
             let deadlinePassed (park : RefPark) : bool =
                 match park.Timeout with
-                | FutexTimeout.Until deadline -> state.Clock >= deadline
+                | FutexTimeout.Until deadline
+                | FutexTimeout.At deadline -> state.Clock >= deadline
                 | FutexTimeout.Untimed
                 | FutexTimeout.Unbounded -> false
 
@@ -1160,7 +1347,8 @@ module TestFutex =
             | RefThread.Parked park when park.Woken ->
                 let timedOut =
                     match park.Timeout with
-                    | FutexTimeout.Until deadline -> state.Clock >= deadline
+                    | FutexTimeout.Until deadline
+                    | FutexTimeout.At deadline -> state.Clock >= deadline
                     | FutexTimeout.Untimed
                     | FutexTimeout.Unbounded -> false
 
@@ -1172,6 +1360,7 @@ module TestFutex =
                     let ending =
                         match park.Timeout with
                         | FutexTimeout.Until _
+                        | FutexTimeout.At _
                         | FutexTimeout.Unbounded -> InterruptedCall.FailsWithEintr
                         | FutexTimeout.Untimed when Map.find p state.Restart -> InterruptedCall.Restarts
                         | FutexTimeout.Untimed -> InterruptedCall.FailsWithEintr
@@ -1220,6 +1409,7 @@ module TestFutex =
     /// system after.
     let rec private kernelStep
         (pids : ProcessId list)
+        (bootNanoseconds : int64)
         (op : Op)
         (system : UnixSystem<int, string>)
         : RefAnswer * UnixSystem<int, string>
@@ -1231,15 +1421,39 @@ module TestFutex =
             | other -> UnionCaseName.ofValue other
 
         match op with
-        | Op.Wait (p, t, a, timeout, matches) ->
+        | Op.Wait (p, t, a, kind, matches) ->
             let word = if matches then 0u else 1u
 
-            let timeout =
-                match timeout with
-                | None -> TimespecArgument.Null
-                | Some ns -> seconds (ns / 1_000_000_000L) (ns % 1_000_000_000L)
+            let timespec (ns : int64) : TimespecArgument =
+                if ns < 0L then
+                    failwith $"the run named %d{ns} ns, before the clock's zero"
 
-            let outcome, system = waitOn pids.[p] t addresses.[a] word timeout system
+                seconds (ns / 1_000_000_000L) (ns % 1_000_000_000L)
+
+            let outcome, system =
+                match kind with
+                | WaitKind.Relative timeout ->
+                    let timeout =
+                        match timeout with
+                        | None -> TimespecArgument.Null
+                        | Some ns -> timespec ns
+
+                    waitOn pids.[p] t addresses.[a] word timeout system
+                | WaitKind.Bitset (bitset, realtime, deadline) ->
+                    let timeout =
+                        match deadline with
+                        | None -> TimespecArgument.Null
+                        | Some AbsoluteDeadline.Saturated -> seconds ktimeSecondsMax 0L
+                        | Some (AbsoluteDeadline.SinceBoot ns) when realtime -> timespec (bootNanoseconds + ns)
+                        | Some (AbsoluteDeadline.SinceBoot ns) -> timespec ns
+
+                    let op =
+                        if realtime then
+                            UnixFutex.FutexWaitBitsetPrivate ||| UnixFutex.FutexClockRealtime
+                        else
+                            UnixFutex.FutexWaitBitsetPrivate
+
+                    futexWith pids.[p] t addresses.[a] op 0 (CopiedArgument.Readable word) timeout bitset system
 
             let outcome =
                 match outcome with
@@ -1247,9 +1461,23 @@ module TestFutex =
                 | other -> label other
 
             RefAnswer.Outcome outcome, system
-        | Op.Wake (p, t, a, n) ->
+        | Op.Wake (p, t, a, n, None) ->
             let count, system = wakeAt pids.[p] t addresses.[a] n system
             RefAnswer.Outcome $"Completed %d{count}", system
+        | Op.Wake (p, t, a, n, Some bitset) ->
+            let outcome, system =
+                futexWith
+                    pids.[p]
+                    t
+                    addresses.[a]
+                    UnixFutex.FutexWakeBitsetPrivate
+                    n
+                    CopiedArgument.Addressless
+                    TimespecArgument.Null
+                    bitset
+                    system
+
+            RefAnswer.Outcome (label outcome), system
         | Op.Kill (p, s, t) -> RefAnswer.Nothing, kill pids.[p] s t (usr1 system) system
         | Op.Advance ns -> RefAnswer.Nothing, UnixSystem.advanceClock ns system
         | Op.Sweep ->
@@ -1310,7 +1538,7 @@ module TestFutex =
                         | Op.FinishAll -> Op.Finish key
                         | _ -> Op.Return key
 
-                    let answer, system = kernelStep pids each system
+                    let answer, system = kernelStep pids bootNanoseconds each system
                     answers @ [ key, answer ], system
                 )
 
@@ -1333,7 +1561,7 @@ module TestFutex =
                                 | ParkState.Asleep -> false
                                 | ParkState.Woken _ -> true
 
-                            $"parked %d{List.findIndex ((=) wait.FutexAddress) addresses} %A{wait.FutexTimeout} taken=%b{wait.TakenByWake} woken=%b{woken}"
+                            $"parked %d{List.findIndex ((=) wait.FutexAddress) addresses} %A{wait.FutexTimeout} bitset=%x{wait.FutexBitset} taken=%b{wait.TakenByWake} woken=%b{woken}"
                         | other -> $"parked in %s{UnionCaseName.ofValue other}"
                     | None, None -> "running"
                     | None, Some (OwedReturn.Interrupted _) -> "owes interrupted"
@@ -1354,7 +1582,7 @@ module TestFutex =
             | RefThread.Owes None -> "owes signal"
             | RefThread.Owes (Some _) -> "owes interrupted"
             | RefThread.Parked park ->
-                $"parked %d{park.Address} %A{park.Timeout} taken=%b{park.Taken} woken=%b{park.Woken}"
+                $"parked %d{park.Address} %A{park.Timeout} bitset=%x{park.Bitset} taken=%b{park.Taken} woken=%b{park.Woken}"
         )
 
     /// What a run of the reference reached, for coverage.
@@ -1369,11 +1597,37 @@ module TestFutex =
         | WokeNone
         /// A signal ended a wait whose timeout Linux saturates.
         | UnboundedInterrupted
+        /// A wake passed over an untaken waiter on its address whose bitset
+        /// shares no bit with its own.
+        | PassedOver
+        /// A wait with an absolute deadline timed out.
+        | AbsoluteTimedOut
+        /// A signal ended a wait with an absolute deadline.
+        | AbsoluteInterrupted
+        /// A bitset of 0 answered `EINVAL`.
+        | ZeroBitset
 
     [<Test>]
     let ``the kernel's futex queues are the reference's`` () : unit =
         let property (cover : RunLabel -> unit) ((restart0, restart1, ops) : bool * bool * Op list) : unit =
-            let pids, system = Machines.withThreads linux 2 threadsEach
+            // Booted after the epoch, so that the realtime clock and the
+            // monotonic one differ: 2026-10-18, half a second in.
+            let pids, system =
+                Machines.withThreadsOn
+                    (UnixBootImage.withBootTime (UnixTimestamp.createOrFail "TestFutex" 1_792_281_600L 500_000_000))
+                    linux
+                    2
+                    threadsEach
+
+            let bootNanoseconds =
+                let realtime = UnixSystem.realtime system
+
+                UnixTimestamp.seconds realtime * 1_000_000_000L
+                + int64 (UnixTimestamp.nanoseconds realtime)
+                - UnixSystem.nanosecondsSinceBoot system
+
+            // A realtime deadline a second before boot must be a valid timespec.
+            bootNanoseconds |> shouldBeGreaterThan 1_000_000_000L
 
             let system =
                 (system, List.zip pids [ restart0 ; restart1 ])
@@ -1399,7 +1653,7 @@ module TestFutex =
                 match refStep state op with
                 | None -> state, system
                 | Some (expected, after) ->
-                    let actual, system = kernelStep pids op system
+                    let actual, system = kernelStep pids bootNanoseconds op system
                     (op, actual) |> shouldEqual (op, expected)
 
                     let rec label (op : Op) (answer : RefAnswer) : unit =
@@ -1413,7 +1667,14 @@ module TestFutex =
                                                    Timeout = FutexTimeout.Until deadline
                                                } when state.Clock >= deadline -> cover RunLabel.TakenAfterTimeout
                             | _ -> ()
-                        | Op.Finish _, RefAnswer.Outcome "Failed ETIMEDOUT" -> cover RunLabel.TimedOut
+                        | Op.Finish (p, t), RefAnswer.Outcome "Failed ETIMEDOUT" ->
+                            cover RunLabel.TimedOut
+
+                            match refThread state (p, t) with
+                            | RefThread.Parked {
+                                                   Timeout = FutexTimeout.At _
+                                               } -> cover RunLabel.AbsoluteTimedOut
+                            | _ -> ()
                         | Op.Finish (p, t), RefAnswer.Outcome "Interrupted" ->
                             cover RunLabel.Interrupted
 
@@ -1421,10 +1682,32 @@ module TestFutex =
                             | RefThread.Parked {
                                                    Timeout = FutexTimeout.Unbounded
                                                } -> cover RunLabel.UnboundedInterrupted
+                            | RefThread.Parked {
+                                                   Timeout = FutexTimeout.At _
+                                               } -> cover RunLabel.AbsoluteInterrupted
                             | _ -> ()
+                        | Op.Wait _, RefAnswer.Outcome "Failed EINVAL"
+                        | Op.Wake _, RefAnswer.Outcome "Failed EINVAL" -> cover RunLabel.ZeroBitset
+                        | Op.Wake (p, _, a, _, bitset), _ ->
+                            let bitset = defaultArg bitset UnixFutex.FutexBitsetMatchAny
+
+                            let passedOver =
+                                state.Threads
+                                |> Map.exists (fun (p', _) thread ->
+                                    match thread with
+                                    | RefThread.Parked park ->
+                                        p' = p && park.Address = a && not park.Taken && park.Bitset &&& bitset = 0u
+                                    | _ -> false
+                                )
+
+                            if passedOver then
+                                cover RunLabel.PassedOver
+
+                            match answer with
+                            | RefAnswer.Outcome "Completed 0" -> cover RunLabel.WokeNone
+                            | RefAnswer.Outcome "Completed 1" -> ()
+                            | _ -> cover RunLabel.WokeSeveral
                         | Op.Return _, RefAnswer.Ended (Some InterruptedCall.Restarts) -> cover RunLabel.Restarted
-                        | Op.Wake _, RefAnswer.Outcome "Completed 0" -> cover RunLabel.WokeNone
-                        | Op.Wake _, RefAnswer.Outcome count when count <> "Completed 1" -> cover RunLabel.WokeSeveral
                         | Op.FinishAll, RefAnswer.Each answers ->
                             for key, answer in answers do
                                 label (Op.Finish key) answer
@@ -1454,5 +1737,9 @@ module TestFutex =
                 RunLabel.WokeSeveral
                 RunLabel.WokeNone
                 RunLabel.UnboundedInterrupted
+                RunLabel.PassedOver
+                RunLabel.AbsoluteTimedOut
+                RunLabel.AbsoluteInterrupted
+                RunLabel.ZeroBitset
             ] do
             (label, coverage.Count label > 5) |> shouldEqual (label, true)

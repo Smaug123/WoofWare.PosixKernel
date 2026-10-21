@@ -114,12 +114,10 @@ module TestStepOracle =
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.TerminalAttributes fd ->
             Ok (SteppedCall.TerminalAttributes (UnixDescriptor.terminalAttributes caller fd system))
-        | Syscall.GetEffectiveUserId ->
-            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId caller system))
-        | Syscall.GetEffectiveGroupId ->
-            Ok (SteppedCall.GetEffectiveGroupId (UnixDescriptor.effectiveGroupId caller system))
+        | Syscall.GetEffectiveUserId -> Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid caller system))
+        | Syscall.GetEffectiveGroupId -> Ok (SteppedCall.GetEffectiveGroupId (UnixCredentials.getegid caller system))
         | Syscall.GetGroups (size, destination) ->
-            UnixDescriptor.tryGetgroups caller destination size system
+            UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
         | Syscall.Stat (policy, path) ->
@@ -190,7 +188,7 @@ module TestStepOracle =
             |> Result.map SteppedCall.FAccessAt
             |> Result.mapError SyscallRefusal.FAccessAt
         | Syscall.Open (path, flags, mode) ->
-            UnixNamespace.tryOpenPath caller flags path mode system
+            UnixNamespace.tryOpenPath caller path flags mode system
             |> Result.map SteppedCall.Open
             |> Result.mapError SyscallRefusal.Open
         | Syscall.OpenAt (dirfd, path, flags, mode) ->
@@ -289,6 +287,8 @@ module TestStepOracle =
             |> Result.mapError SyscallRefusal.PRead
         | Syscall.Write (fd, buffer, count) ->
             UnixReadWrite.tryWrite caller fd (bufferOf buffer) count system
+            // A write answered before its copy delivers nothing.
+            |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
             |> CallProgress.resumeWith (fun paused ->
                 UnixReadWrite.tryWriteWithBytes (copied buffer (PausedWrite.copyRange paused)) paused
             )
@@ -338,8 +338,8 @@ module TestStepOracle =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength) ->
-            UnixConnection.tryAccept caller fd destination declaredLength system
+        | Syscall.Accept (fd, destination, declaredLength, flags) ->
+            UnixConnection.tryAccept caller fd destination declaredLength flags system
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -489,8 +489,8 @@ module TestStepOracle =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> CallProgress.resumeWith (fun paused -> UnixFutex.tryFutexWithWord (cell word) paused)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
@@ -645,8 +645,8 @@ module TestStepOracle =
         let system = system |> stream 10 |> connect 10
 
         let system =
-            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
+            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (11, _), system) -> system
             | other -> failwith $"setting up, accept: %A{other}"
 
         system |> stream 12 |> connect 12
@@ -671,7 +671,7 @@ module TestStepOracle =
 
             // EPOLLIN and EPOLLOUT, each with EPOLLET.
             match UnixPoll.epollCreate1 leader 0 system with
-            | Ok (13, system) -> system |> watch 10 0x8000_0001u |> watch 11 0x8000_0004u
+            | DescriptorAnswer.Returned 13, system -> system |> watch 10 0x8000_0001u |> watch 11 0x8000_0004u
             | other -> failwith $"setting up, epoll_create1: %A{other}"
         | SimulatedUnixFlavour.Darwin ->
             let change (fd : int) (filter : int16) : Kevent =
@@ -685,11 +685,23 @@ module TestStepOracle =
                 }
 
             match UnixKqueue.kqueue leader system with
-            | 13, system ->
+            | DescriptorAnswer.Returned 13, system ->
                 let changes = [ change 10 KeventFilter.Read ; change 11 KeventFilter.Write ]
 
                 match
-                    UnixKqueue.kevent leader 13 2 changes 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.kevent
+                        leader
+                        13
+                        2
+                        changes
+                        0
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                 with
                 | KeventOutcome.Answered [], system -> system
                 | other -> failwith $"setting up, kevent: %A{other}"
@@ -707,8 +719,8 @@ module TestStepOracle =
         let signo = Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some action) system with
-        | Ok (_, system) -> leaderReturned system
-        | Error error -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
+        | SigactionAnswer.Completed _, system -> leaderReturned system
+        | SigactionAnswer.Failed error, _ -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
 
     /// `system` with SIGUSR1 caught, blocked by the leader, and pending on the
     /// process.
@@ -723,11 +735,11 @@ module TestStepOracle =
 
         let system =
             match UnixSignal.pthreadSigmask (Callers.leader system) (MaskHow.block numbering) (Some usr1) system with
-            | Ok (_, system) -> leaderReturned system
-            | Error error -> failwith $"setting up, pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> leaderReturned system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"setting up, pthread_sigmask: %O{error}"
 
         match UnixSignal.kill (Callers.leader system) pid (Signal.toRawSignoUnder numbering Signal.SIGUSR1) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> leaderReturned system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> leaderReturned system
         | other -> failwith $"setting up, kill: %A{other}"
 
     /// `system` with its leader inside a handler for SIGUSR2, whose frame is
@@ -744,7 +756,7 @@ module TestStepOracle =
             Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGUSR2
 
         match UnixSignal.pthreadKill leader 0 usr2 system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) ->
             match UnixSignal.onReturnToUser leader system with
             | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system) when
                 frame.Id = HandlerFrameId 0L
@@ -780,8 +792,8 @@ module TestStepOracle =
                 ordinary
 
         let opened (path : string) (flags : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixNamespace.openPath (Callers.leader system) flags (PathArg.ofText path) 0 system with
-            | SyscallOutcome.Answered (SyscallAnswer.Completed _), system -> system
+            match UnixNamespace.openPath (Callers.leader system) (PathArg.ofText path) flags 0 system with
+            | OpenOutcome.Answered (DescriptorAnswer.Returned _), system -> system
             | other -> failwith $"setting up, open(%s{path}): %A{other}"
 
         let system =
@@ -801,7 +813,7 @@ module TestStepOracle =
             | SimulatedUnixFlavour.Darwin -> opened "/d/e" 0 system
             | SimulatedUnixFlavour.Linux ->
                 match UnixInotify.inotifyInit1 (Callers.leader system) 0 system with
-                | Ok (7, system) ->
+                | DescriptorAnswer.Returned 7, system ->
                     // IN_CREATE.
                     match Eager.tryInotifyAddWatch 7 (PathArg.ofText "/d") 0x100u system with
                     | Ok (SyscallAnswer.Completed 1L, system) -> system
@@ -1157,6 +1169,12 @@ module TestStepOracle =
         match flavour with
         | SimulatedUnixFlavour.Linux -> Gen.elements [ 0 ; 0x80000 ; 0x800 ; 0x80800 ; 0x4000 ; 0x80 ; 0x1 ]
         | SimulatedUnixFlavour.Darwin -> Gen.elements [ 0 ; 0x1000000 ; 0x4 ; 0x1000004 ; 0x1 ]
+
+    /// `accept4(2)` flag words in Linux's numbering: `SOCK_NONBLOCK`,
+    /// `SOCK_CLOEXEC`, both, and words with a bit it rejects. Any word but 0 is
+    /// refused under Darwin, which has no `accept4`.
+    let private acceptFlagsGen : Gen<int> =
+        Gen.elements [ 0 ; 0x800 ; 0x80000 ; 0x80800 ; 0x1 ; Int32.MinValue ]
 
     let private optionLengthGen : Gen<uint32> =
         Gen.frequency
@@ -1566,7 +1584,18 @@ module TestStepOracle =
             Gen.zip socketFd (Gen.elements [ -1 ; 0 ; 1 ; 4 ; 128 ; Int32.MaxValue ])
             |> Gen.filter (fun (fd, backlog) -> fd <> backlog)
             |> Gen.map Syscall.Listen
-            "Accept", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.Accept
+            "Accept",
+            Gen.map4
+                (fun fd destination declaredLength flags -> Syscall.Accept (fd, destination, declaredLength, flags))
+                socketFd
+                userBufferGen
+                (Gen.optionOf socklenGen)
+                acceptFlagsGen
+            |> Gen.filter (fun call ->
+                match call with
+                | Syscall.Accept (fd, _, _, flags) -> fd <> flags
+                | _ -> true
+            )
             "Shutdown",
             Gen.zip socketFd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ])
             |> Gen.filter (fun (fd, how) -> fd <> how)
@@ -1665,12 +1694,28 @@ module TestStepOracle =
                 let! timeout =
                     Gen.elements
                         [
-                            KeventTimeout.Null
-                            KeventTimeout.Readable (0L, 0L)
-                            KeventTimeout.Readable (1L, 0L)
-                            KeventTimeout.Readable (-1L, 0L)
-                            KeventTimeout.Readable (0L, 1_000_000_001L)
-                            KeventTimeout.Unreadable
+                            TimespecArgument.Null
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = -1L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_001L
+                                }
+                            TimespecArgument.Unreadable
                         ]
 
                 return kq, changes, nchanges, eventlist, nevents, timeout
@@ -1776,7 +1821,14 @@ module TestStepOracle =
                         [
                             4, Gen.constant UnixFutex.FutexWaitPrivate
                             3, Gen.constant UnixFutex.FutexWakePrivate
-                            1, Gen.elements [ 0 ; 9 ; 384 ]
+                            3,
+                            Gen.elements
+                                [
+                                    UnixFutex.FutexWaitBitsetPrivate
+                                    UnixFutex.FutexWaitBitsetPrivate ||| UnixFutex.FutexClockRealtime
+                                    UnixFutex.FutexWakeBitsetPrivate
+                                ]
+                            1, Gen.elements [ 0 ; 9 ; 384 ; 2 ; 6 ]
                         ]
 
                 let! value = Gen.elements [ 0 ; 0 ; 1 ; -1 ]
@@ -1787,13 +1839,26 @@ module TestStepOracle =
                         [
                             TimespecArgument.Null
                             TimespecArgument.Null
-                            TimespecArgument.Readable (0L, 0L)
-                            TimespecArgument.Readable (0L, 10_000_000L)
-                            TimespecArgument.Readable (0L, 1_000_000_000L)
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 10_000_000L
+                                }
+                            TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 1_000_000_000L
+                                }
                             TimespecArgument.Unreadable
                         ]
 
-                return Syscall.Futex (address, op, value, word, timeout)
+                let! val3 = Gen.elements [ UnixFutex.FutexBitsetMatchAny ; 1u ; 2u ; 0u ]
+                return Syscall.Futex (address, op, value, word, timeout, val3)
             }
         ]
 
@@ -1840,8 +1905,8 @@ module TestStepOracle =
         | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
             UnixSocket.tryGetsockopt caller fd level optionName value (bufferOf length) system
             |> stopped
-        | Syscall.Futex (address, op, value, word, timeout) ->
-            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+        | Syscall.Futex (address, op, value, word, timeout, val3) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout val3 system
             |> stopped
         | other -> failwith $"%s{UnionCaseName.ofValue other} copies no buffer in"
 
@@ -1921,7 +1986,7 @@ module TestStepOracle =
                     try
                         match reference leader call system with
                         | Ok stepped ->
-                            Stepped.carriedOn stepped
+                            Stepped.carriedOn leader system stepped
                             |> Option.bind (returned leader)
                             |> Option.bind owingReturned
                             |> Option.defaultValue system
@@ -1939,6 +2004,10 @@ module TestStepOracle =
 
             let caller = Callers.thread caller system
 
+            // Whether `SteppedCall.system` disagreed with the system the
+            // answer holds, found without naming a case.
+            let systemMismatch : string option ref = ref None
+
             let viaStep =
                 observe (fun () ->
                     let stepped = UnixSystem.tryStep caller call system
@@ -1949,8 +2018,27 @@ module TestStepOracle =
                     | Ok _
                     | Error _ -> ()
 
+                    match stepped with
+                    | Ok stepped ->
+                        let expected =
+                            match Stepped.heldSystems stepped with
+                            | [] -> system
+                            | [ held ] -> held
+                            | held ->
+                                failwith $"%A{call}: the answer holds %d{List.length held} systems, not at most one"
+
+                        if not (obj.ReferenceEquals (SteppedCall.system system stepped, expected)) then
+                            systemMismatch.Value <-
+                                Some
+                                    $"%A{call} by %O{caller}: SteppedCall.system of %A{Stepped.view stepped} is not the system the answer holds, or the one the call was made in"
+                    | Error _ -> ()
+
                     stepped
                 )
+
+            match systemMismatch.Value with
+            | Some message -> failwith message
+            | None -> ()
 
             let direct = observe (fun () -> reference caller call system)
 
@@ -2088,8 +2176,8 @@ module TestStepOracle =
             // first bytes of each buffer, and no others.
             let afterWrite =
                 match UnixSystem.step leader calls.[0] system with
-                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system)) ->
-                    system
+                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed 3L), system),
+                                     None) -> system
                 | other -> failwith $"write: %A{Stepped.view other}"
 
             let afterPWrite =
@@ -2186,7 +2274,7 @@ module TestStepOracle =
                         fun () ->
                             UnixReadWrite.tryWrite leader 3 unmapped 3UL system
                             |> answered
-                            |> Result.map SteppedCall.Write
+                            |> Result.map (fun fate -> SteppedCall.Write (fate, None))
                             |> Result.mapError SyscallRefusal.Write
                         Syscall.Send (10, CopiedArgument.Unmapped address, 4UL, 0),
                         fun () ->
@@ -2233,6 +2321,7 @@ module TestStepOracle =
                 // did before the copy is `TestFaultingFileWrite`'s.
                 match UnixSystem.tryStep leader (fst calls.[0]) system with
                 | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EFAULT),
-                                                                _))) -> ()
+                                                                _),
+                                         None)) -> ()
                 | Ok other -> failwith $"write through %O{unmapped}: %A{Stepped.view other}"
                 | Error refusal -> failwith $"write through %O{unmapped} was refused: %A{refusal}"

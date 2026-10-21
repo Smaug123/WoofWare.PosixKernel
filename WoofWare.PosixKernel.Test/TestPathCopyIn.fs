@@ -112,6 +112,11 @@ module TestPathCopyIn =
         | SyscallAnswer.Completed _ -> None
         | SyscallAnswer.Failed error -> Some error
 
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : UnixError option =
+        match answer with
+        | DescriptorAnswer.Returned _ -> None
+        | DescriptorAnswer.Failed error -> Some error
+
     let private flags (access : FileAccessMode) : OpenFlags =
         {
             Access = access
@@ -122,6 +127,7 @@ module TestPathCopyIn =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -137,8 +143,8 @@ module TestPathCopyIn =
         =
         let opened (flags : OpenFlags) =
             Some (fun path system ->
-                match OpenFlagWords.openPath flags path 0o644 system with
-                | Ok (answer, _) -> ofAnswer answer
+                match OpenFlagWords.openPath path flags 0o644 system with
+                | Ok (answer, _) -> ofDescriptorAnswer answer
                 | Error refusal -> failwith $"open refused: %s{OpenRefusal.describe refusal}"
             )
 
@@ -146,8 +152,8 @@ module TestPathCopyIn =
         // passed it.
         let openedRaw (word : int) =
             Some (fun path system ->
-                match OpenOutcomes.openPath word path 0o644 system with
-                | Ok (answer, _) -> ofAnswer answer
+                match OpenOutcomes.openPath path word 0o644 system with
+                | Ok (answer, _) -> ofDescriptorAnswer answer
                 | Error refusal -> failwith $"open refused: %s{OpenRefusal.describe refusal}"
             )
 
@@ -493,6 +499,19 @@ module TestPathCopyIn =
             FailedWithoutChange = fun error system answer -> answer = Ok (SyscallAnswer.Failed error, system)
         }
 
+    let private opening
+        (name : string)
+        (bytes : PathArgumentBytes -> UnixSystem<int, string> -> Result<DescriptorAnswer * UnixSystem<int, string>, 'r>)
+        (parsed : UnixPath -> UnixSystem<int, string> -> Result<DescriptorAnswer * UnixSystem<int, string>, 'r>)
+        : EntryPoint<Result<DescriptorAnswer * UnixSystem<int, string>, 'r>>
+        =
+        {
+            Name = name
+            Bytes = bytes
+            Parsed = parsed
+            FailedWithoutChange = fun error system answer -> answer = Ok (DescriptorAnswer.Failed error, system)
+        }
+
     [<Test>]
     let ``creating calls copy their path in and then answer as before`` () : unit =
         for mode in [ 0o777 ; 0o7755 ] do
@@ -527,10 +546,10 @@ module TestPathCopyIn =
 
         for openFlags in flagsGen do
             holds (
-                changing
+                opening
                     $"open %A{openFlags}"
-                    (fun path -> OpenFlagWords.openPath openFlags path 0o640)
-                    (fun path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory openFlags path 0o640)
+                    (fun path -> OpenFlagWords.openPath path openFlags 0o640)
+                    (fun path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory path openFlags 0o640)
             )
 
     [<Test>]

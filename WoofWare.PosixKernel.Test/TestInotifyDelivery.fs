@@ -15,9 +15,10 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 /// Random sequences (`InotifyDeliveryOps`) of path syscalls (creating,
 /// truncating, linking, unlinking, renaming, changing modes, owners and times,
 /// through plain paths, "/." and "/", symbolic links and hard links), of
-/// descriptors opened, written through, truncated, `fchmod`ed and closed, and
-/// of watches added and removed, some with `IN_EXCL_UNLINK` or
-/// `IN_DONT_FOLLOW`, on two instances, run against the model; after each,
+/// descriptors opened (by path, and onto a directory by "." from another),
+/// written through, truncated, `fchmod`ed and closed, and of watches added
+/// and removed, some with `IN_EXCL_UNLINK` or `IN_DONT_FOLLOW`, on two
+/// instances, run against the model; after each,
 /// both instances are drained, and their records must be those the reference
 /// expects, cookies compared by which records share one.
 /// The reference keeps its own tree of paths, and the name each descriptor
@@ -55,6 +56,16 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 ///   it, leaves in place, unlinked; a watch with `IN_EXCL_UNLINK` hears nothing
 ///   of a write through an unlinked name, at the directory or the inode
 ///   itself, and hears its `ftruncate` and `fchmod`;
+/// - a directory opened by "." from a kept descriptor onto it holds the name
+///   that descriptor holds, unlinked if the directory has been removed since:
+///   a change through it is reported there, under the name the directory had
+///   when its last name went;
+/// - a close of a descriptor, which is the last reference to its description:
+///   `IN_CLOSE_WRITE` if it was opened for writing, and `IN_CLOSE_NOWRITE`
+///   otherwise, as a write through it is reported, a watch with
+///   `IN_EXCL_UNLINK` hearing nothing of it through an unlinked name; before
+///   the inode's going that the close lets go of. A `Create` or an
+///   `OpenTruncate` closes what it opened, through the name its path reached;
 /// - a record carries every event of its change, whichever the watch asked
 ///   for;
 /// - `IN_ISDIR` when the inode is a directory, but on `IN_MOVE_SELF` and
@@ -95,6 +106,16 @@ module TestInotifyDelivery =
         /// A record of a change through a kept descriptor whose name a rename
         /// moved.
         | ThroughMoved
+        /// A record of a change through a descriptor opened by "." onto a
+        /// directory whose last name had gone.
+        | ThroughRemovedDirectoryByDot
+        /// A close's record through a kept descriptor whose name has been
+        /// unlinked.
+        | ClosedThroughUnlinked
+        /// A close through an unlinked name, under a watch with
+        /// `IN_EXCL_UNLINK` asking for its event, that the reference expects
+        /// to hear nothing of it.
+        | ExcludedClose
         /// A watched inode's going.
         | Gone
         /// A watched file's going while a descriptor still holds it, through
@@ -157,6 +178,8 @@ module TestInotifyDelivery =
             Node : Node
             ReadOnly : bool
             Through : OpenedThrough option
+            /// Opened by "." from another kept descriptor.
+            ByDot : bool
         }
 
     type private Reference =
@@ -506,14 +529,19 @@ module TestInotifyDelivery =
         match op with
         | Op.Create (path, _) ->
             match lookup (named path) true with
-            | _, Some _ -> reference, None
+            | opened, Some node -> notifyPath opened closeWrite node reference, None
             | created, None ->
                 let id, reference = fresh reference
                 let node = Node.File id
-                bind created node reference |> notifyParent created create node 0u, None
+
+                bind created node reference
+                |> notifyParent created create node 0u
+                |> notifyPath created closeWrite node,
+                None
         | Op.OpenTruncate path ->
             match lookup (named path) true with
-            | resolved, Some (Node.File _ as node) -> notifyPath resolved modify node reference, None
+            | resolved, Some (Node.File _ as node) ->
+                notifyPath resolved modify node reference |> notifyPath resolved closeWrite node, None
             | other -> failwith $"O_TRUNC of %s{named path} succeeded on %A{other}"
         | Op.MkDir path ->
             let created, _ = lookup (named path) false
@@ -740,11 +768,34 @@ module TestInotifyDelivery =
                                 Node = node
                                 ReadOnly = readOnly
                                 Through = through
+                                ByDot = false
                             }
                         ]
                 },
                 None
             | other -> failwith $"open of %s{named path} succeeded on %A{other}"
+        // The directory the descriptor is onto, through the name it holds:
+        // the one the descriptor was opened through, moved by a rename and
+        // left in place, unlinked, by a removal (Linux's dentry).
+        | Op.OpenDotAt slot ->
+            match keptAt slot reference with
+            | Some (_,
+                    (({
+                          Node = Node.Directory _
+                      }) as from)) ->
+                { reference with
+                    Kept =
+                        reference.Kept
+                        @ [
+                            { from with
+                                ReadOnly = true
+                                ByDot = true
+                            }
+                        ]
+                },
+                None
+            | Some (_, other) -> failwith $"openat(\".\") through slot %d{slot} succeeded on %A{other.Node}"
+            | None -> failwith $"openat(\".\") through slot %d{slot} succeeded, but the reference keeps no descriptor"
         | Op.Write (slot, count) ->
             match keptAt slot reference with
             | Some (_, kept) when count > 0 -> notifyKept kept modify true reference, None
@@ -761,8 +812,10 @@ module TestInotifyDelivery =
         | Op.Close slot ->
             match keptAt slot reference with
             | Some (index, closed) ->
+                let released = if closed.ReadOnly then closeNoWrite else closeWrite
+
                 let reference =
-                    { reference with
+                    { notifyKept closed released true reference with
                         Kept = reference.Kept |> List.removeAt index
                     }
 
@@ -837,8 +890,16 @@ module TestInotifyDelivery =
                 | Op.Fchmod (slot, _) -> keptAt slot reference |> Option.map snd, false
                 | _ -> None, false
 
+            // The kept descriptor a close lets go of, and the name it holds.
+            let closing =
+                match op with
+                | Op.Close slot ->
+                    keptAt slot reference
+                    |> Option.bind (fun (_, kept) -> kept.Through |> Option.map (fun name -> kept, name))
+                | _ -> None
+
             let system, reference, kept =
-                match syscallOf system.Machine.UnixPlatform treeOwner fds kept op with
+                match syscallOf (UnixSystem.platform system) treeOwner fds kept op with
                 | None -> system, reference, kept
                 | Some syscall ->
 
@@ -854,9 +915,32 @@ module TestInotifyDelivery =
 
                     let kept =
                         match op with
-                        | Op.Open _ -> kept @ [ int answered ]
+                        | Op.Open _
+                        | Op.OpenDotAt _ -> kept @ [ int answered ]
                         | Op.Close slot -> kept |> List.removeAt (slotIndex slot kept.Length)
                         | _ -> kept
+
+                    match op with
+                    | Op.Close _ ->
+                        match closing with
+                        | Some (closed, name) when name.Unlinked ->
+                            if reference.Queued <> queuedBefore then
+                                cover Label.ClosedThroughUnlinked
+
+                            let released = if closed.ReadOnly then closeNoWrite else closeWrite
+
+                            let excludes (inode : int) =
+                                [ 0 ; 1 ]
+                                |> List.exists (fun instance ->
+                                    match Map.tryFind inode reference.Watches.[instance] with
+                                    | Some (_, mask) -> mask &&& released <> 0u && mask &&& exclUnlink <> 0u
+                                    | None -> false
+                                )
+
+                            if excludes name.Parent || excludes (idOf closed.Node) then
+                                cover Label.ExcludedClose
+                        | _ -> ()
+                    | _ -> ()
 
                     match through with
                     | Some through ->
@@ -866,6 +950,11 @@ module TestInotifyDelivery =
                             match through.Through with
                             | Some name when name.Unlinked -> cover Label.ThroughUnlinked
                             | Some name when name.Moved -> cover Label.ThroughMoved
+                            | _ -> ()
+
+                            match through.Node, through.Through with
+                            | Node.Directory _, Some name when name.Unlinked && through.ByDot ->
+                                cover Label.ThroughRemovedDirectoryByDot
                             | _ -> ()
 
                         // A watch that would have heard of the write but for
@@ -936,9 +1025,14 @@ module TestInotifyDelivery =
         coverage.Count Label.ThroughDescriptor |> shouldBeGreaterThan 300
         coverage.Count Label.ThroughUnlinked |> shouldBeGreaterThan 100
         coverage.Count Label.ThroughMoved |> shouldBeGreaterThan 30
+        coverage.Count Label.ThroughRemovedDirectoryByDot |> shouldBeGreaterThan 20
         coverage.Count Label.ExcludedUnlinked |> shouldBeGreaterThan 20
         coverage.Count (Label.Record RecordLabel.DeleteSelf) |> shouldBeGreaterThan 20
         coverage.Count (Label.Record RecordLabel.MoveSelf) |> shouldBeGreaterThan 20
         coverage.Count Label.Gone |> shouldBeGreaterThan 50
         coverage.Count Label.GoneWhileOpen |> shouldBeGreaterThan 5
         coverage.Count Label.WatchesLink |> shouldBeGreaterThan 20
+        coverage.Count (Label.Record RecordLabel.CloseWrite) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.CloseNoWrite) |> shouldBeGreaterThan 50
+        coverage.Count Label.ClosedThroughUnlinked |> shouldBeGreaterThan 30
+        coverage.Count Label.ExcludedClose |> shouldBeGreaterThan 10

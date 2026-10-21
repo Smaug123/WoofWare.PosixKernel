@@ -85,7 +85,7 @@ module TestCrossProcess =
                     let fd, _ = fds.[fd % fds.Length]
 
                     match UnixDescriptor.tryDup (Caller.make pid thread) fd system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system, asleep
+                    | Ok (DescriptorAnswer.Returned _, system) -> system, asleep
                     | other -> failwith $"dup of %d{fd} in %O{pid}: %A{other}"
             | CountStep.Read (proc, thread, fd) ->
                 let caller = Caller.make (pidAt proc) (thread % countThreads)
@@ -470,7 +470,9 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
+                match
+                    UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view
+                with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -533,7 +535,7 @@ module TestCrossProcess =
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                        | Ok (Ok created) -> created
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
@@ -607,7 +609,7 @@ module TestCrossProcess =
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                        | Ok (Ok created) -> created
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
@@ -677,7 +679,7 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     match
-                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view
+                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped TimespecArgument.Null view
                     with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
@@ -725,6 +727,7 @@ module TestCrossProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/locked")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -734,13 +737,13 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
-                        (PathArg.ofText "/locked")
                         0o644
                         view
                 with
-                | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                 | other -> failwith $"open: %A{other}"
 
             let flock (pid : ProcessId) (thread : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
@@ -901,25 +904,25 @@ module TestCrossProcess =
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             match UnixSignal.pthreadSigmask caller (MaskHow.number numbering how) (Some set) machine with
-            | Ok (_, machine) -> machine
-            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, machine -> machine
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
 
         match ending with
         | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
         | Ending.Kill ->
             match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
-            | Ok fate -> ended "kill" fate
-            | Error errno -> failwith $"kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill: %O{errno}"
+            | fate -> ended "kill" fate
         | Ending.Raise ->
             match UnixSignal.pthreadKill caller 0 sigterm machine with
-            | Ok fate -> ended "pthread_kill" fate
-            | Error errno -> failwith $"pthread_kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"pthread_kill: %O{errno}"
+            | fate -> ended "pthread_kill" fate
         | Ending.ReturnToUser ->
             let machine = machine |> mask SignalMaskChange.Block |> returned
 
             let machine =
                 match UnixSignal.pthreadKill caller 0 sigterm machine with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, machine) -> returned machine
                 | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
 
             machine
@@ -951,7 +954,9 @@ module TestCrossProcess =
                 match UnixReadWrite.write caller writeFd UserBuffer.Mapped 1UL machine with
                 | CallProgress.Answered fate -> ended "write" fate
                 | CallProgress.NeedsCopyIn paused ->
-                    UnixReadWrite.writeWithBytes (ImmutableArray.Create 0uy) paused |> ended "write"
+                    match UnixReadWrite.writeWithBytes (ImmutableArray.Create 0uy) paused with
+                    | fate, None -> ended "write" fate
+                    | _, Some delivery -> failwith $"a write into a pipe with no reader delivered %A{delivery}"
             | other -> failwith $"pipe2: %A{other}"
 
     /// A `dup2` of `oldFd` onto `newFd`, and the close of `oldFd`, by the
@@ -964,7 +969,7 @@ module TestCrossProcess =
         : UnixSystem<int, string>
         =
         match UnixDescriptor.tryDup2 (Caller.make pid (Proc.leader pid view)) oldFd newFd view with
-        | Ok (SyscallAnswer.Completed fd, view) when int fd = newFd -> KeventWorld.closeIn pid oldFd view
+        | Ok (DescriptorAnswer.Returned fd, view) when fd = newFd -> KeventWorld.closeIn pid oldFd view
         | other -> failwith $"dup2 %d{oldFd} %d{newFd}: %A{other}"
 
     [<Test>]
@@ -1003,56 +1008,58 @@ module TestCrossProcess =
                 Machines.assertClean after
             | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
-    /// Every delivery `machine` has made, oldest first, with each one's bytes.
-    let private deliveries (machine : UnixSystem<int, string>) : (ExternalEndpoint * byte list) list =
-        DeliveryLog.toList machine.Machine.Delivered
-        |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
-
-    /// `pid`'s thread 0 writes `text` to its descriptor `fd`, which takes all of it.
+    /// `pid`'s thread 0 writes `text` to its descriptor `fd`, which takes all of it:
+    /// the delivery the write made, as its endpoint and its bytes, and the machine
+    /// after it.
     let private writeIn
         (pid : ProcessId)
         (fd : int)
         (text : string)
         (machine : UnixSystem<int, string>)
-        : UnixSystem<int, string>
+        : (ExternalEndpoint * byte list) * UnixSystem<int, string>
         =
         let bytes = ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text)
 
-        Machines.doIn
+        Machines.inProcess
             pid
             (fun view ->
-                match WriteOutcomes.writeBytesAs (Caller.make pid 0) fd bytes view with
-                | Ok (WriteStep.Returns (WriteAnswer.Completed written, view)) when int written = bytes.Length -> view
+                match WriteOutcomes.admitThenWriteDeliveringAs (Caller.make pid 0) fd UserBuffer.Mapped bytes view with
+                | Ok (WriteStep.Returns (WriteAnswer.Completed written, view), Some delivery) when
+                    int written = bytes.Length
+                    ->
+                    (delivery.Endpoint, List.ofSeq delivery.Bytes), view
                 | other -> failwith $"write %d{fd} %s{text}: %A{other}"
             )
             machine
 
     [<Test>]
-    let ``a process's end leaves what every process delivered to its launched pipes as it was`` () : unit =
-        // A client reads a process's standard output after the process has ended, from
-        // the deliveries its launched pipes made: closing those pipes at the end must not
-        // take any of them back, nor reorder them among another process's.
+    let ``each process's writes to its launched pipes deliver to its own ends, before and after another ends``
+        ()
+        : unit
+        =
+        // An `ExternalEndpoint` names the process the pipe was launched into, so two
+        // processes' standard streams are apart at the client; and one process's end
+        // closes its own launched pipes, leaving another's delivering.
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
 
-            let machine =
-                machine |> writeIn a 1 "a out" |> writeIn b 1 "b out" |> writeIn a 2 "a err"
+            let aOut, machine = writeIn a 1 "a out" machine
+            let bOut, machine = writeIn b 1 "b out" machine
+            let aErr, machine = writeIn a 2 "a err" machine
 
-            let before = deliveries machine
-
-            before
-            |> List.map fst
-            |> shouldEqual [ ExternalEndpoint (a, 1) ; ExternalEndpoint (b, 1) ; ExternalEndpoint (a, 2) ]
+            [ aOut ; bOut ; aErr ]
+            |> shouldEqual
+                [
+                    ExternalEndpoint (a, 1), List.ofSeq "a out"B
+                    ExternalEndpoint (b, 1), List.ofSeq "b out"B
+                    ExternalEndpoint (a, 2), List.ofSeq "a err"B
+                ]
 
             let machine = exitedOk a machine
-            deliveries machine |> shouldEqual before
-
-            let machine = writeIn b 2 "b err" machine
-            let machine = exitedOk b machine
-
-            deliveries machine
-            |> shouldEqual (before @ [ ExternalEndpoint (b, 2), List.ofSeq "b err"B ])
+            let bErr, machine = writeIn b 2 "b err" machine
+            bErr |> shouldEqual (ExternalEndpoint (b, 2), List.ofSeq "b err"B)
+            exitedOk b machine |> ignore<UnixSystem<int, string>>
 
     [<Test>]
     let ``a process's end sends each peer its FIN in the order each flavour releases them`` () : unit =
@@ -1100,7 +1107,7 @@ module TestCrossProcess =
                                 match
                                     UnixDescriptor.tryDup2 (Caller.make a (Proc.leader a view)) layout.[0] alias view
                                 with
-                                | Ok (SyscallAnswer.Completed _, view) -> view
+                                | Ok (DescriptorAnswer.Returned _, view) -> view
                                 | other -> failwith $"dup2: %A{other}"
                             )
                             machine
@@ -1116,7 +1123,7 @@ module TestCrossProcess =
                                 (fun view ->
                                     let epoll, view =
                                         match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                                        | Ok (Ok created) -> created
+                                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                         | other -> failwith $"epoll_create1: %A{other}"
 
                                     let view =
@@ -1200,6 +1207,7 @@ module TestCrossProcess =
                 match
                     OpenFlagWords.openPathIn
                         pid
+                        (PathArg.ofText "/locked")
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -1209,13 +1217,13 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
-                        (PathArg.ofText "/locked")
                         0o644
                         view
                 with
-                | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                 | other -> failwith $"open: %A{other}"
 
             let held, machine = Machines.inProcess a (openLocked a) machine
@@ -1243,7 +1251,7 @@ module TestCrossProcess =
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
                             match UnixPoll.tryEpollCreate1 (Caller.make a (Proc.leader a view)) 0 view with
-                            | Ok (Ok (_, view)) -> view
+                            | Ok (DescriptorAnswer.Returned _, view) -> view
                             | other -> failwith $"epoll_create1: %A{other}"
                         | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueueIn a view |> snd
                     )
@@ -1326,7 +1334,7 @@ module TestCrossProcess =
                         | SimulatedUnixFlavour.Linux ->
                             let epoll, view =
                                 match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
-                                | Ok (Ok created) -> created
+                                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                 | other -> failwith $"epoll_create1: %A{other}"
 
                             let interest =
@@ -1511,7 +1519,7 @@ module TestCrossProcess =
                                     match
                                         UnixPoll.tryEpollCreate1 (Caller.make parent (Proc.leader parent view)) 0 view
                                     with
-                                    | Ok (Ok created) -> created
+                                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                                     | other -> failwith $"epoll_create1: %A{other}"
 
                                 let interest =
@@ -1670,7 +1678,9 @@ module TestCrossProcess =
         Machines.assertClean machine
 
         let view = Machines.viewOf b machine
-        VirtualFileSystem.tryGet standing view.Machine.FileSystem |> shouldEqual None
+
+        VirtualFileSystem.tryGet standing (UnixSystem.fileSystem view)
+        |> shouldEqual None
 
         // The listener's port is free again.
         let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
@@ -1697,9 +1707,12 @@ module TestCrossProcess =
             | Ok (_, machine) ->
                 Machines.processIds machine |> shouldEqual Set.empty
                 Machines.checkInvariants machine |> shouldEqual []
-                OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
-                machine.Machine.Sockets |> shouldEqual Map.empty
-                machine.Machine.Connections |> shouldEqual Map.empty
+
+                OpenFileTable.descriptions (UnixSystem.openFiles machine)
+                |> shouldEqual Map.empty
+
+                (Kernel.machine machine).Sockets |> shouldEqual Map.empty
+                (Kernel.machine machine).Connections |> shouldEqual Map.empty
             | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Nothing yet passes a descriptor from one process to another, so no queue
@@ -1779,6 +1792,7 @@ module TestCrossProcess =
                         match
                             OpenFlagWords.openPathIn
                                 b
+                                (PathArg.ofText "/shared")
                                 {
                                     Access = FileAccessMode.ReadWrite
                                     Create = true
@@ -1788,13 +1802,13 @@ module TestCrossProcess =
                                     CloseOnExec = false
                                     Synchronous = false
                                     DataSynchronous = false
+                                    NonBlocking = false
                                     Directory = false
                                 }
-                                (PathArg.ofText "/shared")
                                 0o644
                                 view
                         with
-                        | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
+                        | Ok (DescriptorAnswer.Returned fd, view) -> fd, view
                         | other -> failwith $"open: %A{other}"
                     )
                     machine
@@ -1884,9 +1898,9 @@ module TestCrossProcess =
 
         match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
         | Ok (WriteStep.ProcessEnded (_, dead)) ->
-            let machine = ProcessView.unfocusWithout dead
+            let machine = Proc.unviewWithout dead
             Machines.assertClean machine
-            machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
+            UnixSystem.pipes machine |> Map.containsKey pipe |> shouldEqual false
         | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
     [<Test>]
@@ -1919,7 +1933,7 @@ module TestCrossProcess =
         =
         let fd, view =
             match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) flags view with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"inotify_init1: %A{other}"
 
         match
@@ -1933,7 +1947,7 @@ module TestCrossProcess =
         let view = Machines.viewOf pid machine
 
         match UnixDescriptor.tryBytesAvailable (Caller.make pid (Proc.leader pid view)) fd UserBuffer.Mapped view with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
     /// `open(path, O_WRONLY|O_CREAT|O_EXCL)` and its close, by the process
@@ -1942,6 +1956,7 @@ module TestCrossProcess =
         match
             OpenFlagWords.openPathIn
                 pid
+                (PathArg.ofText path)
                 {
                     Access = FileAccessMode.WriteOnly
                     Create = true
@@ -1951,13 +1966,13 @@ module TestCrossProcess =
                     CloseOnExec = false
                     Synchronous = false
                     DataSynchronous = false
+                    NonBlocking = false
                     Directory = false
                 }
-                (PathArg.ofText path)
                 0o644
                 view
         with
-        | Ok (SyscallAnswer.Completed fd, view) -> KeventWorld.closeIn pid (int fd) view
+        | Ok (DescriptorAnswer.Returned fd, view) -> KeventWorld.closeIn pid fd view
         | other -> failwith $"open(%s{path}): %A{other}"
 
     let private inCreate : uint32 = 0x100u

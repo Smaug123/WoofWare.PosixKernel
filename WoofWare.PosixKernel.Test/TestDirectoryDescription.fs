@@ -51,6 +51,7 @@ module TestDirectoryDescription =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -77,6 +78,15 @@ module TestDirectoryDescription =
         | SyscallAnswer.Completed value -> value, system
         | SyscallAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
 
+    let private returned
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
+
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
@@ -84,10 +94,10 @@ module TestDirectoryDescription =
 
     let private createFile (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let fd, system =
-            Answered.openPath creating (rooted path) 0o644 system
-            |> completed $"creat %s{path}"
+            Answered.openPath (rooted path) creating 0o644 system
+            |> returned $"creat %s{path}"
 
-        closeFd (int fd) system
+        closeFd fd system
 
     let private makeDirectory (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
@@ -100,16 +110,10 @@ module TestDirectoryDescription =
         |> snd
 
     let private openAt (flags : OpenFlags) (path : string) (system : UnixSystem<int, string>) =
-        let fd, system =
-            Answered.openPath flags (rooted path) 0 system |> completed $"open %s{path}"
-
-        int fd, system
+        Answered.openPath (rooted path) flags 0 system |> returned $"open %s{path}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system =
-            Answered.dup (Callers.leader system) fd system |> completed $"dup %d{fd}"
-
-        int fd, system
+        Answered.dup (Callers.leader system) fd system |> returned $"dup %d{fd}"
 
     let private read (fd : int) (system : UnixSystem<int, string>) =
         match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
@@ -625,7 +629,7 @@ module TestDirectoryDescription =
 
             let epoll, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
@@ -682,8 +686,8 @@ module TestDirectoryDescription =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
                 |> createFile "f"
 
-            match Answered.openPath directoryReading (rooted "f") 0 system with
-            | SyscallAnswer.Failed UnixError.ENOTDIR, _ -> ()
+            match Answered.openPath (rooted "f") directoryReading 0 system with
+            | DescriptorAnswer.Failed UnixError.ENOTDIR, _ -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
     [<Test>]
@@ -713,7 +717,7 @@ module TestDirectoryDescription =
             for flags in unmodelled do
                 let word = OpenFlagWords.encode platform flags
 
-                match OpenOutcomes.openPath word (PathArg.ofPath (rooted "d")) 0 system with
+                match OpenOutcomes.openPath (PathArg.ofPath (rooted "d")) word 0 system with
                 | Error (OpenRefusal.UnmodelledDirectoryOpen refused) -> refused |> shouldEqual word
                 | other -> failwith $"%O{platform} %A{flags}: %A{other}"
 
@@ -740,8 +744,8 @@ module TestDirectoryDescription =
                     PathArg.ofText "nx"
                     PathArgumentBytes.Unreadable
                 ] do
-                match OpenOutcomes.openPath word path 0 system with
-                | Ok (SyscallAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
+                match OpenOutcomes.openPath path word 0 system with
+                | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
                 | other -> failwith $"%O{platform}: %A{other}"
 
     // ------------------------------------------------------------ invariants
@@ -831,18 +835,19 @@ module TestDirectoryDescription =
         mismatched asFifo |> shouldEqual true
 
         let overFifoInode =
-            { asFifo with
-                Machine =
-                    { asFifo.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem =
                             CommittedFileSystem.initial (
                                 VirtualFileSystem.Unchecked.setContent
                                     inode
                                     (InodeContent.Fifo (PermissionBits.parseOrFail "test" 0o644))
-                                    asFifo.Machine.FileSystem
+                                    machine.FileSystem
                             )
                     }
-            }
+                )
+                asFifo
 
         mismatched overFifoInode |> shouldEqual false
 

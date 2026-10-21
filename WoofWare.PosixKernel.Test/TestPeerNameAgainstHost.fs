@@ -331,7 +331,7 @@ module TestPeerNameAgainstHost =
     let private modelName (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint
             | None -> failwith $"the model's fd %d{fd} is not bound"
         | other -> failwith $"the model's fd %d{fd} names %A{other}, not a socket"
@@ -369,8 +369,8 @@ module TestPeerNameAgainstHost =
             | other -> failwith $"the model's listen answered %A{other}"
 
         let accept (listener : int) (system : UnixSystem<int, string>) =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"the model's accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
@@ -694,7 +694,7 @@ module TestPeerNameAgainstHost =
         (system : UnixSystem<int, string>)
         : Observed
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let userBuffer =
             match destination with

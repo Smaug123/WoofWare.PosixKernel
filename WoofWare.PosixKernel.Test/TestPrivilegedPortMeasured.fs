@@ -122,7 +122,7 @@ module TestPrivilegedPortMeasured =
         |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private setV6Only (fd : int) (value : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         match
             Lone.UnixSocket.trySetsockoptBytes

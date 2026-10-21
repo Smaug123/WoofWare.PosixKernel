@@ -127,11 +127,18 @@ module internal InotifyReplay =
     let movedFrom : uint32 = 0x40u
     let movedTo : uint32 = 0x80u
     let create : uint32 = 0x100u
+    let closeWrite : uint32 = 0x8u
+    let closeNoWrite : uint32 = 0x10u
     let delete : uint32 = 0x200u
 
-    /// `IN_ALL_EVENTS` without the events this kernel does not raise: those
-    /// opening, reading and releasing a file raise.
-    let modelledEvents : uint32 = 0xFC6u
+    /// `IN_ALL_EVENTS` without the events opening, reading and releasing a
+    /// file raise: the probes' `graphEvents`.
+    let graphEvents : uint32 = 0xFC6u
+
+    /// `IN_ALL_EVENTS` without the events this kernel does not raise:
+    /// `IN_OPEN` and `IN_ACCESS`, which opening and reading a file raise. The
+    /// close probe's `closeEvents`.
+    let closeEvents : uint32 = 0xFDEu
 
     /// The mask .NET's `FileSystemWatcher` asks for.
     let dotnetMask : uint32 =
@@ -154,7 +161,7 @@ module internal InotifyReplay =
     /// succeed.
     let init1In (pid : ProcessId) (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid system)) flags system with
-        | Ok (Ok created) -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
     /// `init1In` the only process on the machine.
@@ -242,6 +249,7 @@ module internal InotifyReplay =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -252,9 +260,9 @@ module internal InotifyReplay =
         (path : string)
         (mode : int)
         (system : UnixSystem<int, string>)
-        : SyscallAnswer * UnixSystem<int, string>
+        : DescriptorAnswer * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPathIn pid flags (PathArg.ofText path) mode system with
+        match OpenFlagWords.openPathIn pid (PathArg.ofText path) flags mode system with
         | Ok answered -> answered
         | Error refusal -> failwith $"open(%s{path}) refused: %s{OpenRefusal.describe refusal}"
 
@@ -264,7 +272,7 @@ module internal InotifyReplay =
         (path : string)
         (mode : int)
         (system : UnixSystem<int, string>)
-        : SyscallAnswer * UnixSystem<int, string>
+        : DescriptorAnswer * UnixSystem<int, string>
         =
         openAnswerIn (Lone.pid system) flags path mode system
 
@@ -279,8 +287,8 @@ module internal InotifyReplay =
         : int * UnixSystem<int, string>
         =
         match openAnswerIn pid flags path mode system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
 
     /// `openFdIn` the only process on the machine.
     let openFd
@@ -369,41 +377,6 @@ module internal InotifyReplay =
         match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 count) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
         | other -> failwith $"read(%d{fd}): %A{other}"
-
-    /// The refusal of a change an inotify watch could hear of through a name
-    /// this kernel does not keep, which `result` answers: `choose` picks it out
-    /// of the call's own refusal. Fails the test for an answer, or another
-    /// refusal.
-    let unplaced
-        (call : string)
-        (choose : 'r -> UnplacedChangeRefusal option)
-        (result : Result<'a, 'r>)
-        : UnplacedChangeRefusal
-        =
-        match result with
-        | Ok answer -> failwith $"%s{call} answered %A{answer}, where it should have been refused"
-        | Error refusal ->
-            match choose refusal with
-            | Some unplaced -> unplaced
-            | None -> failwith $"%s{call} was refused, but for another reason: %A{refusal}"
-
-    /// That `refusal` is of a change through a removed directory, whose
-    /// missing input is the name it had in its old parent.
-    let throughRemovedDirectory (refusal : UnplacedChangeRefusal) : unit =
-        match refusal with
-        | UnplacedChangeRefusal.RemovedDirectoryName _ -> ()
-
-    /// The refusal of `chmod(path, mode)`, which must be of a change an
-    /// inotify watch could hear of through a name this kernel does not keep.
-    let chmodRefusal (path : string) (mode : int) (system : UnixSystem<int, string>) : UnplacedChangeRefusal =
-        UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText path) mode system
-        |> unplaced
-            $"chmod(%s{path})"
-            (fun refusal ->
-                match refusal with
-                | ChModRefusal.UnplacedChange refusal -> Some refusal
-                | _ -> None
-            )
 
     /// The probe's `writeFile`: `open(O_WRONLY|O_CREAT|O_TRUNC, 0644)`, a
     /// write of `text`, and a close, by the process `pid`.
@@ -636,14 +609,14 @@ module internal InotifyReplay =
         )
 
     /// What a row of records would have been under a watch asking for no
-    /// event this kernel does not raise: the records of `IN_ACCESS`,
-    /// `IN_OPEN` and the two `IN_CLOSE_*` events dropped.
+    /// event this kernel does not raise: the records of `IN_ACCESS` and
+    /// `IN_OPEN` dropped.
     let withoutUnmodelled (text : string) : string =
         if text = "(none)" then
             text
         else
 
-        let unmodelled = set [ "ACCESS" ; "OPEN" ; "CLOSE_WRITE" ; "CLOSE_NOWRITE" ]
+        let unmodelled = set [ "ACCESS" ; "OPEN" ]
 
         let kept =
             text.Split " | "

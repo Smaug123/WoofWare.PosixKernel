@@ -177,8 +177,8 @@ module TestUnixWaitFinish =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (UnixSystem.platform system)) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some disposition) system with
-        | Ok (_, system) -> returned system
-        | Error error -> failwith $"sigaction of %O{signal}: %O{error}"
+        | SigactionAnswer.Completed _, system -> returned system
+        | SigactionAnswer.Failed error, _ -> failwith $"sigaction of %O{signal}: %O{error}"
 
     let private handler (restart : bool) : SignalDisposition<string> =
         SignalDisposition.Catch
@@ -343,8 +343,8 @@ module TestUnixWaitFinish =
 
             let epoll, system =
                 match UnixPoll.epollCreate1 leader 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"epoll_create1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"epoll_create1: %O{error}"
 
             let system =
                 match
@@ -380,9 +380,13 @@ module TestUnixWaitFinish =
 
             let timeout =
                 if case.Timed then
-                    KeventTimeout.Readable (0L, 5_000_000L)
+                    TimespecArgument.Readable
+                        {
+                            Seconds = 0L
+                            Nanoseconds = 5_000_000L
+                        }
                 else
-                    KeventTimeout.Null
+                    TimespecArgument.Null
 
             UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps
@@ -398,8 +402,8 @@ module TestUnixWaitFinish =
                 OpenFlagWords.bitOf (UnixSystem.platform system) OpenFlagBit.Create ||| 2
 
             let opened (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-                match OpenOutcomes.openPath flags (PathArg.ofText "/lock") 0o644 system with
-                | Ok (SyscallAnswer.Completed fd, system) -> int fd, returned system
+                match OpenOutcomes.openPath (PathArg.ofText "/lock") flags 0o644 system with
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, returned system
                 | other -> failwith $"open: %A{other}"
 
             let holder, system = opened system
@@ -422,7 +426,7 @@ module TestUnixWaitFinish =
         | Sleep.Accept ->
             let listener, system = KeventWorld.listenerAtAs (Callers.leader system) port system
 
-            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
             |> sleeps
                 "accept"
                 (fun outcome ->
@@ -460,8 +464,8 @@ module TestUnixWaitFinish =
         | Sleep.InotifyRead ->
             let fd, system =
                 match UnixInotify.inotifyInit1 (Callers.leader system) 0 system with
-                | Ok (fd, system) -> fd, returned system
-                | Error error -> failwith $"inotify_init1: %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, returned system
+                | DescriptorAnswer.Failed error, _ -> failwith $"inotify_init1: %O{error}"
 
             let system =
                 match Eager.tryInotifyAddWatch fd (PathArg.ofText "/") 0x100u system with
@@ -544,6 +548,11 @@ module TestUnixWaitFinish =
                     UnixReadWrite.tryWriteWithBytes
                         (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
                         paused
+                    |> Result.map (fun (fate, delivery) ->
+                        match delivery with
+                        | None -> fate
+                        | Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
+                    )
 
             match fate with
             | Ok (ProcessFate.Continues (WriteOutcome.WouldBlock _, system)) -> Some system
@@ -586,9 +595,9 @@ module TestUnixWaitFinish =
 
         let signal (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
             match UnixSignal.pthreadKill leader sleeper (usr1 system) system with
-            | Ok (ProcessFate.Continues (_, system)) -> Some (returned system)
-            | Ok (ProcessFate.ProcessEnded _) -> None
-            | Error error -> failwith $"pthread_kill: %O{error}"
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> Some (returned system)
+            | ProcessFate.ProcessEnded _ -> None
+            | ProcessFate.Continues (KillAnswer.Failed error, _) -> failwith $"pthread_kill: %O{error}"
 
         let withSystem (system : UnixSystem<int, string>) : World option =
             Some

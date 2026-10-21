@@ -78,8 +78,10 @@ module TestCopyOutMeasured =
             | Ok (GetSockNameAnswer.Failed _) -> None
             | Error refusal -> failwith $"getsockname refused: %O{refusal}"
         | "accept" ->
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped declared system with
-            | Ok (AcceptOutcome.Accepted (_, copiedOut, reported), _) ->
+            match
+                UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some declared) 0 system
+            with
+            | Ok (AcceptOutcome.Accepted (_, PeerAddressCopy.Written (copiedOut, reported)), _) ->
                 Some (copiedOut, reported, local (socketOf client system))
             | Ok _ -> None
             | Error refusal -> failwith $"accept refused: %O{refusal}"

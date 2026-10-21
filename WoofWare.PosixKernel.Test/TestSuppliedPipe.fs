@@ -42,7 +42,7 @@ module TestSuppliedPipe =
 
     let private fionread (system : UnixSystem<int, string>) : int =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) 0 UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on descriptor 0 answered %A{other}"
 
     /// What `poll` reports for descriptor 0 on Linux.
@@ -51,7 +51,7 @@ module TestSuppliedPipe =
         | Some id -> Lone.LinuxReadiness.ofDescription id system
         | None -> failwith "descriptor 0 is not open"
 
-    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = system.Machine.Pipes.[PipeId 0L]
+    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = (UnixSystem.pipes system).[PipeId 0L]
 
     let private writerOpen (system : UnixSystem<int, string>) : bool =
         PipeState.heldByClient PipeEnd.Write (stdinPipe system)
@@ -442,7 +442,7 @@ module TestSuppliedPipe =
 
             let epoll, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok (epoll, system)) -> epoll, system
+                | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
                 | other -> failwith $"%s{name}: epoll_create1 answered %A{other}"
 
             let system =
@@ -492,7 +492,7 @@ module TestSuppliedPipe =
 
             let duplicate, system =
                 match Answered.dup (Callers.leader system) 0 system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"dup(0) answered %A{other}"
 
             let closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -509,7 +509,7 @@ module TestSuppliedPipe =
             // nothing holds the pipe.
             let system = closeOrFail duplicate system
             assertInvariants "after closing the duplicate" system
-            Map.containsKey (PipeId 0L) system.Machine.Pipes |> shouldEqual false
+            Map.containsKey (PipeId 0L) (UnixSystem.pipes system) |> shouldEqual false
 
     [<Test>]
     let ``a Linux writer resuming fills a free slot rather than merging into the newest`` () : unit =
@@ -558,18 +558,19 @@ module TestSuppliedPipe =
             // Emptied behind the client's back: it would have written into the
             // room, so a state where it has not is not one the kernel reaches.
             let emptied =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Pipes =
                                 Map.add
                                     (PipeId 0L)
                                     { stdinPipe system with
                                         Buffer = snd (PipeBuffer.read 65536 (stdinPipe system).Buffer)
                                     }
-                                    system.Machine.Pipes
+                                    machine.Pipes
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants emptied
             |> shouldEqual [ UnixSystemDefect.SuppliedPipeHasRoom (PipeId 0L) ]

@@ -115,13 +115,17 @@ module TestArchitectureFacts =
                 let! minor = ArbMap.defaults |> ArbMap.generate<uint32>
                 let! patch = ArbMap.defaults |> ArbMap.generate<uint32>
 
+                let! build = Gen.elements [ LinuxKernelBuild.SmallBuffer832 ; LinuxKernelBuild.SmallBuffer960 ]
+
                 return
-                    SimulatedUnixKernel.Linux
+                    SimulatedUnixKernel.Linux (
                         {
                             Major = major
                             Minor = minor
                             Patch = patch
-                        }
+                        },
+                        build
+                    )
             }
 
     /// The kernel of `flavour` the admission tables are asked about.
@@ -135,12 +139,14 @@ module TestArchitectureFacts =
                     VersionRevision = 0u
                 }
         | SimulatedUnixFlavour.Linux ->
-            SimulatedUnixKernel.Linux
+            SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                }
+                },
+                LinuxKernelBuild.SmallBuffer832
+            )
 
     let private combinationGen : Gen<SimulatedUnixKernel * SimulatedUnixArchitecture * SimulatedPageSize * string> =
         gen {
@@ -216,22 +222,26 @@ module TestArchitectureFacts =
 
         versionOf SimulatedUnixPlatform.linuxX64
         |> shouldEqual (
-            SimulatedUnixKernel.Linux
+            SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 17u
                     Patch = 0u
-                }
+                },
+                LinuxKernelBuild.SmallBuffer960
+            )
         )
 
         versionOf SimulatedUnixPlatform.linuxArm64
         |> shouldEqual (
-            SimulatedUnixKernel.Linux
+            SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                }
+                },
+                LinuxKernelBuild.SmallBuffer832
+            )
         )
 
         versionOf SimulatedUnixPlatform.macOsArm64
@@ -256,7 +266,9 @@ module TestArchitectureFacts =
 
             let parsed =
                 match SimulatedUnixPlatform.kernel platform with
-                | SimulatedUnixKernel.Linux _ -> LinuxRelease.version release |> Option.map SimulatedUnixKernel.Linux
+                | SimulatedUnixKernel.Linux (_, build) ->
+                    LinuxRelease.version release
+                    |> Option.map (fun version -> SimulatedUnixKernel.Linux (version, build))
                 | SimulatedUnixKernel.Darwin _ -> DarwinRelease.version release |> Option.map SimulatedUnixKernel.Darwin
 
             parsed |> shouldEqual (Some (SimulatedUnixPlatform.kernel platform))
@@ -348,7 +360,7 @@ module TestArchitectureFacts =
                 UnixSystem.initial<int, string> platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-            UnixMachineState.userBufferCheck system.Machine |> shouldEqual expected
+            UnixMachineState.userBufferCheck (Kernel.machine system) |> shouldEqual expected
             UnixSystem.checkInvariants system |> shouldEqual []
 
         let limitGen =
@@ -385,8 +397,9 @@ module TestArchitectureFacts =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                UnixMachineState.userBufferCheck
-                    (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)).Machine
+                UnixMachineState.userBufferCheck (
+                    Kernel.machine (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                )
                 |> shouldEqual (UserBufferCheck.BeforeOperation limit)
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -414,12 +427,13 @@ module TestArchitectureFacts =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let forged =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             UserBufferCheck = check
                         }
-                }
+                    )
+                    system
 
             let sound =
                 match SimulatedUnixPlatform.flavour platform, check with

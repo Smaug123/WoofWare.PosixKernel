@@ -106,7 +106,7 @@ module TestConnectSearchHoldersMeasured =
         fd, (if reuse then ReuseAddress.set true fd system else system)
 
     let private bindOrFail (fd : int) (endpoint : Ipv4Endpoint) (system : UnixSystem<int, string>) =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"binding %s{Ipv4Endpoint.toString endpoint}: %A{other}"
 
@@ -116,7 +116,7 @@ module TestConnectSearchHoldersMeasured =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, ConnectRefusal>
         =
-        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopback port)) system
+        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopback port)) system
 
     let private connectOrFail (fd : int) (port : uint16) (system : UnixSystem<int, string>) =
         match connect fd port system with
@@ -124,8 +124,8 @@ module TestConnectSearchHoldersMeasured =
         | other -> failwith $"connecting fd %d{fd} to %d{port}: %A{other}"
 
     let private acceptOrFail (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{listener}: %A{other}"
 
     let private closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -137,7 +137,7 @@ module TestConnectSearchHoldersMeasured =
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : string =
         match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -145,7 +145,7 @@ module TestConnectSearchHoldersMeasured =
     let private portOf (fd : int) (system : UnixSystem<int, string>) : uint16 =
         match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> endpoint.Port
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -323,12 +323,13 @@ module TestConnectSearchHoldersMeasured =
             // holder is put there by bind(2), which does not move it.
             let system =
                 if implicitHolder row.Holder then
-                    { system with
-                        Machine =
-                            { system.Machine with
+                    Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
                                 NextEphemeralPort = target
                             }
-                    }
+                        )
+                        system
                 else
                     system
 
@@ -344,12 +345,13 @@ module TestConnectSearchHoldersMeasured =
             let system =
                 if row.Walked then
                     let system =
-                        { system with
-                            Machine =
-                                { system.Machine with
+                        Kernel.mapMachine
+                            (fun machine ->
+                                { machine with
                                     NextEphemeralPort = low
                                 }
-                        }
+                            )
+                            system
 
                     let refusedFrom (system : UnixSystem<int, string>) : uint16 * UnixSystem<int, string> =
                         let fd, system = newSocket false system
@@ -367,12 +369,13 @@ module TestConnectSearchHoldersMeasured =
                         failwith
                             $"%s{row.Holder}/%s{row.Search}: refused connects took %d{first} and %d{second}, with T=%d{target}"
 
-                    { system with
-                        Machine =
-                            { system.Machine with
+                    Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
                                 NextEphemeralPort = low
                             }
-                    }
+                        )
+                        system
                 else
                     system
 

@@ -57,21 +57,23 @@ module TestConnect =
         =
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     let private streamSocket (binding : Ipv4Binding option) (phase : SocketPhase) : SocketDescription =
@@ -136,7 +138,7 @@ module TestConnect =
         : SyscallAnswer * UnixSystem<int, string>
         =
         let blob =
-            CopyIn.blob system.Machine.UnixPlatform (inetFamily system.Machine.UnixPlatform) destination
+            CopyIn.blob (UnixSystem.platform system) (inetFamily (UnixSystem.platform system)) destination
 
         match CopyIn.connect fd UserBuffer.Mapped declaredLength blob system with
         | Ok result -> result
@@ -157,8 +159,9 @@ module TestConnect =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -209,18 +212,19 @@ module TestConnect =
         let _, system = clientAndListener platform 5000us
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
                             Map.add
                                 (SocketId 0L)
                                 { streamSocket None SocketPhase.Idle with
                                     Addressing = SocketAddressing.initial SocketDomain.Unix false
                                 }
-                                system.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                system
 
         Lone.UnixConnection.connectSocket
             (SocketId 0L)
@@ -441,11 +445,11 @@ module TestConnect =
         let outcome, system = connectTo fd 16u (loopback 5000us) system
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match (UnixMachineState.socket (SocketId 0L) system.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).Phase with
         | SocketPhase.Established _ -> ()
         | other -> failwith $"expected Established, got %A{other}"
 
-        match (UnixMachineState.socket (SocketId 1L) system.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 1L) (Kernel.machine system)).Phase with
         | SocketPhase.Listening listenState -> listenState.Queue |> List.length |> shouldEqual 1
         | other -> failwith $"expected Listening, got %A{other}"
 
@@ -464,7 +468,7 @@ module TestConnect =
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
 
         // The connection is made whatever the syscall answered.
-        match (UnixMachineState.socket (SocketId 1L) system.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 1L) (Kernel.machine system)).Phase with
         | SocketPhase.Listening listenState -> listenState.Queue |> List.length |> shouldEqual 1
         | other -> failwith $"expected Listening, got %A{other}"
 
@@ -497,7 +501,7 @@ module TestConnect =
     /// will not model. Each is a case a client can match on rather than a
     /// message it would have to read.
     let private refusedBy (fd : int) (destination : Ipv4Endpoint) (system : UnixSystem<int, string>) : ConnectRefusal =
-        match CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform destination) system with
+        match CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) destination) system with
         | Error refusal -> refusal
         | Ok answer -> failwith $"expected a refusal, got %A{answer}"
 
@@ -526,12 +530,13 @@ module TestConnect =
             withSocket (SocketId 0L) (streamSocket None SocketPhase.Idle) (systemOn platform)
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         LocalRoutes = UnixSystem.defaultLocalRoutes
                     }
-            }
+                )
+                system
 
         let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 5000us
 
@@ -542,7 +547,7 @@ module TestConnect =
 
             // The refusal reverts the address it resolved to the wildcard,
             // and keeps the port.
-            match (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Address |> shouldEqual Ipv4Address.any
             | None -> failwith "the refused socket holds no binding"
         | SimulatedUnixFlavour.Darwin ->
@@ -614,9 +619,7 @@ module TestConnect =
             platform
 
     let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Lone.UnixSystemState.withFileDescriptors
-            (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
-            system
+        Lone.withFileDescriptors (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)) system
 
     /// The three ways a socket's source comes to be its own destination, port
     /// 40000 on loopback, with nothing listening: connect's own implicit bind
@@ -650,7 +653,7 @@ module TestConnect =
                         fd
                         UserBuffer.Mapped
                         16u
-                        (CopyIn.inet system.Machine.UnixPlatform (loopback 40000us))
+                        (CopyIn.inet (UnixSystem.platform system) (loopback 40000us))
                         system
                 with
                 | Error (ConnectRefusal.SimultaneousOpen destination) ->
@@ -666,11 +669,14 @@ module TestConnect =
         for name, fd, system in selfTupleSockets SimulatedUnixPlatform.macOsArm64 do
             for blocking in [ true ; false ] do
                 let system = if blocking then system else nonBlocking fd system
-                let before = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+
+                let before =
+                    (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).Ipv4Binding
+
                 let answer, after = connectTo fd 16u (loopback 40000us) system
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-                let socket = UnixMachineState.socket (SocketId 0L) after.Machine
+                let socket = UnixMachineState.socket (SocketId 0L) (Kernel.machine after)
                 socket.Phase |> shouldEqual SocketPhase.Idle
 
                 let expected =
@@ -709,12 +715,13 @@ module TestConnect =
                          >> Configured.expectOk EphemeralPortRangeRefusal.describe)
                         platform
 
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             LocalRoutes = UnixSystem.defaultLocalRoutes
                         }
-                }
+                    )
+                    system
 
             let holder =
                 { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
@@ -732,7 +739,7 @@ module TestConnect =
 
             match connectTo fd 16u (loopback 40000us) system with
             | SyscallAnswer.Failed UnixError.ECONNREFUSED, after ->
-                match (UnixMachineState.socket (SocketId 1L) after.Machine).Ipv4Binding with
+                match (UnixMachineState.socket (SocketId 1L) (Kernel.machine after)).Ipv4Binding with
                 | Some binding when binding.Endpoint.Port = 40001us -> ()
                 | other -> failwith $"SO_REUSEADDR %b{reuse}: the refused socket is bound at %A{other}"
 
@@ -751,12 +758,13 @@ module TestConnect =
         let system =
             let system = systemOn platform
 
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         LocalRoutes = UnixSystem.defaultLocalRoutes
                     }
-            }
+                )
+                system
 
         let holder =
             { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
@@ -773,7 +781,9 @@ module TestConnect =
         let fd, system = withSocket (SocketId 1L) bound system
         let answer, after = connectTo fd 16u (loopback 40000us) system
         answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
-        (UnixMachineState.socket (SocketId 1L) after.Machine) |> shouldEqual bound
+
+        (UnixMachineState.socket (SocketId 1L) (Kernel.machine after))
+        |> shouldEqual bound
 
     /// A socket bound to the wildcard is its own destination only where its
     /// source is known to be: towards 127.0.0.1, which it resolves to.
@@ -806,12 +816,13 @@ module TestConnect =
         let system =
             let system = systemOn platform
 
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         LocalRoutes = UnixSystem.defaultLocalRoutes
                     }
-            }
+                )
+                system
 
         let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
 
@@ -850,7 +861,9 @@ module TestConnect =
 
         let answer, system = connectTo fd 16u (loopback 1us) system
         answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
-        let given = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+
+        let given =
+            (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).Ipv4Binding
 
         given
         |> Option.map (fun binding -> binding.Endpoint.Port, PortHold.isHeld binding.PortHold)
@@ -859,7 +872,7 @@ module TestConnect =
         let answer, system = connectTo fd 16u (loopback 40000us) system
         answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-        (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine system)).Ipv4Binding
         |> Option.map (fun binding -> binding.Endpoint)
         |> shouldEqual (Some (Ipv4Endpoint.ofParts Ipv4Address.any 40001us))
 

@@ -33,12 +33,13 @@ module TestStateQueries =
     [<Test>]
     let ``platform is the one the machine was started on`` () : unit =
         for platform in platforms do
-            UnixMachineState.platform (initialOn platform).Machine |> shouldEqual platform
+            UnixMachineState.platform (Kernel.machine (initialOn platform))
+            |> shouldEqual platform
 
     [<Test>]
     let ``processorCount is the default until set, and then what was set`` () : unit =
         for platform in platforms do
-            UnixMachineState.processorCount (initialOn platform).Machine
+            UnixMachineState.processorCount (Kernel.machine (initialOn platform))
             |> shouldEqual UnixSystem.defaultProcessorCount
 
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
@@ -46,7 +47,7 @@ module TestStateQueries =
             |> UnixBootImage.tryWithProcessorCount count
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual count
 
         Check.One (
@@ -77,7 +78,7 @@ module TestStateQueries =
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual uptime
 
             match UnixClock.tryClockGettime (Callers.leader system) (fullPrecisionSinceBoot platform) system with
-            | Ok (Ok reading) ->
+            | Ok (ClockGettimeAnswer.Completed reading) ->
                 UnixTimestamp.seconds reading * 1_000_000_000L
                 + int64 (UnixTimestamp.nanoseconds reading)
                 |> shouldEqual uptime
@@ -89,45 +90,6 @@ module TestStateQueries =
         Check.One (
             propertyConfig,
             Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf advance))) property
-        )
-
-    [<Test>]
-    let ``delivered is every write to a drained stream, oldest first`` () : unit =
-        let property (platform : SimulatedUnixPlatform, writes : (int * int) list) : unit =
-            let initial = initialOn platform
-
-            DeliveryLog.count (UnixMachineState.delivered initial.Machine) |> shouldEqual 0
-
-            let final, expected =
-                ((initial, []), List.indexed writes)
-                ||> List.fold (fun (system, expected) (index, (fd, count)) ->
-                    let bytes =
-                        ImmutableArray.Create<byte> (Array.init count (fun i -> byte (index + i)))
-
-                    match WriteOutcomes.write fd bytes system with
-                    | Ok (WriteAnswer.Completed _, after) ->
-                        let expected =
-                            if count = 0 then
-                                expected
-                            else
-                                {
-                                    Endpoint = ExternalEndpoint (Lone.pid after, fd)
-                                    Bytes = bytes
-                                }
-                                :: expected
-
-                        after, expected
-                    | other -> failwith $"write(%d{fd}, %d{count} bytes) answered %A{Result.map fst other}"
-                )
-
-            DeliveryLog.toList (UnixMachineState.delivered final.Machine)
-            |> shouldEqual (List.rev expected)
-
-        let write = Gen.zip (Gen.elements [ 1 ; 2 ]) (Gen.choose (0, 4))
-
-        Check.One (
-            propertyConfig,
-            Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf write |> Gen.resize 10))) property
         )
 
     /// Arbitrary non-NUL bytes, short and drawn from a small alphabet.
@@ -233,21 +195,9 @@ module TestStateQueries =
             UnixSystem.signals (Lone.pid system) system
             |> shouldEqual (UnixProcessState.signals (Lone.proc system))
 
-            UnixSystem.delivered system
-            |> shouldEqual (UnixMachineState.delivered system.Machine)
-
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do
                 UnixSystem.descriptorTarget (Lone.pid system) fd system
                 |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system))
 
             UnixSystem.descriptorTarget (Lone.pid system) 3 system |> shouldEqual None
-
-            // And a write that reaches the client is what `delivered` reports.
-            match WriteOutcomes.writeBytes 0 1 (ImmutableArray.Create<byte> [| 7uy |]) system with
-            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, written)) ->
-                UnixSystem.delivered written
-                |> DeliveryLog.toList
-                |> List.map (fun delivery -> List.ofSeq delivery.Bytes)
-                |> shouldEqual [ [ 7uy ] ]
-            | other -> failwith $"writing to standard output: %A{other}"

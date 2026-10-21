@@ -40,22 +40,16 @@ module internal CommittedFileSystem =
     /// ended, and each description's record of the name it was opened
     /// through moved or marked unlinked by them
     /// (`OpenFileTable.followChanges`). `notice` says how the syscall reached
-    /// what it changed, or that a description let go of a name
-    /// (`ChangeNotice.NameReleased`, with `VirtualFileSystem.unchanged`).
-    ///
-    /// Refused, changing nothing, where Linux would report a change to a
-    /// watch through a name this kernel does not keep: the name a removed
-    /// directory had, for a change that reached it by ".", ".." or "/"
-    /// (`ReachedThrough.RemovedDirectory`, `UnplacedChangeRefusal`), when a
-    /// watch on its old parent asks for an event the change raises. Any other
-    /// change is committed.
+    /// what it changed, or that a description was released or let go of a
+    /// name (`ChangeNotice.Released`, `ChangeNotice.NameReleased`, with
+    /// `VirtualFileSystem.unchanged`).
     let commit
         (notice : ChangeNotice)
         (maxQueuedEvents : int)
         (mutation : VfsMutation)
         (openFiles : OpenFileTable)
         (committed : CommittedFileSystem)
-        : Result<CommittedFileSystem * OpenFileTable, UnplacedChangeRefusal>
+        : CommittedFileSystem * OpenFileTable
         =
         // By reference rather than by value: the graph a mutator was handed is
         // the very object this holds, and comparing two maps of every inode
@@ -64,18 +58,12 @@ module internal CommittedFileSystem =
             failwith
                 "CommittedFileSystem.commit: the mutation was made from a graph other than the one this machine holds, so committing it would lose every change between the two (this is a bug in the caller)."
 
-        let effects, unplaced, nextCookie =
+        let effects, nextCookie =
             InotifyDelivery.notifications notice mutation openFiles committed.NextCookie
 
-        match InotifyDelivery.unplacedRefusal unplaced openFiles with
-        | Some refusal -> Error refusal
-        | None ->
-
-        Ok (
-            {
-                Graph = VfsMutation.after mutation
-                NextCookie = nextCookie
-            },
-            InotifyDelivery.deliver maxQueuedEvents effects openFiles
-            |> OpenFileTable.followChanges (VfsMutation.changes mutation)
-        )
+        {
+            Graph = VfsMutation.after mutation
+            NextCookie = nextCookie
+        },
+        InotifyDelivery.deliver maxQueuedEvents effects openFiles
+        |> OpenFileTable.followChanges (VfsMutation.changes mutation)

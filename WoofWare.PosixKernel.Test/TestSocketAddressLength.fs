@@ -71,7 +71,7 @@ module TestSocketAddressLength =
         NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
     let private bindAt (endpoint : Ipv4Endpoint) (fd : int) (system : UnixSystem<int, string>) =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"binding fd %d{fd} at %O{endpoint}: %A{other}"
 
@@ -93,7 +93,7 @@ module TestSocketAddressLength =
                 fd
                 UserBuffer.Mapped
                 16u
-                (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                 system
         with
         | Ok (SyscallAnswer.Completed 0L, system) -> fd, system
@@ -102,7 +102,7 @@ module TestSocketAddressLength =
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Listening listenState -> ListenState.connections listenState
             | phase -> failwith $"fd %d{fd} is %A{phase}, not listening"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
@@ -239,7 +239,9 @@ module TestSocketAddressLength =
                         [ UserBuffer.Mapped ]
 
                 for destination in destinations do
-                    match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd destination word system with
+                    match
+                        UnixConnection.tryAccept (Callers.thread 0 system) listenerFd destination (Some word) 0 system
+                    with
                     | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after) when
                         isLinux platform && int word < 0
                         ->
@@ -263,9 +265,8 @@ module TestSocketAddressLength =
                         with
                         | Ok (PollOutcome.Answered ([ revents ], 1), _) -> revents |> shouldEqual 0x2001s
                         | other -> failwith $"polling the client after the drop: %A{other}"
-                    | Ok (AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), after) when
-                        not (isLinux platform && int word < 0)
-                        ->
+                    | Ok (AcceptOutcome.Accepted (acceptedFd, PeerAddressCopy.Written (copiedOut, reportedLength)),
+                          after) when not (isLinux platform && int word < 0) ->
                         copiedOut |> shouldEqual (CopyOut.expected platform client word)
                         reportedLength |> shouldEqual 16
                         Map.containsKey acceptedFd fdsBefore |> shouldEqual false
@@ -273,25 +274,127 @@ module TestSocketAddressLength =
                     | other -> failwith $"%O{platform} accept at 0x%08x{word} through %A{destination}: got %A{other}"
             )
 
-    /// Linux reads no length when the destination is NULL, so every length
-    /// succeeds there (measured). This library does not model a NULL
-    /// destination for `accept`, so it refuses rather than answering EINVAL;
-    /// and a destination the client has no address for might be NULL.
+    /// The probe's `O4 accept NULL, one queued` rows: through a NULL
+    /// destination both flavours take the connection at every length, a
+    /// negative one on Linux included, and leave the length cell as it was. The
+    /// cell's contents are no input to such a call, so there is no length to
+    /// vary here; what is checked is that the call takes the connection, makes
+    /// its descriptor, and answers no address, both at once and on waking.
     [<Test>]
-    let ``a negative length through a null destination is not answered on Linux`` () : unit =
-        let listenerFd, system = withListener SimulatedUnixPlatform.linuxX64
-        let _, system = connectClient system
+    let ``accept through a null destination takes the connection and writes nothing`` () : unit =
+        for platform in platforms do
+            let listenerFd, system = withListener platform
+            let _, queued = connectClient system
+            let fdsBefore = FileDescriptorRegistry.fds (Lone.fileDescriptors queued)
 
-        for word in [ 0xFFFF_FFFFu ; 0x8000_0000u ] do
             match
-                UnixConnection.tryAccept (Callers.thread 0 system) listenerFd (UserBuffer.Unmapped 0UL) word system
+                UnixConnection.tryAccept (Callers.thread 0 queued) listenerFd (UserBuffer.Unmapped 0UL) None 0 queued
             with
-            | Error (AcceptRefusal.UnmeasuredCopyOutFault _) -> ()
-            | other -> failwith $"word 0x%08x{word}: expected a refusal, got %A{other}"
+            | Ok (AcceptOutcome.Accepted (acceptedFd, PeerAddressCopy.NotRequested), after) ->
+                Map.containsKey acceptedFd fdsBefore |> shouldEqual false
 
-            match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Addressless word system with
-            | Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen) -> ()
-            | other -> failwith $"word 0x%08x{word}: expected a refusal, got %A{other}"
+                FileDescriptorRegistry.tryFindTarget acceptedFd (Lone.fileDescriptors after)
+                |> Option.isSome
+                |> shouldEqual true
+
+                queueOf listenerFd after |> shouldEqual []
+                UnixSystem.checkInvariants after |> shouldEqual []
+            | other -> failwith $"%O{platform} accept through NULL, one queued: got %A{other}"
+
+            // Thread 1 asleep on the empty queue first, then woken by the
+            // connection the leader makes.
+            let system = Threads.ensure 1 system
+
+            let parked =
+                match
+                    UnixConnection.tryAccept
+                        (Callers.thread 1 system)
+                        listenerFd
+                        (UserBuffer.Unmapped 0UL)
+                        None
+                        0
+                        system
+                with
+                | Ok (AcceptOutcome.WouldBlock _, parked) -> parked
+                | other -> failwith $"%O{platform} accept through NULL, none queued: got %A{other}"
+
+            let _, woken = connectClient parked
+            let woken = Woken.thread 1 woken
+
+            match UnixConnection.tryFinishAccept (Callers.thread 1 woken) woken with
+            | Ok (AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), after) ->
+                queueOf listenerFd after |> shouldEqual []
+                UnixSystem.checkInvariants after |> shouldEqual []
+            | other -> failwith $"%O{platform} accept through NULL, woken: got %A{other}"
+
+    /// A NULL destination takes no length, since no kernel reads the cell for
+    /// it, and every other destination takes one. Either mistake is the
+    /// caller's whatever the descriptor, so it is refused before the
+    /// descriptor is looked at, and the public entry point throws
+    /// `ArgumentException`.
+    [<Test>]
+    let ``a declared length is supplied exactly when the destination is not null`` () : unit =
+        for platform in platforms do
+            let listenerFd, system = withListener platform
+            let _, system = connectClient system
+
+            for fd in [ listenerFd ; 99 ] do
+                everyLength (fun word ->
+                    match
+                        UnixConnection.tryAccept
+                            (Callers.thread 0 system)
+                            fd
+                            (UserBuffer.Unmapped 0UL)
+                            (Some word)
+                            0
+                            system
+                    with
+                    | Error (AcceptRefusal.LengthContradictsDestination true) -> ()
+                    | other -> failwith $"%O{platform} fd %d{fd}, NULL with 0x%08x{word}: got %A{other}"
+                )
+
+                for destination in
+                    [
+                        UserBuffer.Mapped
+                        UserBuffer.Opaque
+                        UserBuffer.Addressless
+                        UserBuffer.Unmapped 1UL
+                        UserBuffer.Unmapped 4096UL
+                    ] do
+                    match UnixConnection.tryAccept (Callers.thread 0 system) fd destination None 0 system with
+                    | Error (AcceptRefusal.LengthContradictsDestination false) -> ()
+                    | other -> failwith $"%O{platform} fd %d{fd}, %A{destination} with no length: got %A{other}"
+
+            Assert.Throws<System.ArgumentException> (fun () ->
+                UnixConnection.accept (Callers.thread 0 system) listenerFd UserBuffer.Mapped None 0 system
+                |> ignore
+            )
+            |> ignore
+
+    /// Whether the kernel reads the length cell, and whether it writes
+    /// anything, turns on whether the destination is NULL, which a destination
+    /// the client has no address for might be: so once a connection is there
+    /// to take, such a call is refused at every length, and the connection
+    /// stays queued.
+    [<Test>]
+    let ``an addressless destination is refused at every length once a connection is queued`` () : unit =
+        for platform in platforms do
+            let listenerFd, system = withListener platform
+            let _, system = connectClient system
+
+            everyLength (fun word ->
+                match
+                    UnixConnection.tryAccept
+                        (Callers.thread 0 system)
+                        listenerFd
+                        UserBuffer.Addressless
+                        (Some word)
+                        0
+                        system
+                with
+                | Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen) -> ()
+                | other -> failwith $"%O{platform} word 0x%08x{word}: expected a refusal, got %A{other}"
+            )
 
     /// A dropped connection is exactly what accepting it and then closing the
     /// accepted descriptor would leave, bar the identities the accept would
@@ -322,7 +425,7 @@ module TestSocketAddressLength =
 
             let queueFd, system =
                 match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-                | Ok (Ok created) -> created
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"epoll_create1: %A{other}"
 
             let system =
@@ -340,7 +443,7 @@ module TestSocketAddressLength =
                                     fd
                                     UserBuffer.Mapped
                                     16u
-                                    (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                                    (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                                     system
                             with
                             | Ok (SyscallAnswer.Failed UnixError.EINPROGRESS, system) -> fd, system
@@ -373,13 +476,17 @@ module TestSocketAddressLength =
                 )
 
             let dropped =
-                match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped word system with
+                match
+                    UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some word) 0 system
+                with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after) -> after
                 | other -> failwith $"word 0x%08x{word}: expected a dropped connection, got %A{other}"
 
             let acceptedThenClosed =
-                match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u system with
-                | Ok (AcceptOutcome.Accepted (acceptedFd, _, _), after) ->
+                match
+                    UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) 0 system
+                with
+                | Ok (AcceptOutcome.Accepted (acceptedFd, _), after) ->
                     match UnixDescriptor.tryClose (Callers.leader after) acceptedFd after with
                     | Ok (SyscallAnswer.Completed _, after) -> after
                     | other -> failwith $"closing the accepted descriptor: %A{other}"
@@ -390,19 +497,20 @@ module TestSocketAddressLength =
             FileDescriptorRegistry.fds (Lone.fileDescriptors dropped)
             |> shouldEqual (FileDescriptorRegistry.fds (Lone.fileDescriptors acceptedThenClosed))
 
-            OpenFileTable.descriptions dropped.Machine.OpenFiles
-            |> shouldEqual (OpenFileTable.descriptions acceptedThenClosed.Machine.OpenFiles)
+            OpenFileTable.descriptions (UnixSystem.openFiles dropped)
+            |> shouldEqual (OpenFileTable.descriptions (UnixSystem.openFiles acceptedThenClosed))
 
             // The socket identity and the description identity the accept
             // minted are the only differences.
             (Lone.withFileDescriptors
                 ((Lone.fileDescriptors dropped))
-                { acceptedThenClosed with
-                    Machine =
-                        { acceptedThenClosed.Machine with
-                            NextSocketId = dropped.Machine.NextSocketId
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            NextSocketId = (Kernel.machine dropped).NextSocketId
                         }
-                })
+                    )
+                    acceptedThenClosed))
             |> shouldEqual dropped
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
@@ -420,7 +528,13 @@ module TestSocketAddressLength =
 
                 let system =
                     match
-                        UnixConnection.tryAccept (Callers.thread 1 system) listenerFd UserBuffer.Mapped word system
+                        UnixConnection.tryAccept
+                            (Callers.thread 1 system)
+                            listenerFd
+                            UserBuffer.Mapped
+                            (Some word)
+                            0
+                            system
                     with
                     | Ok (AcceptOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"%O{platform} 0x%08x{word}: expected a park, got %A{other}"
@@ -454,7 +568,9 @@ module TestSocketAddressLength =
                 UnixSocket.tryGetsockname (Callers.leader system) closedFd UserBuffer.Mapped word system
                 |> shouldEqual (Ok (GetSockNameAnswer.Failed (UnixError.EBADF, None)))
 
-                match UnixConnection.tryAccept (Callers.thread 0 system) closedFd UserBuffer.Mapped word system with
+                match
+                    UnixConnection.tryAccept (Callers.thread 0 system) closedFd UserBuffer.Mapped (Some word) 0 system
+                with
                 | Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> ()
                 | other -> failwith $"%O{platform} accept at 0x%08x{word}: %A{other}"
             )
@@ -473,15 +589,16 @@ module TestSocketAddressLength =
 
             let fileFd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors system)
 
             let createEventQueue =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin ->
                     FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId

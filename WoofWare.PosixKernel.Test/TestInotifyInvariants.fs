@@ -62,7 +62,7 @@ module TestInotifyInvariants =
 
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-        | Ok (Ok created) -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"inotify_init1: %A{other}"
 
     let private add (fd : int) (path : string) (mask : uint32) (system : UnixSystem<int, string>) =
@@ -80,7 +80,7 @@ module TestInotifyInvariants =
         let fd, system = init1 0x800 linux
         let _, system = add fd "d1" 0x100u system
         let id = idOf fd system
-        system, id, OpenFileTable.inotifyState context id system.Machine.OpenFiles
+        system, id, OpenFileTable.inotifyState context id (UnixSystem.openFiles system)
 
     let private forge (state : InotifyState) : UnixSystem<int, string> =
         let system, id, _ = instance
@@ -221,12 +221,13 @@ module TestInotifyInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     InotifyLimits = limits
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``the machine's limits are held to the instances and watches each user holds`` () : unit =
@@ -237,7 +238,7 @@ module TestInotifyInvariants =
         let id = idOf fd system
         let user = (Lone.proc system).Credentials.EffectiveUser
         UnixSystem.checkInvariants system |> shouldEqual []
-        let limits = system.Machine.InotifyLimits
+        let limits = (Kernel.machine system).InotifyLimits
 
         UnixSystem.checkInvariants (
             withMachineLimits
@@ -265,7 +266,7 @@ module TestInotifyInvariants =
         UnixSystem.checkInvariants (withMachineLimits notAdmissible system)
         |> shouldEqual [ UnixSystemDefect.InotifyLimitsNotAdmissible notAdmissible ]
 
-        let state = OpenFileTable.inotifyState context id system.Machine.OpenFiles
+        let state = OpenFileTable.inotifyState context id (UnixSystem.openFiles system)
 
         let overfull =
             Lone.mapOpenFiles
@@ -301,7 +302,7 @@ module TestInotifyInvariants =
     let ``a read parked on something other than an instance is a defect`` () : unit =
         let fd, system =
             match UnixPoll.tryEpollCreate1 (Callers.leader linux) 0 linux with
-            | Ok (Ok created) -> created
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"%A{other}"
 
         let id = idOf fd system
@@ -317,7 +318,7 @@ module TestInotifyInvariants =
                     })
                 system
 
-        let target = (OpenFileTable.get context id parked.Machine.OpenFiles).Target
+        let target = (OpenFileTable.get context id (UnixSystem.openFiles parked)).Target
 
         UnixSystem.checkInvariants parked
         |> shouldEqual
@@ -349,7 +350,7 @@ module TestInotifyInvariants =
 
         let fd, registry =
             FileDescriptorRegistry.createInotify
-                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform darwin))
                 UserId.root
                 false
                 (Lone.fileDescriptors darwin)
@@ -362,7 +363,7 @@ module TestInotifyInvariants =
             [
                 UnixSystemDefect.DescriptionNotOfFlavour (
                     id,
-                    (OpenFileTable.get context id forged.Machine.OpenFiles).Target,
+                    (OpenFileTable.get context id (UnixSystem.openFiles forged)).Target,
                     SimulatedUnixFlavour.Darwin
                 )
             ]
@@ -379,7 +380,7 @@ module TestInotifyInvariants =
             }
 
         UnixSystem.defaultInotifyLimits |> shouldEqual limits
-        linux.Machine.InotifyLimits |> shouldEqual limits
+        (Kernel.machine linux).InotifyLimits |> shouldEqual limits
 
         let refused (limits : InotifyLimits) =
             match UnixBootImage.tryWithInotifyLimits limits image with
@@ -441,7 +442,7 @@ module TestInotifyInvariants =
                 }
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        configured.Machine.InotifyLimits
+        (Kernel.machine configured).InotifyLimits
         |> shouldEqual
             {
                 MaxUserInstances = 2
@@ -474,8 +475,8 @@ module TestInotifyInvariants =
                 pid
                 (fun view ->
                     match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) 0x800 view with
-                    | Ok (Ok (fd, view)) -> Ok fd, view
-                    | Ok (Error error) -> Error error, view
+                    | Ok (DescriptorAnswer.Returned fd, view) -> Ok fd, view
+                    | Ok (DescriptorAnswer.Failed error, view) -> Error error, view
                     | Error refusal -> failwith $"%A{refusal}"
                 )
 
@@ -534,13 +535,13 @@ module TestInotifyInvariants =
     let ``step answers inotify_init1 and inotify_rm_watch as the functions do`` () : unit =
         let viaStep =
             match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x800) linux with
-            | Ok (SteppedCall.InotifyInit1 (Ok (fd, system))) -> fd, system
+            | Ok (SteppedCall.InotifyInit1 (DescriptorAnswer.Returned fd, system)) -> fd, system
             | other -> failwith $"%A{Result.map Stepped.view other}"
 
         viaStep |> shouldEqual (init1 0x800 linux)
 
         UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux
-        |> Stepped.resultShouldBe (Ok (SteppedCall.InotifyInit1 (Error UnixError.EINVAL)))
+        |> Stepped.resultShouldBe (Ok (SteppedCall.InotifyInit1 (DescriptorAnswer.Failed UnixError.EINVAL, linux)))
 
         let system, _, _ = instance
 
@@ -603,7 +604,7 @@ module TestInotifyInvariants =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                 proc.Signals
@@ -710,11 +711,12 @@ module TestInotifyInvariants =
                 | Error refusal -> failwith $"%A{call} by %d{thread}: %s{SyscallRefusal.describe refusal}"
                 | Ok stepped ->
                     match call, stepped with
-                    | _, SteppedCall.InotifyInit1 (Ok (_, after))
+                    | _, SteppedCall.InotifyInit1 (DescriptorAnswer.Returned _, after)
                     | _, SteppedCall.InotifyAddWatch (_, after)
                     | _, SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Failed _), after)
-                    | _, SteppedCall.Dup (SyscallAnswer.Completed _, after) -> system <- after
-                    | _, SteppedCall.InotifyInit1 (Error UnixError.EMFILE) -> ()
+                    | _, SteppedCall.Dup (DescriptorAnswer.Returned _, after) -> system <- after
+                    | _, SteppedCall.InotifyInit1 (DescriptorAnswer.Failed UnixError.EMFILE, after) ->
+                        after |> shouldEqual system
                     | Syscall.InotifyRmWatch (fd, _), SteppedCall.InotifyRmWatch (_, after) ->
                         system <- after
 
@@ -740,7 +742,7 @@ module TestInotifyInvariants =
                         // sleep.
                         elif not (wouldSleep fd) then
                             failwith $"the leader's read of %d{fd} slept"
-                    | Syscall.Dup fd, SteppedCall.Dup (SyscallAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
+                    | Syscall.Dup fd, SteppedCall.Dup (DescriptorAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
                         ()
                     | Syscall.Close fd, SteppedCall.Close (answer, after) ->
                         if asleep && answer = SyscallAnswer.Completed 0L then
@@ -762,7 +764,7 @@ module TestInotifyInvariants =
                                 { proc with
                                     Signals =
                                         SignalState.enqueue
-                                            (Lone.UnixSystemState.signalNumbering system)
+                                            (Kernel.signalNumbering system)
                                             {
                                                 Signal = Signal.SIGUSR1
                                                 Target = ValueSome 1
@@ -870,16 +872,57 @@ module TestInotifyInvariants =
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.OpenedThroughNoNameNotRoot (id, f) ]
 
-        openedThroughForged id (Some (ReachedThrough.RemovedDirectory d)) system
-        |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.OpenedThroughRemovedDirectoryNamed (id, f, d) ]
-
         // An unlinked name the directory still binds to the inode is no defect:
         // the name may have been given again (`inotify-dentry-probe.c` section
         // L).
         openedThroughForged id (named "f" true) system
         |> UnixSystem.checkInvariants
         |> shouldEqual []
+
+    [<Test>]
+    let ``a directory's unlinked name is the one it had when its last name went`` () : unit =
+        let system, _, d, _ = openedThroughName ()
+
+        let fd, system =
+            InotifyReplay.openFd
+                { InotifyReplay.openFlags FileAccessMode.ReadOnly false false false with
+                    Directory = true
+                }
+                "d/e"
+                0
+                system
+
+        let id = idOf fd system
+        let e = InotifyReplay.numberOf "d/e" system
+
+        let named (entry : string) (unlinked : bool) : ReachedThrough option =
+            Some (
+                ReachedThrough.Name (
+                    {
+                        Parent = d
+                        Name = name entry
+                    },
+                    unlinked
+                )
+            )
+
+        // Still named: no name of it has gone.
+        openedThroughForged id (named "e" true) system
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (id, e, d, name "e")
+            ]
+
+        let removed = InotifyReplay.rmdir "d/e" system
+        UnixSystem.checkInvariants removed |> shouldEqual []
+
+        openedThroughForged id (named "z" true) removed
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (id, e, d, name "z")
+            ]
 
     [<Test>]
     let ``descriptions holding one name record it alike, and two recording one linked name hold one name`` () : unit =
@@ -938,7 +981,9 @@ module TestInotifyInvariants =
 
         let instance, system = init1 0x800 system
         let instanceId = idOf instance system
-        let target = (OpenFileTable.get context instanceId system.Machine.OpenFiles).Target
+
+        let target =
+            (OpenFileTable.get context instanceId (UnixSystem.openFiles system)).Target
 
         openedThroughForged instanceId (Some ReachedThrough.Unnamed) system
         |> registryDefects
@@ -986,7 +1031,7 @@ module TestInotifyInvariants =
             |> InotifyReplay.unlink "d/f"
             |> InotifyReplay.link "d/h" "d/f"
 
-        OpenFileTable.openedThrough id system.Machine.OpenFiles
+        OpenFileTable.openedThrough id (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (
@@ -1019,7 +1064,7 @@ module TestInotifyInvariants =
             |> InotifyReplay.rename "d/f" "d/e/moved"
             |> InotifyReplay.rename "d/e" "d/e2"
 
-        OpenFileTable.openedThrough id system.Machine.OpenFiles
+        OpenFileTable.openedThrough id (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (
@@ -1035,7 +1080,7 @@ module TestInotifyInvariants =
         let system =
             system |> InotifyReplay.unlink "d/e2/moved" |> InotifyReplay.rmdir "d/e2"
 
-        OpenFileTable.openedThrough directoryId system.Machine.OpenFiles
+        OpenFileTable.openedThrough directoryId (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (

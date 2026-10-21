@@ -158,9 +158,43 @@ module internal GetIdsRefusal =
         | GetIdsRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
         | GetIdsRefusal.Buffer refusal -> BufferRefusal.kind refusal
 
-/// The calls by which a process reads and changes who it is: `getresuid(2)`,
-/// `getresgid(2)`, and the C library's `setresuid(3)`, `setresgid(3)` and
-/// `setgroups(3)`.
+/// What `getgroups(2)` does with the caller's buffer and what it returns.
+[<RequireQualifiedAccess>]
+type GetGroupsAnswer =
+    /// The call was asked only how many groups there are (a size of 0). It
+    /// returns `count` and writes nothing, whatever the buffer is.
+    | Counted of count : int
+    /// Place these groups in the caller's buffer, in this order, and return how
+    /// many there are. They fit: the size has already been compared with this
+    /// list. An empty list writes nothing and so never faults.
+    | Copied of groups : GroupId list
+    /// The call returns -1 and the caller stores `error` wherever its libc
+    /// keeps errno. Nothing was written.
+    | Failed of error : UnixError
+
+/// Why this kernel will not answer a `getgroups(2)`.
+[<RequireQualifiedAccess>]
+type internal GetGroupsRefusal =
+    /// The buffer has no answer at the copy, which is the only step that
+    /// reads it.
+    | Buffer of BufferRefusal
+
+[<RequireQualifiedAccess>]
+module internal GetGroupsRefusal =
+    /// What this kernel knows about why it will not answer. A client adds which
+    /// entry point asked, and what the buffer was.
+    let describe (refusal : GetGroupsRefusal) : string =
+        match refusal with
+        | GetGroupsRefusal.Buffer refusal -> BufferRefusal.describe refusal
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : GetGroupsRefusal) : RefusalKind =
+        match refusal with
+        | GetGroupsRefusal.Buffer refusal -> BufferRefusal.kind refusal
+
+/// The calls by which a process reads and changes who it is: `geteuid(2)`,
+/// `getegid(2)`, `getresuid(2)`, `getresgid(2)` and `getgroups(2)`, and the C
+/// library's `setresuid(3)`, `setresgid(3)` and `setgroups(3)`.
 ///
 /// Each change is the whole process's, every thread alike, as the C library's
 /// functions make it. Linux's system calls beneath them change only the
@@ -300,6 +334,112 @@ module UnixCredentials =
         =
         tryGetresgid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.getresgid" GetIdsRefusal.kind GetIdsRefusal.describe
+
+    /// `geteuid` once `Entry` has admitted its caller.
+    let private geteuidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        : UserId
+        =
+        system.Process.Credentials.EffectiveUser
+
+    /// `geteuid(2)`: the process's effective user ID.
+    ///
+    /// Total, and changes nothing: `geteuid` cannot fail.
+    let geteuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UserId
+        =
+        Entry.call "UnixCredentials.geteuid" CallerRequirement.Running caller Shape.answer geteuidIn system
+
+    /// `getegid` once `Entry` has admitted its caller.
+    let private getegidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        : GroupId
+        =
+        system.Process.Credentials.EffectiveGroup
+
+    /// `getegid(2)`: the process's effective group ID.
+    ///
+    /// Total, and changes nothing: `getegid` cannot fail.
+    let getegid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : GroupId
+        =
+        Entry.call "UnixCredentials.getegid" CallerRequirement.Running caller Shape.answer getegidIn system
+
+    /// `tryGetgroups` once `Entry` has admitted its caller.
+    let private tryGetgroupsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (destination : UserBuffer)
+        (size : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<GetGroupsAnswer, GetGroupsRefusal>
+        =
+        // Measured on Linux 6.18.5 and Darwin 27.0 (`getgroups.c`), in this
+        // order: a negative size is EINVAL on both (-1, -2, -16, -65536,
+        // INT_MIN + 1 and INT_MIN, and -1 with a NULL buffer); a size of 0 returns the count and writes nothing,
+        // even through NULL; a size below the count is EINVAL, NULL or not; and
+        // only then is the buffer written, so NULL is EFAULT. Linux copies
+        // nothing for an empty list, so no buffer faults then; Darwin's list
+        // always holds the effective group. Linux writes
+        // element by element up to a fault (a buffer one element short of a
+        // PROT_NONE page had its first element written), which an `Unmapped`
+        // buffer, holding no storage at all, never shows.
+        if size < 0 then
+            Ok (GetGroupsAnswer.Failed UnixError.EINVAL)
+        else
+
+        let groups =
+            Credentials.reportedGroups
+                (SimulatedUnixPlatform.groupListReport system.Machine.UnixPlatform)
+                system.Process.Credentials
+
+        let count = List.length groups
+
+        if size = 0 then
+            Ok (GetGroupsAnswer.Counted count)
+        elif size < count then
+            Ok (GetGroupsAnswer.Failed UnixError.EINVAL)
+        elif count = 0 then
+            Ok (GetGroupsAnswer.Copied [])
+        else
+
+        match destination with
+        | UserBuffer.Mapped -> Ok (GetGroupsAnswer.Copied groups)
+        | UserBuffer.Unmapped _ -> Ok (GetGroupsAnswer.Failed UnixError.EFAULT)
+        | UserBuffer.Opaque -> Error (GetGroupsRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+        | UserBuffer.Addressless -> Error (GetGroupsRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+
+    /// `getgroups`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (destination : UserBuffer)
+        (size : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetGroupsAnswer, GetGroupsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.getgroups"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetgroupsIn destination size)
+            system
+
+    /// `getgroups(2)`: the process's groups, into `destination`, which has room
+    /// for `size` of them.
+    ///
+    /// Changes nothing, so it returns no system.
+    let getgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (destination : UserBuffer)
+        (size : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : GetGroupsAnswer
+        =
+        tryGetgroups caller destination size system
+        |> Refusal.orRaise "UnixCredentials.getgroups" GetGroupsRefusal.kind GetGroupsRefusal.describe
 
     // Measured on Linux 6.18.5 with glibc 2.41 (`docs/probes/setxid-threads`):
     // glibc's wrapper sends every other thread signal 33, whose SA_RESTART

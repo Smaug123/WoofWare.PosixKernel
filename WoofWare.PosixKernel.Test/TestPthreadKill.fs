@@ -84,8 +84,11 @@ module TestPthreadKill =
 
     let private answer (system : UnixSystem<int, string>) (target : int) (signo : int) : string =
         match UnixSignal.tryPthreadKill (Callers.leader system) target signo system with
-        | Ok (Ok _) -> "OK"
-        | Ok (Error errno) -> $"%O{errno}"
+        | Ok (ProcessFate.Continues (KillAnswer.Completed _, _))
+        | Ok (ProcessFate.ProcessEnded _) -> "OK"
+        | Ok (ProcessFate.Continues (KillAnswer.Failed errno, after)) ->
+            after |> shouldEqual system
+            $"%O{errno}"
         | Error refusal -> $"refused %O{refusal}"
 
     /// The probe's `args` rows: `raise` and `pthread_kill(pthread_self())`
@@ -168,15 +171,17 @@ module TestPthreadKill =
                     HandlerFrames.enterIn "h" thread mask system
 
             match UnixSignal.tryPthreadKill (Callers.leader system) target signo system, sendable flavour signo with
-            | Ok (Error errno), false -> errno |> shouldEqual UnixError.EINVAL
-            | Ok (Ok outcome), true ->
+            | Ok (ProcessFate.Continues (KillAnswer.Failed errno, after)), false ->
+                errno |> shouldEqual UnixError.EINVAL
+                after |> shouldEqual system
+            | Ok outcome, true ->
                 let expected =
                     if signo = 0 then
                         SignalGeneration.ProcessContinues (Lone.proc system).Signals
                     else
                         match
                             SignalState.generate
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 coreDumps
                                 (QueueAccounts.ofLone SignalSender.ThreadKill system)
                                 leader
@@ -184,9 +189,7 @@ module TestPthreadKill =
                                 (Set.ofList [ leader ; worker ])
                                 {
                                     Signal =
-                                        match
-                                            Signal.ofRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signo
-                                        with
+                                        match Signal.ofRawSignoUnder (Kernel.signalNumbering system) signo with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueSome target
@@ -206,10 +209,11 @@ module TestPthreadKill =
                     |> shouldEqual system
 
                 match outcome, expected with
-                | ProcessFate.Continues (KillOutcome.ProcessRuns, after), SignalGeneration.ProcessContinues signals ->
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after),
+                  SignalGeneration.ProcessContinues signals ->
                     (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
-                | ProcessFate.Continues (KillOutcome.ProcessStopped stoppedBy, after),
+                | ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped stoppedBy), after),
                   SignalGeneration.ProcessStopped (signal, signals) ->
                     stoppedBy |> shouldEqual signal
                     (Lone.proc after).Signals |> shouldEqual signals
@@ -268,7 +272,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         signal
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         proc.Signals
@@ -291,7 +295,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     HandlerFrames.enterVia
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         carrier
                         "carrier"
                         (Lone.leader system)
@@ -310,12 +314,9 @@ module TestPthreadKill =
             }
         )
 
-    let private continues
-        (what : string)
-        (answer : Result<Result<ProcessFate<KillOutcome, int, string>, UnixError>, 'Refusal>)
-        =
+    let private continues (what : string) (answer : Result<ProcessFate<KillAnswer, int, string>, 'Refusal>) =
         match answer with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
         | other -> failwith $"%s{what}: %O{other}"
 
     /// The probe's `handler` rows: a caught signal raised by either thread runs
@@ -461,12 +462,14 @@ module TestPthreadKill =
                         match target with
                         | None ->
                             match UnixSignal.tryKill (Callers.leader system) (self system) signo system with
-                            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> Ok system
+                            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
+                                Ok system
                             | Error (KillRefusal.Receiver refusal) -> Error refusal
                             | other -> failwith $"kill: %O{other}"
                         | Some thread ->
                             match UnixSignal.tryPthreadKill (Callers.leader system) thread signo system with
-                            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> Ok system
+                            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
+                                Ok system
                             | Error (ThreadKillRefusal.Receiver refusal) -> Error refusal
                             | other -> failwith $"pthread_kill: %O{other}"
 
@@ -517,7 +520,7 @@ module TestPthreadKill =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 signal
                                 SignalDisposition.Default
                                 proc.Signals
@@ -527,7 +530,7 @@ module TestPthreadKill =
         let system = systemOn SimulatedUnixFlavour.Darwin |> pendingOnProcess Signal.SIGTERM
 
         match UnixSignal.tryPthreadKill (Callers.leader system) leader 15 system with
-        | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+        | Ok (ProcessFate.ProcessEnded (ended, after)) ->
             EndedProcess.termination ended
             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGTERM, false))
 

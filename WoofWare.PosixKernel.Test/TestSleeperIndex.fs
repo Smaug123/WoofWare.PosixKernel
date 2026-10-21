@@ -241,8 +241,9 @@ module TestSleeperIndex =
                 | CallProgress.Answered (ProcessFate.ProcessEnded (_, system)) -> Map.remove pid pipes, system
                 | CallProgress.NeedsCopyIn paused ->
                     match UnixReadWrite.writeWithBytes (ImmutableArray.Create<byte> 1uy) paused with
-                    | ProcessFate.Continues (_, system) -> pipes, system
-                    | ProcessFate.ProcessEnded (_, system) -> Map.remove pid pipes, system
+                    | ProcessFate.Continues (_, system), None -> pipes, system
+                    | ProcessFate.ProcessEnded (_, system), None -> Map.remove pid pipes, system
+                    | _, Some delivery -> failwith $"a write into a pipe the process made delivered %A{delivery}"
         | 9 when running pid thread system ->
             match pick () with
             | None -> pipes, system
@@ -256,9 +257,9 @@ module TestSleeperIndex =
         | 10 when running pid thread system && random.Next 4 = 0 ->
             // `SIGTERM`, whose default ends the process, sent to itself.
             match UnixSignal.kill caller (ProcessId.toInt32 pid) 15 system with
-            | Ok (ProcessFate.Continues (_, system)) -> pipes, system
-            | Ok (ProcessFate.ProcessEnded (_, system)) -> Map.remove pid pipes, system
-            | Error error -> failwith $"kill: %O{error}"
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> pipes, system
+            | ProcessFate.ProcessEnded (_, system) -> Map.remove pid pipes, system
+            | ProcessFate.Continues (KillAnswer.Failed error, _) -> failwith $"kill: %O{error}"
         | 11
         | 12 ->
             let woken, system = UnixWait.wake system

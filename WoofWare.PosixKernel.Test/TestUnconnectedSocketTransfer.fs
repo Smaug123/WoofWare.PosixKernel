@@ -291,7 +291,12 @@ module TestUnconnectedSocketTransfer =
 
         let connectTo (endpoint : Ipv4Endpoint) (family : int) (system : UnixSystem<int, string>) =
             match
-                CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.blob system.Machine.UnixPlatform family endpoint) system
+                CopyIn.connect
+                    fd
+                    UserBuffer.Mapped
+                    16u
+                    (CopyIn.blob (UnixSystem.platform system) family endpoint)
+                    system
             with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"connect did not complete: %A{other}"
@@ -301,7 +306,7 @@ module TestUnconnectedSocketTransfer =
 
         let system =
             match
-                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopbackAt 0us)) system
+                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopbackAt 0us)) system
             with
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"bind failed: %A{other}"
@@ -329,7 +334,7 @@ module TestUnconnectedSocketTransfer =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"the dissolve did not complete: %A{other}"
 
-        let before = system.Machine.Sockets.[socketId]
+        let before = (Kernel.machine system).Sockets.[socketId]
         before.Phase |> shouldEqual SocketPhase.Idle
 
         before.Ipv4Binding
@@ -338,9 +343,9 @@ module TestUnconnectedSocketTransfer =
 
         match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
         | Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EDESTADDRREQ), after)) ->
-            let low, high = system.Machine.EphemeralPortRange
+            let low, high = UnixSystem.ephemeralPortRange system
 
-            match after.Machine.Sockets.[socketId].Ipv4Binding with
+            match (Kernel.machine after).Sockets.[socketId].Ipv4Binding with
             | Some binding ->
                 binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
 
@@ -366,7 +371,7 @@ module TestUnconnectedSocketTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
                         proc.Signals
@@ -392,7 +397,7 @@ module TestUnconnectedSocketTransfer =
                         fd
                         UserBuffer.Mapped
                         16u
-                        (CopyIn.inet system.Machine.UnixPlatform loopbackAnyPort)
+                        (CopyIn.inet (UnixSystem.platform system) loopbackAnyPort)
                         system
                 with
                 | Ok (BindAnswer.Bound _, system) -> Some system
@@ -440,32 +445,58 @@ module TestUnconnectedSocketTransfer =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-        let socketBefore = before.Machine.Sockets.[socketId]
-        let socketAfter = after.Machine.Sockets.[socketId]
+        let socketBefore = (Kernel.machine before).Sockets.[socketId]
+        let socketAfter = (Kernel.machine after).Sockets.[socketId]
 
-        if
-            socketBefore.Ipv4Binding.IsNone
-            && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
-        then
-            let low, high = before.Machine.EphemeralPortRange
+        // A write is a send call, which marks a UDP socket's receive side
+        // (`DatagramReceiver.sent`, a change on Darwin only) whatever it
+        // answers; with that put back, the write changes only what binding it
+        // makes.
+        let receiversBefore = (Kernel.machine before).DatagramReceivers
+        let receiversAfter = (Kernel.machine after).DatagramReceivers
 
-            match socketAfter.Ipv4Binding with
-            | Some binding ->
-                binding.Endpoint.Address = Ipv4Address.any
-                && binding.Endpoint.Port >= low
-                && binding.Endpoint.Port <= high
-                && binding.LockedAddress = None
-                && not binding.LockedPort
-                && { after with
-                       Machine =
-                           { after.Machine with
-                               NextEphemeralPort = before.Machine.NextEphemeralPort
-                               Sockets = before.Machine.Sockets
-                           }
-                   } = before
-            | None -> false
-        else
-            after = before
+        let receiverMarked =
+            match Map.tryFind socketId receiversBefore with
+            | Some receiver -> Map.tryFind socketId receiversAfter = Some (DatagramReceiver.sent receiver)
+            | None -> receiversAfter = receiversBefore
+
+        let after =
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        DatagramReceivers = receiversBefore
+                    }
+                )
+                after
+
+        // What the write did to the binding, with the receive side put back.
+        let bindingRight =
+            if
+                socketBefore.Ipv4Binding.IsNone
+                && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
+            then
+                let low, high = UnixSystem.ephemeralPortRange before
+
+                match socketAfter.Ipv4Binding with
+                | Some binding ->
+                    binding.Endpoint.Address = Ipv4Address.any
+                    && binding.Endpoint.Port >= low
+                    && binding.Endpoint.Port <= high
+                    && binding.LockedAddress = None
+                    && not binding.LockedPort
+                    && Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
+                                NextEphemeralPort = (Kernel.machine before).NextEphemeralPort
+                                Sockets = (Kernel.machine before).Sockets
+                            }
+                        )
+                        after = before
+                | None -> false
+            else
+                after = before
+
+        receiverMarked && bindingRight
 
     /// Whether the kernel's answer for `row`'s call on `fd` is the one the probe
     /// saw, or the refusal the rules call for where the answer is a sleep, a

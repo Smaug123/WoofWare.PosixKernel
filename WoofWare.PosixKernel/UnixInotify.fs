@@ -70,7 +70,7 @@ module internal InotifyAddWatchRefusal =
             $"this kernel is %O{flavour}-flavoured, and inotify exists on Linux only, so no kernel of this flavour has the call."
         | InotifyAddWatchRefusal.UnmodelledEvents events ->
             let names = events |> List.map (sprintf "%O") |> String.concat ", "
-            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open, read or release of a file to a watch, and unmounts nothing. Ask for the other events only."
+            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open or read of a file to a watch, and unmounts nothing. Ask for the other events only."
         | InotifyAddWatchRefusal.OneShot ->
             "the watch would carry IN_ONESHOT, which removes the watch after its first event, and that removal is not modelled."
         | InotifyAddWatchRefusal.Path refusal -> PathRefusal.describe refusal
@@ -109,10 +109,7 @@ type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Hand
 /// readable while it holds one, and `ioctl(FIONREAD)` reports their bytes.
 ///
 /// A change to the filesystem, by any process, queues records on the instances
-/// watching it; a watched inode's own deletion and rename are not reported.
-/// A change made through a descriptor, or through "." to a directory `rmdir`
-/// removed, throws `UnmodelledException` where a watch could hear of it:
-/// Linux reports it through a name this kernel does not keep.
+/// watching it.
 [<RequireQualifiedAccess>]
 module UnixInotify =
 
@@ -153,14 +150,14 @@ module UnixInotify =
     let private tryInotifyInit1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
         if flags &&& ~~~(InotifyInitFlags.CloseOnExec ||| InotifyInitFlags.NonBlock) <> 0 then
-            Ok (Error UnixError.EINVAL)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         else
 
         let owner = system.Process.Credentials.EffectiveUser
@@ -171,7 +168,7 @@ module UnixInotify =
             instancesOf owner system.Machine
             >= system.Machine.InotifyLimits.MaxUserInstances
         then
-            Ok (Error UnixError.EMFILE)
+            Ok (DescriptorAnswer.Failed UnixError.EMFILE, system)
         else
 
         match
@@ -199,20 +196,20 @@ module UnixInotify =
                     (flags &&& InotifyInitFlags.CloseOnExec <> 0))
                 registry
 
-        Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
     /// `inotifyInit1`, with a refusal answered as the `Error` rather than raised.
     let internal tryInotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
         =
         Entry.call
             "UnixInotify.inotifyInit1"
             CallerRequirement.Running
             caller
-            (Shape.result (Shape.result Shape.withSystem))
+            (Shape.result Shape.withSystem)
             (tryInotifyInit1In flags)
             system
 
@@ -235,7 +232,7 @@ module UnixInotify =
         (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryInotifyInit1 caller flags system
         |> Refusal.orRaise "UnixInotify.inotifyInit1" InotifyRefusal.kind InotifyRefusal.describe

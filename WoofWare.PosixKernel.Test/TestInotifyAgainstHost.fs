@@ -228,10 +228,12 @@ module TestInotifyAgainstHost =
 
                                     let model =
                                         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-                                        | Ok (Ok (fd, after)) ->
+                                        | Ok (DescriptorAnswer.Returned fd, after) ->
                                             system <- after
                                             Ok (int64 fd)
-                                        | Ok (Error error) -> Error error
+                                        | Ok (DescriptorAnswer.Failed error, after) ->
+                                            after |> shouldEqual system
+                                            Error error
                                         | Error refusal -> failwith $"%A{refusal}"
 
                                     match host, model with
@@ -356,7 +358,7 @@ module TestInotifyAgainstHost =
                                             UserBuffer.Mapped
                                             system
                                     with
-                                    | Ok (BytesAvailableAnswer.Reported count) -> count |> shouldEqual available
+                                    | Ok (BytesAvailableAnswer.Reported count, _) -> count |> shouldEqual available
                                     | other -> failwith $"%A{op}: %A{other}"
                             | Op.Close slot ->
                                 match slots.[slot] with
@@ -378,9 +380,9 @@ module TestInotifyAgainstHost =
                                         failwith $"%A{op}: dup failed on the host"
 
                                     match UnixDescriptor.tryDup (Callers.leader system) modelFd system with
-                                    | Ok (SyscallAnswer.Completed copy, after) ->
+                                    | Ok (DescriptorAnswer.Returned copy, after) ->
                                         system <- after
-                                        slots.[free] <- Some (hostCopy, int copy)
+                                        slots.[free] <- Some (hostCopy, copy)
                                     | other -> failwith $"%A{op}: %A{other}"
                                 | _ -> ()
                             | Op.LSeek (slot, offset, whence) ->
@@ -494,8 +496,8 @@ module TestInotifyAgainstHost =
 
                 let model =
                     match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
-                    | Ok (Ok _) -> true
-                    | Ok (Error UnixError.EINVAL) -> false
+                    | Ok (DescriptorAnswer.Returned _, _) -> true
+                    | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) when after = system -> false
                     | other -> failwith $"0x%x{flags}: %A{other}"
 
                 if Result.isOk host <> model then

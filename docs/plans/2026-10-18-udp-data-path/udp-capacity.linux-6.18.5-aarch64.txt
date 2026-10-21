@@ -1,0 +1,27 @@
+Linux 6.18.5 aarch64
+SO_RCVBUF 212992
+size 0: unpaced 256, 256; paced 256; primed 256
+size 1: unpaced 256, 256; paced 256; primed 256
+size 16: unpaced 256, 256; paced 256; primed 256
+size 100: unpaced 256, 256; paced 256; primed 256
+size 200: unpaced 166, 166; paced 166; primed 166
+size 500: unpaced 166, 166; paced 166; primed 166
+size 1000: unpaced 92, 92; paced 92; primed 92
+size 2000: unpaced 48, 48; paced 48; primed 48
+size 4096: unpaced 25, 25; paced 25; primed 25
+size 9216: unpaced 12, 12; paced 12; primed 12
+size 65507: unpaced 3, 3; paced 3; primed 3
+size 197 holds 256; size 198 holds 166
+size 645 holds 166; size 646 holds 92
+size 1669 holds 92; size 1670 holds 48
+size 3717 holds 48; size 3718 holds 25
+size 7813 holds 25; size 7814 holds 12
+size 16917 holds 12; size 16918 holds 11
+size 18530 holds 11; size 18531 holds 10
+size 20467 holds 10; size 20468 holds 9
+size 22833 holds 9; size 22834 holds 8
+size 25792 holds 8; size 25793 holds 7
+size 29595 holds 7; size 29596 holds 6
+size 34666 holds 6; size 34667 holds 5
+size 41766 holds 5; size 41767 holds 4
+size 52416 holds 4; size 52417 holds 3

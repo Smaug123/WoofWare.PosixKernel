@@ -53,7 +53,7 @@ module TestLoopbackAliasConnectMeasured =
         NewSocket.create SocketDomain.Inet kind protocol system
 
     let private bindTo (fd : int) (endpoint : Ipv4Endpoint) (system : UnixSystem<int, string>) =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform endpoint) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"bind to %A{endpoint} answered %A{other}"
 
@@ -110,7 +110,7 @@ module TestLoopbackAliasConnectMeasured =
         : Result<SyscallAnswer * UnixSystem<int, string>, string>
         =
         let blob =
-            CopyIn.inet system.Machine.UnixPlatform (Ipv4Endpoint.ofParts address port)
+            CopyIn.inet (UnixSystem.platform system) (Ipv4Endpoint.ofParts address port)
 
         CopyIn.connect fd UserBuffer.Mapped 16u blob system
         |> Result.mapError (fun refusal -> $"refused:%s{UnionCaseName.ofValue refusal}")
@@ -141,7 +141,7 @@ module TestLoopbackAliasConnectMeasured =
             let peer, accepted =
                 match socket.Phase with
                 | SocketPhase.Established (connection, ConnectionEnd.Client) ->
-                    let connection = UnixMachineState.connection connection after.Machine
+                    let connection = UnixMachineState.connection connection (Kernel.machine after)
 
                     shown connection.ServerAddress,
                     $" | accepted local=%s{shown connection.ServerAddress} peer=%s{shown connection.ClientAddress}"
@@ -239,7 +239,7 @@ module TestLoopbackAliasConnectMeasured =
                 | SimulatedUnixFlavour.Linux, 'W', Ok (SyscallAnswer.Completed 0L, after) ->
                     match (socketOf fd after).Phase with
                     | SocketPhase.Established (connection, ConnectionEnd.Client) ->
-                        (UnixMachineState.connection connection after.Machine).ServerAddress
+                        (UnixMachineState.connection connection (Kernel.machine after)).ServerAddress
                         |> shouldEqual (Ipv4Endpoint.ofParts alias port)
                     | phase -> failwith $"Linux: connected, yet the socket is %A{phase}"
                 | SimulatedUnixFlavour.Linux, 'N', Ok (SyscallAnswer.Failed UnixError.ECONNREFUSED, _) -> ()

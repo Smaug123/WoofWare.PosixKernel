@@ -75,7 +75,9 @@ module TestWakeMemo =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
+                match
+                    UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view
+                with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept by thread %d{thread}: %A{other}"
             )
@@ -98,8 +100,8 @@ module TestWakeMemo =
                                 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
                                 view
                         with
-                        | Ok (_, view) -> view
-                        | Error error -> failwith $"sigaction: %O{error}"
+                        | SigactionAnswer.Completed _, view -> view
+                        | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
                     KeventWorld.listenerAt 8080us view
                 )
@@ -117,12 +119,12 @@ module TestWakeMemo =
                 pid
                 (fun view ->
                     match UnixSignal.tryPthreadKill (Callers.leader view) 1 10 view with
-                    | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view))) -> view
+                    | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, view)) -> view
                     | other -> failwith $"pthread_kill: %A{other}"
                 )
                 swept
 
-        LanguagePrimitives.PhysicalEquality signalled.Machine swept.Machine
+        LanguagePrimitives.PhysicalEquality (Kernel.machine signalled) (Kernel.machine swept)
         |> shouldEqual true
 
         LanguagePrimitives.PhysicalEquality
@@ -275,7 +277,7 @@ module TestWakeMemo =
 
         let later = UnixSystem.advanceClock 7_000_000L swept
 
-        LanguagePrimitives.PhysicalEquality later.Machine swept.Machine
+        LanguagePrimitives.PhysicalEquality (Kernel.machine later) (Kernel.machine swept)
         |> shouldEqual true
 
         remembers later |> shouldEqual true
@@ -305,8 +307,13 @@ module TestWakeMemo =
         woken |> shouldEqual []
         obj.ReferenceEquals (swept, machine) |> shouldEqual false
         swept |> shouldEqual machine
-        obj.ReferenceEquals (swept.Machine, machine.Machine) |> shouldEqual true
-        obj.ReferenceEquals (swept.Scheduling, machine.Scheduling) |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.machine swept, Kernel.machine machine)
+        |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.scheduling swept, Kernel.scheduling machine)
+        |> shouldEqual true
+
         obj.ReferenceEquals (swept.Processes, machine.Processes) |> shouldEqual true
         remembers swept |> shouldEqual true
 

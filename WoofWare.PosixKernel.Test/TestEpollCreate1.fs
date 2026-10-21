@@ -46,8 +46,8 @@ module TestEpollCreate1 =
 
     let private created (flags : int) (system : UnixSystem<int, string>) : bool =
         match UnixPoll.tryEpollCreate1 (Callers.leader system) flags system with
-        | Ok (Ok _) -> true
-        | Ok (Error UnixError.EINVAL) -> false
+        | Ok (DescriptorAnswer.Returned _, _) -> true
+        | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) when after = system -> false
         | other -> failwith $"flags 0x%x{flags}: expected an epoll instance or EINVAL, got %A{other}"
 
     [<Test>]
@@ -78,7 +78,7 @@ module TestEpollCreate1 =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
                 (Lone.fileDescriptors linux)
 
         let _, withTwo =
@@ -93,13 +93,13 @@ module TestEpollCreate1 =
 
         let property (flags : int) : unit =
             match UnixPoll.tryEpollCreate1 (Callers.leader holed) flags holed with
-            | Ok (Ok (fd, after)) ->
+            | Ok (DescriptorAnswer.Returned fd, after) ->
                 (flags = 0 || flags = cloExec) |> shouldEqual true
                 fd |> shouldEqual epoll
 
                 let expectedFd, expectedRegistry =
                     FileDescriptorRegistry.createEpoll
-                        (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
                         (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
@@ -110,14 +110,15 @@ module TestEpollCreate1 =
                     FileDescriptorRegistry.setFlags
                         fd
                         (DescriptorFlags.closingOnExec
-                            (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
                             (flags = cloExec))
                         expectedRegistry
 
                 after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)
-            | Ok (Error error) ->
+            | Ok (DescriptorAnswer.Failed error, after) ->
                 error |> shouldEqual UnixError.EINVAL
                 (flags = 0 || flags = cloExec) |> shouldEqual false
+                after |> shouldEqual holed
             | Error refusal -> failwith $"unexpected refusal %s{EpollCreateRefusal.describe refusal}"
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 500, Prop.forAll (Arb.fromGen flagsGen) property)

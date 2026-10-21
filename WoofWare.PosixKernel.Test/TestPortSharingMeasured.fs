@@ -149,7 +149,7 @@ module TestPortSharingMeasured =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let protocol =
             match transport with
@@ -161,7 +161,7 @@ module TestPortSharingMeasured =
 
         let fd, system =
             match step pid (Syscall.Socket (domain, kind, protocol)) system with
-            | Ok (SteppedCall.Socket (Ok created)) -> created
+            | Ok (SteppedCall.Socket (DescriptorAnswer.Returned fd, system)) -> fd, system
             | other -> failwith $"socket: %A{other}"
 
         if flags.Contains 'a' then
@@ -184,7 +184,7 @@ module TestPortSharingMeasured =
     let private nameOf (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : string =
         match step pid (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
         | Ok (SteppedCall.GetSockName (GetSockNameAnswer.Reported (bytes, _))) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -284,8 +284,8 @@ module TestPortSharingMeasured =
                     CopiedArgument.Readable (System.Collections.Immutable.ImmutableArray.Create<byte> [| 0x78uy |])
 
                 match step pid (Syscall.Write (fd, buffer, 1UL)) system with
-                | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system))) ->
-                    answered error, system
+                | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system),
+                                         None)) -> answered error, system
                 | Ok other -> failwith $"%s{row.Line}: write stepped to %A{other}"
                 | Error refusal -> describeRefusal refusal, system
             | other -> failwith $"%s{row.Line}: unknown operation %s{other}"

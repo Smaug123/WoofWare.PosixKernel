@@ -1,0 +1,10 @@
+no call (answered -1): charge 46080 before the takes, 46080 after 10 takes
+FIONREAD (answered 1000): charge 46080 before the takes, 23040 after 10 takes
+poll(POLLIN) on a blocking socket (answered 1): charge 46080 before the takes, 23040 after 10 takes
+poll(POLLIN) on a non-blocking socket (answered 1): charge 46080 before the takes, 46080 after 10 takes
+recv(MSG_PEEK) (answered 1000): charge 46080 before the takes, 23040 after 10 takes
+epoll_ctl(ADD, EPOLLIN) on a blocking socket (answered 0): charge 46080 before the takes, 23040 after 10 takes
+epoll_wait (registered before the arrivals) on a blocking socket (answered 1): charge 46080 before the takes, 23040 after 10 takes
+epoll_wait (registered before the arrivals) on a non-blocking socket (answered 1): charge 46080 before the takes, 46080 after 10 takes
+FIONREAD, then one take, then the ten more, then FIONREAD (answered 1000, then FIONREAD answered): charge 46080 before the takes, 23040 after 9 takes
+  (the second FIONREAD answered 1000)

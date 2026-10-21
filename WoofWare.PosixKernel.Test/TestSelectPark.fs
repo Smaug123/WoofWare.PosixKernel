@@ -89,12 +89,7 @@ module TestSelectPark =
             |> shouldEqual (Some Set.empty)
 
             let elapsed =
-                { asleep with
-                    Scheduling =
-                        UnixSchedulingState.advanceClock
-                            (deadline - asleep.Scheduling.NanosecondsSinceBoot)
-                            asleep.Scheduling
-                }
+                UnixSystem.advanceClock (deadline - UnixSystem.nanosecondsSinceBoot asleep) asleep
 
             UnixWait.satisfied (Callers.thread thread elapsed) elapsed
             |> shouldEqual (Some (Set.singleton (WakePrimitive.DeadlinePassed deadline)))

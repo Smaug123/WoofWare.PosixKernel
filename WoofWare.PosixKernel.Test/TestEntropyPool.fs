@@ -170,7 +170,7 @@ module TestEntropyPool =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let bytes, _ = EntropyPool.draw 16 system.Machine.EntropyPool
+        let bytes, _ = EntropyPool.draw 16 (UnixSystem.entropyPool system)
         hex bytes |> shouldEqual "21a2be4a9ff6b02c8989142347031794"
 
         // The flavour does not choose the seed.
@@ -178,4 +178,4 @@ module TestEntropyPool =
             UnixSystem.initial SimulatedUnixPlatform.macOsArm64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        darwin.Machine.EntropyPool |> shouldEqual system.Machine.EntropyPool
+        UnixSystem.entropyPool darwin |> shouldEqual (UnixSystem.entropyPool system)

@@ -40,7 +40,7 @@ module TestUnixWait =
 
         let lockerFd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 (Lone.fileDescriptors system)
 
         let blockedFd, registry =
@@ -130,14 +130,11 @@ module TestUnixWait =
 
             Lone.Parking.park thread (parkOfThread thread) system
         | Op.Unpark thread -> Lone.UnixParkState.unpark thread system
-        | Op.AdvanceClock nanoseconds ->
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-            }
+        | Op.AdvanceClock nanoseconds -> UnixSystem.advanceClock nanoseconds system
         | Op.CreateEpoll ->
             let _, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     (Lone.fileDescriptors system)
 
             withRegistry registry system
@@ -273,8 +270,13 @@ module TestUnixWait =
         let woken, after = UnixWait.wake parked
         woken |> shouldEqual []
         after |> shouldEqual parked
-        obj.ReferenceEquals (after.Machine, parked.Machine) |> shouldEqual true
-        obj.ReferenceEquals (after.Scheduling, parked.Scheduling) |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.machine after, Kernel.machine parked)
+        |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.scheduling after, Kernel.scheduling parked)
+        |> shouldEqual true
+
         obj.ReferenceEquals (after.Processes, parked.Processes) |> shouldEqual true
 
         let woken, again = UnixWait.wake after
@@ -351,11 +353,7 @@ module TestUnixWait =
 
         Lone.deadlines parked |> shouldEqual [ 5L ; 9L ]
 
-        let woken =
-            { parked with
-                Scheduling = UnixSchedulingState.advanceClock 5L parked.Scheduling
-            }
-            |> Lone.waking [ 1 ]
+        let woken = UnixSystem.advanceClock 5L parked |> Lone.waking [ 1 ]
 
         Lone.deadlines woken |> shouldEqual [ 9L ]
 
@@ -471,11 +469,11 @@ module TestUnixWait =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -598,14 +596,27 @@ module TestUnixWait =
                                 match deadline with
                                 | None -> FutexTimeout.Untimed
                                 | Some deadline -> FutexTimeout.Until deadline
+                            FutexBitset = UnixFutex.FutexBitsetMatchAny
                             TakenByWake = taken
                         }
+
+                    match deadline with
+                    | None -> ()
+                    | Some deadline ->
+                        ParkedSyscall.Futex
+                            {
+                                FutexAddress = 0x1000UL
+                                FutexTimeout = FutexTimeout.At deadline
+                                FutexBitset = 1u
+                                TakenByWake = taken
+                            }
 
             for taken in [ false ; true ] do
                 ParkedSyscall.Futex
                     {
                         FutexAddress = 0x1000UL
                         FutexTimeout = FutexTimeout.Unbounded
+                        FutexBitset = UnixFutex.FutexBitsetMatchAny
                         TakenByWake = taken
                     }
 
@@ -627,7 +638,9 @@ module TestUnixWait =
                     {
                         Listener = target (SocketId 0L)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = 16u
+                        DeclaredLength = (Some 16u)
+                        NewSocketNonBlocking = false
+                        NewSocketCloseOnExec = false
                     }
 
                 ParkedSyscall.PipeRead
@@ -737,13 +750,13 @@ module TestUnixWait =
                 match
                     UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system
                 with
-                | Ok (fd, system) -> fd, system
-                | Error error -> failwith $"socket failed with %O{error}"
+                | DescriptorAnswer.Returned fd, system -> fd, system
+                | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
             let pipeOf (description : OpenFileDescriptionId) : PipeId option =
-                match OpenFileTable.tryFind description system.Machine.OpenFiles with
+                match OpenFileTable.tryFind description (UnixSystem.openFiles system) with
                 | Some {
                            Target = OpenFileTarget.Pipe (pipeId, _)
                        } -> Some pipeId
@@ -770,7 +783,7 @@ module TestUnixWait =
                     let derived =
                         WakeCondition.ofPark parked
                         |> WakeCondition.primitives
-                        |> List.choose (Parking.exclusiveQueueOf system.Machine)
+                        |> List.choose (Parking.exclusiveQueueOf (Kernel.machine system))
                         |> List.distinct
 
                     if derived <> stated then

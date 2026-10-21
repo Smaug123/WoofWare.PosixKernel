@@ -55,7 +55,7 @@ module TestSocketUid =
         (system : UnixSystem<int, string>)
         : ProcessId * UnixSystem<int, string>
         =
-        match UnixSystem.tryLaunch (launchOn system.Machine.UnixPlatform credentials) system with
+        match UnixSystem.tryLaunch (launchOn (UnixSystem.platform system) credentials) system with
         | Ok launched -> launched
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
@@ -75,14 +75,14 @@ module TestSocketUid =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let domain, kind, protocol =
             NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp
 
         let fd, system =
             match step pid (Syscall.Socket (domain, kind, protocol)) system with
-            | SteppedCall.Socket (Ok made) -> made
+            | SteppedCall.Socket (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket: %A{Stepped.view other}"
 
         if not reuse then
@@ -109,7 +109,7 @@ module TestSocketUid =
         (system : UnixSystem<int, string>)
         : Result<BindAnswer * UnixSystem<int, string>, SyscallRefusal<int>>
         =
-        let blob = CopyIn.inetCopy system.Machine.UnixPlatform endpoint
+        let blob = CopyIn.inetCopy (UnixSystem.platform system) endpoint
 
         match
             UnixSystem.tryStep
@@ -136,7 +136,7 @@ module TestSocketUid =
         match FileDescriptorRegistry.tryFind fd (UnixSystem.fileDescriptors pid system) with
         | Some description ->
             match description.Target with
-            | OpenFileTarget.Socket socketId -> UnixMachineState.socket socketId system.Machine
+            | OpenFileTarget.Socket socketId -> UnixMachineState.socket socketId (Kernel.machine system)
             | other -> failwith $"fd %d{fd} is %A{other}"
         | None -> failwith $"fd %d{fd} is not open"
 
@@ -174,15 +174,15 @@ module TestSocketUid =
             | None -> system
 
         let client, system = tcpSocket pid false system
-        let blob = CopyIn.inetCopy system.Machine.UnixPlatform loopback
+        let blob = CopyIn.inetCopy (UnixSystem.platform system) loopback
 
         let system =
             match step pid (Syscall.Connect (client, CopiedArgument.Readable blob, uint32 blob.Length)) system with
             | SteppedCall.Connect (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"connect: %A{Stepped.view other}"
 
-        match step pid (Syscall.Accept (listener, UserBuffer.Mapped, 16u)) system with
-        | SteppedCall.Accept (AcceptOutcome.Accepted (accepted, _, _), system) -> listener, accepted, client, system
+        match step pid (Syscall.Accept (listener, UserBuffer.Mapped, (Some 16u), 0)) system with
+        | SteppedCall.Accept (AcceptOutcome.Accepted (accepted, _), system) -> listener, accepted, client, system
         | other -> failwith $"accept: %A{Stepped.view other}"
 
     let private close (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -325,7 +325,7 @@ module TestSocketUid =
             // The accepted end closes first, and so goes to TIME_WAIT.
             let system = system |> close pid listener |> close pid accepted |> close pid client
 
-            system.Machine.TimeWaits |> Map.count |> shouldEqual 1
+            (Kernel.machine system).TimeWaits |> Map.count |> shouldEqual 1
 
             for binderName in [ "u501" ; listenerName ; "root" ] do
                 let binderPid, system = withProcess (credentialsOf binderName) system

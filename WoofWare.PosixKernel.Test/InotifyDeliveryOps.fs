@@ -86,10 +86,25 @@ module internal InotifyDeliveryOps =
         | Ftruncate of slot : int
         | Fchmod of slot : int * mode : int
         | Close of slot : int
+        /// `openat(2)` of "." from the kept descriptor `slot`, for reading,
+        /// with `O_DIRECTORY`, kept: the directory that descriptor is onto,
+        /// reached by ".", which it may be after the directory's removal.
+        | OpenDotAt of slot : int
 
     /// Every event a watch in a sequence may ask for.
     let eventBits : uint32 list =
-        [ modify ; attrib ; movedFrom ; movedTo ; create ; delete ; 0x400u ; 0x800u ]
+        [
+            modify
+            attrib
+            closeWrite
+            closeNoWrite
+            movedFrom
+            movedTo
+            create
+            delete
+            0x400u
+            0x800u
+        ]
 
     /// `IN_EXCL_UNLINK`.
     let exclUnlink : uint32 = 0x04000000u
@@ -152,6 +167,7 @@ module internal InotifyDeliveryOps =
                 2, Gen.map Op.Ftruncate slot
                 2, Gen.map2 (fun s m -> Op.Fchmod (s, m)) slot (Gen.elements [ 0o755 ; 0o700 ])
                 2, Gen.map Op.Close slot
+                1, Gen.map Op.OpenDotAt slot
             ]
 
     /// A descriptor opened through a name that something then happens to,
@@ -180,6 +196,36 @@ module internal InotifyDeliveryOps =
 
             let! change = Gen.elements [ Op.Write (0, 1) ; Op.Ftruncate 0 ; Op.Fchmod (0, 0o700) ]
             return [ Op.Create (p, false) ; Op.Open (p, readOnly) ] @ meanwhile @ [ change ]
+        }
+
+    /// A directory opened through a name that something then happens to,
+    /// opened again by "." from that descriptor, and a mode change through
+    /// either: the name removed, renamed away, renamed over, or left alone.
+    /// A slot of 0 is the newest kept descriptor, 1 the one before it.
+    let private directoryEpisodeGen : Gen<Op list> =
+        gen {
+            let path = Gen.choose (0, paths.Length - 1)
+            let! p = path
+            let! q = path
+
+            let! meanwhile =
+                Gen.elements
+                    [
+                        [ Op.RmDir p ]
+                        [ Op.RmDir p ]
+                        [ Op.Rename (p, q) ; Op.RmDir q ]
+                        [ Op.Rename (q, p) ]
+                        [ Op.Rename (p, q) ]
+                        []
+                    ]
+
+            let! through = Gen.elements [ 0 ; 0 ; 1 ]
+            let! mode = Gen.elements [ 0o755 ; 0o700 ]
+
+            return
+                [ Op.MkDir p ; Op.Open (p, true) ]
+                @ meanwhile
+                @ [ Op.OpenDotAt 0 ; Op.Fchmod (through, mode) ]
         }
 
     /// A file with two names, watched itself, opened through one or both or
@@ -280,6 +326,7 @@ module internal InotifyDeliveryOps =
                         [
                             6, Gen.map List.singleton (opGen targets)
                             2, episodeGen
+                            1, directoryEpisodeGen
                             1, selfEpisodeGen
                         ])
                 |> Gen.map List.concat
@@ -376,7 +423,8 @@ module internal InotifyDeliveryOps =
         | Op.Write _
         | Op.Ftruncate _
         | Op.Fchmod _
-        | Op.Close _ ->
+        | Op.Close _
+        | Op.OpenDotAt _ ->
 
         match kept with
         | [] -> None
@@ -393,6 +441,13 @@ module internal InotifyDeliveryOps =
         | Op.Ftruncate slot -> Some (Syscall.FTruncate (slotOf slot, 0L))
         | Op.Fchmod (slot, mode) -> Some (Syscall.FChMod (slotOf slot, mode))
         | Op.Close slot -> Some (Syscall.Close (slotOf slot))
+        | Op.OpenDotAt slot ->
+            let flags =
+                { openFlags FileAccessMode.ReadOnly false false false with
+                    Directory = true
+                }
+
+            Some (Syscall.OpenAt (slotOf slot, PathArg.ofText ".", word flags, 0))
         | other -> failwith $"%A{other} is not a call through a kept descriptor"
 
     /// The `SyscallAnswer` the call `stepped` answers, and the system after it.
@@ -420,22 +475,31 @@ module internal InotifyDeliveryOps =
         | SteppedCall.FTruncate (answer, after)
         | SteppedCall.FChMod (answer, after)
         | SteppedCall.Close (answer, after) -> answer, after
-        | SteppedCall.Open (SyscallOutcome.Answered answer, after) -> answer, after
-        | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after)) ->
-            SyscallAnswer.Completed written, after
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after)) ->
+        | SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Returned fd), after) ->
+            SyscallAnswer.Completed (int64 fd), after
+        | SteppedCall.Open (OpenOutcome.Answered (DescriptorAnswer.Failed error), after) ->
             SyscallAnswer.Failed error, after
-        | SteppedCall.Write (ProcessFate.Continues (outcome, _)) ->
+        | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
+        | SteppedCall.OpenAt (OpenOutcome.Answered (DescriptorAnswer.Returned fd), after) ->
+            SyscallAnswer.Completed (int64 fd), after
+        | SteppedCall.OpenAt (OpenOutcome.Answered (DescriptorAnswer.Failed error), after) ->
+            SyscallAnswer.Failed error, after
+        | SteppedCall.OpenAt (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after), _) ->
+            SyscallAnswer.Completed written, after
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after), _) ->
+            SyscallAnswer.Failed error, after
+        | SteppedCall.Write (ProcessFate.Continues (outcome, _), _) ->
             failwith $"expected a write that returns and raises no signal, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _)) ->
+        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _), _) ->
             failwith $"expected a write that returns and raises no signal, but it ended the process: %A{ended}"
         | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call the property makes"
 
     /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
     /// the `write(2)` of `bytes` through `fd` in `system`, is what the same
     /// write answers through the call's own functions, held to it made a step
-    /// at a time (`WriteOutcomes.admitThenWrite`), leaving the same system.
+    /// at a time (`WriteOutcomes.admitThenWriteDeliveringAs`), leaving the same
+    /// system and delivering the same bytes.
     let private requireWrittenAlike
         (fd : int)
         (bytes : System.Collections.Immutable.ImmutableArray<byte>)
@@ -444,29 +508,32 @@ module internal InotifyDeliveryOps =
         : unit
         =
         let throughSteps =
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
-            |> Result.map (fun step ->
-                match step with
-                | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
-                | WriteStep.ReturnsRaising (answer, signal, after) ->
-                    ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
-                | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
-                | WriteStep.WouldBlock (condition, after) ->
-                    ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
-                | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+            WriteOutcomes.admitThenWriteDeliveringAs (Callers.thread 0 system) fd UserBuffer.Mapped bytes system
+            |> Result.map (fun (step, delivery) ->
+                let fate =
+                    match step with
+                    | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+                    | WriteStep.ReturnsRaising (answer, signal, after) ->
+                        ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+                    | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+                    | WriteStep.WouldBlock (condition, after) ->
+                        ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+                    | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+
+                fate, delivery
             )
 
         match stepped, throughSteps with
-        | SteppedCall.Write fate, Ok steps when fate = steps -> ()
+        | SteppedCall.Write (fate, delivery), Ok steps when (fate, delivery) = steps -> ()
         | _ ->
-            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>) : string =
+            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>, delivery : Delivery option) : string =
                 match fate with
-                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}"
-                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}"
+                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}, delivering %A{delivery}"
+                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}, delivering %A{delivery}"
 
             let viaStep =
                 match stepped with
-                | SteppedCall.Write fate -> answered fate
+                | SteppedCall.Write (fate, delivery) -> answered (fate, delivery)
                 | other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
 
             failwith
@@ -546,6 +613,10 @@ module internal InotifyDeliveryOps =
         | DeleteSelf
         /// `IN_MOVE_SELF`.
         | MoveSelf
+        /// `IN_CLOSE_WRITE`.
+        | CloseWrite
+        /// `IN_CLOSE_NOWRITE`.
+        | CloseNoWrite
 
     /// Every label a record of `mask` naming `entry` ("" for none) carries.
     let recordLabels (mask : uint32) (entry : string) : RecordLabel list =
@@ -570,4 +641,8 @@ module internal InotifyDeliveryOps =
                 RecordLabel.DeleteSelf
             if mask &&& moveSelf <> 0u then
                 RecordLabel.MoveSelf
+            if mask &&& closeWrite <> 0u then
+                RecordLabel.CloseWrite
+            if mask &&& closeNoWrite <> 0u then
+                RecordLabel.CloseNoWrite
         ]

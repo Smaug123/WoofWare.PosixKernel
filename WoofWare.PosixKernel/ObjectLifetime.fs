@@ -282,7 +282,9 @@ module ObjectLifetime =
     /// was opened through, since unlinked (`ChangeNotice.NameReleased`), its
     /// inode once nothing names or holds it, and the directory of the name it
     /// was opened through likewise — in `system`, whose open file table no
-    /// longer holds the description.
+    /// longer holds the description. The release of a description onto an
+    /// inode is reported to the inotify instances watching it first
+    /// (`ChangeNotice.Released`).
     ///
     /// Destroying a connected stream socket's description closes its end of
     /// the connection (`TcpTransfer.close`): the peer gets a FIN, behind
@@ -323,6 +325,28 @@ module ObjectLifetime =
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
         | OpenFileTarget.CharacterDevice (inode, _, _) ->
+            // The release itself, as Linux's `fsnotify_close` reports it, under
+            // the name the description was opened through, before anything the
+            // release lets go of goes (measured, `docs/probes/inotify-close`
+            // section U).
+            let system =
+                match destroyedDescription.OpenedThrough with
+                | None ->
+                    failwith
+                        $"ObjectLifetime.releaseDestroyed: the description of %A{destroyed.Target} records no name it was opened through, which every description onto an inode records (FileDescriptorRegistryDefect.OpenedThroughMismatch; this is a bug in this library)."
+                | Some through ->
+                    { system with
+                        Machine =
+                            UnixMachineState.commitFileSystem
+                                (ChangeNotice.Released (
+                                    inode,
+                                    through,
+                                    FileAccessMode.permitsWrite destroyed.AccessMode
+                                ))
+                                (VirtualFileSystem.unchanged system.Machine.FileSystem)
+                                system.Machine
+                    }
+
             // The description may have been the last holding a name of a file
             // since unlinked, which goes as it does (Linux's dentry): an
             // inotify watch on the file, if it has no link left, hears of its
@@ -359,7 +383,6 @@ module ObjectLifetime =
             match destroyedDescription.OpenedThrough with
             | Some (ReachedThrough.Name (dentry, _)) -> Ok (forgetIfUnheld dentry.Parent system)
             | Some ReachedThrough.Unnamed
-            | Some (ReachedThrough.RemovedDirectory _)
             | None -> Ok system
         | OpenFileTarget.Fifo (inode, _) -> ReservedFifo.fail "ObjectLifetime.releaseDestroyed" inode
         | OpenFileTarget.Pipe (pipeId, _) ->
@@ -535,6 +558,7 @@ module ObjectLifetime =
         let machine =
             ({ system.Machine with
                 Sockets = sockets
+                DatagramReceivers = Map.remove socketId system.Machine.DatagramReceivers
                 Connections = connections
              },
              candidates)

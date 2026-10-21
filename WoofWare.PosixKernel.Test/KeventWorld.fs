@@ -44,7 +44,8 @@ module KeventWorld =
     /// A new kqueue, made by `caller`.
     let kqueueAs (caller : Caller<int>) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixKqueue.tryKqueue caller system with
-        | Ok created -> created
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
         | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
 
     /// `kqueueAs` the leader of the process `pid`.
@@ -214,8 +215,8 @@ module KeventWorld =
 
     /// Accept one connection through `fd`, which must hold one, by `caller`.
     let acceptAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept caller fd UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+        match UnixConnection.tryAccept caller fd UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{fd}: %A{other}"
 
     /// `acceptAs` thread 1 of the process `pid`.
@@ -243,7 +244,7 @@ module KeventWorld =
     /// A `dup` of `fd` by `caller`, which must succeed.
     let dupAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup caller fd system with
-        | SyscallAnswer.Completed copy, system -> int copy, system
+        | DescriptorAnswer.Returned copy, system -> copy, system
         | other, _ -> failwith $"dup of fd %d{fd}: %A{other}"
 
     /// `dupAs` the leader of the process `pid`.
@@ -256,7 +257,7 @@ module KeventWorld =
 
     /// `getsockopt(SO_ERROR)` on `fd`.
     let readSocketError (fd : int) (system : UnixSystem<int, string>) : GetSockOptAnswer * UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
@@ -300,7 +301,11 @@ module KeventWorld =
                 changes
                 nevents
                 UserBuffer.Mapped
-                (KeventTimeout.Readable (0L, 0L))
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
                 system
         with
         | Ok answered -> answered

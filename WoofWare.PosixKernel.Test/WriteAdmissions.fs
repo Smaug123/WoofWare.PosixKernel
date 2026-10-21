@@ -29,7 +29,9 @@ module internal WriteOutcomes =
 
     /// The step after the copy of a `write` through `fd` that its admission
     /// said to transfer: `UnixReadWrite.tryApplyWrite` of `bytes` into `into`,
-    /// marked as a `write` is, in the view of the only process.
+    /// marked as a `write` is, in the view of the only process. Fails if the
+    /// write delivered bytes out of the machine, which only one into a pipe a
+    /// client drains does.
     let applyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (into : WriteInto)
@@ -38,6 +40,11 @@ module internal WriteOutcomes =
         : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         Lone.UnixReadWrite.tryApplyWriteThrough fd into bytes system
+        |> Result.map (fun (step, delivery) ->
+            match delivery with
+            | None -> step
+            | Some delivery -> failwith $"expected a write that delivers nothing, got %A{delivery}"
+        )
 
     /// The step after the copy of a blocking `write` by `thread` through `fd`
     /// that its admission said to transfer part of and sleep:
@@ -59,7 +66,8 @@ module internal WriteOutcomes =
     /// `UnixReadWrite.tryAdmitWrite`, and if it says to transfer,
     /// `tryApplyWrite` or `applyWriteThenSleep` of the first that many of
     /// `bytes` with the decision it made, marked as a `write` is. An
-    /// admission's answer is reported as the write's. The oracle
+    /// admission's answer is reported as the write's. Beside the step, the
+    /// delivery `tryApplyWrite` made, if it was the one called. The oracle
     /// `admitThenWrite` holds the public protocol to.
     let private stepsThenWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
@@ -67,7 +75,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
         =
         let thread = Caller.thread caller
 
@@ -81,30 +89,39 @@ module internal WriteOutcomes =
                     (Proc.view (Caller.processId caller) system)
             with
             | Error refusal -> Error refusal
-            | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
+            | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) ->
+                Ok (WriteStep.Returns (answer, after), None)
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
-                Ok (WriteStep.ReturnsRaising (answer, signal, after))
-            | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
-            | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-            | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after)
+                Ok (WriteStep.ReturnsRaising (answer, signal, after), None)
+            | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after), None)
+            | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after), None)
+            | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after, None)
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
                 if count > bytes.Length then
                     failwith $"admitWrite asked for %d{count} of %d{bytes.Length} bytes"
 
                 UnixReadWrite.tryApplyWrite into (ImmutableArray.Create (bytes, 0, count)) admitted
-                |> Result.map (UnixReadWrite.markedThrough fd admitted)
+                |> Result.map (fun (step, delivery) -> UnixReadWrite.markedThrough fd admitted step, delivery)
             | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (count, total, into), admitted)) ->
                 if total <> bytes.Length || count > bytes.Length then
                     failwith $"admitWrite asked for %d{count} of %d{total} bytes, given %d{bytes.Length}"
 
-                UnixReadWrite.applyWriteThenSleep thread total into (ImmutableArray.Create (bytes, 0, count)) admitted
-                |> UnixReadWrite.markedThrough fd admitted
-                |> Ok
+                let step =
+                    UnixReadWrite.applyWriteThenSleep
+                        thread
+                        total
+                        into
+                        (ImmutableArray.Create (bytes, 0, count))
+                        admitted
+                    |> UnixReadWrite.markedThrough fd admitted
+
+                Ok (step, None)
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer (count, _), signal, _))
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map Proc.unfocus)
+        stepped
+        |> Result.map (fun (step, delivery) -> WriteStep.map Proc.unfocus step, delivery)
 
     /// A whole `send(2)` by `caller` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
@@ -197,7 +214,28 @@ module internal WriteOutcomes =
     /// A whole `write(2)` by `caller` of `bytes` from `buffer`, through the
     /// library's public protocol (`UnixReadWrite.write`, and if it stops at the
     /// copy, `writeWithBytes` of the bytes `PausedWrite.copyRange` names),
-    /// held to `stepsThenWrite`, which makes the same write a step at a time.
+    /// held to `stepsThenWrite`, which makes the same write a step at a time;
+    /// and beside its step, the delivery `writeWithBytes` answered, if it was
+    /// called.
+    let admitThenWriteDeliveringAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (buffer : UserBuffer)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
+        =
+        let actual =
+            UnixReadWrite.tryWrite caller fd buffer (uint64 bytes.Length) system
+            |> Result.map (CallProgress.mapAnswered (fun fate -> fate, None))
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.tryWriteWithBytes (copied "write" (PausedWrite.copyRange paused) bytes) paused
+            )
+            |> Result.map (fun (fate, delivery) -> stepOf fate, delivery)
+
+        agreeing "write" (stepsThenWrite caller fd buffer bytes system) actual
+
+    /// `admitThenWriteDeliveringAs`, without the delivery.
     let admitThenWriteAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -206,14 +244,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
-        let actual =
-            UnixReadWrite.tryWrite caller fd buffer (uint64 bytes.Length) system
-            |> CallProgress.resumeWith (fun paused ->
-                UnixReadWrite.tryWriteWithBytes (copied "write" (PausedWrite.copyRange paused) bytes) paused
-            )
-            |> Result.map stepOf
-
-        agreeing "write" (stepsThenWrite caller fd buffer bytes system) actual
+        admitThenWriteDeliveringAs caller fd buffer bytes system |> Result.map fst
 
     /// `admitThenWriteAs` the thread `thread` of the only process on the
     /// machine.
@@ -293,7 +324,8 @@ module internal WriteOutcomes =
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
     /// copy, `writeWithBytes` of `bytesAt offset count` for the range
     /// `PausedWrite.copyRange` names), held to `stepsThenFinishWrite`.
-    /// `bytesAt` must answer exactly `count` bytes.
+    /// `bytesAt` must answer exactly `count` bytes. Fails if the write
+    /// delivered bytes out of the machine, which a woken write never does.
     let finishWriteAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
@@ -309,6 +341,11 @@ module internal WriteOutcomes =
                     failwith $"finishWrite asked for %A{range}"
 
                 UnixReadWrite.tryWriteWithBytes (bytesAt range.FirstByte range.ByteCount) paused
+                |> Result.map (fun (fate, delivery) ->
+                    match delivery with
+                    | None -> fate
+                    | Some delivery -> failwith $"a woken write delivered %A{delivery}"
+                )
             )
             |> Result.map stepOf
 
@@ -368,6 +405,21 @@ module internal WriteOutcomes =
         Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system
         |> returned
 
+    /// A whole `write(2)` of `bytes` by the leader, `admitThenWriteDeliveringAs`
+    /// from a mapped buffer, through `returned`, and beside it the delivery
+    /// the write made.
+    let writeDelivering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fd : int)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<(WriteAnswer * UnixSystem<'Thread, 'Handler>) * Delivery option, WriteRefusal>
+        =
+        match
+            admitThenWriteDeliveringAs (Callers.thread (Lone.leader system) system) fd UserBuffer.Mapped bytes system
+        with
+        | Error refusal -> Error refusal
+        | Ok (step, delivery) -> returned (Ok step) |> Result.map (fun returned -> returned, delivery)
+
     /// A whole `write(2)` of `bytes` by the leader, `admitThenWrite` from a
     /// mapped buffer, through `returned`.
     let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -397,6 +449,8 @@ module internal WriteOutcomes =
             match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
             | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
+            | Ok (PWriteAdmission.DeviceAnswered (answer, inode, through)) ->
+                Ok (Lone.UnixReadWrite.applyPWriteDeviceAnswer answer inode through system)
             | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
             | Ok (PWriteAdmission.Transfer (count, into)) ->
                 if count > bytes.Length then

@@ -51,7 +51,7 @@ module TestPollTimeout =
 
         let system = Threads.spawn thread system
 
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let socket =
@@ -86,18 +86,20 @@ module TestPollTimeout =
 
         let fd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = Map.add socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> withRegistry registry
 
     let private listener : int = fst world
@@ -110,11 +112,11 @@ module TestPollTimeout =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected the listener, got %O{other}"
 
-        let socket = UnixMachineState.socket socketId system.Machine
+        let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Sockets =
                         Map.add
                             socketId
@@ -127,17 +129,16 @@ module TestPollTimeout =
                                             Drained = false
                                         }
                             }
-                            system.Machine.Sockets
+                            machine.Sockets
                 }
-        }
+            )
+            system
 
     let private ready : UnixSystem<int, string> -> UnixSystem<int, string> =
         withQueue [ ConnectionId 99L ]
 
     let private after (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     let private entry (fd : int) (events : int16) : PollEntry =
         {
@@ -280,20 +281,21 @@ module TestPollTimeout =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"expected the listener, got %O{other}"
 
-            let socket = UnixMachineState.socket socketId parked.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine parked)
 
-            { parked with
-                Machine =
-                    { parked.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
                             Map.add
                                 socketId
                                 { socket with
                                     Phase = SocketPhase.Refused RefusalError.Pending
                                 }
-                                parked.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                parked
 
         woken refused |> Option.isSome |> shouldEqual true
         let reported, count, _ = finishes refused
@@ -340,10 +342,7 @@ module TestPollTimeout =
     let ``a deadline past the clock's range is refused, and one just inside it parks`` () : unit =
         let timeout = 1_000_000L
 
-        let nearTheEnd (uptime : int64) : UnixSystem<int, string> =
-            { idle with
-                Scheduling = UnixSchedulingState.advanceClock uptime idle.Scheduling
-            }
+        let nearTheEnd (uptime : int64) : UnixSystem<int, string> = UnixSystem.advanceClock uptime idle
 
         let late = nearTheEnd (System.Int64.MaxValue - timeout + 1L)
 
@@ -411,7 +410,7 @@ module TestPollTimeout =
         let dupFd, registry =
             match
                 FileDescriptorRegistry.dup
-                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform idle))
                     listener
                     (Lone.fileDescriptors idle)
             with
@@ -441,8 +440,9 @@ module TestPollTimeout =
         // them, such as PRI alone, leaves it waiting.
         let directory, registry =
             FileDescriptorRegistry.openDirectory
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                false
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -485,8 +485,9 @@ module TestPollTimeout =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -515,7 +516,7 @@ module TestPollTimeout =
         let _, registry =
             match
                 FileDescriptorRegistry.dup
-                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform idle))
                     listener
                     (Lone.fileDescriptors idle)
             with

@@ -29,7 +29,7 @@ module TestUnixMachineState =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        (Lone.withFileDescriptors registry system).Machine
+        Kernel.machine (Lone.withFileDescriptors registry system)
 
     [<Test>]
     let ``every reference a description holds keeps its inode alive`` () : unit =
@@ -42,6 +42,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 fileInode
                 FileAccessMode.ReadOnly
@@ -51,6 +52,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openDirectory
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 directoryInode
                 withFile
@@ -92,6 +94,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 through
                 fileInode
                 FileAccessMode.ReadOnly

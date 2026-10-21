@@ -270,11 +270,11 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | FileClone of destination : int * source : int
     /// `tcgetattr(3)`, as `UnixDescriptor.terminalAttributes` makes it.
     | TerminalAttributes of fd : int
-    /// `geteuid(2)`, as `UnixDescriptor.effectiveUserId` makes it.
+    /// `geteuid(2)`, as `UnixCredentials.geteuid` makes it.
     | GetEffectiveUserId
-    /// `getegid(2)`, as `UnixDescriptor.effectiveGroupId` makes it.
+    /// `getegid(2)`, as `UnixCredentials.getegid` makes it.
     | GetEffectiveGroupId
-    /// `getgroups(2)`, as `UnixDescriptor.getgroups` makes it.
+    /// `getgroups(2)`, as `UnixCredentials.getgroups` makes it.
     | GetGroups of size : int * destination : UserBuffer
     /// `stat(2)` or `lstat(2)`, as `UnixPathResolution.stat` makes it:
     /// `policy` says which.
@@ -429,7 +429,7 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `listen(2)`, as `UnixSocket.listen` makes it.
     | Listen of fd : int * backlog : int
     /// `accept(2)`, as `UnixConnection.accept` makes it.
-    | Accept of fd : int * destination : UserBuffer * declaredLength : uint32
+    | Accept of fd : int * destination : UserBuffer * declaredLength : uint32 option * flags : int
     /// `shutdown(2)`, as `UnixConnection.shutdown` makes it.
     | Shutdown of fd : int * how : int
     /// `getsockname(2)`, as `UnixSocket.getsockname` makes it.
@@ -469,7 +469,7 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
         nchanges : int *
         eventlist : UserBuffer *
         nevents : int *
-        timeout : KeventTimeout
+        timeout : TimespecArgument
     /// `inotify_init1(2)`, as `UnixInotify.inotifyInit1` makes it. `flags` is
     /// raw, in Linux's numbering.
     | InotifyInit1 of flags : int
@@ -555,8 +555,15 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | GetCpu
     /// Linux's `futex(2)` on the word at `address`, as `UnixFutex.futex` makes
     /// it, with `word` what the caller's memory at `address` held as the call
-    /// was made. A `FUTEX_WAKE_PRIVATE` reads neither `word` nor `timeout`.
-    | Futex of address : uint64 * op : int * value : int * word : CopiedArgument<uint32> * timeout : TimespecArgument
+    /// was made, and `val3` the call's sixth argument. A wake reads neither
+    /// `word` nor `timeout`, and a plain wait or wake does not read `val3`.
+    | Futex of
+        address : uint64 *
+        op : int *
+        value : int *
+        word : CopiedArgument<uint32> *
+        timeout : TimespecArgument *
+        val3 : uint32
 
 /// What `UnixSystem.step` answers for a `Syscall.Nanosleep`: what
 /// `SteppedCall.Nanosleep` holds.
@@ -703,11 +710,11 @@ type SteppedSendMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
 [<NoEquality ; NoComparison>]
 type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// What `UnixDescriptor.dup` answers.
-    | Dup of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.dup2` answers.
-    | Dup2 of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup2 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.dup3` answers.
-    | Dup3 of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
+    | Dup3 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.fcntl` answers.
     | Fcntl of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.lseek` answers.
@@ -721,16 +728,16 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixDescriptor.close` answers.
     | Close of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.bytesAvailable` answers.
-    | BytesAvailable of answer : BytesAvailableAnswer
+    | BytesAvailable of answer : BytesAvailableAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.fileClone` answers.
-    | FileClone of error : UnixError
+    | FileClone of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixDescriptor.terminalAttributes` answers.
     | TerminalAttributes of answer : TerminalAttributesAnswer
-    /// What `UnixDescriptor.effectiveUserId` answers.
+    /// What `UnixCredentials.geteuid` answers.
     | GetEffectiveUserId of user : UserId
-    /// What `UnixDescriptor.effectiveGroupId` answers.
+    /// What `UnixCredentials.getegid` answers.
     | GetEffectiveGroupId of group : GroupId
-    /// What `UnixDescriptor.getgroups` answers.
+    /// What `UnixCredentials.getgroups` answers.
     | GetGroups of answer : GetGroupsAnswer
     /// What `UnixPathResolution.stat` answers.
     | Stat of answer : FileStatusAnswer
@@ -769,9 +776,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// `UnixPathResolution.accessWithPath` after it.
     | FAccessAt of answer : SyscallAnswer
     /// What `UnixNamespace.openPath` answers.
-    | Open of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    | Open of outcome : OpenOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixNamespace.openat` answers.
-    | OpenAt of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    | OpenAt of outcome : OpenOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixNamespace.readlink` answers.
     | ReadLink of answer : ReadLinkAnswer
     /// What `UnixNamespace.readlinkat` answers.
@@ -823,9 +830,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | RecvMsg of stepped : SteppedRecvMsg<'Thread, 'Handler>
     /// What `UnixReadWrite.pread` answers.
     | PRead of answer : ReadAnswer * system : UnixSystem<'Thread, 'Handler>
-    /// What `UnixReadWrite.write` answers, or
-    /// `UnixReadWrite.writeWithBytes` after it.
-    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+    /// What `UnixReadWrite.writeWithBytes` answers after `UnixReadWrite.write`,
+    /// or what `write` answers, beside no delivery, if it ended before its copy.
+    | Write of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler> * delivered : Delivery option
     /// What `UnixReadWrite.send` answers, or `UnixReadWrite.sendWithBytes`
     /// after it.
     | Send of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
@@ -841,7 +848,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixPipe.pipe2` answers.
     | Pipe2 of answer : Pipe2Answer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSocket.socket` answers.
-    | Socket of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | Socket of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSocket.bind` answers, or `UnixSocket.bindWithAddress` after
     /// it.
     | Bind of answer : BindAnswer * system : UnixSystem<'Thread, 'Handler>
@@ -871,36 +878,36 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// A `pselect(2)`. Reserved: see `SteppedPSelect`.
     | PSelect of stepped : SteppedPSelect<'Thread, 'Handler>
     /// What `UnixPoll.epollCreate1` answers.
-    | EpollCreate1 of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | EpollCreate1 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixPoll.epollCtl` answers.
     | EpollCtl of answer : EpollCtlAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixPoll.epollWait` answers.
     | EpollWait of outcome : EpollWaitOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixKqueue.kqueue` answers.
-    | Kqueue of fd : int * system : UnixSystem<'Thread, 'Handler>
+    | Kqueue of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixKqueue.kevent` answers.
     | Kevent of outcome : KeventOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyInit1` answers.
-    | InotifyInit1 of result : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+    | InotifyInit1 of answer : DescriptorAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyAddWatch` answers, or
     /// `UnixInotify.inotifyAddWatchWithPath` after it.
     | InotifyAddWatch of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixInotify.inotifyRmWatch` answers.
     | InotifyRmWatch of answer : SyscallAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.kill` answers.
-    | Kill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | Kill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.pthreadKill` answers.
-    | PthreadKill of result : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
+    | PthreadKill of fate : ProcessFate<KillAnswer, 'Thread, 'Handler>
     /// What `UnixSignal.sigaction` answers.
-    | SigAction of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigAction of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigactionSyscall` answers.
-    | SigActionSyscall of result : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigActionSyscall of answer : SigactionAnswer<'Handler> * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.pthreadSigmask` answers.
-    | PthreadSigMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | PthreadSigMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigprocmask` answers.
-    | SigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | SigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.rtSigprocmask` answers.
-    | RtSigProcMask of result : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+    | RtSigProcMask of answer : SignalMaskAnswer * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSignal.sigpending` answers.
     | SigPending of pending : SignalMask
     /// What `UnixSignal.sigsuspend` answers.
@@ -918,7 +925,7 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// A `sigtimedwait(2)`. Reserved: see `SteppedSigTimedWait`.
     | SigTimedWait of stepped : SteppedSigTimedWait<'Thread, 'Handler>
     /// What `UnixClock.clockGettime` answers.
-    | ClockGetTime of result : Result<UnixTimestamp, UnixError>
+    | ClockGetTime of answer : ClockGettimeAnswer
     /// What `UnixClock.gettimeofday` answers.
     | GetTimeOfDay of time : UnixTimestamp
     /// A `nanosleep(2)`. Reserved: see `SteppedNanosleep`.
@@ -955,3 +962,147 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixFutex.futexWithWord` answers, or `UnixFutex.futex` where the
     /// call answers before it reads the word.
     | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+
+[<RequireQualifiedAccess>]
+module SteppedCall =
+
+    /// The system after the call `stepped` describes, made in `madeIn`: the
+    /// system `stepped` holds, whatever became of the call (the thread asleep
+    /// in it, interrupted, or the process ended, when it is the system without
+    /// the process), and `madeIn` where `stepped` holds none, because the call
+    /// could change nothing.
+    ///
+    /// `madeIn` must be the system `UnixSystem.step` made the call in; nothing
+    /// checks that it is.
+    let system<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (madeIn : UnixSystem<'Thread, 'Handler>)
+        (stepped : SteppedCall<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let ofFate (fate : ProcessFate<'Outcome, 'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
+            match fate with
+            | ProcessFate.Continues (_, system)
+            | ProcessFate.ProcessEnded (_, system) -> system
+
+        let reserved (name : string) : UnixSystem<'Thread, 'Handler> =
+            failwith
+                $"SteppedCall.system: SteppedCall.%s{name} is reserved, and nothing in this version makes one (this is a bug in this library)."
+
+        match stepped with
+        | SteppedCall.Dup (_, system)
+        | SteppedCall.Dup2 (_, system)
+        | SteppedCall.Dup3 (_, system)
+        | SteppedCall.Fcntl (_, system)
+        | SteppedCall.LSeek (_, system)
+        | SteppedCall.FLock (_, system)
+        | SteppedCall.FTruncate (_, system)
+        | SteppedCall.Close (_, system)
+        | SteppedCall.BytesAvailable (_, system)
+        | SteppedCall.ChMod (_, system)
+        | SteppedCall.FChMod (_, system)
+        | SteppedCall.FChModAt (_, system)
+        | SteppedCall.ChOwn (_, system)
+        | SteppedCall.LChOwn (_, system)
+        | SteppedCall.FChOwn (_, system)
+        | SteppedCall.FChOwnAt (_, system)
+        | SteppedCall.UTimensAt (_, system)
+        | SteppedCall.ChDir (_, system)
+        | SteppedCall.Open (_, system)
+        | SteppedCall.OpenAt (_, system)
+        | SteppedCall.ReadDirectoryEntry (_, system)
+        | SteppedCall.MkDir (_, system)
+        | SteppedCall.MkDirAt (_, system)
+        | SteppedCall.MkNod (_, system)
+        | SteppedCall.MkNodAt (_, system)
+        | SteppedCall.Unlink (_, system)
+        | SteppedCall.RmDir (_, system)
+        | SteppedCall.UnlinkAt (_, system)
+        | SteppedCall.Rename (_, system)
+        | SteppedCall.RenameAt (_, system)
+        | SteppedCall.CloneFile (_, system)
+        | SteppedCall.FileClone (_, system)
+        | SteppedCall.Symlink (_, system)
+        | SteppedCall.SymlinkAt (_, system)
+        | SteppedCall.Link (_, system)
+        | SteppedCall.LinkAt (_, system)
+        | SteppedCall.Read (_, system)
+        | SteppedCall.Recv (_, system)
+        | SteppedCall.PRead (_, system)
+        | SteppedCall.PWrite (_, system)
+        | SteppedCall.CopyFileRange (_, system)
+        | SteppedCall.Pipe2 (_, system)
+        | SteppedCall.Bind (_, system)
+        | SteppedCall.Connect (_, system)
+        | SteppedCall.Listen (_, system)
+        | SteppedCall.Accept (_, system)
+        | SteppedCall.Shutdown (_, system)
+        | SteppedCall.SetSockOpt (_, system)
+        | SteppedCall.GetSockOpt (_, system)
+        | SteppedCall.Poll (_, system)
+        | SteppedCall.EpollCtl (_, system)
+        | SteppedCall.EpollWait (_, system)
+        | SteppedCall.Socket (_, system)
+        | SteppedCall.EpollCreate1 (_, system)
+        | SteppedCall.Kqueue (_, system)
+        | SteppedCall.Kevent (_, system)
+        | SteppedCall.InotifyInit1 (_, system)
+        | SteppedCall.InotifyAddWatch (_, system)
+        | SteppedCall.InotifyRmWatch (_, system)
+        | SteppedCall.SigSuspend (_, system)
+        | SteppedCall.RtSigSuspend (_, system)
+        | SteppedCall.Pause (_, system)
+        | SteppedCall.SigAction (_, system)
+        | SteppedCall.SigActionSyscall (_, system)
+        | SteppedCall.PthreadSigMask (_, system)
+        | SteppedCall.SigProcMask (_, system)
+        | SteppedCall.RtSigProcMask (_, system)
+        | SteppedCall.GetRandom (_, system)
+        | SteppedCall.GetEntropy (_, system)
+        | SteppedCall.UMask (_, system)
+        | SteppedCall.SetResUid (_, system)
+        | SteppedCall.SetResGid (_, system)
+        | SteppedCall.SetGroups (_, system)
+        | SteppedCall.Spawn (_, system)
+        | SteppedCall.ExitGroup (_, system)
+        | SteppedCall.Futex (_, system) -> system
+        | SteppedCall.SigReturn system -> system
+        | SteppedCall.Write (fate, _)
+        | SteppedCall.Send fate -> ofFate fate
+        | SteppedCall.ExitThread fate -> ofFate fate
+        | SteppedCall.Kill fate
+        | SteppedCall.PthreadKill fate -> ofFate fate
+        | SteppedCall.PosixFAdvise _
+        | SteppedCall.TerminalAttributes _
+        | SteppedCall.GetEffectiveUserId _
+        | SteppedCall.GetEffectiveGroupId _
+        | SteppedCall.GetGroups _
+        | SteppedCall.Stat _
+        | SteppedCall.FStat _
+        | SteppedCall.FStatAt _
+        | SteppedCall.StatFs _
+        | SteppedCall.FStatFs _
+        | SteppedCall.GetCwd _
+        | SteppedCall.Access _
+        | SteppedCall.FAccessAt _
+        | SteppedCall.ReadLink _
+        | SteppedCall.ReadLinkAt _
+        | SteppedCall.GetSockName _
+        | SteppedCall.GetPeerName _
+        | SteppedCall.SigPending _
+        | SteppedCall.ClockGetTime _
+        | SteppedCall.GetTimeOfDay _
+        | SteppedCall.GetProcessId _
+        | SteppedCall.GetResUid _
+        | SteppedCall.GetResGid _
+        | SteppedCall.GetCpu _ -> madeIn
+        | SteppedCall.RecvFrom _ -> reserved "RecvFrom"
+        | SteppedCall.RecvMsg _ -> reserved "RecvMsg"
+        | SteppedCall.SendTo _ -> reserved "SendTo"
+        | SteppedCall.SendMsg _ -> reserved "SendMsg"
+        | SteppedCall.Select _ -> reserved "Select"
+        | SteppedCall.PSelect _ -> reserved "PSelect"
+        | SteppedCall.SigWait _ -> reserved "SigWait"
+        | SteppedCall.SigWaitInfo _ -> reserved "SigWaitInfo"
+        | SteppedCall.SigTimedWait _ -> reserved "SigTimedWait"
+        | SteppedCall.Nanosleep _ -> reserved "Nanosleep"
+        | SteppedCall.ClockNanosleep _ -> reserved "ClockNanosleep"
