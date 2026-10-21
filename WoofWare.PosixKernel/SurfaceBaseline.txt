@@ -334,8 +334,6 @@ WoofWare.PosixKernel.CharacterDevice.Zero [static property]: [read-only] WoofWar
 WoofWare.PosixKernel.CharacterDeviceModule inherit obj
 WoofWare.PosixKernel.CharacterDeviceModule.all [static property]: [read-only] WoofWare.PosixKernel.CharacterDevice list
 WoofWare.PosixKernel.CharacterDeviceModule.get_all [static method]: unit -> WoofWare.PosixKernel.CharacterDevice list
-WoofWare.PosixKernel.CharacterDeviceModule.name [static method]: WoofWare.PosixKernel.CharacterDevice -> WoofWare.PosixKernel.DirectoryEntryName
-WoofWare.PosixKernel.CharacterDeviceModule.permissions [static method]: WoofWare.PosixKernel.CharacterDevice -> WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.CharacterDeviceState inherit obj, implements WoofWare.PosixKernel.CharacterDeviceState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.CharacterDeviceState System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.CharacterDeviceState.Equals [method]: (WoofWare.PosixKernel.CharacterDeviceState, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.ClientEnd inherit obj, implements WoofWare.PosixKernel.ClientEnd System.IEquatable, System.Collections.IStructuralEquatable - union type with 4 cases
@@ -4103,7 +4101,14 @@ WoofWare.PosixKernel.RmDirRules..ctor [constructor]: WoofWare.PosixKernel.Unbind
 WoofWare.PosixKernel.RmDirRules.Equals [method]: (WoofWare.PosixKernel.RmDirRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.RmDirRules.get_RemovedDirectoryEffect [method]: unit -> WoofWare.PosixKernel.UnbindTargetEffect
 WoofWare.PosixKernel.RmDirRules.RemovedDirectoryEffect [property]: [read-only] WoofWare.PosixKernel.UnbindTargetEffect
-WoofWare.PosixKernel.SeedEntry inherit obj, implements WoofWare.PosixKernel.SeedEntry System.IEquatable, System.Collections.IStructuralEquatable - union type with 3 cases
+WoofWare.PosixKernel.SeedEntry inherit obj, implements WoofWare.PosixKernel.SeedEntry System.IEquatable, System.Collections.IStructuralEquatable - union type with 4 cases
+WoofWare.PosixKernel.SeedEntry+CharacterDevice inherit WoofWare.PosixKernel.SeedEntry
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.get_number [method]: unit -> WoofWare.PosixKernel.DeviceNumber
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.get_owner [method]: unit -> WoofWare.PosixKernel.InodeOwner option
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.get_permissions [method]: unit -> WoofWare.PosixKernel.PermissionBits
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.number [property]: [read-only] WoofWare.PosixKernel.DeviceNumber
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.owner [property]: [read-only] WoofWare.PosixKernel.InodeOwner option
+WoofWare.PosixKernel.SeedEntry+CharacterDevice.permissions [property]: [read-only] WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.SeedEntry+Directory inherit WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry+Directory.entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.SeedEntry+Directory.get_entries [method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
@@ -4124,17 +4129,21 @@ WoofWare.PosixKernel.SeedEntry+Symlink.get_target [method]: unit -> WoofWare.Pos
 WoofWare.PosixKernel.SeedEntry+Symlink.owner [property]: [read-only] WoofWare.PosixKernel.InodeOwner option
 WoofWare.PosixKernel.SeedEntry+Symlink.target [property]: [read-only] WoofWare.PosixKernel.SymlinkTarget
 WoofWare.PosixKernel.SeedEntry+Tags inherit obj
+WoofWare.PosixKernel.SeedEntry+Tags.CharacterDevice [static field]: int = 3
 WoofWare.PosixKernel.SeedEntry+Tags.Directory [static field]: int = 1
 WoofWare.PosixKernel.SeedEntry+Tags.File [static field]: int = 0
 WoofWare.PosixKernel.SeedEntry+Tags.Symlink [static field]: int = 2
 WoofWare.PosixKernel.SeedEntry.Equals [method]: (WoofWare.PosixKernel.SeedEntry, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.SeedEntry.get_IsCharacterDevice [method]: unit -> bool
 WoofWare.PosixKernel.SeedEntry.get_IsDirectory [method]: unit -> bool
 WoofWare.PosixKernel.SeedEntry.get_IsFile [method]: unit -> bool
 WoofWare.PosixKernel.SeedEntry.get_IsSymlink [method]: unit -> bool
 WoofWare.PosixKernel.SeedEntry.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.SeedEntry.IsCharacterDevice [property]: [read-only] bool
 WoofWare.PosixKernel.SeedEntry.IsDirectory [property]: [read-only] bool
 WoofWare.PosixKernel.SeedEntry.IsFile [property]: [read-only] bool
 WoofWare.PosixKernel.SeedEntry.IsSymlink [property]: [read-only] bool
+WoofWare.PosixKernel.SeedEntry.NewCharacterDevice [static method]: (WoofWare.PosixKernel.DeviceNumber, WoofWare.PosixKernel.PermissionBits, WoofWare.PosixKernel.InodeOwner option) -> WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry.NewDirectory [static method]: (Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>, WoofWare.PosixKernel.PermissionBits, WoofWare.PosixKernel.InodeOwner option) -> WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry.NewFile [static method]: (System.Byte System.Collections.Immutable.ImmutableArray, WoofWare.PosixKernel.PermissionBits, WoofWare.PosixKernel.InodeOwner option) -> WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry.NewSymlink [static method]: (WoofWare.PosixKernel.SymlinkTarget, WoofWare.PosixKernel.InodeOwner option) -> WoofWare.PosixKernel.SeedEntry
@@ -7611,6 +7620,7 @@ WoofWare.PosixKernel.UnixBootImage inherit obj
 WoofWare.PosixKernel.UnixBootImage.boot [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.platform [static method]: WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.SimulatedUnixPlatform
 WoofWare.PosixKernel.UnixBootImage.withBootTime [static method]: WoofWare.PosixKernel.UnixTimestamp -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixBootImage.withDeviceFileSystem [static method]: Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withEntropySeed [static method]: System.UInt64 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withEphemeralPortRange [static method]: (System.UInt16, System.UInt16) -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withFileSystem [static method]: WoofWare.PosixKernel.UnixTimestamp -> WoofWare.PosixKernel.InodeOwner -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
@@ -8692,6 +8702,7 @@ WoofWare.PosixKernel.UnixSystem.currentDirectoryInode [static method]: WoofWare.
 WoofWare.PosixKernel.UnixSystem.defaultCoreDumps [static property]: [read-only] WoofWare.PosixKernel.CoreDumps
 WoofWare.PosixKernel.UnixSystem.defaultCredentials [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.Credentials
 WoofWare.PosixKernel.UnixSystem.defaultCurrentDirectory [static property]: [read-only] WoofWare.PosixKernel.AbsoluteUnixPath
+WoofWare.PosixKernel.UnixSystem.defaultDevtmpfsContents [static property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.defaultEntropySeed [static property]: [read-only] System.UInt64
 WoofWare.PosixKernel.UnixSystem.defaultEphemeralPortRange [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> (System.UInt16 * System.UInt16)
 WoofWare.PosixKernel.UnixSystem.defaultGroupId [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.GroupId
@@ -8717,6 +8728,7 @@ WoofWare.PosixKernel.UnixSystem.fileModeCreationMask [static method]: WoofWare.P
 WoofWare.PosixKernel.UnixSystem.fileSystem [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.VirtualFileSystem
 WoofWare.PosixKernel.UnixSystem.get_defaultCoreDumps [static method]: unit -> WoofWare.PosixKernel.CoreDumps
 WoofWare.PosixKernel.UnixSystem.get_defaultCurrentDirectory [static method]: unit -> WoofWare.PosixKernel.AbsoluteUnixPath
+WoofWare.PosixKernel.UnixSystem.get_defaultDevtmpfsContents [static method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.get_defaultEntropySeed [static method]: unit -> System.UInt64
 WoofWare.PosixKernel.UnixSystem.get_defaultInotifyLimits [static method]: unit -> WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalIpv4Addresses [static method]: unit -> WoofWare.PosixKernel.Ipv4Address list

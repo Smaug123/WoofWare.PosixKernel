@@ -711,6 +711,13 @@
          boots, measured by docs/probes/devtmpfs-times. `TestDeviceFileSystem`
          replays them. -->
     <EmbeddedResource Include="..\docs\probes\devtmpfs-times\measured-linux-6.18.5-aarch64-3-boots.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-times.linux.txt" />
+    <!-- Every entry of a Linux devtmpfs, measured by docs/probes/devtmpfs-contents.
+         `TestDeviceFileSystem` holds the default contents' nodes to their rows. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-contents\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-contents.linux.txt" />
+    <!-- What a devtmpfs listing reports for `.` and `..`, and when it moves a
+         directory's atime, measured by docs/probes/devtmpfs-listing.
+         `TestDeviceFileSystem` replays both. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-listing\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-listing.linux.txt" />
     <!-- docs/probes/atime. `TestAccessTime` replays the rows of the mounts the
          model claims: a noatime tmpfs on Linux, and APFS with its default
          options on Darwin. -->

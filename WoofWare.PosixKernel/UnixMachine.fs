@@ -391,9 +391,19 @@ module UnixMachineState =
         let rule =
             match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
             | None, _ -> AccessTimeUpdate.ofMount machine.Mount
-            // Measured (`docs/probes/devtmpfs-times`): no read moves a time
-            // of a devtmpfs node.
-            | Some _, DeviceFileSystemMount.Devtmpfs _ -> AccessTimeUpdate.Never
+            | Some _, DeviceFileSystemMount.Devtmpfs _ ->
+                match
+                    (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem)
+                        .Content
+                with
+                // Measured (`docs/probes/devtmpfs-times`): no read moves a time
+                // of a devtmpfs node; a device's driver, not the filesystem,
+                // answers the read.
+                | InodeContent.CharacterDevice _ -> AccessTimeUpdate.Never
+                // A devtmpfs is mounted `relatime` (`DevtmpfsMount.Flags`), and a
+                // listing of one of its directories moves the directory's atime
+                // under that rule (`docs/probes/devtmpfs-listing`).
+                | _ -> AccessTimeUpdate.Relative
             | Some root, DeviceFileSystemMount.Devfs ->
                 failwith
                     $"UnixMachineState.afterRead: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."

@@ -100,9 +100,9 @@ module internal SortedEntryNames =
 /// A filesystem mounted over a directory of the root filesystem.
 [<RequireQualifiedAccess>]
 type MountedFileSystem =
-    /// Linux's devtmpfs, which holds a node for each device the kernel has a
-    /// driver for. This kernel's holds a node for each `CharacterDevice`, and
-    /// nothing else: no name can be created in it, and none removed.
+    /// Linux's devtmpfs, which holds what the machine's configuration says it
+    /// holds (`UnixBootImage.withDeviceFileSystem`): no name can be created in
+    /// it, and none removed.
     | Devtmpfs
     /// Darwin's devfs, which this kernel does not model. A path that reaches it
     /// is refused.
@@ -259,7 +259,7 @@ type VirtualFileSystemDefect =
     /// A mounted filesystem's root is absent, or is not a directory.
     | MountRootNotDirectory of root : InodeNumber
     /// The inodes recorded as being on the filesystem mounted at `root` are not
-    /// that root and the entries it binds.
+    /// that root and everything below it.
     | MountMembershipMismatch of root : InodeNumber * recorded : Set<InodeNumber> * actual : Set<InodeNumber>
     /// The inode number a mount keeps for the directory it covers is also the
     /// number of an inode in the graph.
@@ -2007,12 +2007,100 @@ module VirtualFileSystem =
             failwith
                 $"VirtualFileSystem.forget: inode %O{inode} is still named by %d{count} directory entry/entries, so forgetting it would leave the graph with a dangling entry (this is a bug in the caller of VirtualFileSystem.forget)."
 
+    /// Realise the seed `entries` in `directory`, as `ofFileSystemSeed` does at
+    /// the root: every inode made at `createdAt`, owned by its entry's owner
+    /// or else by `defaultOwner`, each symbolic link with `symlinkPermissions`.
+    let rec private installSeed
+        (createdAt : UnixTimestamp)
+        (defaultOwner : InodeOwner)
+        (symlinkPermissions : PermissionBits)
+        (directory : InodeNumber)
+        (entries : Map<DirectoryEntryName, SeedEntry>)
+        (vfs : VirtualFileSystem)
+        : VirtualFileSystem
+        =
+        // `Map` iterates in key order, so the inode numbers a seed produces
+        // are a function of the seed alone rather than of how the host
+        // happened to build the map. Inode numbers are visible to a process
+        // through `st_ino`, so this is part of the replay contract.
+        entries
+        |> Map.fold
+            (fun vfs name entry ->
+                let collision (kind : string) (error : UnixError) : VirtualFileSystem =
+                    failwith
+                        $"VirtualFileSystem.installSeed: could not create the %s{kind} %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
+
+                match entry with
+                | SeedEntry.File (contents, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match
+                        createFile
+                            directory
+                            name
+                            permissions
+                            owner
+                            createdAt
+                            (FileContents.ofImmutableArray contents)
+                            vfs
+                    with
+                    | Ok (_, created) -> created.After
+                    | Error error -> collision "file" error
+                | SeedEntry.Symlink (target, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match createSymlink directory name symlinkPermissions owner createdAt target vfs with
+                    | Ok (_, created) -> created.After
+                    | Error error -> collision "symlink" error
+                | SeedEntry.Directory (children, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match createDirectory directory name permissions owner createdAt vfs with
+                    | Ok (inode, created) ->
+                        installSeed createdAt defaultOwner symlinkPermissions inode children created.After
+                    | Error error -> collision "directory" error
+                | SeedEntry.CharacterDevice (number, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    let created =
+                        match ensureBindable directory name vfs with
+                        | Error error -> Error error
+                        | Ok () ->
+                            let inode, allocated =
+                                allocate (InodeContent.CharacterDevice (number, permissions)) owner createdAt vfs
+
+                            bind directory name inode createdAt allocated
+
+                    match created with
+                    | Ok vfs -> vfs
+                    | Error error -> collision "character device" error
+            )
+            vfs
+
+    /// `root` and every inode below it: what its directories bind, and what
+    /// theirs do, down to the leaves.
+    let private subtreeOf (root : InodeNumber) (vfs : VirtualFileSystem) : Set<InodeNumber> =
+        // A graph forged with a directory cycle is its own defect; `found`
+        // keeps one from looping here.
+        let rec gather (inode : InodeNumber) (found : Set<InodeNumber>) : Set<InodeNumber> =
+            if Set.contains inode found then
+                found
+            else
+
+            let found = Set.add inode found
+
+            match tryGetDirectory inode vfs with
+            | Some content -> content.Entries |> Map.fold (fun found _ child -> gather child found) found
+            | None -> found
+
+        gather root Set.empty
+
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
-    /// `permissions` owned by `owner`, holding one character device node for
-    /// each of `devices`, under its name, holding its number and with its
-    /// permissions, owned by `owner` too, all created at `now`. The root directory's own
-    /// times do not move: a mount changes no directory of the filesystem it
-    /// covers.
+    /// `permissions` owned by `owner`, holding the seed `contents` realised
+    /// as `ofFileSystemSeed` realises one, with `owner` as its default owner
+    /// and `symlinkPermissions` as its links' bits, all created at `now`. The
+    /// root directory's own times do not move: a mount changes no directory of
+    /// the filesystem it covers.
     ///
     /// The root may already bind `name` to an empty directory, which the mount
     /// then covers; otherwise the mount covers a directory that held nothing,
@@ -2023,7 +2111,8 @@ module VirtualFileSystem =
         (name : DirectoryEntryName)
         (permissions : PermissionBits)
         (owner : InodeOwner)
-        (devices : (DirectoryEntryName * DeviceNumber * PermissionBits) list)
+        (symlinkPermissions : PermissionBits)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
         (now : UnixTimestamp)
         (vfs : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
@@ -2089,20 +2178,11 @@ module VirtualFileSystem =
 
         let vfs = bind vfs.Root name mountRoot now vfs |> bound "the mounted root"
 
-        let vfs, members =
-            devices
-            |> List.fold
-                (fun (vfs, members) (deviceName, number, devicePermissions) ->
-                    let node, vfs =
-                        allocate (InodeContent.CharacterDevice (number, devicePermissions)) owner now vfs
+        let vfs = installSeed now owner symlinkPermissions mountRoot contents vfs
 
-                    let vfs =
-                        bind mountRoot deviceName node now vfs
-                        |> bound $"the node \"%s{DirectoryEntryName.toEscaped deviceName}\""
-
-                    vfs, Map.add node mountRoot members
-                )
-                (vfs, Map.add mountRoot mountRoot vfs.MountMembers)
+        let members =
+            subtreeOf mountRoot vfs
+            |> Set.fold (fun members inode -> Map.add inode mountRoot members) vfs.MountMembers
 
         let root = vfs.Inodes.[vfs.Root]
 
@@ -2916,8 +2996,7 @@ module VirtualFileSystem =
                     Some (VirtualFileSystemDefect.SubdirectoryCountMismatch (directory, stored, counted))
             )
 
-        // A mounted filesystem holds its root and what that root binds, and
-        // nothing deeper: every mount this module makes is flat.
+        // A mounted filesystem holds its root and everything below it.
         let mountDefects =
             let recordedByRoot =
                 vfs.MountMembers
@@ -2935,7 +3014,7 @@ module VirtualFileSystem =
                     match mount, tryGetDirectory root vfs with
                     | None, _ -> [], Set.empty
                     | Some _, None -> [ VirtualFileSystemDefect.MountRootNotDirectory root ], Set.empty
-                    | Some _, Some content -> [], content.Entries |> Map.values |> Set.ofSeq |> Set.add root
+                    | Some _, Some _ -> [], subtreeOf root vfs
 
                 let recorded = Map.tryFind root recordedByRoot |> Option.defaultValue Set.empty
 
@@ -3046,59 +3125,9 @@ module VirtualFileSystem =
         (entries : Map<DirectoryEntryName, SeedEntry>)
         : VirtualFileSystem
         =
-        let rec install
-            (directory : InodeNumber)
-            (entries : Map<DirectoryEntryName, SeedEntry>)
-            (vfs : VirtualFileSystem)
-            : VirtualFileSystem
-            =
-            // `Map` iterates in key order, so the inode numbers a seed produces
-            // are a function of the seed alone rather than of how the host
-            // happened to build the map. Inode numbers are visible to a process
-            // through `st_ino`, so this is part of the replay contract.
-            entries
-            |> Map.fold
-                (fun vfs name entry ->
-                    match entry with
-                    | SeedEntry.File (contents, permissions, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match
-                            createFile
-                                directory
-                                name
-                                permissions
-                                owner
-                                createdAt
-                                (FileContents.ofImmutableArray contents)
-                                vfs
-                        with
-                        | Ok (_, created) -> created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the file %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                    | SeedEntry.Symlink (target, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match createSymlink directory name symlinkPermissions owner createdAt target vfs with
-                        | Ok (_, created) -> created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the symlink %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                    | SeedEntry.Directory (children, permissions, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match createDirectory directory name permissions owner createdAt vfs with
-                        | Ok (inode, created) -> install inode children created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the directory %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                )
-                vfs
-
         let vfs = empty nameMatching createdAt defaultOwner
 
-        install (root vfs) entries vfs
+        installSeed createdAt defaultOwner symlinkPermissions (root vfs) entries vfs
         |> assertInvariants "VirtualFileSystem.ofFileSystemSeed"
 
     /// Construction that bypasses every invariant this module maintains.

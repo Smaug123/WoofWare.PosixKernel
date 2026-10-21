@@ -35,10 +35,27 @@ module internal DevtmpfsMount =
             Flags = 0x1022L
         }
 
+    /// What a devtmpfs holds when a client expresses no preference: the nodes
+    /// Linux's memory-device driver makes on every kernel, which are `null`,
+    /// `zero`, `full`, `random` and `urandom`, each 0666 and owned by root.
+    let defaultContents : Map<DirectoryEntryName, SeedEntry> =
+        // `drivers/char/mem.c` registers these five whatever the kernel was
+        // configured with; every other node a devtmpfs holds is there because
+        // of a configuration option (kmsg for CONFIG_PRINTK, tty and console
+        // for CONFIG_TTY, mem for CONFIG_DEVMEM) or of the machine's hardware.
+        // Each node's number, mode and owner are measured on Linux 6.18.5
+        // (`docs/probes/devtmpfs-contents`, ENTRY rows).
+        [ "null", 3u ; "zero", 5u ; "full", 7u ; "random", 8u ; "urandom", 9u ]
+        |> List.map (fun (name, minor) ->
+            DirectoryEntryName.parseOrFail "DevtmpfsMount.defaultContents" name,
+            SeedEntry.CharacterDevice (DeviceNumber (1u, minor), PermissionBits 0o666, None)
+        )
+        |> Map.ofList
+
 /// The filesystem a machine has mounted at `/dev`.
 [<RequireQualifiedAccess>]
 type internal DeviceFileSystemMount =
-    /// Linux's devtmpfs, holding a node for each `CharacterDevice`.
+    /// Linux's devtmpfs, holding what the machine's configuration says.
     | Devtmpfs of DevtmpfsMount
     /// Darwin's devfs, which this kernel does not model: a path that reaches
     /// `/dev` is refused.
@@ -70,32 +87,9 @@ module internal DeviceFileSystemMount =
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module CharacterDevice =
-    /// Every device this kernel has a driver for, in the order a devtmpfs
-    /// makes their nodes. A devtmpfs holds a node for each of these and for
-    /// nothing else.
+    /// Every device this kernel has a driver for: a character device node can
+    /// be opened only if it holds the number one of these is registered under.
     let all : CharacterDevice list = [ CharacterDevice.Null ; CharacterDevice.URandom ]
-
-    /// The name of the device's node in `/dev`.
-    let name (device : CharacterDevice) : DirectoryEntryName =
-        match device with
-        | CharacterDevice.Null -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "null"
-        | CharacterDevice.URandom -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "urandom"
-        | CharacterDevice.Zero -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "zero"
-        | CharacterDevice.Random -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "random"
-        | CharacterDevice.Tty -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "tty"
-
-    /// The permission bits of the device's node.
-    let permissions (device : CharacterDevice) : PermissionBits =
-        // Measured on both flavours: crw-rw-rw- for all five nodes
-        // (`devices.c`, STAT rows: mode 020666 for null, zero, random and
-        // urandom, on Linux 6.18.5 and on Darwin 27.0.0; `darwin-devfs.c`,
-        // STAT rows: the same for tty, on both).
-        match device with
-        | CharacterDevice.Null
-        | CharacterDevice.URandom
-        | CharacterDevice.Zero
-        | CharacterDevice.Random
-        | CharacterDevice.Tty -> PermissionBits 0o666
 
     /// What an `ioctl(2)` the device's Linux driver does not recognise answers:
     /// `FIONREAD` and `TCGETS` (`tcgetattr`) among them, neither device being a

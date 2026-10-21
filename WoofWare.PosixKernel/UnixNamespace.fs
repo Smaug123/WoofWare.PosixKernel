@@ -227,7 +227,9 @@ module DirectoryEntryKind =
 type DirectoryRecord =
     {
         /// `d_ino`: the inode the entry names. For `.` that is the directory
-        /// itself and for `..` its parent, as `stat` would report them.
+        /// itself and for `..` its parent, as `stat` would report them, but
+        /// for the root of the device filesystem `..` is that root itself,
+        /// its own parent within the filesystem mounted there.
         Inode : InodeNumber
         /// `d_name`.
         Name : PathComponent
@@ -253,11 +255,6 @@ type internal ReadDirectoryRefusal =
     /// `DirectoryPosition.Unenumerable`), and what each filesystem yields from
     /// an offset it did not hand out is its own.
     | UnenumerablePosition of inode : InodeNumber * offset : int64
-    /// The description is onto `inode`, a directory of the device filesystem.
-    /// A real one lists a node for every device the machine has and this
-    /// kernel's holds only the nodes of the devices it has drivers for, so a
-    /// listing would leave out names a real one reports.
-    | DeviceFileSystem of inode : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal ReadDirectoryRefusal =
@@ -267,14 +264,11 @@ module internal ReadDirectoryRefusal =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition (inode, offset) ->
             $"the description onto directory %O{inode} is at offset %d{offset}, where lseek put it. Both kernels accept that offset, but what the next read yields from it is each filesystem's own (tmpfs resumes from the entry with the greatest offset at or below it; APFS skips that many entries, or answers EAGAIN, depending on the high word), and this kernel's position is a name rather than an offset. Only offset 0, which rewinds, is readable from."
-        | ReadDirectoryRefusal.DeviceFileSystem inode ->
-            $"the description is onto directory %O{inode}, on the device filesystem. A real one lists a node for every device the machine has, and this kernel's holds only the nodes of the devices it has drivers for, so its listing would leave out names a real one reports."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadDirectoryRefusal) : RefusalKind =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition _ -> RefusalKind.Unmodelled
-        | ReadDirectoryRefusal.DeviceFileSystem _ -> RefusalKind.Unmodelled
 
 /// How far `rename(2)` had got with its source when it stopped to copy its
 /// *destination* pathname in — which is not the same point on the two flavours.
@@ -803,6 +797,20 @@ module UnixNamespace =
             failwith
                 $"%s{context}: about to create an inode in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
 
+    /// The refusal owed for binding `name` in `directory`, if `directory` is
+    /// on the device filesystem. Asked once every errno the call owes has
+    /// been answered: a real devtmpfs answers them as any tmpfs does, and
+    /// only a call that would then bind the name is past this kernel.
+    let private deviceFileSystemNewName
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (vfs : VirtualFileSystem)
+        : PathRefusal option
+        =
+        match VirtualFileSystem.mountedRootOf directory vfs with
+        | Some _ -> Some (PathRefusal.DeviceFileSystemNewName (directory, name))
+        | None -> None
+
     /// A new empty regular file bound as `name` in `directory`, which a walk
     /// has just found free, with the permission bits a creating `open(2)`
     /// gives `mode` and owned as any new inode there is: the file's inode, and
@@ -1054,6 +1062,10 @@ module UnixNamespace =
         with
         | CreatingOpenVerdict.Refuse error -> Ok (DescriptorAnswer.Failed error, system)
         | CreatingOpenVerdict.Create (directory, name) ->
+            match deviceFileSystemNewName directory name system.Machine.FileSystem with
+            | Some refusal -> Error (OpenRefusal.Path refusal)
+            | None ->
+
             let inode, system =
                 createRegularFile "UnixNamespace.openPath" directory name mode system
 
@@ -1673,10 +1685,6 @@ module UnixNamespace =
             | SimulatedUnixFlavour.Darwin -> ReservedFifo.fail "UnixNamespace.getdents" inode
         | OpenFileTarget.Directory (inode, position) ->
 
-        match VirtualFileSystem.mountedRootOf inode system.Machine.FileSystem with
-        | Some _ -> Error (ReadDirectoryRefusal.DeviceFileSystem inode)
-        | None ->
-
         let withPosition (position : DirectoryPosition) (system : ProcessView<'Thread, 'Handler>) =
             UnixSystemState.withFileDescriptors
                 (FileDescriptorRegistry.setDirectoryPosition fd position (UnixSystemState.fileDescriptors system))
@@ -1714,9 +1722,16 @@ module UnixNamespace =
         // directory the mount covers, not the mounted root's: measured on both
         // flavours, `readdir("/")` reports `dev` as 14 and `stat("/dev")` as 1
         // on Linux (`mountpoint.c`).
+        //
+        // A mounted filesystem's root is its own parent within that
+        // filesystem, so its `..` reports the root itself: measured on Linux's
+        // devtmpfs, where `readdir("/dev")` reports `..` as 1, `/dev`'s own
+        // `st_ino` (`docs/probes/devtmpfs-listing`). A directory below the
+        // root reports its parent, as on the root filesystem.
         let reported =
             match name, VirtualFileSystem.mountOf target system.Machine.FileSystem with
             | PathComponent.Name _, Some mount -> mount.Covered
+            | PathComponent.Parent, _ when (VirtualFileSystem.mountOf inode system.Machine.FileSystem).IsSome -> inode
             | _, _ -> target
 
         let record : DirectoryRecord =
@@ -1817,6 +1832,10 @@ module UnixNamespace =
         with
         | MkDirVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkDirVerdict.Create (directory, name, parentPermissions) ->
+
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error refusal
+        | None ->
 
         let permissions =
             MkDirRules.createdPermissions rules parentPermissions system.Process.Umask mode
@@ -2002,6 +2021,10 @@ module UnixNamespace =
         | MkNodVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkNodVerdict.Refused refusal -> Error refusal
         | MkNodVerdict.CreateRegularFile (directory, name) ->
+            match deviceFileSystemNewName directory name system.Machine.FileSystem with
+            | Some refusal -> Error (MkNodRefusal.Path refusal)
+            | None ->
+
             let _, system = createRegularFile "UnixNamespace.mknod" directory name mode system
             Ok (SyscallAnswer.Completed 0L, system)
 
@@ -3254,6 +3277,10 @@ module UnixNamespace =
         | SymlinkVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | SymlinkVerdict.Create (directory, name) ->
 
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error (SymlinkRefusal.Path refusal)
+        | None ->
+
         match paused.Target with
         | None -> Error SymlinkRefusal.EmptyTarget
         | Some target ->
@@ -3575,6 +3602,10 @@ module UnixNamespace =
         with
         | LinkVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | LinkVerdict.Create (directory, name) ->
+
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error (LinkRefusal.Path refusal)
+        | None ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 

@@ -593,6 +593,18 @@ module internal UnixParkState =
         }
         |> OwedReturns.markIfDue thread
 
+/// The seed a boot image's root filesystem is realised from, with what
+/// realising it needs beside its entries.
+type internal RootFileSystemSeed =
+    {
+        /// Every seeded inode's birth, mtime, ctime and atime.
+        SeedCreatedAt : UnixTimestamp
+        /// The owner of the root and of every entry that states none.
+        SeedOwner : InodeOwner
+        /// What the root directory holds.
+        SeedEntries : Map<DirectoryEntryName, SeedEntry>
+    }
+
 /// A simulated machine before it has booted, with the ID its first process
 /// will have: what `UnixSystem.initial` makes, which the setters in
 /// `UnixBootImage` configure and `UnixBootImage.boot` turns, by launching that
@@ -609,6 +621,15 @@ type UnixBootImage<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
             /// The ID the first process gets. The machine's thread ID allocator
             /// already holds its leader's thread ID as its one live ID.
             ProcessId : ProcessId
+            /// What the machine's root filesystem was realised from. Kept, as
+            /// `DeviceContents` is, so that whichever of the two a setter
+            /// changes, the filesystem is realised afresh from both: the
+            /// inode numbers a process sees then do not depend on which
+            /// setter ran first.
+            RootSeed : RootFileSystemSeed
+            /// What the machine's device filesystem was realised holding:
+            /// empty for a devfs, which holds nothing this kernel models.
+            DeviceContents : Map<DirectoryEntryName, SeedEntry>
         }
 
 /// What the entry point returns, for a request this kernel could answer.

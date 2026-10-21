@@ -113,11 +113,11 @@ type internal PathRefusal =
     /// The walk reached `mountRoot`, the root of a filesystem this kernel does
     /// not model: Darwin's devfs.
     | UnmodelledFileSystem of mountRoot : InodeNumber * fileSystem : MountedFileSystem
-    /// The walk looked `name` up in `directory`, which is on a device
-    /// filesystem and does not bind it. This kernel's device filesystem holds
-    /// a node for each device it has a driver for and nothing else, where a
-    /// real one holds many more, so whether a real one binds `name` is unknown.
-    | UnmodelledDeviceName of directory : InodeNumber * name : DirectoryEntryName
+    /// The call would bind `name` in `directory`, on the device filesystem,
+    /// as a process allowed to write there may on a real devtmpfs. This
+    /// kernel's device filesystem holds what its configuration says, and
+    /// nothing a process adds to it.
+    | DeviceFileSystemNewName of directory : InodeNumber * name : DirectoryEntryName
     /// The path is empty and the call is about the object `fd` names, which is
     /// not a filesystem object: a pipe, a socket or an event queue. What a
     /// kernel answers about such an object through an empty path has not been
@@ -146,8 +146,8 @@ module internal PathRefusal =
         match refusal with
         | PathRefusal.UnmodelledFileSystem (mountRoot, fileSystem) ->
             $"the path reaches the root of the %O{fileSystem} mounted at inode %O{mountRoot}, which this kernel does not model."
-        | PathRefusal.UnmodelledDeviceName (directory, name) ->
-            $"the path looks up \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, on the device filesystem. This kernel's device filesystem holds a node only for each device it has a driver for, and a real one holds many more, so whether that name exists is unknown."
+        | PathRefusal.DeviceFileSystemNewName (directory, name) ->
+            $"the call would bind \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, on the device filesystem, as a process allowed to write there may on a real devtmpfs. This kernel's device filesystem holds what its configuration says, and nothing a process adds to it."
         | PathRefusal.UnmodelledStartingObject fd ->
             $"the path is empty and the call asks about what fd %d{fd} names, which is a pipe, a socket or an event queue rather than a filesystem object. What a kernel answers about such an object through an empty path has not been measured."
         | PathRefusal.ProtectedSymlinkCacheDependent (directory, link, traversal, limit) ->
@@ -159,7 +159,7 @@ module internal PathRefusal =
     let kind (refusal : PathRefusal) : RefusalKind =
         match refusal with
         | PathRefusal.UnmodelledFileSystem _ -> RefusalKind.Unmodelled
-        | PathRefusal.UnmodelledDeviceName _ -> RefusalKind.Unmodelled
+        | PathRefusal.DeviceFileSystemNewName _ -> RefusalKind.Unmodelled
         | PathRefusal.UnmodelledStartingObject _ -> RefusalKind.Unmodelled
         | PathRefusal.ProtectedSymlinkCacheDependent _ -> RefusalKind.Unmodelled
         | PathRefusal.UndecidedNameEquivalence _ -> RefusalKind.Unmodelled
@@ -292,29 +292,6 @@ type internal PausedResolution =
 
 [<RequireQualifiedAccess>]
 module PathWalk =
-
-    /// The refusal owed for looking `name` up in `directory` and finding
-    /// nothing, if the directory is on a device filesystem, whose names this
-    /// kernel knows only some of.
-    let private absentNameRefusal
-        (vfs : VirtualFileSystem)
-        (directory : InodeNumber)
-        (name : DirectoryEntryName)
-        : PathRefusal option
-        =
-        match VirtualFileSystem.mountedRootOf directory vfs with
-        | None -> None
-        | Some root ->
-            match VirtualFileSystem.mountOf root vfs with
-            | Some {
-                       FileSystem = MountedFileSystem.Devtmpfs
-                   }
-            | Some {
-                       FileSystem = MountedFileSystem.Devfs
-                   } -> Some (PathRefusal.UnmodelledDeviceName (directory, name))
-            | None ->
-                failwith
-                    $"PathWalk: inode %O{directory} is recorded as on the filesystem mounted at inode %O{root}, which is not a mounted root. Run VirtualFileSystem.checkInvariants."
 
     /// The refusal owed for reaching `inode`, if it is the root of a mounted
     /// filesystem this kernel does not model.
@@ -541,10 +518,7 @@ module PathWalk =
         match VirtualFileSystem.lookUpEntry directory name vfs with
         | EntryLookup.Undecided bound ->
             Error (PathFailure.Refused (PathRefusal.UndecidedNameEquivalence (directory, name, bound)))
-        | EntryLookup.Free ->
-            match absentNameRefusal vfs directory name with
-            | Some refusal -> Error (PathFailure.Refused refusal)
-            | None -> Error (PathFailure.Errno UnixError.ENOENT)
+        | EntryLookup.Free -> Error (PathFailure.Errno UnixError.ENOENT)
         | EntryLookup.Bound target ->
 
         match unmodelledMountRefusal vfs target with
@@ -797,9 +771,7 @@ module PathWalk =
             // ENOENT (`stat`) or the point of the call (`mkdir`). A
             // trailing separator does not change that — `mkdir("nx/")`
             // creates on both platforms.
-            match absentNameRefusal vfs directory name with
-            | Some refusal -> Error (PathFailure.Refused refusal)
-            | None -> finish (ResolvedTarget.Entry (directory, name, None))
+            finish (ResolvedTarget.Entry (directory, name, None))
         | EntryLookup.Bound target ->
 
         match unmodelledMountRefusal vfs target with

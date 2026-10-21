@@ -447,9 +447,23 @@ module TestWithFileSystemAndCurrentDirectory =
                             name "dev", SeedEntry.directory (Map.ofList [ name "x", SeedEntry.file noBytes ])
                         ])
                     "/"
-                // A directory in the device filesystem, whose names this kernel
-                // knows only some of.
-                startAt SimulatedUnixPlatform.linuxX64 seed "/dev/pts"
+                // A device node, which this kernel holds only in the device
+                // filesystem.
+                startAt
+                    SimulatedUnixPlatform.linuxX64
+                    (Map.ofList
+                        [
+                            name "null",
+                            SeedEntry.CharacterDevice (
+                                DeviceNumber (1u, 3u),
+                                PermissionBits.parseOrFail "TestWithFileSystemAndCurrentDirectory" 0o666,
+                                None
+                            )
+                        ])
+                    "/"
+                // A directory on Darwin's devfs, which this kernel does not
+                // model.
+                startAt SimulatedUnixPlatform.macOsArm64 seed "/dev"
             ]
             |> List.choose (fun result ->
                 match result with
