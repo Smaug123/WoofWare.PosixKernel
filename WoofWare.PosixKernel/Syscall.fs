@@ -171,17 +171,6 @@ type SigTimedWaitArguments =
     // What it holds is the design of the signal wait (`docs/design/sigwait-options.md`).
     internal | SigTimedWaitArguments
 
-/// The arguments of a `recvfrom(2)`: what `Syscall.RecvFrom` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.RecvFrom`.
-[<NoComparison>]
-type RecvFromArguments =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | RecvFromArguments
-
 /// The arguments of a `recvmsg(2)`: what `Syscall.RecvMsg` holds.
 ///
 /// Its representation is internal, so a later version may change what it
@@ -192,17 +181,6 @@ type RecvMsgArguments =
     // What it holds is the design of the datagram data path
     // (`docs/design/datagram-park-options.md`).
     internal | RecvMsgArguments
-
-/// The arguments of a `sendto(2)`: what `Syscall.SendTo` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.SendTo`.
-[<NoComparison>]
-type SendToArguments =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | SendToArguments
 
 /// The arguments of a `sendmsg(2)`: what `Syscall.SendMsg` holds.
 ///
@@ -233,8 +211,7 @@ type SendMsgArguments =
 /// since what the call writes there is in its answer.
 ///
 /// `Nanosleep`, `ClockNanosleep`, `Select`, `PSelect`, `SigWait`,
-/// `SigWaitInfo`, `SigTimedWait`, `RecvFrom`, `RecvMsg`, `SendTo` and
-/// `SendMsg` are reserved: this kernel does not model those calls yet, their
+/// `SigWaitInfo`, `SigTimedWait`, `RecvMsg` and `SendMsg` are reserved: this kernel does not model those calls yet, their
 /// arguments' types have internal representations, and nothing in this
 /// version makes one.
 [<RequireQualifiedAccess ; NoComparison>]
@@ -391,8 +368,19 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | Read of fd : int * buffer : UserBuffer * count : uint64
     /// `recv(2)`, as `UnixReadWrite.recv` makes it.
     | Recv of fd : int * buffer : UserBuffer * count : uint64 * flags : int
-    /// `recvfrom(2)`. Reserved: see `RecvFromArguments`.
-    | RecvFrom of arguments : RecvFromArguments
+    /// `recvfrom(2)`, as `UnixReadWrite.recvfrom` makes it, then
+    /// `UnixReadWrite.recvfromWithLength` of the `socklen_t` the length cell
+    /// `sourceLength` holds, if the call reads it, when it reads it: on Linux
+    /// after the datagram's bytes are in `buffer`. A NULL `source` is
+    /// `UserBuffer.Unmapped 0UL`, and a NULL `sourceLength`
+    /// `CopiedArgument.Unmapped 0UL`.
+    | RecvFrom of
+        fd : int *
+        buffer : UserBuffer *
+        count : uint64 *
+        flags : int *
+        source : UserBuffer *
+        sourceLength : CopiedArgument<uint32>
     /// `recvmsg(2)`. Reserved: see `RecvMsgArguments`.
     | RecvMsg of arguments : RecvMsgArguments
     /// `pread(2)`, as `UnixReadWrite.pread` makes it.
@@ -403,8 +391,17 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `send(2)`, as `UnixReadWrite.send` makes it, then
     /// `UnixReadWrite.sendWithBytes` of the bytes of `buffer` it copies.
     | Send of fd : int * buffer : CopiedArgument<ImmutableArray<byte>> * count : uint64 * flags : int
-    /// `sendto(2)`. Reserved: see `SendToArguments`.
-    | SendTo of arguments : SendToArguments
+    /// `sendto(2)`, as `UnixReadWrite.sendto` makes it, then
+    /// `UnixReadWrite.sendtoWithAddress` of the bytes of `destination` it
+    /// copies and `UnixReadWrite.sendWithBytes` of the bytes of `buffer`. A
+    /// NULL `destination` is `CopiedArgument.Unmapped 0UL`.
+    | SendTo of
+        fd : int *
+        buffer : CopiedArgument<ImmutableArray<byte>> *
+        count : uint64 *
+        flags : int *
+        destination : CopiedArgument<ImmutableArray<byte>> *
+        declaredLength : uint32
     /// `sendmsg(2)`. Reserved: see `SendMsgArguments`.
     | SendMsg of arguments : SendMsgArguments
     /// `pwrite(2)`, as `UnixReadWrite.pwrite` makes it, then
@@ -642,18 +639,6 @@ type SteppedSigTimedWait<'Thread, 'Handler when 'Thread : comparison and 'Handle
     // What it holds is the design of the signal wait (`docs/design/sigwait-options.md`).
     internal | SteppedSigTimedWait
 
-/// What `UnixSystem.step` answers for a `Syscall.RecvFrom`: what
-/// `SteppedCall.RecvFrom` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.RecvFrom`.
-[<NoEquality ; NoComparison>]
-type SteppedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | SteppedRecvFrom
-
 /// What `UnixSystem.step` answers for a `Syscall.RecvMsg`: what
 /// `SteppedCall.RecvMsg` holds.
 ///
@@ -665,18 +650,6 @@ type SteppedRecvMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
     // What it holds is the design of the datagram data path
     // (`docs/design/datagram-park-options.md`).
     internal | SteppedRecvMsg
-
-/// What `UnixSystem.step` answers for a `Syscall.SendTo`: what
-/// `SteppedCall.SendTo` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.SendTo`.
-[<NoEquality ; NoComparison>]
-type SteppedSendTo<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | SteppedSendTo
 
 /// What `UnixSystem.step` answers for a `Syscall.SendMsg`: what
 /// `SteppedCall.SendMsg` holds.
@@ -824,8 +797,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | Read of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixReadWrite.recv` answers.
     | Recv of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
-    /// A `recvfrom(2)`. Reserved: see `SteppedRecvFrom`.
-    | RecvFrom of stepped : SteppedRecvFrom<'Thread, 'Handler>
+    /// What `UnixReadWrite.recvfrom` answers, or
+    /// `UnixReadWrite.recvfromWithLength` after it.
+    | RecvFrom of outcome : RecvFromOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A `recvmsg(2)`. Reserved: see `SteppedRecvMsg`.
     | RecvMsg of stepped : SteppedRecvMsg<'Thread, 'Handler>
     /// What `UnixReadWrite.pread` answers.
@@ -836,8 +810,10 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixReadWrite.send` answers, or `UnixReadWrite.sendWithBytes`
     /// after it.
     | Send of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
-    /// A `sendto(2)`. Reserved: see `SteppedSendTo`.
-    | SendTo of stepped : SteppedSendTo<'Thread, 'Handler>
+    /// What `UnixReadWrite.sendWithBytes` answers after
+    /// `UnixReadWrite.sendtoWithAddress`, or either of them or
+    /// `UnixReadWrite.sendto` answers first.
+    | SendTo of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
     /// A `sendmsg(2)`. Reserved: see `SteppedSendMsg`.
     | SendMsg of stepped : SteppedSendMsg<'Thread, 'Handler>
     /// What `UnixReadWrite.pwrite` answers, or `UnixReadWrite.pwriteWithBytes`
@@ -1027,6 +1003,7 @@ module SteppedCall =
         | SteppedCall.LinkAt (_, system)
         | SteppedCall.Read (_, system)
         | SteppedCall.Recv (_, system)
+        | SteppedCall.RecvFrom (_, system)
         | SteppedCall.PRead (_, system)
         | SteppedCall.PWrite (_, system)
         | SteppedCall.CopyFileRange (_, system)
@@ -1067,7 +1044,8 @@ module SteppedCall =
         | SteppedCall.Futex (_, system) -> system
         | SteppedCall.SigReturn system -> system
         | SteppedCall.Write (fate, _)
-        | SteppedCall.Send fate -> ofFate fate
+        | SteppedCall.Send fate
+        | SteppedCall.SendTo fate -> ofFate fate
         | SteppedCall.ExitThread fate -> ofFate fate
         | SteppedCall.Kill fate
         | SteppedCall.PthreadKill fate -> ofFate fate
@@ -1095,9 +1073,7 @@ module SteppedCall =
         | SteppedCall.GetResUid _
         | SteppedCall.GetResGid _
         | SteppedCall.GetCpu _ -> madeIn
-        | SteppedCall.RecvFrom _ -> reserved "RecvFrom"
         | SteppedCall.RecvMsg _ -> reserved "RecvMsg"
-        | SteppedCall.SendTo _ -> reserved "SendTo"
         | SteppedCall.SendMsg _ -> reserved "SendMsg"
         | SteppedCall.Select _ -> reserved "Select"
         | SteppedCall.PSelect _ -> reserved "PSelect"

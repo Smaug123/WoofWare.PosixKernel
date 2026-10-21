@@ -58,9 +58,11 @@ type internal SyscallRefusal<'Thread> =
     | LinkAt of LinkRefusal
     | Read of ReadRefusal
     | Recv of ReceiveRefusal
+    | RecvFrom of ReceiveRefusal
     | PRead of PReadRefusal
     | Write of WriteRefusal
     | Send of SendRefusal
+    | SendTo of SendRefusal
     | PWrite of PWriteRefusal
     | CopyFileRange of CopyFileRangeRefusal
     | Pipe2 of Pipe2Refusal
@@ -164,9 +166,11 @@ module internal SyscallRefusal =
         | SyscallRefusal.LinkAt refusal -> $"linkat: %s{LinkRefusal.describe refusal}"
         | SyscallRefusal.Read refusal -> $"read: %s{ReadRefusal.describe refusal}"
         | SyscallRefusal.Recv refusal -> $"recv: %s{ReceiveRefusal.describe refusal}"
+        | SyscallRefusal.RecvFrom refusal -> $"recvfrom: %s{ReceiveRefusal.describe refusal}"
         | SyscallRefusal.PRead refusal -> $"pread: %s{PReadRefusal.describe refusal}"
         | SyscallRefusal.Write refusal -> $"write: %s{WriteRefusal.describe refusal}"
         | SyscallRefusal.Send refusal -> $"send: %s{SendRefusal.describe refusal}"
+        | SyscallRefusal.SendTo refusal -> $"sendto: %s{SendRefusal.describe refusal}"
         | SyscallRefusal.PWrite refusal -> $"pwrite: %s{PWriteRefusal.describe refusal}"
         | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
         | SyscallRefusal.Pipe2 refusal -> $"pipe2: %s{Pipe2Refusal.describe refusal}"
@@ -263,10 +267,12 @@ module internal SyscallRefusal =
         | SyscallRefusal.Link inner -> LinkRefusal.kind inner
         | SyscallRefusal.LinkAt inner -> LinkRefusal.kind inner
         | SyscallRefusal.Read inner -> ReadRefusal.kind inner
-        | SyscallRefusal.Recv inner -> ReceiveRefusal.kind inner
+        | SyscallRefusal.Recv inner
+        | SyscallRefusal.RecvFrom inner -> ReceiveRefusal.kind inner
         | SyscallRefusal.PRead inner -> PReadRefusal.kind inner
         | SyscallRefusal.Write inner -> WriteRefusal.kind inner
-        | SyscallRefusal.Send inner -> SendRefusal.kind inner
+        | SyscallRefusal.Send inner
+        | SyscallRefusal.SendTo inner -> SendRefusal.kind inner
         | SyscallRefusal.PWrite inner -> PWriteRefusal.kind inner
         | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
         | SyscallRefusal.Pipe2 inner -> Pipe2Refusal.kind inner
@@ -1669,7 +1675,14 @@ module UnixSystem =
             UnixReadWrite.tryRecv caller fd buffer count flags system
             |> Result.map SteppedCall.Recv
             |> Result.mapError SyscallRefusal.Recv
-        | Syscall.RecvFrom _ -> reserved "Syscall.RecvFrom"
+        | Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.RecvFrom"
+                UnixReadWrite.tryRecvFromWithLength
+                sourceLength
+                (fun sourceLength -> UnixReadWrite.tryRecvFrom caller fd buffer count flags source sourceLength system)
+            |> Result.map SteppedCall.RecvFrom
+            |> Result.mapError SyscallRefusal.RecvFrom
         | Syscall.RecvMsg _ -> reserved "Syscall.RecvMsg"
         | Syscall.PRead (fd, buffer, count, offset) ->
             UnixReadWrite.tryPread caller fd buffer count offset system
@@ -1696,7 +1709,33 @@ module UnixSystem =
                 (fun buffer -> UnixReadWrite.trySend caller fd buffer count flags system)
             |> Result.map SteppedCall.Send
             |> Result.mapError SyscallRefusal.Send
-        | Syscall.SendTo _ -> reserved "Syscall.SendTo"
+        | Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength) ->
+            let throughDestination =
+                CopiedArgument.copyBytes
+                    "UnixSystem.step of Syscall.SendTo"
+                    PausedSendToAddress.copyRange
+                    UnixReadWrite.trySendToWithAddress
+                    destination
+                    (fun destination ->
+                        UnixReadWrite.trySendTo
+                            caller
+                            fd
+                            (CopiedArgument.userBuffer buffer)
+                            count
+                            flags
+                            destination
+                            declaredLength
+                            system
+                    )
+
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.SendTo"
+                PausedSend.copyRange
+                UnixReadWrite.trySendWithBytes
+                buffer
+                (fun _ -> throughDestination)
+            |> Result.map SteppedCall.SendTo
+            |> Result.mapError SyscallRefusal.SendTo
         | Syscall.SendMsg _ -> reserved "Syscall.SendMsg"
         | Syscall.PWrite (fd, buffer, count, offset) ->
             CopiedArgument.copyBytes

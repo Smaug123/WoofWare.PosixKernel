@@ -156,7 +156,7 @@ type internal DatagramReceiveAnswer =
     /// `EAGAIN`, and a blocking one sleeps.
     | Empty
     /// The call fails with `error`, the receiver's pending error, which it
-    /// takes.
+    /// takes, but for a Darwin peek, which leaves it pending.
     | Failed of error : UnixError
 
 /// A Linux UDP socket's receive side: its two queues, and the charge against
@@ -560,9 +560,13 @@ module internal DatagramReceiver =
             DatagramReceiveAnswer.Datagram (fitting count next, returned, next.Source), after
 
         let failed () : DatagramReceiveAnswer * DatagramReceiver =
-            match takeError receiver with
-            | Some error, after -> DatagramReceiveAnswer.Failed error, after
-            | None, _ -> failwith "DatagramReceiver.receive: no error to take (this is a bug in this library)."
+            match takeError receiver, receiver with
+            // Measured (`udp-sendto.c` Z2, in
+            // docs/plans/2026-10-18-udp-data-path): Darwin's MSG_PEEK answers
+            // the error and leaves it pending; Linux's takes it.
+            | (Some error, _), DatagramReceiver.Darwin _ when peek -> DatagramReceiveAnswer.Failed error, receiver
+            | (Some error, after), _ -> DatagramReceiveAnswer.Failed error, after
+            | (None, _), _ -> failwith "DatagramReceiver.receive: no error to take (this is a bug in this library)."
 
         match receiver with
         | DatagramReceiver.Linux _ ->

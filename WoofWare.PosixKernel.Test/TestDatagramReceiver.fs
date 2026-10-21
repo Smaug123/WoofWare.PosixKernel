@@ -252,9 +252,11 @@ module internal DatagramReceiverReference =
         else if not m.Held.IsEmpty then
             datagram ()
         elif m.Error then
+            // Measured (`udp-sendto.c` Z2): Darwin's MSG_PEEK leaves the error
+            // pending.
             DatagramReceiverSeen.Failed UnixError.ECONNREFUSED,
             { m with
-                Error = false
+                Error = peek
             }
         elif count = 0 then
             DatagramReceiverSeen.Zero, m
