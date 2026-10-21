@@ -3411,6 +3411,8 @@ WoofWare.PosixKernel.PausedLink`2 inherit obj
 WoofWare.PosixKernel.PausedPWrite inherit obj
 WoofWare.PosixKernel.PausedPWrite.copyRange [static method]: WoofWare.PosixKernel.PausedPWrite<'Thread, 'Handler> -> WoofWare.PosixKernel.CopyRange
 WoofWare.PosixKernel.PausedPWrite`2 inherit obj
+WoofWare.PosixKernel.PausedRecvFrom inherit obj
+WoofWare.PosixKernel.PausedRecvFrom.received [static method]: WoofWare.PosixKernel.PausedRecvFrom<'Thread, 'Handler> -> System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.PausedRecvFrom`2 inherit obj
 WoofWare.PosixKernel.PausedRename`2 inherit obj
 WoofWare.PosixKernel.PausedSend inherit obj

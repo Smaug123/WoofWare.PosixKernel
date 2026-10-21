@@ -791,8 +791,10 @@ module PausedSendToAddress =
         paused.Range
 
 /// A `recvfrom(2)` stopped where the kernel reads the caller's length cell:
-/// `UnixReadWrite.recvfrom` answers it, and `UnixReadWrite.recvfromWithLength`
-/// takes the `socklen_t` the cell holds and finishes the call.
+/// `UnixReadWrite.recvfrom` answers it, `PausedRecvFrom.received` says what
+/// the call has put in the caller's buffer by then, and
+/// `UnixReadWrite.recvfromWithLength` takes the `socklen_t` the cell holds
+/// once those bytes are there, and finishes the call.
 [<NoEquality ; NoComparison>]
 type PausedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -804,11 +806,26 @@ type PausedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
             Flags : int
             Source : UserBuffer
             SourceLength : UserBuffer
+            Received : ImmutableArray<byte>
             /// The system the call was made in: everything a `recvfrom` does
             /// before it reads the cell is a question, which the call asks
             /// again with the cell's value.
             System : ProcessView<'Thread, 'Handler>
         }
+
+[<RequireQualifiedAccess>]
+module PausedRecvFrom =
+    /// The bytes the call has put at the start of the caller's buffer before
+    /// it reads the length cell: on Linux, the datagram's, which it copies
+    /// first; on Darwin, which reads the cell before it receives, none. A
+    /// client whose cell lies in that buffer writes these, and then reads
+    /// the cell. The answer `UnixReadWrite.recvfromWithLength` gives holds
+    /// them again.
+    let received<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedRecvFrom<'Thread, 'Handler>)
+        : ImmutableArray<byte>
+        =
+        paused.Received
 
 /// A `pwrite(2)` stopped where the kernel copies from the caller's buffer:
 /// `UnixReadWrite.pwrite` answers it, `PausedPWrite.copyRange` says which bytes
@@ -6172,9 +6189,10 @@ module UnixReadWrite =
         let answered (answer : RecvFromAnswer) (system : ProcessView<'Thread, 'Handler>) =
             Ok (CallProgress.Answered (RecvFromOutcome.Answered answer, system))
 
-        // The call stops to read the length cell, and is made again from the
-        // start with what it holds.
-        let stopsForTheCell () =
+        // The call stops to read the length cell, having put `received` in
+        // the caller's buffer, and is made again from the start with what
+        // the cell holds.
+        let stopsForTheCell (received : ImmutableArray<byte>) =
             ({
                 Thread = thread
                 Fd = fd
@@ -6183,6 +6201,7 @@ module UnixReadWrite =
                 Flags = flags
                 Source = source
                 SourceLength = sourceLength
+                Received = received
                 System = made
             }
             : PausedRecvFrom<'Thread, 'Handler>)
@@ -6299,7 +6318,7 @@ module UnixReadWrite =
             else
 
             match cell with
-            | LengthCell.Unread -> stopsForTheCell ()
+            | LengthCell.Unread -> stopsForTheCell bytes
             | LengthCell.Opaque -> Error (ReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
             | LengthCell.Addressless -> Error (ReceiveRefusal.Buffer BufferRefusal.AddresslessAtScreen)
             | LengthCell.Null
@@ -6355,7 +6374,7 @@ module UnixReadWrite =
             match from, cell with
             | None, _
             | Some _, LengthCell.Holds 0u -> received (PeerAddressCopy.Written (ImmutableArray.Empty, 0))
-            | Some _, LengthCell.Unread -> stopsForTheCell ()
+            | Some _, LengthCell.Unread -> stopsForTheCell ImmutableArray.Empty
             | Some _, LengthCell.Opaque -> Error (ReceiveRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
             | Some from, LengthCell.Holds length ->
                 match source with
@@ -6412,7 +6431,9 @@ module UnixReadWrite =
     ///
     /// The call stops for what the length cell holds only where that decides
     /// the answer, once a datagram is received for a source that is not NULL,
-    /// and `recvfromWithLength` takes it and makes the call again with it.
+    /// and `recvfromWithLength` takes it and makes the call again with it. A
+    /// Linux call has put the datagram's bytes in the buffer by then
+    /// (`PausedRecvFrom.received`), which a cell lying in the buffer holds.
     /// Darwin reads a cell that is not NULL before anything else, so one
     /// that faults is `EFAULT` ahead of even a closed descriptor's `EBADF`;
     /// Linux reads it only once it uses it.

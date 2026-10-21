@@ -294,7 +294,8 @@ module TestCallProgress =
                 )
                 |> Seq.map (fun (m : Reflection.MethodInfo) -> $"%s{t.Name}.%s{m.Name}")
             )
-            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange"))
+            // What a paused call says of itself resumes nothing.
+            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange") && name <> "PausedRecvFrom.received")
             |> Set.ofSeq
 
         resumes |> shouldEqual (resumesOfNull |> List.map fst |> Set.ofList)

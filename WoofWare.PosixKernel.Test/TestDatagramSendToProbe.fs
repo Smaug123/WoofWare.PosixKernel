@@ -894,6 +894,37 @@ module TestDatagramSendToProbe =
         | Error _ -> ()
         | Ok other -> failwith $"recvfrom: %A{other}"
 
+    /// Linux reads the length cell only after it has copied the datagram, so
+    /// a cell inside the buffer holds the datagram's bytes by then, which the
+    /// paused call names; Darwin reads the cell first, and names none.
+    [<TestCase("darwin 27.0")>]
+    [<TestCase("6.18.5 container")>]
+    let ``a recvfrom stopped for its length cell names what it has put in the buffer`` (name : string) : unit =
+        let platform = recordings.[name].Platform
+        let system = boot platform
+        let r, rport, system = boundAt Ipv4Address.loopback system
+        let t, _, system = boundAt Ipv4Address.loopback system
+        let system = connectTo t rport system
+        let overwrites = ImmutableArray.Create<byte> [| 0xFFuy ; 0xFFuy ; 0xFFuy ; 0xFFuy |]
+        let _, system = send t overwrites system
+        let leader = Callers.leader system
+
+        match UnixReadWrite.tryRecvFrom leader r UserBuffer.Mapped 4UL 0 UserBuffer.Mapped UserBuffer.Mapped system with
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let received = PausedRecvFrom.received paused
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> received.IsEmpty |> shouldEqual true
+            | SimulatedUnixFlavour.Linux ->
+                List.ofSeq received |> shouldEqual (List.ofSeq overwrites)
+
+                // The cell, the buffer's first four bytes, holds them now.
+                match UnixReadWrite.tryRecvFromWithLength 0xFFFFFFFFu paused with
+                | Ok (RecvFromOutcome.Answered (RecvFromAnswer.FailedAfterReceiving (UnixError.EINVAL, bytes, None)), _) ->
+                    List.ofSeq bytes |> shouldEqual (List.ofSeq overwrites)
+                | other -> failwith $"recvfromWithLength: %A{other}"
+        | other -> failwith $"recvfrom: %A{other}"
+
     [<Test>]
     let ``a Darwin send that only takes a pending error marks the socket as having sent`` () : unit =
         replay "Z3" "darwin 27.0"

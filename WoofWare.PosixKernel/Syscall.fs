@@ -370,7 +370,8 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | Recv of fd : int * buffer : UserBuffer * count : uint64 * flags : int
     /// `recvfrom(2)`, as `UnixReadWrite.recvfrom` makes it, then
     /// `UnixReadWrite.recvfromWithLength` of the `socklen_t` the length cell
-    /// `sourceLength` holds, if the call reads it. A NULL `source` is
+    /// `sourceLength` holds, if the call reads it, when it reads it: on Linux
+    /// after the datagram's bytes are in `buffer`. A NULL `source` is
     /// `UserBuffer.Unmapped 0UL`, and a NULL `sourceLength`
     /// `CopiedArgument.Unmapped 0UL`.
     | RecvFrom of
