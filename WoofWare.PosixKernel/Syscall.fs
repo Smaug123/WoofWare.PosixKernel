@@ -429,7 +429,7 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `listen(2)`, as `UnixSocket.listen` makes it.
     | Listen of fd : int * backlog : int
     /// `accept(2)`, as `UnixConnection.accept` makes it.
-    | Accept of fd : int * destination : UserBuffer * declaredLength : uint32 * flags : int
+    | Accept of fd : int * destination : UserBuffer * declaredLength : uint32 option * flags : int
     /// `shutdown(2)`, as `UnixConnection.shutdown` makes it.
     | Shutdown of fd : int * how : int
     /// `getsockname(2)`, as `UnixSocket.getsockname` makes it.

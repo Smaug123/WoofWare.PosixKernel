@@ -485,7 +485,7 @@ module TestCredentialThreadsMeasured =
                 {
                     Listener = SleepTarget.Waiting (description, 3)
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 }

@@ -1220,7 +1220,7 @@ module TestMultiProcessFuzz =
             | None -> Made.Answered view
             | Some fd ->
                 match
-                    UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped 16u 0 view
+                    UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped (Some 16u) 0 view
                     |> logged log
                 with
                 | Ok (AcceptOutcome.Accepted _, after) ->

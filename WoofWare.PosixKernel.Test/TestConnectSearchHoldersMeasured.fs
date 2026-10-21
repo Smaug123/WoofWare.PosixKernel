@@ -124,8 +124,8 @@ module TestConnectSearchHoldersMeasured =
         | other -> failwith $"connecting fd %d{fd} to %d{port}: %A{other}"
 
     let private acceptOrFail (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u 0 system with
-        | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{listener}: %A{other}"
 
     let private closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

@@ -376,7 +376,7 @@ module TestDispositionBeforeReturn =
         | _, "accept" ->
             let listener, system = KeventWorld.listenerAt port system
 
-            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped 16u 0 system
+            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
             |> sleeps
                 "accept"
                 (fun outcome ->

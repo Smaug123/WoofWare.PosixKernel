@@ -132,8 +132,10 @@ module TestTimeWaitMeasured =
         )
 
     let private accept (listener : int) (row : Row) : int * Row =
-        match UnixConnection.tryAccept (Callers.thread 0 row.System) listener UserBuffer.Mapped 16u 0 row.System with
-        | Ok (AcceptOutcome.Accepted (accepted, _, _), system) ->
+        match
+            UnixConnection.tryAccept (Callers.thread 0 row.System) listener UserBuffer.Mapped (Some 16u) 0 row.System
+        with
+        | Ok (AcceptOutcome.Accepted (accepted, _), system) ->
             accepted,
             { row with
                 System = system
@@ -634,7 +636,7 @@ module TestTimeWaitMeasured =
                                     (Callers.thread 0 row.System)
                                     row.X
                                     UserBuffer.Mapped
-                                    16u
+                                    (Some 16u)
                                     0
                                     row.System
                             with
