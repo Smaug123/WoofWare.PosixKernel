@@ -1812,6 +1812,65 @@ module TestDeviceFileSystem =
 
         reported "/dev/null" system |> shouldEqual before
 
+    /// `docs/probes/atime`'s `read-older getdents-eof` row, on a `relatime`
+    /// tmpfs: a directory read to its end, its atime then put an hour before
+    /// its mtime, and one more call at the end, which moved the atime to now.
+    [<Test>]
+    let ``a call at the end of a devtmpfs directory moves its access time by relatime too`` () : unit =
+        let contents =
+            UnixSystem.defaultDevtmpfsContents
+            |> Map.add (name "net") (SeedEntry.directory Map.empty)
+
+        let second = 1_000_000_000L
+        let now = 864_000L
+        let system = bootedWith Map.empty contents |> UnixSystem.advanceClock (now * second)
+
+        let fd, system =
+            match DirectoryReading.openDirectory (UnixPath.parseOrFail context "/dev/net") system with
+            | Ok fd, system -> fd, system
+            | Error error, _ -> failwith $"opening /dev/net: %O{error}"
+
+        let _, system = DirectoryReading.drain fd system
+
+        let system =
+            match
+                UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
+                    -100
+                    (NullablePathArgument.NotNull (PathArg.ofText "/dev/net"))
+                    (TimesArgument.Fields (
+                        {
+                            Seconds = now - 7200L
+                            Nanoseconds = 0L
+                        },
+                        {
+                            Seconds = now - 3600L
+                            Nanoseconds = 0L
+                        }
+                    ))
+                    0
+                    system
+            with
+            | Ok (SyscallAnswer.Completed 0L, system) -> system
+            | other -> failwith $"utimensat /dev/net: %A{other}"
+
+        let atEnd (system : UnixSystem<int, string>) : UnixTimestamp * UnixSystem<int, string> =
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> (reported "/dev/net" system).AccessTime, system
+            | other -> failwith $"reading /dev/net at its end: %A{other}"
+
+        // Before the mtime: moved.
+        let atime, system = atEnd system
+        atime |> shouldEqual (UnixTimestamp.ofSeconds now)
+
+        // Equal to the ctime the utimensat set: moved again, a second later.
+        let atime, system = atEnd (UnixSystem.advanceClock second system)
+        atime |> shouldEqual (UnixTimestamp.ofSeconds (now + 1L))
+
+        // After both, and recent: left alone.
+        let atime, _ = atEnd (UnixSystem.advanceClock second system)
+        atime |> shouldEqual (UnixTimestamp.ofSeconds (now + 1L))
+
     // -------------------------------------------------------------- Darwin
 
     [<Test>]

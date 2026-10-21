@@ -161,7 +161,7 @@ Path resolution keeps its flavour's limits whichever type is chosen.
 
 Whether a read moves an access time is a mount option, and each type is mounted with one, which `statfs(2)` reports.
 The Linux tmpfs is mounted `noatime`, so only `utimensat(2)` moves an access time there.
-Linux's devtmpfs at `/dev` is mounted `relatime`: a directory read that yields an entry moves a directory's access time to now when it is not after the modification time or the change time, or is at least 86400 whole seconds old; nothing moves a device node's.
+Linux's devtmpfs at `/dev` is mounted `relatime`: a directory read, whether it yields an entry or is at the end, moves a directory's access time to now when it is not after the modification time or the change time, or is at least 86400 whole seconds old; nothing moves a device node's.
 The Darwin APFS volume has APFS's default options: a `read(2)` or `pread(2)` of at least one byte from a file, even one that answers 0 at end-of-file or `EFAULT`, and a directory read that yields an entry, move the access time to now when it is before the modification time, and nothing else moves it (`readlink(2)` and a path through a symbolic link included).
 On NFS no read moves it, which is unmeasured: an NFS file's times are the server's.
 

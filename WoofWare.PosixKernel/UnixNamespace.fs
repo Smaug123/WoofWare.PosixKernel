@@ -1710,8 +1710,26 @@ module UnixNamespace =
             )
         | _, false, DirectoryPosition.Cursor cursor ->
 
+        // The directory's access time moves where its filesystem's rule says
+        // for a call that returns an entry, on both flavours, and for one at
+        // the end on Linux alone, whose `iterate_dir` asks `file_accessed`
+        // whatever it yields (measured, `docs/probes/atime`: getdents and
+        // getdents-eof; on Linux the rows of the `relatime` tmpfs, where the
+        // call at the end moved an atime before the mtime).
+        let read =
+            { system with
+                Machine =
+                    UnixMachineState.afterRead
+                        inode
+                        (UnixMachineState.realtime system.Scheduling system.Machine)
+                        system.Machine
+            }
+
         match VirtualFileSystem.nextDirectoryEntry inode cursor system.Machine.FileSystem with
-        | None -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
+        | None ->
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> Ok (ReadDirectoryAnswer.EndOfDirectory, read)
+            | SimulatedUnixFlavour.Darwin -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
         | Some (name, target, next) ->
 
         let kind =
@@ -1739,18 +1757,6 @@ module UnixNamespace =
                 Inode = reported
                 Name = name
                 Kind = kind
-            }
-
-        // A call that returns an entry moves the directory's access time
-        // where its filesystem's rule says, and one at the end does not
-        // (measured, `docs/probes/atime`: getdents and getdents-eof).
-        let read =
-            { system with
-                Machine =
-                    UnixMachineState.afterRead
-                        inode
-                        (UnixMachineState.realtime system.Scheduling system.Machine)
-                        system.Machine
             }
 
         Ok (ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) read)
@@ -1785,7 +1791,8 @@ module UnixNamespace =
     ///
     /// A call that yields an entry moves the directory's access time as
     /// `UnixReadWrite.read` moves a file's: it is a `getdents(2)` into a
-    /// buffer with room for one record. A call at the end moves nothing.
+    /// buffer with room for one record. A call at the end moves it the same
+    /// way on Linux, and moves nothing on Darwin.
     let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
