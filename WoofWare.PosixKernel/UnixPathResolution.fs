@@ -225,12 +225,44 @@ module internal FStatAtRefusal =
         | FStatAtRefusal.Stat inner -> StatRefusal.kind inner
         | FStatAtRefusal.Descriptor inner -> FStatRefusal.kind inner
 
+/// Why this kernel will not change the mode or owner of an inode on Darwin's
+/// devfs.
+[<RequireQualifiedAccess>]
+type internal DevfsAttributeRefusal =
+    /// The caller is privileged. devfs refuses every unprivileged caller a
+    /// mode change, its owner's included, EPERM (measured); what it answers
+    /// root has not been measured.
+    | PrivilegedCaller of inode : InodeNumber
+    /// An owner change that names an ID, which devfs makes (measured: an
+    /// owner naming its own IDs succeeds), moving the change time by a rule
+    /// of its own: lazily, by at most a second from where it was, as
+    /// `utimensat(2)` with explicit times was measured to.
+    | OwnerChange of inode : InodeNumber
+
+[<RequireQualifiedAccess>]
+module internal DevfsAttributeRefusal =
+    /// What this kernel knows about why it will not answer.
+    let describe (refusal : DevfsAttributeRefusal) : string =
+        match refusal with
+        | DevfsAttributeRefusal.PrivilegedCaller inode ->
+            $"a privileged caller would change the mode or owner of inode %O{inode}, on Darwin's devfs. Measured on Darwin 27.0, devfs refuses every unprivileged caller a mode change, the node's owner included, EPERM; what it answers root has not been measured."
+        | DevfsAttributeRefusal.OwnerChange inode ->
+            $"the call would set the owner of inode %O{inode}, on Darwin's devfs. Measured on Darwin 27.0, devfs makes the change, and moves a node's change time by a rule of its own (lazily, by at most a second from where it was), which this kernel does not model."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : DevfsAttributeRefusal) : RefusalKind =
+        match refusal with
+        | DevfsAttributeRefusal.PrivilegedCaller _ -> RefusalKind.Unmodelled
+        | DevfsAttributeRefusal.OwnerChange _ -> RefusalKind.Unmodelled
+
 /// Why this kernel will not answer a `chmod(2)`, or an `fchmodat(2)` that
 /// walks its path.
 [<RequireQualifiedAccess>]
 type internal ChModRefusal =
     /// This kernel will not resolve the path.
     | Path of PathRefusal
+    /// The path names an inode on Darwin's devfs.
+    | Devfs of DevfsAttributeRefusal
 
 [<RequireQualifiedAccess>]
 module internal ChModRefusal =
@@ -239,11 +271,13 @@ module internal ChModRefusal =
     let describe (refusal : ChModRefusal) : string =
         match refusal with
         | ChModRefusal.Path refusal -> PathRefusal.describe refusal
+        | ChModRefusal.Devfs refusal -> DevfsAttributeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ChModRefusal) : RefusalKind =
         match refusal with
         | ChModRefusal.Path inner -> PathRefusal.kind inner
+        | ChModRefusal.Devfs inner -> DevfsAttributeRefusal.kind inner
 
 /// Why this kernel will not answer an `fchmod(2)`.
 [<RequireQualifiedAccess>]
@@ -256,6 +290,8 @@ type internal FChModRefusal =
     /// The descriptor is a socket, on a flavour whose sockets have a mode that
     /// `fchmod` changes. This kernel holds no such mode.
     | Socket of socket : SocketId
+    /// The descriptor names an inode on Darwin's devfs.
+    | Devfs of DevfsAttributeRefusal
 
 [<RequireQualifiedAccess>]
 module internal FChModRefusal =
@@ -267,12 +303,14 @@ module internal FChModRefusal =
             $"the descriptor is an end of pipe %O{pipe}, which the process was launched with rather than one it made. Measured on Linux, fchmod on a pipe end changes the mode fstat then reports (0600 to 02750, say) if the caller owns the pipe or is privileged, and answers EPERM otherwise; this pipe's owner is whoever launched the process, which the launch table does not state, so either answer would be a guess."
         | FChModRefusal.Socket socket ->
             $"the descriptor is socket %O{socket}. Measured on Linux, fchmod on a socket of every domain and kind succeeds and changes the mode fstat then reports (0777 to 0600, say); this kernel holds no inode for a socket and so no mode to change, and answering success while changing nothing would be a lie the moment one is modelled."
+        | FChModRefusal.Devfs refusal -> DevfsAttributeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FChModRefusal) : RefusalKind =
         match refusal with
         | FChModRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | FChModRefusal.Socket _ -> RefusalKind.Unmodelled
+        | FChModRefusal.Devfs inner -> DevfsAttributeRefusal.kind inner
 
 /// Why this kernel will not answer an `fchmodat(2)`.
 [<RequireQualifiedAccess>]
@@ -309,6 +347,8 @@ module internal FChModAtRefusal =
 type internal ChOwnRefusal =
     /// This kernel will not resolve the path.
     | Path of PathRefusal
+    /// The path names an inode on Darwin's devfs.
+    | Devfs of DevfsAttributeRefusal
 
 [<RequireQualifiedAccess>]
 module internal ChOwnRefusal =
@@ -317,11 +357,13 @@ module internal ChOwnRefusal =
     let describe (refusal : ChOwnRefusal) : string =
         match refusal with
         | ChOwnRefusal.Path refusal -> PathRefusal.describe refusal
+        | ChOwnRefusal.Devfs refusal -> DevfsAttributeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ChOwnRefusal) : RefusalKind =
         match refusal with
         | ChOwnRefusal.Path inner -> PathRefusal.kind inner
+        | ChOwnRefusal.Devfs inner -> DevfsAttributeRefusal.kind inner
 
 /// Why this kernel will not answer an `fchown(2)`.
 [<RequireQualifiedAccess>]
@@ -334,6 +376,8 @@ type internal FChOwnRefusal =
     /// The descriptor is a socket, on a flavour whose sockets have an owner
     /// that `fchown` changes. This kernel holds no such owner.
     | Socket of socket : SocketId
+    /// The descriptor names an inode on Darwin's devfs.
+    | Devfs of DevfsAttributeRefusal
 
 [<RequireQualifiedAccess>]
 module internal FChOwnRefusal =
@@ -345,12 +389,14 @@ module internal FChOwnRefusal =
             $"the descriptor is an end of pipe %O{pipe}, which the process was launched with rather than one it made. Measured on Linux, fchown on a pipe end changes the owner fstat then reports by the same rule as a file's, which depends on who owns the pipe; this pipe's owner is whoever launched the process, which the launch table does not state, so any answer would be a guess."
         | FChOwnRefusal.Socket socket ->
             $"the descriptor is socket %O{socket}. Measured on Linux, fchown on a socket of every domain and kind changes the owner fstat then reports, by the same rule as a file's (the owner may give it one of its groups, a non-owner naming a user is EPERM, root may do anything); this kernel holds no owner for a socket, so it has nothing to judge the call against or to change."
+        | FChOwnRefusal.Devfs refusal -> DevfsAttributeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FChOwnRefusal) : RefusalKind =
         match refusal with
         | FChOwnRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | FChOwnRefusal.Socket _ -> RefusalKind.Unmodelled
+        | FChOwnRefusal.Devfs inner -> DevfsAttributeRefusal.kind inner
 
 /// Why this kernel will not answer an `fchownat(2)`.
 [<RequireQualifiedAccess>]
@@ -404,6 +450,11 @@ type internal UTimensAtRefusal =
     /// The call would set a time on a file of this filesystem, whose server
     /// decides what it stores.
     | UnmeasuredFileSystem of fileSystem : EmulatedFileSystemType
+    /// The call would set `inode`'s times, on Darwin's devfs. devfs moves the
+    /// change time lazily, sometimes to now and sometimes to a second after
+    /// where it was, and an explicit time in the epoch's first microsecond
+    /// reads as now (measured), by rules this kernel does not model.
+    | DevfsTimes of inode : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal UTimensAtRefusal =
@@ -421,6 +472,8 @@ module internal UTimensAtRefusal =
             $"the call reached an end of pipe %O{pipe}, which the process was launched with rather than one it made. Measured on Linux, utimensat sets a pipe's times by the same rules as a file's, which depend on who owns the pipe; this pipe's owner is whoever launched the process, which the launch table does not state."
         | UTimensAtRefusal.UnmeasuredFileSystem fileSystem ->
             $"the call would set a time on a file of a %O{fileSystem} mount, where the server decides what is stored; measured, tmpfs and APFS each store a time their own way, and nothing here says what this server does."
+        | UTimensAtRefusal.DevfsTimes inode ->
+            $"the call would set the times of inode %O{inode}, on Darwin's devfs. Measured on Darwin 27.0, devfs moves the change time lazily, to now on one run and to a second after where it was on another, and reads an explicit time in the epoch's first microsecond as now, by rules this kernel does not model."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : UTimensAtRefusal) : RefusalKind =
@@ -431,6 +484,7 @@ module internal UTimensAtRefusal =
         | UTimensAtRefusal.Socket _ -> RefusalKind.Unmodelled
         | UTimensAtRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | UTimensAtRefusal.UnmeasuredFileSystem _ -> RefusalKind.Unmodelled
+        | UTimensAtRefusal.DevfsTimes _ -> RefusalKind.Unmodelled
 
 /// <summary>
 /// What <c>fstat(2)</c> reported.
@@ -775,10 +829,6 @@ module UnixPathResolution =
     ///
     /// Refuses for a directory on an NFS mount, whose size and link count this
     /// kernel cannot state; see `StatRefusal`.
-    ///
-    /// Throws for an inode on Darwin's devfs, which this kernel does not model.
-    /// No path or descriptor reaches one: a walk refuses at the mount. Internal
-    /// for that reason, since a client given a bare inode could name one.
     let internal statOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
         (system : ProcessView<'Thread, 'Handler>)
@@ -798,9 +848,9 @@ module UnixPathResolution =
             match VirtualFileSystem.mountedRootOf inode fileSystem, system.Machine.DeviceMount with
             | None, _ -> VirtualFileSystem.deviceId
             | Some _, DeviceFileSystemMount.Devtmpfs devtmpfs -> devtmpfs.DeviceId
-            | Some root, DeviceFileSystemMount.Devfs ->
-                failwith
-                    $"UnixPathResolution.statOf: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+            | Some _, DeviceFileSystemMount.Devfs devfs -> devfs.DeviceId
+
+        let onFileSystem = UnixMachineState.fileSystemOf inode system.Machine
 
         let sizeAndLinks : Result<int64 * int64, StatRefusal> =
             match entry.Content with
@@ -822,7 +872,10 @@ module UnixPathResolution =
                     int64 (VirtualFileSystem.bindingCount inode fileSystem)
                 )
             | InodeContent.Directory _ ->
-                let fsType = UnixMachineState.fileSystemTypeOf inode system.Machine
+                match onFileSystem with
+                | InodeFileSystem.Devfs ->
+                    Ok (Devfs.directorySize inode fileSystem, Devfs.directoryLinkCount inode fileSystem)
+                | InodeFileSystem.Typed fsType ->
 
                 match
                     EmulatedFileSystemType.directorySize fsType (VirtualFileSystem.entryCount inode fileSystem),
@@ -846,15 +899,20 @@ module UnixPathResolution =
             else
                 None
 
-        let ioBlockSize, allocatedBlocks =
-            EmulatedFileSystemType.allocation
-                (UnixMachineState.fileSystemTypeOf inode system.Machine)
-                (SimulatedUnixPlatform.pageSize system.Machine.UnixPlatform)
-                entry.Content
-
         match sizeAndLinks with
         | Error refusal -> Some (Error refusal)
         | Ok (size, links) ->
+
+        let ioBlockSize, allocatedBlocks =
+            match onFileSystem with
+            | InodeFileSystem.Devfs ->
+                let ioBlockSize, allocatedBlocks = Devfs.allocation inode entry.Content size
+                Some ioBlockSize, Some allocatedBlocks
+            | InodeFileSystem.Typed fsType ->
+                EmulatedFileSystemType.allocation
+                    fsType
+                    (SimulatedUnixPlatform.pageSize system.Machine.UnixPlatform)
+                    entry.Content
 
         Some (
             Ok
@@ -1223,18 +1281,30 @@ module UnixPathResolution =
     /// whose links change (`SymlinkModeChange.ChangesLink`), this filesystem
     /// holds: EPERM changing nothing, or the new bits with `ctime` moved.
     /// The caller reached `inode` `through` a path or a descriptor.
+    ///
+    /// On Darwin's devfs, EPERM to every unprivileged caller, its owner
+    /// included, and refused to a privileged one.
     let private changeModeOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (through : ReachedThrough)
         (inode : InodeNumber)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : SyscallAnswer * ProcessView<'Thread, 'Handler>
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, DevfsAttributeRefusal>
         =
         let entry =
             VirtualFileSystem.get "UnixPathResolution.changeModeOf" inode system.Machine.FileSystem
 
+        // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, NS and CONSOLE
+        // rows): `chmod` of `/dev`, `/dev/null` and `/dev/monotonic` is EPERM,
+        // and so is that of `/dev/console` by its owner, to its own mode.
+        if VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem then
+            match Credentials.privilege system.Process.Credentials with
+            | CallerPrivilege.Unprivileged -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+            | CallerPrivilege.Privileged -> Error (DevfsAttributeRefusal.PrivilegedCaller inode)
+        else
+
         match PermissionBits.afterModeChange (Standing.toward system.Process.Credentials entry.Owner) mode with
-        | ModeChange.Forbidden -> SyscallAnswer.Failed UnixError.EPERM, system
+        | ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
         | ModeChange.Permitted bits ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
@@ -1244,14 +1314,16 @@ module UnixPathResolution =
                 Mode = true
             }
 
-        SyscallAnswer.Completed 0L,
-        { system with
-            Machine =
-                UnixMachineState.commitFileSystem
-                    (ChangeNotice.SetAttributes (through, set))
-                    (VirtualFileSystem.setPermissions inode bits now system.Machine.FileSystem)
-                    system.Machine
-        }
+        Ok (
+            SyscallAnswer.Completed 0L,
+            { system with
+                Machine =
+                    UnixMachineState.commitFileSystem
+                        (ChangeNotice.SetAttributes (through, set))
+                        (VirtualFileSystem.setPermissions inode bits now system.Machine.FileSystem)
+                        system.Machine
+            }
+        )
 
     /// `fchmodat` without `AT_EMPTY_PATH`, of a path this kernel has already
     /// copied in, starting from `directory` if it is relative.
@@ -1294,7 +1366,7 @@ module UnixPathResolution =
             | InodeContent.CharacterDevice _ -> true
 
         if changeable then
-            Ok (changeModeOf through inode mode system)
+            changeModeOf through inode mode system |> Result.mapError ChModRefusal.Devfs
         else
             Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
 
@@ -1442,7 +1514,8 @@ module UnixPathResolution =
         | DescriptorAttributeTarget.Fails error -> Ok (SyscallAnswer.Failed error, system)
         | DescriptorAttributeTarget.Socket socket -> Error (FChModRefusal.Socket socket)
         | DescriptorAttributeTarget.LaunchedPipe pipeId -> Error (FChModRefusal.LaunchedPipe pipeId)
-        | DescriptorAttributeTarget.Inode (inode, through) -> Ok (changeModeOf through inode mode system)
+        | DescriptorAttributeTarget.Inode (inode, through) ->
+            changeModeOf through inode mode system |> Result.mapError FChModRefusal.Devfs
         | DescriptorAttributeTarget.Pipe (pipeId, status) ->
 
         match PermissionBits.afterModeChange (Standing.toward system.Process.Credentials status.Owner) mode with
@@ -1496,13 +1569,15 @@ module UnixPathResolution =
     /// nothing, success changing nothing, or the new owner and bits with
     /// `ctime` moved. The caller reached `inode` `through` a path or a
     /// descriptor.
+    ///
+    /// On Darwin's devfs, a change that names an ID is refused.
     let private changeOwnerOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (through : ReachedThrough)
         (inode : InodeNumber)
         (user : UserId option)
         (group : GroupId option)
         (system : ProcessView<'Thread, 'Handler>)
-        : SyscallAnswer * ProcessView<'Thread, 'Handler>
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, DevfsAttributeRefusal>
         =
         let entry =
             VirtualFileSystem.get "UnixPathResolution.changeOwnerOf" inode system.Machine.FileSystem
@@ -1527,8 +1602,14 @@ module UnixPathResolution =
                 target
                 bits
         with
-        | OwnerChange.Forbidden -> SyscallAnswer.Failed UnixError.EPERM, system
-        | OwnerChange.Untouched -> SyscallAnswer.Completed 0L, system
+        | OwnerChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+        | OwnerChange.Untouched -> Ok (SyscallAnswer.Completed 0L, system)
+        // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, NS and CONSOLE
+        // rows): `chown(-1, -1)` of `/dev/null` and `/dev/monotonic` succeeds,
+        // a non-owner naming itself is EPERM, and the owner of `/dev/console`
+        // naming its own IDs succeeds, at a change time this kernel cannot say.
+        | OwnerChange.Changed _ when VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem ->
+            Error (DevfsAttributeRefusal.OwnerChange inode)
         | OwnerChange.Changed changed ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
@@ -1562,11 +1643,16 @@ module UnixPathResolution =
                 Mode = changed <> bits
             }
 
-        SyscallAnswer.Completed 0L,
-        { system with
-            Machine =
-                UnixMachineState.commitFileSystem (ChangeNotice.SetAttributes (through, set)) mutation system.Machine
-        }
+        Ok (
+            SyscallAnswer.Completed 0L,
+            { system with
+                Machine =
+                    UnixMachineState.commitFileSystem
+                        (ChangeNotice.SetAttributes (through, set))
+                        mutation
+                        system.Machine
+            }
+        )
 
     /// `fchownat` without `AT_EMPTY_PATH`, of a path this kernel has already
     /// copied in, starting from `directory` if it is relative.
@@ -1595,7 +1681,9 @@ module UnixPathResolution =
         match resolvePathReached directory policy path system with
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (ChOwnRefusal.Path refusal)
-        | Ok (inode, through) -> Ok (changeOwnerOf through inode user group system)
+        | Ok (inode, through) ->
+            changeOwnerOf through inode user group system
+            |> Result.mapError ChOwnRefusal.Devfs
 
     /// `tryChown` once `Entry` has admitted its caller.
     let private tryChownIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1724,7 +1812,9 @@ module UnixPathResolution =
         | DescriptorAttributeTarget.Fails error -> Ok (SyscallAnswer.Failed error, system)
         | DescriptorAttributeTarget.Socket socket -> Error (FChOwnRefusal.Socket socket)
         | DescriptorAttributeTarget.LaunchedPipe pipeId -> Error (FChOwnRefusal.LaunchedPipe pipeId)
-        | DescriptorAttributeTarget.Inode (inode, through) -> Ok (changeOwnerOf through inode user group system)
+        | DescriptorAttributeTarget.Inode (inode, through) ->
+            changeOwnerOf through inode user group system
+            |> Result.mapError FChOwnRefusal.Devfs
         | DescriptorAttributeTarget.Pipe (pipeId, status) ->
 
         let credentials = system.Process.Credentials
@@ -1824,7 +1914,8 @@ module UnixPathResolution =
         | AtPathTarget.CurrentDirectory ->
             let cwd, through = currentDirectoryReached system
 
-            Ok (changeModeOf through cwd mode system)
+            changeModeOf through cwd mode system
+            |> Result.mapError (ChModRefusal.Devfs >> FChModAtRefusal.ChMod)
         | AtPathTarget.Walked ->
             chmodParsed directory arguments.FinalSymlink path mode system
             |> Result.mapError FChModAtRefusal.ChMod
@@ -1922,7 +2013,8 @@ module UnixPathResolution =
         | AtPathTarget.CurrentDirectory ->
             let cwd, through = currentDirectoryReached system
 
-            Ok (changeOwnerOf through cwd user group system)
+            changeOwnerOf through cwd user group system
+            |> Result.mapError (ChOwnRefusal.Devfs >> FChOwnAtRefusal.ChOwn)
         | AtPathTarget.Walked ->
             chownParsed directory arguments.FinalSymlink path user group system
             |> Result.mapError FChOwnAtRefusal.ChOwn
@@ -2038,14 +2130,24 @@ module UnixPathResolution =
             | TimestampRequest.Omit, TimestampRequest.Omit -> Ok (SyscallAnswer.Completed 0L, system)
             | _ ->
 
-            let fileSystem = UnixMachineState.fileSystemTypeOf inode system.Machine
+            let changed =
+                match UnixMachineState.fileSystemOf inode system.Machine with
+                | InodeFileSystem.Typed fileSystem ->
+                    match TimestampChangeRules.rangeOf fileSystem with
+                    | None -> Error (UTimensAtRefusal.UnmeasuredFileSystem fileSystem)
+                    | Some range ->
+                        Ok (TimestampChangeRules.changed flavour range now asNow access modification entry.Times)
+                // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, TIMES
+                // rows after `utimes` and `utimensat` with no times and with
+                // both UTIME_NOW, and CONSOLE rows): the access and
+                // modification times move to now, to the microsecond, but the
+                // change time moved to now on one run and to a second after
+                // its old value on another.
+                | InodeFileSystem.Devfs -> Error (UTimensAtRefusal.DevfsTimes inode)
 
-            match TimestampChangeRules.rangeOf fileSystem with
-            | None -> Error (UTimensAtRefusal.UnmeasuredFileSystem fileSystem)
-            | Some range ->
-
-            let times =
-                TimestampChangeRules.changed flavour range now asNow access modification entry.Times
+            match changed with
+            | Error refusal -> Error refusal
+            | Ok times ->
 
             let set =
                 { AttributesSet.none with

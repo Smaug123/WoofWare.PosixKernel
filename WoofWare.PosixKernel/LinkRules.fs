@@ -76,6 +76,25 @@ module internal LinkRules =
         | DirectorySourceRefusal.BeforeDestination, _
         | DirectorySourceRefusal.Last, _ ->
 
+        // Darwin's devfs refuses an unprivileged caller a link from it or into
+        // it EPERM once the destination has been walked, ahead of the existing
+        // name's EEXIST, the cross-mount EXDEV and the write check, and behind
+        // only a free name's trailing separator (measured on Darwin 27.0,
+        // `docs/probes/devfs-darwin`, NS link rows, and `link-symlink.c`
+        // LINKDEV rows).
+        let devfsRefuses =
+            Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && match resolution.Target with
+               | ResolvedTarget.Entry (directory, _, existing) ->
+                   (VirtualFileSystem.isOnDevfs source vfs
+                    || VirtualFileSystem.isOnDevfs directory vfs)
+                   && (existing.IsSome || not resolution.TrailingSeparatorDemanded)
+               | ResolvedTarget.Directory _ -> false
+
+        if devfsRefuses then
+            LinkVerdict.Refuse UnixError.EPERM
+        else
+
         match
             NewNameRules.verdict
                 FreeNameTrailingSeparator.NoSuchEntry

@@ -209,6 +209,7 @@
     <Compile Include="TestDirectoryDescription.fs" />
     <Compile Include="TestDeviceFileSystem.fs" />
     <Compile Include="TestDeviceFileSystemAgainstHost.fs" />
+    <Compile Include="TestDevfs.fs" />
     <Compile Include="TestDeviceDescriptors.fs" />
     <Compile Include="TestDeviceDescriptorsAgainstHost.fs" />
     <Compile Include="TestDirectoryReadAgainstHost.fs" />
@@ -719,6 +720,10 @@
          directory's atime, measured by docs/probes/devtmpfs-listing.
          `TestDeviceFileSystem` replays both. -->
     <EmbeddedResource Include="..\docs\probes\devtmpfs-listing\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-listing.linux.txt" />
+    <!-- Darwin's devfs as uid 501 sees it: stat, statfs and listing rows, when
+         a time moves, and every namespace and attribute call's errno,
+         measured by docs/probes/devfs-darwin. `TestDevfs` replays them. -->
+    <EmbeddedResource Include="..\docs\probes\devfs-darwin\measured-darwin-27.0-arm64-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.devfs-darwin.txt" />
     <!-- docs/probes/atime. `TestAccessTime` replays the rows of the mounts the
          model claims: a noatime tmpfs on Linux, and APFS with its default
          options on Darwin. -->

@@ -792,7 +792,9 @@ module UnixBootImage =
                 SeedEntries = seed
             }
 
-        match UnixSystem.realiseFileSystem platform machine.DeviceMount rootSeed image.DeviceContents with
+        match
+            UnixSystem.realiseFileSystem platform machine.DeviceMount machine.BootTime rootSeed image.DeviceContents
+        with
         | Error (MountFault.CoveredEntryNotAnEmptyDirectory name) ->
             Error (FileSystemSeedFault.SeedCoversDeviceFileSystem name)
         | Ok filesystem ->
@@ -854,38 +856,85 @@ module UnixBootImage =
         =
         let machine = image.Machine
         let platform = machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour platform
         let limits = SimulatedUnixPlatform.pathLimits platform
 
-        // The first offender in `Map` order, a directory's children before
-        // the names after it, as `withFileSystem` finds one. Linux binds any
-        // name and matches names byte for byte, so the length is all there is
-        // to check of one.
-        let rec firstFault (entries : Map<DirectoryEntryName, SeedEntry>) : DeviceFileSystemFault option =
-            entries
-            |> Map.toSeq
-            |> Seq.tryPick (fun (name, entry) ->
-                let name =
-                    DirectoryEntryName.assertValidFor "UnixBootImage.withDeviceFileSystem" "contents" name
+        let root =
+            {
+                User = UserId.root
+                Group = GroupId.parseOrFail "UnixBootImage.withDeviceFileSystem" 0u
+            }
 
+        // What the device filesystem refuses of one entry, apart from its
+        // children. Linux binds any name and matches names byte for byte, so
+        // the length is all there is to check of a name there.
+        let entryFault (name : DirectoryEntryName) (entry : SeedEntry) : DeviceFileSystemFault option =
+            match machine.DeviceMount with
+            | DeviceFileSystemMount.Devtmpfs _ ->
                 if not (PathLimits.nameWithinLimit limits name) then
-                    Some (DeviceFileSystemFault.NameTooLong name)
+                    Some (DeviceFileSystemFault.NameTooLong (name, 255))
                 else
                     match entry with
-                    | SeedEntry.Directory (children, _, _) -> firstFault children
+                    | SeedEntry.Directory _
                     | SeedEntry.CharacterDevice _ -> None
                     | SeedEntry.File _
-                    | SeedEntry.Symlink _ -> Some (DeviceFileSystemFault.NotMadeByDevtmpfs name)
-            )
+                    | SeedEntry.Symlink _ -> Some (DeviceFileSystemFault.NotMadeByDeviceFileSystem name)
+            | DeviceFileSystemMount.Devfs _ ->
+                // devfs keeps a name in a 32-byte buffer with its NUL, and
+                // `pathconf(_PC_NAME_MAX)` of `/dev` reports 31 (measured on
+                // Darwin 27.0, `darwin-devfs.c`, PATHCONF row).
+                if UnixByteString.length (DirectoryEntryName.toByteString name) > 31 then
+                    Some (DeviceFileSystemFault.NameTooLong (name, 31))
+                else
+                    match entry with
+                    | SeedEntry.Directory (_, permissions, owner) ->
+                        let owner = owner |> Option.defaultValue root
 
-        match machine.DeviceMount with
-        | DeviceFileSystemMount.Devfs -> Error DeviceFileSystemFault.Devfs
-        | DeviceFileSystemMount.Devtmpfs _ ->
+                        if permissions <> PermissionBits 0o555 || owner <> root then
+                            Some (DeviceFileSystemFault.DirectoryNotAsDevfsMakesIt (name, permissions, owner))
+                        else
+                            None
+                    | SeedEntry.CharacterDevice (number, _, _) ->
+                        if DeviceNumber.isEncodableUnder flavour number then
+                            None
+                        else
+                            Some (DeviceFileSystemFault.NumberNotEncodable (name, number))
+                    | SeedEntry.File _
+                    | SeedEntry.Symlink _ -> Some (DeviceFileSystemFault.NotMadeByDeviceFileSystem name)
+
+        // The first offender in `Map` order, a directory's children before
+        // the names after it, and a directory's own pair of possibly
+        // equivalent names after all of them, as `withFileSystem` finds one.
+        let rec firstFault (entries : Map<DirectoryEntryName, SeedEntry>) : DeviceFileSystemFault option =
+            let ofEachName =
+                entries
+                |> Map.toSeq
+                |> Seq.tryPick (fun (name, entry) ->
+                    let name =
+                        DirectoryEntryName.assertValidFor "UnixBootImage.withDeviceFileSystem" "contents" name
+
+                    match entryFault name entry with
+                    | Some fault -> Some fault
+                    | None ->
+                        match entry with
+                        | SeedEntry.Directory (children, _, _) -> firstFault children
+                        | SeedEntry.CharacterDevice _
+                        | SeedEntry.File _
+                        | SeedEntry.Symlink _ -> None
+                )
+
+            match ofEachName, SimulatedUnixPlatform.entryNameMatching platform with
+            | Some fault, _ -> Some fault
+            | None, EntryNameMatching.Bytes -> None
+            | None, EntryNameMatching.CanonicalEquivalence ->
+                EntryNameMatching.firstPossiblyEquivalentPair (Map.keys entries)
+                |> Option.map DeviceFileSystemFault.NamesPossiblyEquivalent
 
         match firstFault contents with
         | Some fault -> Error fault
         | None ->
 
-        match UnixSystem.realiseFileSystem platform machine.DeviceMount image.RootSeed contents with
+        match UnixSystem.realiseFileSystem platform machine.DeviceMount machine.BootTime image.RootSeed contents with
         | Error fault ->
             failwith
                 $"UnixBootImage.withDeviceFileSystem: mounting the device filesystem failed with %A{fault}, over a root seed it was mounted over before (this is a bug in this library)."
@@ -901,29 +950,34 @@ module UnixBootImage =
 
     /// <summary>
     /// Set what the machine's device filesystem, mounted at `/dev`, holds:
-    /// `contents`, realised as `withFileSystem` realises a seed, with every
-    /// inode made at the epoch, as devtmpfs makes its own nodes before the
-    /// realtime clock is set, and owned by root unless an entry says
-    /// otherwise.
+    /// `contents`, realised as `withFileSystem` realises a seed, owned by root
+    /// unless an entry says otherwise. On Linux it is a devtmpfs, whose every
+    /// inode is made at the epoch, as devtmpfs makes its own nodes before the
+    /// realtime clock is set; on Darwin a devfs, whose inodes are made at the
+    /// whole second `withBootTime` set and born at the epoch.
     ///
     /// Each name is what `readdir(3)` lists and `stat(2)` reports, whether or
     /// not this kernel has a driver for the number a node holds; opening a
     /// node whose number has none raises `UnmodelledException`
-    /// (`CharacterDevice.all` lists the drivers). A name it does not hold is
-    /// ENOENT. `UnixSystem.defaultDevtmpfsContents` is what it holds unless
-    /// this is called.
+    /// (`CharacterDevice.all` lists the drivers, all of them Linux's). A name
+    /// it does not hold is ENOENT. `UnixSystem.defaultDevtmpfsContents` and
+    /// `UnixSystem.defaultDevfsContents` are what it holds unless this is
+    /// called.
     ///
-    /// Raises `UnmodelledException` on Darwin, whose devfs this kernel does
-    /// not model, and for contents holding a regular file or a symbolic link:
-    /// a devtmpfs makes only device nodes and the directories holding them, at
-    /// boot, and anything else in it was made by a process afterwards, at a
-    /// time and with an access-time history this configuration does not
-    /// describe.
+    /// Raises `UnmodelledException` for contents holding a regular file or a
+    /// symbolic link: a device filesystem makes only device nodes and the
+    /// directories holding them, at boot, and anything else in it was made by
+    /// a process afterwards, at a time and with an access-time history this
+    /// configuration does not describe. Likewise, on Darwin, for a directory
+    /// whose mode is not 0555 or whose owner is not root, which is how devfs
+    /// makes every directory, and for a directory holding two names that might
+    /// be canonically equivalent spellings of one, which this kernel cannot
+    /// tell apart.
     ///
     /// The root filesystem is what `withFileSystem` last set, whichever of the
     /// two was called first.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The contents hold an entry whose name is past Linux's `NAME_MAX`, so no devtmpfs could hold it. The contents hold a forged name, such as `Unchecked.defaultof`.</exception>
+    /// <exception cref="T:System.ArgumentException">The contents hold an entry whose name is longer than the device filesystem holds: Linux's `NAME_MAX` for a devtmpfs, 31 bytes for Darwin's devfs. On Darwin, a node holds a number its 32-bit `dev_t` cannot encode: a major past 255 or a minor past 0xFFFFFF. The contents hold a forged name, such as `Unchecked.defaultof`.</exception>
     let withDeviceFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (contents : Map<DirectoryEntryName, SeedEntry>)
         (image : UnixBootImage<'Thread, 'Handler>)
@@ -1148,14 +1202,32 @@ module UnixBootImage =
             Error (BootTimeRefusal.FinerThanMicrosecond bootTime)
         else
 
+        // A devfs's times are the boot's, so the filesystem is realised afresh
+        // from what the other setters last set.
+        match
+            UnixSystem.realiseFileSystem
+                machine.UnixPlatform
+                machine.DeviceMount
+                bootTime
+                image.RootSeed
+                image.DeviceContents
+        with
+        | Error fault ->
+            failwith
+                $"UnixBootImage.withBootTime: mounting the device filesystem failed with %A{fault}, over a root seed it was mounted over before (this is a bug in this library)."
+        | Ok filesystem ->
+
         { machine with
             BootTime = bootTime
+            CommittedFileSystem = CommittedFileSystem.initial filesystem
         }
         |> withMachine image
         |> Ok
 
     /// <summary>
-    /// Set what the realtime clock read when this machine booted.
+    /// Set what the realtime clock read when this machine booted. On Darwin,
+    /// the device filesystem's times are this instant's whole second, whichever
+    /// of this and the filesystem setters was called first.
     ///
     /// Refuses an instant before the Unix epoch, since this library models no
     /// realtime clock reading before it, and one after `UnixMachineState.maxBootTimeSeconds`, from

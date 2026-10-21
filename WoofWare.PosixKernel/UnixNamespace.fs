@@ -317,6 +317,11 @@ type internal RenameRefusal =
     /// The call would move `name` out of `directory`, on the device
     /// filesystem, which no name can be removed from here.
     | DeviceFileSystem of directory : InodeNumber * name : DirectoryEntryName
+    /// The destination is `directory`, on Darwin's devfs, reached by a final
+    /// "." or "..". devfs answers that shape by rules of its own, EISDIR,
+    /// EINVAL and EPERM among them, which have been measured only for a few
+    /// combinations.
+    | DevfsNavigationDestination of directory : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal RenameRefusal =
@@ -328,7 +333,9 @@ module internal RenameRefusal =
         | RenameRefusal.MountPoint mountRoot ->
             $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it onto itself is 0, and to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
         | RenameRefusal.DeviceFileSystem (directory, name) ->
-            $"the call would move \"%s{DirectoryEntryName.toEscaped name}\" out of inode %O{directory}, on the device filesystem, which holds only the nodes of the devices this kernel has drivers for; it removes none of them, because it could not then say what a real one answers for the name."
+            $"the call would move \"%s{DirectoryEntryName.toEscaped name}\" out of inode %O{directory}, on the device filesystem, which holds what its configuration says; it removes none of it, because it could not then say what a real one answers for the name."
+        | RenameRefusal.DevfsNavigationDestination directory ->
+            $"the destination is inode %O{directory}, on Darwin's devfs, reached by a final \".\" or \"..\". Measured on Darwin 27.0, devfs answers that shape by rules of its own (EISDIR, EINVAL and EPERM among them), only for a few combinations, which this kernel does not model."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : RenameRefusal) : RefusalKind =
@@ -336,6 +343,7 @@ module internal RenameRefusal =
         | RenameRefusal.Path inner -> PathRefusal.kind inner
         | RenameRefusal.MountPoint _ -> RefusalKind.Unmodelled
         | RenameRefusal.DeviceFileSystem _ -> RefusalKind.Unmodelled
+        | RenameRefusal.DevfsNavigationDestination _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `clonefile(2)`.
 [<RequireQualifiedAccess>]
@@ -797,6 +805,31 @@ module UnixNamespace =
             failwith
                 $"%s{context}: about to create an inode in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
 
+    /// The inodes a resolution reached: the directory it ended in, and what
+    /// its final name names, if anything.
+    let private resolvedInodes (resolution : Resolution) : InodeNumber list =
+        match resolution.Target with
+        | ResolvedTarget.Directory (inode, _) -> [ inode ]
+        | ResolvedTarget.Entry (directory, _, existing) -> directory :: Option.toList existing
+
+    /// The refusal owed a privileged caller whose call reached `inodes`, if
+    /// one is on Darwin's devfs, where the call would change a name, link
+    /// from one, or change a mode or owner. devfs refuses an unprivileged
+    /// caller EPERM (measured), and what it answers root has not been
+    /// measured, so it is refused once the call's walks have resolved.
+    let private devfsPrivilegedCaller
+        (credentials : Credentials)
+        (inodes : InodeNumber list)
+        (vfs : VirtualFileSystem)
+        : PathRefusal option
+        =
+        match Credentials.privilege credentials with
+        | CallerPrivilege.Unprivileged -> None
+        | CallerPrivilege.Privileged ->
+            inodes
+            |> List.tryFind (fun inode -> VirtualFileSystem.isOnDevfs inode vfs)
+            |> Option.map PathRefusal.DevfsPrivilegedCaller
+
     /// The refusal owed for binding `name` in `directory`, if `directory` is
     /// on the device filesystem. Asked once every errno the call owes has
     /// been answered: a real devtmpfs answers them as any tmpfs does, and
@@ -1048,6 +1081,15 @@ module UnixNamespace =
         | Error (PathFailure.Errno error) -> Ok (DescriptorAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (OpenRefusal.Path refusal)
         | Ok resolution ->
+
+        match
+            if flags.Create then
+                devfsPrivilegedCaller credentials (resolvedInodes resolution) system.Machine.FileSystem
+            else
+                None
+        with
+        | Some refusal -> Error (OpenRefusal.Path refusal)
+        | None ->
 
         match
             CreatingOpenRules.verdict
@@ -1729,6 +1771,10 @@ module UnixNamespace =
         | None ->
             match flavour with
             | SimulatedUnixFlavour.Linux -> Ok (ReadDirectoryAnswer.EndOfDirectory, read)
+            // devfs moves it at the end too (`docs/probes/devfs-darwin`, TIMES
+            // rows), where APFS does not.
+            | SimulatedUnixFlavour.Darwin when VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem ->
+                Ok (ReadDirectoryAnswer.EndOfDirectory, read)
             | SimulatedUnixFlavour.Darwin -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
         | Some (name, target, next) ->
 
@@ -1829,6 +1875,12 @@ module UnixNamespace =
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error refusal
         | Ok resolution ->
+
+        match
+            devfsPrivilegedCaller system.Process.Credentials (resolvedInodes resolution) system.Machine.FileSystem
+        with
+        | Some refusal -> Error refusal
+        | None ->
 
         match
             MkDirRules.verdict
@@ -2008,6 +2060,12 @@ module UnixNamespace =
         | Error (PathFailure.Refused refusal) -> Error (MkNodRefusal.Path refusal)
         | Ok resolution ->
 
+        match
+            devfsPrivilegedCaller system.Process.Credentials (resolvedInodes resolution) system.Machine.FileSystem
+        with
+        | Some refusal -> Error (MkNodRefusal.Path refusal)
+        | None ->
+
         let rules = SimulatedUnixPlatform.creatingOpenRules platform
 
         // Measured (`mknodat-rules.c`, PATH and MODE): past the walk, a
@@ -2174,6 +2232,12 @@ module UnixNamespace =
         | None ->
 
         match
+            devfsPrivilegedCaller system.Process.Credentials (resolvedInodes resolution) system.Machine.FileSystem
+        with
+        | Some refusal -> Error (RemovalRefusal.Path refusal)
+        | None ->
+
+        match
             UnlinkRules.verdict
                 (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
                 system.Process.Credentials
@@ -2277,6 +2341,12 @@ module UnixNamespace =
         // parent's rule consults; see `RemovalRefusal.MountPoint`.
         match RemovalChecks.mountPointInStickyDirectory resolution system.Machine.FileSystem with
         | Some mountRoot -> Error (RemovalRefusal.MountPoint mountRoot)
+        | None ->
+
+        match
+            devfsPrivilegedCaller system.Process.Credentials (resolvedInodes resolution) system.Machine.FileSystem
+        with
+        | Some refusal -> Error (RemovalRefusal.Path refusal)
         | None ->
 
         match
@@ -2701,6 +2771,23 @@ module UnixNamespace =
         | Ok (sourceResolution, destinationResolution) ->
 
         let vfs = system.Machine.FileSystem
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        match
+            devfsPrivilegedCaller
+                system.Process.Credentials
+                (resolvedInodes sourceResolution @ resolvedInodes destinationResolution)
+                vfs
+        with
+        | Some refusal -> Error (RenameRefusal.Path refusal)
+        | None ->
+
+        match destinationResolution.Target with
+        | ResolvedTarget.Directory (directory, FinalNavigation.Current)
+        | ResolvedTarget.Directory (directory, FinalNavigation.Parent) when VirtualFileSystem.isOnDevfs directory vfs ->
+            Error (RenameRefusal.DevfsNavigationDestination directory)
+        | ResolvedTarget.Directory _
+        | ResolvedTarget.Entry _ ->
 
         let mountRootNamed (resolution : Resolution) : InodeNumber option =
             match resolution.Target with
@@ -2733,6 +2820,15 @@ module UnixNamespace =
         let verdict =
             match mountRootNamed sourceResolution, mountRootNamed destinationResolution, verdict with
             | None, None, verdict -> Ok verdict
+            // Darwin compares the moved object's mount with the destination's,
+            // so a mount point moved, or displaced, by another name is EXDEV
+            // whatever else is true of it (measured, `docs/probes/devfs-darwin`:
+            // `rename("/dev", "/tmp/x")` and `rename("/tmp/f", "/dev")`). A
+            // mount point renamed onto itself has not been measured there.
+            | Some source, Some destination, _ when source = destination && flavour = SimulatedUnixFlavour.Darwin ->
+                Error (RenameRefusal.MountPoint source)
+            | _, _, (RenameVerdict.Refuse UnixError.EXDEV as crossed) when flavour = SimulatedUnixFlavour.Darwin ->
+                Ok crossed
             | Some source, Some destination, RenameVerdict.NoOp when
                 source = destination
                 && SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
@@ -2975,9 +3071,12 @@ module UnixNamespace =
                         Ownership = paused.Ownership
                     }
             )
+        // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, NS rows):
+        // `clonefile("/dev/null", <a free name>)` is EINVAL, as XNU refuses a
+        // source that is neither a file, a directory nor a link before it
+        // looks the destination up.
         | Some (InodeContent.CharacterDevice _) ->
-            failwith
-                $"UnixNamespace.cloneFileWithSource: the source resolved to inode %O{inode}, a character device; clonefile(2) is Darwin's, and this kernel holds no device on Darwin (this is a bug in this library)."
+            Ok (CallProgress.Answered (SyscallAnswer.Failed UnixError.EINVAL, system))
         | Some (InodeContent.Socket _) ->
             failwith
                 $"UnixNamespace.cloneFileWithSource: the source resolved to inode %O{inode}, which is a socket. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
@@ -3275,6 +3374,12 @@ module UnixNamespace =
         | Ok resolution ->
 
         match
+            devfsPrivilegedCaller system.Process.Credentials (resolvedInodes resolution) system.Machine.FileSystem
+        with
+        | Some refusal -> Error (SymlinkRefusal.Path refusal)
+        | None ->
+
+        match
             SymlinkRules.verdict
                 (SimulatedUnixPlatform.bindableEntryNames system.Machine.UnixPlatform)
                 system.Process.Credentials
@@ -3421,10 +3526,12 @@ module UnixNamespace =
         | Ok (Error error) -> Ok (CallProgress.Answered (SyscallAnswer.Failed error, system))
         | Ok (Ok inode) ->
 
-        match UnixMachineState.fileSystemTypeOf inode system.Machine with
-        | EmulatedFileSystemType.Nfs -> Error (LinkRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs)
-        | EmulatedFileSystemType.Tmpfs
-        | EmulatedFileSystemType.Apfs ->
+        match UnixMachineState.fileSystemOf inode system.Machine with
+        | InodeFileSystem.Typed EmulatedFileSystemType.Nfs ->
+            Error (LinkRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs)
+        | InodeFileSystem.Typed EmulatedFileSystemType.Tmpfs
+        | InodeFileSystem.Typed EmulatedFileSystemType.Apfs
+        | InodeFileSystem.Devfs ->
 
         let isDirectory =
             match VirtualFileSystem.tryGetContent inode vfs with
@@ -3596,6 +3703,15 @@ module UnixNamespace =
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (LinkRefusal.Path refusal)
         | Ok resolution ->
+
+        match
+            devfsPrivilegedCaller
+                system.Process.Credentials
+                (paused.Source :: resolvedInodes resolution)
+                system.Machine.FileSystem
+        with
+        | Some refusal -> Error (LinkRefusal.Path refusal)
+        | None ->
 
         match
             LinkRules.verdict

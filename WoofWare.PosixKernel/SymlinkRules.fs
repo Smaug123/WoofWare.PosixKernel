@@ -56,6 +56,20 @@ module internal SymlinkRules =
         // and Darwin 27.0: "." is EEXIST; EEXIST and the trailing separator's
         // ENOENT each beat an unwritable directory's EACCES, and EACCES beats
         // Darwin's EILSEQ. `at-dirfd.c` measured the orphan's ENOENT.
+        //
+        // Darwin's devfs refuses an unprivileged caller an existing name EPERM
+        // where every other filesystem answers EEXIST (`docs/probes/devfs-darwin`,
+        // NS rows: `symlink(x, /dev/null)` and `symlink(x, /dev/monotonic)`);
+        // a free name there is `NewNameRules`'.
+        match resolution.Target with
+        | ResolvedTarget.Entry (directory, _, Some _) when
+            VirtualFileSystem.isOnDevfs directory vfs
+            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            ->
+            SymlinkVerdict.Refuse UnixError.EPERM
+        | ResolvedTarget.Entry _
+        | ResolvedTarget.Directory _ ->
+
         match
             NewNameRules.verdict
                 FreeNameTrailingSeparator.NoSuchEntry

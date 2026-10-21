@@ -841,15 +841,20 @@ module UnixDescriptor =
                     // 1, 5 and 37 entries for offsets INT64_MIN, -10000,
                     // -size-1, -size, -size+1, -1, 0, 1, 7, 2^40 and
                     // INT64_MAX-size-1 .. INT64_MAX.
-                    match UnixMachineState.fileSystemTypeOf inode system.Machine with
+                    match UnixMachineState.fileSystemOf inode system.Machine with
                     // Linux 6.18.5: EINVAL for every offset, leaving the
                     // position where it was. A tmpfs directory's `llseek`
                     // takes `SEEK_SET` and `SEEK_CUR` only.
-                    | EmulatedFileSystemType.Tmpfs -> Ok (SeekEndBasis.Fails UnixError.EINVAL)
+                    | InodeFileSystem.Typed EmulatedFileSystemType.Tmpfs -> Ok (SeekEndBasis.Fails UnixError.EINVAL)
+                    // Darwin 27.0 (`docs/probes/devfs-darwin`, DIRFD rows): the
+                    // size `stat` reports, as on APFS, whose arithmetic is
+                    // Darwin's `lseek` for any vnode.
+                    | InodeFileSystem.Devfs ->
+                        Ok (SeekEndBasis.Size (Devfs.directorySize inode system.Machine.FileSystem))
                     // macOS 26.6: exactly a regular file's arithmetic over the
                     // size `stat` reports — EINVAL below zero, EOVERFLOW past
                     // INT64_MAX.
-                    | EmulatedFileSystemType.Apfs ->
+                    | InodeFileSystem.Typed EmulatedFileSystemType.Apfs ->
                         match
                             EmulatedFileSystemType.directorySize EmulatedFileSystemType.Apfs directory.Entries.Count
                         with
@@ -858,7 +863,7 @@ module UnixDescriptor =
                             failwith
                                 "UnixDescriptor.lseek: EmulatedFileSystemType.directorySize states no size for an APFS directory, which is what SEEK_END on one is measured from (this is a bug in this library)"
                     // The size is the server's, as for `stat`.
-                    | EmulatedFileSystemType.Nfs -> Error (LSeekRefusal.DirectoryEnd inode)
+                    | InodeFileSystem.Typed EmulatedFileSystemType.Nfs -> Error (LSeekRefusal.DirectoryEnd inode)
 
         match basis with
         | Error refusal -> Error refusal

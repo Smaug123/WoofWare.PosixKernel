@@ -226,6 +226,12 @@ module private RemovalChecks =
         | StickyRemoval.ForbiddenButPrivileged -> false
         | StickyRemoval.Forbidden -> true
 
+    /// Whether `inode` is the root of a filesystem: the root itself, or the
+    /// root of a mounted one, which XNU marks `VROOT`.
+    let isMountRoot (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
+        inode = VirtualFileSystem.root vfs
+        || (VirtualFileSystem.mountOf inode vfs).IsSome
+
     /// <summary>
     /// Whether the inode a name is bound to is a directory.
     /// </summary>
@@ -330,17 +336,23 @@ module internal UnlinkRules =
     ///
     ///  * A path that consumed no component at all — "/", or a symlink whose
     ///    target was "/" — is EISDIR.
-    ///  * The root reached by "." or ".." is EBUSY, which is XNU's `unlink1`
-    ///    refusing a mount's root vnode (`vp->v_flag & VROOT`). This library
-    ///    mounts no filesystem a Darwin path can reach (its devfs is refused),
-    ///    so "the root of a mount" and "the root" are the same inode. Measured: `unlink("/.")`, `unlink("/..")` and — through
-    ///    `lroot -> "/"` — `unlink("lroot/.")` are EBUSY, where `unlink("d/.")`
-    ///    on an ordinary directory is EPERM.
+    ///  * The root of a mount reached by "." or ".." is EBUSY, which is XNU's
+    ///    `unlink1` refusing a mount's root vnode (`vp->v_flag & VROOT`): the
+    ///    root, or the root of the device filesystem. Measured:
+    ///    `unlink("/.")`, `unlink("/..")` and — through `lroot -> "/"` —
+    ///    `unlink("lroot/.")` are EBUSY, where `unlink("d/.")` on an ordinary
+    ///    directory is EPERM.
     ///  * Any other directory reached with no final name is EPERM.
     ///  * A free final name is ENOENT.
+    ///  * A final name naming the root of a mount is EBUSY, as above:
+    ///    `unlink("/dev")` (`docs/probes/devfs-darwin`, NS rows).
     ///  * The target being a directory is EPERM, and beats the write check:
     ///    `unlink("nowrite/kdir")` is EPERM where `unlink("nowrite/kid")` is
     ///    EACCES. This is the arm Linux orders the other way round.
+    ///  * A name on devfs is EPERM to an unprivileged caller, where the write
+    ///    check would answer EACCES of its 0555 directories: `unlink("/dev/null")`
+    ///    (`docs/probes/devfs-darwin`, NS rows). A privileged caller is
+    ///    refused before this verdict is asked.
     ///  * Removing a name needs write on the directory holding it: EACCES.
     ///  * A sticky directory forbids removing an entry the caller owns neither
     ///    of, and Darwin spends EACCES on it where Linux spends EPERM — so it is
@@ -373,7 +385,7 @@ module internal UnlinkRules =
             | FinalNavigation.Root -> UnlinkVerdict.Refuse UnixError.EISDIR
             | FinalNavigation.Current
             | FinalNavigation.Parent ->
-                if inode = VirtualFileSystem.root vfs then
+                if RemovalChecks.isMountRoot inode vfs then
                     UnlinkVerdict.Refuse UnixError.EBUSY
                 else
                     UnlinkVerdict.Refuse UnixError.EPERM
@@ -383,7 +395,14 @@ module internal UnlinkRules =
         | None -> UnlinkVerdict.Refuse UnixError.ENOENT
         | Some target ->
 
-        if RemovalChecks.isDirectory target vfs then
+        if RemovalChecks.isMountRoot target vfs then
+            UnlinkVerdict.Refuse UnixError.EBUSY
+        elif RemovalChecks.isDirectory target vfs then
+            UnlinkVerdict.Refuse UnixError.EPERM
+        elif
+            VirtualFileSystem.isOnDevfs directory vfs
+            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+        then
             UnlinkVerdict.Refuse UnixError.EPERM
         elif
             RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs
@@ -589,13 +608,13 @@ module internal RmDirRules =
     ///
     ///  * A path that consumed no component at all — "/", or a symlink whose
     ///    target was "/" — is EISDIR. Where Linux gives that path EBUSY.
-    ///  * The root reached by "." or ".." is EBUSY, which is XNU refusing a
-    ///    mount's root vnode; this library mounts no filesystem a Darwin path can
-    ///    reach (its devfs is refused), so "the root of a mount" and "the root"
-    ///    are the same inode. Measured: `rmdir("/.")`,
-    ///    `rmdir("/..")` and — through `lroot -> "/"` — `rmdir("lroot/.")` are
-    ///    EBUSY, where Linux answers those EINVAL and ENOTEMPTY. So Darwin
-    ///    specialises the *inode* where Linux specialises the path.
+    ///  * The root of a mount reached by "." or ".." is EBUSY, which is XNU
+    ///    refusing a mount's root vnode: the root, or the root of the device
+    ///    filesystem. Measured: `rmdir("/.")`, `rmdir("/..")` and — through
+    ///    `lroot -> "/"` — `rmdir("lroot/.")` are EBUSY, where Linux answers
+    ///    those EINVAL and ENOTEMPTY, and so are `rmdir("/dev/.")` and
+    ///    `rmdir("/dev/monotonic/..")` (`docs/probes/devfs-darwin`, NS rows).
+    ///    So Darwin specialises the *inode* where Linux specialises the path.
     ///  * Any other directory reached by "." or ".." is EINVAL, and that
     ///    beats the write check: `rmdir("nowrite/kdir/..")` is EINVAL. Linux
     ///    agrees about "." and gives ".." ENOTEMPTY.
@@ -603,6 +622,12 @@ module internal RmDirRules =
     ///  * The target not being a directory is ENOTDIR, and beats the write
     ///    check: `rmdir("nowrite/kid")` is ENOTDIR where `rmdir("nowrite/kdir")`
     ///    is EACCES. This is the arm Linux orders the other way round.
+    ///  * A final name naming the root of a mount is EBUSY, ahead of the write
+    ///    check: `rmdir("/dev")`, whose parent the caller may not write.
+    ///  * A directory on devfs is EPERM to an unprivileged caller, ahead of the
+    ///    write check and of ENOTEMPTY: `rmdir("/dev/monotonic")`
+    ///    (`docs/probes/devfs-darwin`, NS rows). A privileged caller is
+    ///    refused before this verdict is asked.
     ///  * Removing a name needs write on the directory holding it: EACCES.
     ///  * A sticky directory forbids removing an entry the caller owns neither
     ///    of, with EACCES, as `unlink`'s does on this flavour: below ENOTDIR
@@ -630,7 +655,7 @@ module internal RmDirRules =
             | FinalNavigation.Root -> RmDirVerdict.Refuse UnixError.EISDIR
             | FinalNavigation.Current
             | FinalNavigation.Parent ->
-                if inode = VirtualFileSystem.root vfs then
+                if RemovalChecks.isMountRoot inode vfs then
                     RmDirVerdict.Refuse UnixError.EBUSY
                 else
                     RmDirVerdict.Refuse UnixError.EINVAL
@@ -642,6 +667,13 @@ module internal RmDirRules =
 
         if not (RemovalChecks.isDirectory target vfs) then
             RmDirVerdict.Refuse UnixError.ENOTDIR
+        elif RemovalChecks.isMountRoot target vfs then
+            RmDirVerdict.Refuse UnixError.EBUSY
+        elif
+            VirtualFileSystem.isOnDevfs directory vfs
+            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+        then
+            RmDirVerdict.Refuse UnixError.EPERM
         elif
             RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs
             || RemovalChecks.darwinStickyRefuses credentials directory name target vfs
