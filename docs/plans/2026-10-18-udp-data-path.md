@@ -93,10 +93,15 @@ output:
 - `udp-sendto.c`: `sendto` and `recvfrom` with their arguments and the
   socket's state crossed, to find which failure wins (section 2.15). Both
   flavours, and GitHub's runners (`runners/`), 2026-10-21.
+- `udp-sleepers.c`: whom each wake reaches when threads sleep in a receive on
+  one socket, and what each receiving call answers once woken (section
+  2.16). Both flavours, 2026-10-21.
 
 Each probe was run more than once. Every row repeated, except the two that are
 races by nature: which of several sleeping receivers took a datagram (S1), and
-whether Darwin's asynchronous ICMP error had arrived "at once" (L1).
+whether Darwin's asynchronous ICMP error had arrived "at once" (L1), and the
+order in which Darwin's sleepers, all woken at once, returned (V3, V5, V6 and
+V11 each came back in another order on another run).
 
 No x86-64 kernel was measured by hand. A host-equality test (section 5) checks
 Linux's column on CI's x86-64 and Darwin's locally.
@@ -611,6 +616,69 @@ having sent, as a datagram does: one another socket's `sendto` erred, then
 disconnected, paid 42 for a later datagram of 10 bytes where one that took the
 error by `SO_ERROR` paid 26.
 
+### 2.16 Sleeping receivers, several at once (V)
+
+`udp-sleepers.c` parks its sleepers 50 ms apart, then makes each event 100 ms
+after the last and prints who has returned. On Linux it also prints how often
+each sleeper still asleep has gone to sleep since the last one parked
+(`voluntary_ctxt_switches`): +1 would be a sleeper woken that slept again.
+Every such count was +0.
+
+**Linux wakes one sleeper per arrival, the earliest asleep**, for a datagram
+and for the ICMP error alike, and no other sleeper is woken at all:
+
+- three takers, two datagrams 100 ms apart: the first and second parked took
+  them (V1). Three peekers: one returned per datagram, in park order (V2), and
+  two datagrams back to back returned two (V3).
+- a peeker, a taker and a peeker: the first datagram returned the first
+  peeker and left the taker asleep, though the datagram stayed queued; the
+  second returned the taker, which took the first datagram (V4).
+- the error: one returned, the earliest (V6, V7), and a peeker takes it (V7,
+  V8). A datagram after it wakes the next (V6).
+- a sleeper still asleep when a signal comes, with a datagram queued,
+  answers the datagram rather than `EINTR` (V4, V7, V12).
+
+**Darwin wakes every sleeper**, for a datagram and for the error, and they
+race, in another order on another run (V3, V5, V6, V11):
+
+- three peekers all returned the datagram (V2, V3), and three all returned
+  the error, which stayed pending (V7). A peeker and a taker both returned
+  the error (V8).
+- of three takers, one took the error and the rest slept on (V6).
+
+**A close.** Linux leaves every sleeper asleep, through the closed descriptor
+or a `dup` (V11, V12). On Darwin:
+
+- a close of a descriptor that a receive sleeps through ends every receive
+  asleep on the socket with `EBADF`, through that descriptor or a `dup` (V11,
+  V12). It drains the socket for good: a receive through the `dup` that would
+  sleep answers `EBADF` at once from then on (V27, V29), while one with a
+  datagram queued takes it (V28).
+- a close of a descriptor no receive sleeps through changes nothing: a
+  receive asleep through the `dup` sleeps on, and later ones sleep (V24 to
+  V26).
+- a scratch run of the same on a connected TCP socket did the same, which
+  the TCP model does not (it ends only the reads made through the closed
+  descriptor); that is its own change.
+
+**What each call answers once woken** is what it answers with the datagram
+already queued (2.15), with these exceptions:
+
+| row | call | L | D |
+|---|---|---|---|
+| V13, V10 | `recv` of 0 bytes | sleeps; then takes the datagram and returns 0 | returns 0 at once |
+| V30 | `read` of 0 bytes | returns 0 at once | same |
+| V20 | `recvfrom`, length cell unmapped | sleeps; then takes the datagram, `EFAULT` | `EFAULT` at once (the cell is read first) |
+
+The rest, each a single sleeper and a datagram: `read` (V14) and
+`MSG_WAITALL` (V15) take it; a buffer nothing maps is `EFAULT`, the datagram
+taken on Linux and left on Darwin (V16); `recvfrom` writes the source and 16
+(V17); `MSG_TRUNC` returns the datagram's length on Linux and the bytes copied
+on Darwin (V18); a NULL cell is `EFAULT` on Linux and writes no source on
+Darwin (V19); a cell of -1 is `EINVAL` on Linux and is written 16 on Darwin
+(V21); a source nothing maps is `EFAULT` on Linux, and on Darwin returns the
+datagram with the cell written 16 (V22).
+
 ## 3. Design options
 
 ### 3.1 Where the datagrams wait
@@ -893,6 +961,33 @@ three peekers returned, and so did a peeker parked before a taker.
 **Recommend (b).** (a) is observably wrong for Linux peekers, and (b) costs
 one ordinal comparison over the socket's sleepers per arrival.
 
+U4 measured the error (2.16): on Linux it wakes the earliest sleeper too, and
+on Darwin every sleeper. So (b) treats the error as it treats a datagram on
+each flavour.
+
+How (b)'s mark is kept, and what the woken call answers (Patrick,
+2026-10-21; Decisions):
+
+- **The mark is made at arrival.** The send that delivers a datagram, or
+  raises the error, marks the earliest asleep receive on the socket, as a
+  futex wake marks its waiters (`ParkedFutex.TakenByWake`). A receive woken by
+  a signal and not yet finished is not asleep, so it is passed over, as Linux
+  passes over a task already woken. The sweep's exclusive queues
+  (`ExclusiveWaitQueue`), which choose among satisfied waiters at each sweep,
+  would wake a second peeker for a datagram the first left queued.
+- **One primitive, `WakePrimitive.DatagramReceivable of reader`.** Under
+  Darwin it holds while the socket holds a datagram or an error. Under Linux
+  it holds for the receive an arrival marked.
+- **`FinishedDatagramReceive` is a union by call**: `Read` holds what
+  `finishRead` answers for a `read` or `recv`, as `ConnectionRead` does, and
+  `RecvFrom` what `finishRecvFrom` answers. U5 adds `recvmsg`'s.
+- **A blocking Linux `recvfrom` stops for its length cell in the finish**,
+  after taking the datagram, at the `PausedRecvFrom` its non-blocking call
+  stops at. A Darwin one reads the cell before it sleeps, as it reads it
+  before anything else, and its park keeps the value.
+- **Darwin's drain** is a flag on the Darwin receiver, as `ListenState.Drained`
+  is on a listener and `KqueueState.Drained` on a kqueue.
+
 ## 4. Staging
 
 Each stage is a PR, green on its own, with the README changed alongside the API
@@ -984,9 +1079,9 @@ Patrick, 2026-10-18:
 - **3.3**: ties are refused; U1 delivers by a scan, and U2 adds the port index.
 - **Staging**: as section 4, U1 to U6 in order.
 
-Not put to Patrick, so the recommendation stands until he says otherwise:
 3.8's (b), Linux's earliest-parked wake (the draft recommended (a), which S3
-showed wrong for Linux).
+showed wrong for Linux), stood as the recommendation until Patrick chose how
+to keep its mark, for U4, on 2026-10-21 (below).
 
 Patrick, 2026-10-21, for U3:
 
@@ -997,6 +1092,16 @@ Patrick, 2026-10-21, for U3:
   `WouldBlock` and `Interrupted` for U4. Linux's failures after the datagram
   is copied (2.15) are a failure that says what the call wrote first, as
   `getsockopt`'s does.
+
+Patrick, 2026-10-21, for U4 (2.16, 3.8):
+
+- Linux's wake is marked at arrival, as a futex wake is, and both flavours
+  wait for one public primitive, `WakePrimitive.DatagramReceivable of
+  reader`.
+- `FinishedDatagramReceive` becomes a public union, `Read` and `RecvFrom`,
+  holding what each call's finishing function answers.
+- A blocking Linux `recvfrom` reads its length cell in the finish, through
+  `PausedRecvFrom`; a Darwin one reads it before it sleeps.
 
 Patrick, 2026-10-20, after U1b's host test failed on GitHub's runners, whose
 kernels and configuration differ from the container's (2.4):
