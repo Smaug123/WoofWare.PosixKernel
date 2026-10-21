@@ -243,7 +243,10 @@ host's version.
 GitHub's runners also configure what a stock kernel defaults: their
 `net.core.rmem_default` is 1048576, not 212992. Such a setting is boot
 configuration (`UnixBootImage.withUdpReceiveSpace`), and a host-equality test
-reads it from the host rather than assuming the default.
+reads it from the host rather than assuming the default. Darwin's suppression
+of a repeated ICMP port-unreachable error is configuration too
+(`net.inet.udp.port_unreach_rlc_bucket_ms`), which the machine holds at its
+measured default (`PortUnreachableReplies`).
 
 See `reference/probing.md` for the probe technique, including the two ways a
 set-ID measurement reads as "unsupported" when it is not.

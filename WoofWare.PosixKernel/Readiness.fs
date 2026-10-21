@@ -953,6 +953,9 @@ type internal SocketWake =
     | ShutDown of how : TcpShutdownHow
     /// The UDP socket sent a datagram, which left its send buffer at once.
     | DatagramSent
+    /// An ICMP port-unreachable error left `ECONNREFUSED` pending at the UDP
+    /// socket.
+    | ErrorRaised
 
 [<RequireQualifiedAccess>]
 module internal SocketWake =
@@ -980,6 +983,11 @@ module internal SocketWake =
         // registration on a UDP sender is reported after each send).
         | SocketWake.SendSpace
         | SocketWake.DatagramSent -> Some (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.WrBand)
+        // What `sock_def_error_report` passes its waiters. Every registration
+        // stores EPOLLERR, so every one is queued: measured (`udp-transfer.c`
+        // G7, in docs/plans/2026-10-18-udp-data-path), a registration for
+        // IN|ET alone is reported 0x8 after the send that raised the error.
+        | SocketWake.ErrorRaised -> Some EpollEvents.Err
         // State changes, which queue every registration regardless of interest:
         // the entry keeps the wake's position through a later interest change,
         // and delivery's re-poll does the filtering (measured, `order8.c`,
@@ -1027,6 +1035,12 @@ module internal SocketWake =
         // Measured (`udp-transfer.c` G6): a Darwin UDP sender's send
         // activates no EVFILT_WRITE.
         | SocketWake.DatagramSent -> []
+        // Measured (`udp-transfer.c` L1 and section 2.6 of
+        // docs/plans/2026-10-18-udp-data-path): the error makes EVFILT_READ
+        // ready, with data 0. Which filters it activates is unobservable
+        // here, since `kevent` refuses to register a UDP socket
+        // (`DarwinReadiness.modelsSocket`).
+        | SocketWake.ErrorRaised -> [ KqueueFilter.Read ]
 
     /// `wake` happened to the socket `socketId`: signal every epoll
     /// registration of it on the machine, and activate every kqueue
