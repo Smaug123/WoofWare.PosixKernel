@@ -1850,9 +1850,9 @@ module TestConnectedTransfer =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 serverSocket
-                                { machine.Sockets.[serverSocket] with
+                                { UnixMachineState.socket serverSocket machine with
                                     Phase = SocketPhase.Idle
                                 }
                                 machine.Sockets

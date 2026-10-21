@@ -742,7 +742,7 @@ module TestTransferCounts =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     {

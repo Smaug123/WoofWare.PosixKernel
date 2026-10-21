@@ -108,7 +108,9 @@ module TestSocketTable =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = sockets |> List.map (fun (id, socket) -> SocketId id, socket) |> Map.ofList
+                    Sockets =
+                        (SocketTable.empty, sockets)
+                        ||> List.fold (fun table (id, socket) -> SocketTable.set (SocketId id) socket table)
                     // Each UDP socket comes with its receive side, as
                     // `socket(2)` makes it.
                     DatagramReceivers =
@@ -167,7 +169,7 @@ module TestSocketTable =
         let _, kernel =
             NewSocket.create SocketDomain.Unix SocketKind.Datagram SocketProtocol.Default kernel
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 2
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 2
         (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 2L)
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
@@ -179,13 +181,13 @@ module TestSocketTable =
         let fd, kernel =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
 
         match closeFd fd kernel with
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> shouldEqual Map.empty
+        SocketTable.all (Kernel.machine kernel).Sockets |> shouldEqual Map.empty
         // Not rewound: identities are never reused, so the next socket does not
         // take the dead one's name.
         (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 1L)
@@ -215,7 +217,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         // And the surviving descriptor still resolves to it.
@@ -251,7 +253,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// A description naming a socket the table does not hold. `UnixMachineState.socket`
@@ -1027,7 +1029,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1188,7 +1190,7 @@ module TestSocketTable =
                     { machine with
                         Sockets =
                             machine.Sockets
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     ReuseAddress = true
@@ -1750,7 +1752,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
@@ -1859,7 +1861,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1966,7 +1968,7 @@ module TestSocketTable =
                                     else
                                         machine.UnixPlatform
                                 Sockets =
-                                    Map.add
+                                    SocketTable.set
                                         (SocketId 0L)
                                         { someSocket with
                                             Addressing =
@@ -2118,7 +2120,7 @@ module TestSocketTable =
                     { machine with
                         Sockets =
                             machine.Sockets
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
@@ -2132,7 +2134,7 @@ module TestSocketTable =
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) machine).Addressing
                                 }
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -2164,7 +2166,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId socketId)
                                 { someSocket with
                                     Addressing =
@@ -2255,7 +2257,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =

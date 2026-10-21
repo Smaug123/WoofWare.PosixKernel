@@ -234,7 +234,7 @@ module TestDatagramErrorAgainstHost =
     let private kernelPort (fd : int) (system : UnixSystem<int, string>) : uint16 =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (Kernel.machine system).Sockets.[socketId].Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith "a bound socket has no binding"
         | other -> failwith $"%A{other}"

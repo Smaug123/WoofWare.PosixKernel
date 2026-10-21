@@ -121,6 +121,7 @@
     <Compile Include="TestSocketAddress.fs" />
     <Compile Include="TestUnixSystemInvariants.fs" />
     <Compile Include="TestSocketTable.fs" />
+    <Compile Include="TestSocketTableIndex.fs" />
     <Compile Include="TestSocketEventDelivery.fs" />
     <Compile Include="SocketFuzz.fs" />
     <Compile Include="TestSocketFuzz.fs" />
@@ -328,6 +329,7 @@
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeMemo.fs" />
     <Compile Include="TestWakeSweepCost.fs" />
+    <Compile Include="TestDatagramDeliveryCost.fs" />
     <Compile Include="TestCloseCost.fs" />
     <Compile Include="TestOpenFileIndex.fs" />
     <Compile Include="TestCloseRegistrationCost.fs" />

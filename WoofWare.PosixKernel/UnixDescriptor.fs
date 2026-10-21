@@ -1579,7 +1579,7 @@ module UnixDescriptor =
         let system, datagrams =
             match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) when
-                UnixMachineState.receivesDatagrams (UnixMachineState.socket socketId system.Machine)
+                SocketTable.receivesDatagrams (UnixMachineState.socket socketId system.Machine)
                 ->
                 let count, receiver =
                     DatagramReceiver.queried (UnixMachineState.datagramReceiver socketId system.Machine)
@@ -2283,7 +2283,7 @@ module UnixDescriptor =
                     | SocketPhase.Listening listenState ->
                         { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
                                         Phase =

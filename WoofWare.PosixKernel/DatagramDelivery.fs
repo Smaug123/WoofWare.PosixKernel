@@ -105,7 +105,9 @@ module internal DatagramDelivery =
 
     /// The socket that receives a datagram from `from` to `destination`, if
     /// one does, among the sockets on `machine`, which takes `destination`'s
-    /// address as its own.
+    /// address as its own. Reads only the UDP sockets bound at
+    /// `destination`'s port, so its cost does not grow with the sockets
+    /// elsewhere on the machine.
     let receiverOf
         (machine : UnixMachineState)
         (from : Ipv4Endpoint)
@@ -116,12 +118,17 @@ module internal DatagramDelivery =
         // datagram at its port if it is bound to the destination's address or
         // the wildcard, and is unconnected or connected to the datagram's
         // source. A connected socket beats an unconnected one, and a specific
-        // address beats the wildcard.
+        // address beats the wildcard. The index hands over only the UDP
+        // sockets at the port, in the order of their identities, and the
+        // rest of the test below is asked of each of them as it was asked of
+        // every socket.
         let candidates =
-            machine.Sockets
-            |> Map.toList
-            |> List.choose (fun (socketId, socket) ->
-                if not (UnixMachineState.receivesDatagrams socket) then
+            SocketTable.datagramSocketsAt destination.Port machine.Sockets
+            |> Set.toList
+            |> List.choose (fun socketId ->
+                let socket = UnixMachineState.socket socketId machine
+
+                if not (SocketTable.receivesDatagrams socket) then
                     None
                 else
 

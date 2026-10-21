@@ -1108,7 +1108,7 @@ module UnixSocket =
 
         // A UDP socket's receive side is made with it.
         let receivers =
-            if UnixMachineState.receivesDatagrams socket then
+            if SocketTable.receivesDatagrams socket then
                 Map.add
                     socketId
                     (DatagramReceiver.create
@@ -1122,7 +1122,7 @@ module UnixSocket =
         { system with
             Machine =
                 { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+                    Sockets = SocketTable.set socketId socket system.Machine.Sockets
                     DatagramReceivers = receivers
                     NextSocketId = SocketId (raw + 1L)
                 }
@@ -1420,7 +1420,7 @@ module UnixSocket =
                     Machine =
                         { system.Machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
                                         Addressing = SocketAddressing.replaceBinding (Some bound) socket.Addressing
@@ -1459,7 +1459,7 @@ module UnixSocket =
             { system with
                 Machine =
                     { system.Machine with
-                        Sockets = Map.add socketId socket system.Machine.Sockets
+                        Sockets = SocketTable.set socketId socket system.Machine.Sockets
                     }
             }
 
@@ -1920,7 +1920,7 @@ module UnixSocket =
                 Machine =
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Addressing = SocketAddressing.Inet (Some bound)
@@ -2740,7 +2740,7 @@ module UnixSocket =
                 { system with
                     Machine =
                         { system.Machine with
-                            Sockets = Map.add socketId updated system.Machine.Sockets
+                            Sockets = SocketTable.set socketId updated system.Machine.Sockets
                         }
                 }
 
@@ -2949,7 +2949,7 @@ module UnixSocket =
                                 Machine =
                                     { system.Machine with
                                         Sockets =
-                                            Map.add
+                                            SocketTable.set
                                                 socketId
                                                 { socket with
                                                     Phase = SocketPhase.Refused RefusalError.Reported
@@ -2999,7 +2999,7 @@ module UnixSocket =
                     // docs/plans/2026-10-18-udp-data-path: ECONNREFUSED, then
                     // 0, through a null value buffer and at length 0 too).
                     | SocketPhase.Idle
-                    | SocketPhase.DatagramPeer _ when UnixMachineState.receivesDatagrams socket ->
+                    | SocketPhase.DatagramPeer _ when SocketTable.receivesDatagrams socket ->
                         match
                             DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine)
                         with

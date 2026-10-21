@@ -66,7 +66,7 @@ module TestKeventRegistration =
         let phase = (UnixMachineState.socket socketId (Kernel.machine system)).Phase
 
         let peerOpen (connection : ConnectionId) =
-            (Kernel.machine system).Sockets
+            SocketTable.all (Kernel.machine system).Sockets
             |> Map.exists (fun other socket ->
                 other <> socketId
                 && (
@@ -518,7 +518,7 @@ module TestKeventRegistration =
                         match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
                         | SocketPhase.Established (connection, _) when last ->
                             let survivors =
-                                (Kernel.machine after).Sockets
+                                SocketTable.all (Kernel.machine after).Sockets
                                 |> Map.filter (fun _ socket ->
                                     match socket.Phase with
                                     | SocketPhase.Established (c, _) -> c = connection

@@ -782,7 +782,7 @@ module TestPortHolders =
 
         let fail (what : string) : 'a =
             let sockets =
-                (Kernel.machine system).Sockets
+                SocketTable.all (Kernel.machine system).Sockets
                 |> Map.toList
                 |> List.map (fun (id, socket) -> id, socket.Phase, socket.Ipv4Binding, socket.ReuseAddress)
 

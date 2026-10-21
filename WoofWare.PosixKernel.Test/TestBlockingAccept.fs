@@ -775,7 +775,7 @@ module TestBlockingAccept =
         // No descriptor names the listener any more, so it is found by its
         // phase.
         let taken, left =
-            (Kernel.machine system).Sockets
+            SocketTable.all (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.pick (fun (_, socket) ->
                 match socket.Phase with
@@ -1794,7 +1794,7 @@ module TestBlockingAccept =
                         failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
-                    (Kernel.machine system).Sockets
+                    SocketTable.all (Kernel.machine system).Sockets
                     |> Map.tryPick (fun _ socket ->
                         match socket.Phase with
                         | SocketPhase.Listening listenState -> Some listenState
@@ -1976,7 +1976,7 @@ module TestBlockingAccept =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
                                         Phase =

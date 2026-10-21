@@ -68,7 +68,7 @@ module TestConnect =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
                     DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
@@ -216,7 +216,7 @@ module TestConnect =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 0L)
                                 { streamSocket None SocketPhase.Idle with
                                     Addressing = SocketAddressing.initial SocketDomain.Unix false

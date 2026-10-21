@@ -1863,7 +1863,7 @@ module TestBlockingConnection =
                     // The socket of an end goes exactly when nothing references
                     // its description.
                     let socketsLeft =
-                        (Kernel.machine system).Sockets
+                        SocketTable.all (Kernel.machine system).Sockets
                         |> Map.filter (fun _ socket -> (SocketPhase.connectionEnd socket.Phase).IsSome)
                         |> Map.count
 
@@ -2808,8 +2808,8 @@ module TestBlockingConnection =
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                     bytes.Length |> shouldEqual 100
                     // The call's return let go of the socket's last reference.
-                    (Kernel.machine after).Sockets.Count
-                    |> shouldEqual ((Kernel.machine system).Sockets.Count - 1)
+                    (SocketTable.all (Kernel.machine after).Sockets).Count
+                    |> shouldEqual ((SocketTable.all (Kernel.machine system).Sockets).Count - 1)
                 | other -> failwith $"%O{platform}: %A{other}"
             else
                 let system = Lone.waking [ 1 ] system
@@ -3004,8 +3004,8 @@ module TestBlockingConnection =
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 bytes.Length |> shouldEqual 100
 
-                (Kernel.machine after).Sockets.Count
-                |> shouldEqual ((Kernel.machine system).Sockets.Count - 1)
+                (SocketTable.all (Kernel.machine after).Sockets).Count
+                |> shouldEqual ((SocketTable.all (Kernel.machine system).Sockets).Count - 1)
 
                 UnixSystem.checkInvariants after |> shouldEqual []
             | other -> failwith $"read, time %d{seconds}: %A{other}"
@@ -3055,7 +3055,7 @@ module TestBlockingConnection =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socket
                                     { held with
                                         Options =

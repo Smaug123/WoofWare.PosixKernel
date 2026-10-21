@@ -372,7 +372,7 @@ module TestSocketBinding =
         (machine, Seq.indexed taken)
         ||> Seq.fold (fun machine (i, port) ->
             { machine with
-                Sockets = Map.add (SocketId (int64 i + 1L)) (occupant port) machine.Sockets
+                Sockets = SocketTable.set (SocketId (int64 i + 1L)) (occupant port) machine.Sockets
             }
         )
 

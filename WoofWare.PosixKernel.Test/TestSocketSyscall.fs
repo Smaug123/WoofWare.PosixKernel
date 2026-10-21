@@ -298,8 +298,8 @@ module TestSocketSyscall =
                 socket.Phase |> shouldEqual SocketPhase.Idle
                 socket.ReuseAddress |> shouldEqual false
 
-                Map.remove socketId (Kernel.machine after).Sockets
-                |> shouldEqual (Kernel.machine before).Sockets
+                SocketTable.all (SocketTable.remove socketId (Kernel.machine after).Sockets)
+                |> shouldEqual (SocketTable.all (Kernel.machine before).Sockets)
             | Ok (DescriptorAnswer.Failed _, after) -> after |> shouldEqual before
             | Error _ -> ()
 

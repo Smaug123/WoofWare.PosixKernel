@@ -1410,7 +1410,7 @@ module UnixReadWrite =
         // Darwin UDP socket, whatever it answers, changes what the datagrams
         // the socket receives from then on cost it.
         let system =
-            if UnixMachineState.receivesDatagrams socket then
+            if SocketTable.receivesDatagrams socket then
                 { system with
                     Machine =
                         UnixMachineState.withDatagramReceiver
@@ -1429,8 +1429,7 @@ module UnixReadWrite =
         // (`datagramWrite`).
         let pendingError =
             match flavour with
-            | SimulatedUnixFlavour.Darwin when UnixMachineState.receivesDatagrams socket ->
-                takePendingError socketId system
+            | SimulatedUnixFlavour.Darwin when SocketTable.receivesDatagrams socket -> takePendingError socketId system
             | SimulatedUnixFlavour.Darwin
             | SimulatedUnixFlavour.Linux -> None
 
@@ -1516,7 +1515,7 @@ module UnixReadWrite =
                             Machine =
                                 { machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { socket with
                                                 Addressing = SocketAddressing.Inet (Some binding)
@@ -1549,7 +1548,7 @@ module UnixReadWrite =
         // A Linux connect to port 0 leaves a peer no datagram can go to, and
         // what a send there answers is unmeasured.
         | SocketPhase.DatagramPeer (SocketAddress.Inet peer) when
-            UnixMachineState.receivesDatagrams socket && peer.Port <> 0us
+            SocketTable.receivesDatagrams socket && peer.Port <> 0us
             ->
             datagramWrite socketId peer buffer count system
         | SocketPhase.DatagramPeer _
@@ -2197,7 +2196,7 @@ module UnixReadWrite =
 
             let socket = UnixMachineState.socket socketId system.Machine
 
-            if UnixMachineState.receivesDatagrams socket then
+            if SocketTable.receivesDatagrams socket then
                 receiveDatagram
                     DatagramReceiveCall.Read
                     (oneCallsWorth platform count)
@@ -2930,7 +2929,7 @@ module UnixReadWrite =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
-        if UnixMachineState.receivesDatagrams socket then
+        if SocketTable.receivesDatagrams socket then
             receiveDatagram
                 (DatagramReceiveCall.Receive (flags.Peek, false))
                 count
@@ -4567,7 +4566,7 @@ module UnixReadWrite =
 
         // A UDP send never waits, so neither O_NONBLOCK nor MSG_DONTWAIT
         // changes it (`docs/probes/datagram-park`, row S1).
-        if UnixMachineState.receivesDatagrams socket then
+        if SocketTable.receivesDatagrams socket then
             Ok (Ok (SendTarget.Datagram socketId))
         else
 

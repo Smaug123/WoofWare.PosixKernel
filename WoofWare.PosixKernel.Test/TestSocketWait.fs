@@ -98,7 +98,7 @@ module TestSocketWait =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add (SocketId 0L) socket machine.Sockets
+                    Sockets = SocketTable.set (SocketId 0L) socket machine.Sockets
                     DatagramReceivers = ForgedSocket.receivers (SocketId 0L) socket machine
                     NextSocketId = SocketId 1L
                 }
