@@ -13,3 +13,10 @@ and run as the runner's own user.
 `TestDatagramReceiver` replays the capacity, truesize and release files, each
 at its kernel's version and build. The transfer and source files are kept as
 evidence that nothing else in the data path differs on these kernels.
+
+`udp-sendto.c` ran on the same runners on 2026-10-21, at their own
+`net.core.rmem_default`, which none of its rows depends on. Its files are
+named by kernel release and architecture alone. `TestDatagramSendToProbe`
+replays them, each at its kernel's version: they differ from 6.18.5's only in
+when a `recvfrom` that faults copying the source address writes the length
+cell.

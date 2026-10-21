@@ -90,6 +90,9 @@ output:
 - `udp-error.c`: what each call does with an ICMP error pending, beyond
   section L of `udp-transfer.c` (section Y), and the sysctls that decide
   which datagrams are answered with one. Both flavours, 2026-10-20.
+- `udp-sendto.c`: `sendto` and `recvfrom` with their arguments and the
+  socket's state crossed, to find which failure wins (section 2.15). Both
+  flavours, and GitHub's runners (`runners/`), 2026-10-21.
 
 Each probe was run more than once. Every row repeated, except the two that are
 races by nature: which of several sleeping receivers took a datagram (S1), and
@@ -513,6 +516,90 @@ With a datagram queued from 127.0.0.1:p, the address length cell is in and out.
 | `MSG_NOSIGNAL`, `MSG_DONTROUTE`, an unknown bit (0x40000000) | ignored | same |
 | `MSG_DONTWAIT` on a blocking socket | `EAGAIN` when empty | same |
 
+### 2.15 Which failure wins: `sendto` and `recvfrom` (Z)
+
+Sections N and O vary one argument at a time. `udp-sendto.c` crosses them:
+Z1 is every `sendto` of six sender states, two buffers, five counts, two flag
+words and seventeen destinations (2040 calls), and Z2 every `recvfrom` of four
+queues, six length cells, three address buffers, two data buffers, three
+counts and four flag words (1728). Each ran on Darwin 27.0.0 twice, with the
+same answers, on Linux 6.18.5 in the container, and on GitHub's runners
+(6.17.0 and 7.0.0, x86-64 and aarch64). A script holding the ladders below
+predicted every call on every kernel, but the 60 Darwin receives into an
+unmapped buffer that 3.6 refuses.
+
+**`sendto` on Linux**, each rung ahead of the next:
+
+1. the buffer's range (`import_ubuf`), the descriptor;
+2. a destination longer than 128 (`EINVAL`), then its copy (`EFAULT`),
+   neither of which binds the socket;
+3. the socket binds, if it has no port;
+4. a count above 65535 (`EMSGSIZE`);
+5. `MSG_OOB` (`EOPNOTSUPP`);
+6. the destination: shorter than 16 (`EINVAL`), a family neither `AF_INET`
+   nor `AF_UNSPEC` (`EAFNOSUPPORT`), port 0 (`EINVAL`); or no destination on
+   an unconnected socket (`EDESTADDRREQ`). A connected socket sends to a
+   destination it is given;
+7. 255.255.255.255 (`EACCES`); 0.0.0.0 is the socket's own address, or
+   127.0.0.1;
+8. a count above 65507 (`EMSGSIZE`);
+9. the pending error, taken;
+10. the buffer's copy (`EFAULT`), then delivery.
+
+**`sendto` on Darwin**:
+
+1. the descriptor;
+2. the destination's copy: longer than 255 (`ENAMETOOLONG`), shorter than 2
+   (`EINVAL`), unmapped (`EFAULT`). Nothing before here marks the socket as
+   having sent (Z4), and every later rung does;
+3. `MSG_OOB` (`EOPNOTSUPP`);
+4. the pending error, taken;
+5. no destination on an unconnected socket (`EDESTADDRREQ`);
+6. a count above the send buffer (`EMSGSIZE`);
+7. the buffer's copy (`EFAULT`);
+8. a destination on a connected socket (`EISCONN`), whatever it holds;
+9. on a socket whose address is the wildcard, or which has no port: a length
+   other than 16 (`EINVAL`), a family other than `AF_INET` (`EAFNOSUPPORT`),
+   port 0 (`EADDRNOTAVAIL`). A socket bound to a concrete address checks none
+   of these: a family of 99, or a length of 8, sends to the address the bytes
+   hold, and port 0 is sent to;
+10. 0.0.0.0 and, from a socket whose address is the wildcard, 255.255.255.255
+    (`EHOSTUNREACH`, binding the socket); 255.255.255.255 from a concrete
+    address (`EACCES`);
+11. the socket binds, if it has no port, and the datagram is delivered.
+
+**`recvfrom` on Linux**:
+
+1. the buffer's range, the descriptor;
+2. the receive, as `recv`'s: the pending error first, taken even by
+   `MSG_PEEK`; then the queue; a receive into an unmapped buffer takes the
+   datagram, and a peek leaves it. `MSG_TRUNC` returns the datagram's length;
+3. only if the receive succeeded and the address is not NULL: the length
+   cell's read (`EFAULT`, NULL included), which is signed (`EINVAL` for
+   0xffffffff); the length written, 16; then the first `min(length, 16)` bytes
+   of the address (`EFAULT`). Before 6.18 the length is written after the
+   address, so a fault leaves the cell as it was: this is `getsockname`'s
+   `GetSockNameFaultLength`, through the same `move_addr_to_user`. Each
+   failure here comes after the datagram is taken and copied: the buffer
+   holds its bytes, and the call answers -1.
+
+**`recvfrom` on Darwin**:
+
+1. the descriptor;
+2. a length cell that is not NULL is read first (`EFAULT`, taking nothing);
+3. the receive: the queue first, then the error, which `MSG_PEEK` leaves
+   pending; with neither, 0 for a count of 0 and `EAGAIN` otherwise;
+4. if the receive succeeded and the address is not NULL: a datagram's address
+   is copied to the first `min(length, 16)` bytes, a fault there ignored and
+   the length left as it was, and otherwise the length written is 16; a length
+   of 0, a NULL cell, or a receive of 0 with no datagram writes 0 to the cell
+   and nothing to the address.
+
+**Z3.** A Darwin send that only takes a pending error marks the socket as
+having sent, as a datagram does: one another socket's `sendto` erred, then
+disconnected, paid 42 for a later datagram of 10 bytes where one that took the
+error by `SO_ERROR` paid 26.
+
 ## 3. Design options
 
 ### 3.1 Where the datagrams wait
@@ -735,7 +822,9 @@ is today. A peek that faults answers `EFAULT` on both, and changes nothing.
 
 **Flags.** Accept what section 2.14 measured, by flavour: `MSG_TRUNC` on a
 receive, and Linux's ignored `MSG_OOB` on a receive. Keep refusing every
-unmeasured bit, as today, rather than ignoring it as both kernels do.
+unmeasured bit, as today, rather than ignoring it as both kernels do. U3
+accepts `MSG_TRUNC` on `recvfrom` and `MSG_OOB` on a UDP `send` or `sendto`,
+whose place in each ladder 2.15 measured; `MSG_OOB` on a receive waits.
 
 ### 3.7 Readiness and wakes
 
@@ -841,7 +930,12 @@ it touches.
     holds a whole send to that.
 - **U3. `sendto` and `recvfrom`** (3.6): the argument and answer types, the
   destination ladder of 2.10 (sharing `connect`'s decoding and autobind), and
-  the source writes of 2.11.
+  the source writes of 2.11, in the order 2.15 measured.
+  - `sendto` with a NULL destination is `send`, on every socket, as each
+    kernel's own `send` is. One with a destination, on any socket but an IPv4
+    UDP one, is refused, as is `recvfrom` on one.
+  - A Darwin `recv(MSG_PEEK)` with an error pending leaves it pending (2.15),
+    where U1c's took it.
 - **U4. The blocking receive** (3.8): the park's fields, the primitive, the
   finish, and close per flavour. `ReadRefusal.DatagramSleep` goes.
 - **U5. `sendmsg` and `recvmsg`**: their design note, then the calls (2.12).
@@ -877,6 +971,16 @@ Patrick, 2026-10-18:
 Not put to Patrick, so the recommendation stands until he says otherwise:
 3.8's (b), Linux's earliest-parked wake (the draft recommended (a), which S3
 showed wrong for Linux).
+
+Patrick, 2026-10-21, for U3:
+
+- `Syscall.SendTo` and `RecvFrom` are tuple cases, as `Send` and `Connect`
+  are, with NULL as `Unmapped 0UL`; the reserved argument records go.
+- `recvfrom` answers `Received (bytes, returned, source)` with `source` an
+  `accept`'s `PeerAddressCopy`, or a failure, inside an outcome that keeps
+  `WouldBlock` and `Interrupted` for U4. Linux's failures after the datagram
+  is copied (2.15) are a failure that says what the call wrote first, as
+  `getsockopt`'s does.
 
 Patrick, 2026-10-20, after U1b's host test failed on GitHub's runners, whose
 kernels and configuration differ from the container's (2.4):
