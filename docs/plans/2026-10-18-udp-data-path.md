@@ -823,8 +823,8 @@ is today. A peek that faults answers `EFAULT` on both, and changes nothing.
 **Flags.** Accept what section 2.14 measured, by flavour: `MSG_TRUNC` on a
 receive, and Linux's ignored `MSG_OOB` on a receive. Keep refusing every
 unmeasured bit, as today, rather than ignoring it as both kernels do. U3
-accepts `MSG_TRUNC` on `recvfrom` and `MSG_OOB` on a UDP `send` or `sendto`,
-whose place in each ladder 2.15 measured; `MSG_OOB` on a receive waits.
+accepts `MSG_TRUNC` on `recvfrom`. `MSG_OOB` stays refused on every call:
+2.15 measured its place in each `sendto` ladder, for when it comes.
 
 ### 3.7 Readiness and wakes
 
