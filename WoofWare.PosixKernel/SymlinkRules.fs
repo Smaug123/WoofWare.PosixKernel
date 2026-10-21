@@ -57,15 +57,23 @@ module internal SymlinkRules =
         // ENOENT each beat an unwritable directory's EACCES, and EACCES beats
         // Darwin's EILSEQ. `at-dirfd.c` measured the orphan's ENOENT.
         //
-        // Darwin's devfs refuses an unprivileged caller an existing name EPERM
-        // where every other filesystem answers EEXIST (`docs/probes/devfs-darwin`,
-        // NS rows: `symlink(x, /dev/null)` and `symlink(x, /dev/monotonic)`);
-        // a free name there is `NewNameRules`'.
+        // Darwin's devfs refuses an unprivileged caller EPERM wherever every
+        // other filesystem answers the existing name's EEXIST: a name devfs
+        // holds, devfs's root by its own name, and a devfs directory reached
+        // by a final dot (`docs/probes/devfs-darwin`, NS rows:
+        // `symlink(x, /dev/null)`, `symlink(x, /dev)`, `symlink(x, /dev/.)`
+        // and `symlink(x, /dev/monotonic/..)`); a free name there is
+        // `NewNameRules`'.
+        let unprivileged = Credentials.privilege credentials = CallerPrivilege.Unprivileged
+
         match resolution.Target with
-        | ResolvedTarget.Entry (directory, _, Some _) when
-            VirtualFileSystem.isOnDevfs directory vfs
-            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+        | ResolvedTarget.Entry (directory, _, Some existing) when
+            unprivileged
+            && (VirtualFileSystem.isOnDevfs directory vfs
+                || VirtualFileSystem.isOnDevfs existing vfs)
             ->
+            SymlinkVerdict.Refuse UnixError.EPERM
+        | ResolvedTarget.Directory (inode, _) when unprivileged && VirtualFileSystem.isOnDevfs inode vfs ->
             SymlinkVerdict.Refuse UnixError.EPERM
         | ResolvedTarget.Entry _
         | ResolvedTarget.Directory _ ->

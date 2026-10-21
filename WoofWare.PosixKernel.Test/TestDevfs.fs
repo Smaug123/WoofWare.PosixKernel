@@ -627,6 +627,38 @@ module TestDevfs =
             UnixNamespace.tryMknod caller (path args.[0]) mode dev system
             |> ofResult MkNodRefusal.describe
             |> Some
+        | "linkat"
+        | "symlinkat" ->
+            // A directory removed while a descriptor holds it, as the probe
+            // made one.
+            let removed, system =
+                match UnixNamespace.tryMkdir caller (PathArg.ofText "/t/gone") 0o755 system with
+                | Ok (SyscallAnswer.Completed _, system) ->
+                    match DirectoryReading.openDirectory (UnixPath.parseOrFail context "/t/gone") system with
+                    | Ok fd, system ->
+                        match UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofText "/t/gone") system with
+                        | Ok (SyscallAnswer.Completed _, system) -> fd, system
+                        | other -> failwith $"%s{context}: removing /t/gone: %A{other}"
+                    | Error error, _ -> failwith $"%s{context}: opening /t/gone: %O{error}"
+                | other -> failwith $"%s{context}: making /t/gone: %A{other}"
+
+            let atFdCwd = AtDirectory.atFdCwd SimulatedUnixFlavour.Darwin
+
+            match syscall with
+            | "linkat" ->
+                Eager.tryLinkatAs
+                    (Callers.leader system)
+                    atFdCwd
+                    (path args.[0])
+                    removed
+                    (PathArg.ofText args.[2])
+                    0
+                    system
+                |> ofResult LinkRefusal.describe
+            | _ ->
+                Eager.trySymlinkatAs (Callers.leader system) (path args.[0]) removed (PathArg.ofText args.[2]) system
+                |> ofResult SymlinkRefusal.describe
+            |> Some
         | "symlink" ->
             Eager.trySymlink (path args.[0]) (path args.[1]) system
             |> ofResult SymlinkRefusal.describe

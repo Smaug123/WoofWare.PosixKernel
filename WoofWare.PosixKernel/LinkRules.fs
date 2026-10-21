@@ -76,20 +76,25 @@ module internal LinkRules =
         | DirectorySourceRefusal.BeforeDestination, _
         | DirectorySourceRefusal.Last, _ ->
 
-        // Darwin's devfs refuses an unprivileged caller a link from it or into
-        // it EPERM once the destination has been walked, ahead of the existing
-        // name's EEXIST, the cross-mount EXDEV and the write check, and behind
-        // only a free name's trailing separator (measured on Darwin 27.0,
-        // `docs/probes/devfs-darwin`, NS link rows, and `link-symlink.c`
-        // LINKDEV rows).
+        // Darwin's devfs refuses an unprivileged caller a link from it or onto
+        // anything of it EPERM once the destination has been walked, ahead of
+        // the existing name's EEXIST, the cross-mount EXDEV and the write
+        // check, and behind only a destination directory that has been
+        // removed and a free name's trailing separator, each ENOENT (measured
+        // on Darwin 27.0, `docs/probes/devfs-darwin`, NS link rows, among them
+        // `link(/dev/null, tmp/.)`, `link(tmp/f, /dev)`, `link(tmp/f, /dev/.)`
+        // and `linkat` into a removed directory; and `link-symlink.c` LINKDEV
+        // rows).
+        let onDevfs (inode : InodeNumber) = VirtualFileSystem.isOnDevfs inode vfs
+
         let devfsRefuses =
             Credentials.privilege credentials = CallerPrivilege.Unprivileged
             && match resolution.Target with
                | ResolvedTarget.Entry (directory, _, existing) ->
-                   (VirtualFileSystem.isOnDevfs source vfs
-                    || VirtualFileSystem.isOnDevfs directory vfs)
+                   (onDevfs source || onDevfs directory || Option.exists onDevfs existing)
+                   && not (VirtualFileSystem.isOrphanedDirectory directory vfs)
                    && (existing.IsSome || not resolution.TrailingSeparatorDemanded)
-               | ResolvedTarget.Directory _ -> false
+               | ResolvedTarget.Directory (inode, _) -> onDevfs source || onDevfs inode
 
         if devfsRefuses then
             LinkVerdict.Refuse UnixError.EPERM

@@ -473,6 +473,30 @@ int main(void) {
   NS("link(tmp/f, tmp/ro/n)", link(tf, tron), NULL);
   NS("rename(/dev/null, tmp/ro/n)", rename("/dev/null", tron), NULL);
   NS("rename(/dev/null, tmp/nox/n)", rename("/dev/null", tnoxn), NULL);
+  {
+    char tdot[300], tgone[300];
+    snprintf(tdot, sizeof tdot, "%s/.", tmp);
+    snprintf(tgone, sizeof tgone, "%s/gone", tmp);
+    NS("symlink(x, /dev)", symlink("x", "/dev"), NULL);
+    NS("symlink(x, /dev/.)", symlink("x", "/dev/."), NULL);
+    NS("symlink(x, /dev/monotonic/..)", symlink("x", "/dev/monotonic/.."), NULL);
+    NS("link(/dev/null, tmp/.)", link("/dev/null", tdot), NULL);
+    NS("link(tmp/f, /dev)", link(tf, "/dev"), NULL);
+    NS("link(tmp/f, /dev/.)", link(tf, "/dev/."), NULL);
+    NS("link(/dev/null, /dev/.)", link("/dev/null", "/dev/."), NULL);
+    NS("link(/dev/monotonic/uncore, /dev/monotonic/..)", link("/dev/monotonic/uncore", "/dev/monotonic/.."), NULL);
+    NS("clonefile(tmp/f, /dev)", clonefile(tf, "/dev", 0), NULL);
+    NS("mkdir(/dev/monotonic/..)", mkdir("/dev/monotonic/..", 0755), NULL);
+    // A directory removed while a descriptor holds it: linkat and symlinkat
+    // relative to it.
+    mkdir(tgone, 0755);
+    int gone = open(tgone, O_RDONLY | O_DIRECTORY);
+    rmdir(tgone);
+    NS("linkat(/dev/null, removed-dir, n)", linkat(AT_FDCWD, "/dev/null", gone, "n", 0), NULL);
+    NS("linkat(tmp/f, removed-dir, n)", linkat(AT_FDCWD, tf, gone, "n", 0), NULL);
+    NS("symlinkat(x, removed-dir, n)", symlinkat("x", gone, "n"), NULL);
+    close(gone);
+  }
   NS("clonefile(tmp/f, /dev/n)", clonefile(tf, "/dev/n", 0), "/dev/n");
   NS("clonefile(tmp/f, /dev/null)", clonefile(tf, "/dev/null", 0), NULL);
   NS("clonefile(tmp/f, /dev/nope/x)", clonefile(tf, "/dev/nope/x", 0), NULL);
