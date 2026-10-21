@@ -112,6 +112,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = phase
+                                            Drained = false
                                             Uid = UserId.root
                                         }
                                     ]
@@ -296,6 +297,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = SocketPhase.Established (connection, ConnectionEnd.Client)
+                                            Drained = false
                                             Uid = UserId.root
                                         }
                                     ]
@@ -726,6 +728,7 @@ module TestUnixSystemInvariants =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -767,7 +770,6 @@ module TestUnixSystemInvariants =
             {
                 Backlog = 8
                 Queue = []
-                Drained = false
             }
 
     [<Test>]

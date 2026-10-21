@@ -1821,6 +1821,11 @@ module UnixReadWrite =
         | TcpReadAnswer.WouldBlock ->
             if nonBlocking then
                 answered (ReadAnswer.Failed UnixError.EAGAIN)
+            elif (UnixMachineState.socket socketId system.Machine).Drained then
+                // Measured on Darwin 27.0.0 (`tcp-close-drain.c`, T7, T10 and
+                // T12): a read that would sleep on a drained socket answers
+                // EBADF at once.
+                answered (ReadAnswer.Failed UnixError.EBADF)
             else
                 // Measured on both (`tcp-blocking.c`, section R, and
                 // `tcp-recv-send.c` sections P and Z for `recv`): the call
@@ -3675,10 +3680,26 @@ module UnixReadWrite =
         }
         |> SocketWake.signalTransfer connectionId wakes
 
+    /// Whether a close has drained the socket the open file description
+    /// `description` names (`SocketDescription.Drained`).
+    let private socketDrainedThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (description : OpenFileDescriptionId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : bool
+        =
+        match OpenFileTable.tryFind description system.Machine.OpenFiles with
+        | Some {
+                   Target = OpenFileTarget.Socket socketId
+               } -> (UnixMachineState.socket socketId system.Machine).Drained
+        | found ->
+            failwith
+                $"UnixReadWrite: a connection write goes through open file description %O{description}, which is %A{found} rather than a live socket's (this is a bug in this library)."
+
     /// A blocking `call` by `thread`, of `count` bytes to `connectionEnd` of
     /// `connectionId` through `writer` and `fd`, once it has put the first
     /// `taken` of them, fewer than all, in: the count it has taken if
-    /// `returnsOnOwnReset`, and otherwise `thread` asleep for the rest.
+    /// `returnsOnOwnReset`, `EBADF` if a close has drained the socket, and
+    /// otherwise `thread` asleep for the rest.
     let private tookPart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (call : TcpSendCall)
@@ -3693,6 +3714,17 @@ module UnixReadWrite =
         =
         if returnsOnOwnReset connectionId connectionEnd system then
             WriteStep.Returns (WriteAnswer.Completed (int64 taken), system)
+        elif socketDrainedThrough writer system then
+            // Measured on Darwin 27.0.0 (`tcp-close-drain.c`, T21): the bytes
+            // taken stay queued, and a `write` that took some marks its
+            // description written, as one a close ends does.
+            let system =
+                match call with
+                | TcpSendCall.Write when taken > 0 -> markWritten writer system
+                | TcpSendCall.Write
+                | TcpSendCall.Send _ -> system
+
+            WriteStep.Returns (WriteAnswer.Failed UnixError.EBADF, system)
         else
             parkConnectionWrite thread call writer fd UserBuffer.Mapped count taken connectionId connectionEnd system
 
@@ -3756,6 +3788,10 @@ module UnixReadWrite =
                 WriteIntoThenSleep.Connection (connectionId, connectionEnd, call, descriptionId, fd)
 
             reading (WriteAdmission.TransferThenSleep (taken, count, into)) transfer
+        // Measured on Darwin 27.0.0 (`tcp-close-drain.c`, T15, T17 and T18):
+        // a write that would sleep on a drained socket answers EBADF at once.
+        | ConnectionWriteStep.Sleeps transfer when (UnixMachineState.socket socketId system.Machine).Drained ->
+            Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EBADF), withTransfer transfer))
         // Nothing is copied before the write sleeps, so the buffer is not
         // looked at until there is room.
         | ConnectionWriteStep.Sleeps transfer ->

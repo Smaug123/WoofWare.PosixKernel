@@ -50,6 +50,7 @@ module TestListen =
             ReuseAddress = reuse
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -191,7 +192,6 @@ module TestListen =
                         {
                             Backlog = 8
                             Queue = List.map ForgedConnection.queued queued
-                            Drained = false
                         }))
                 (systemOn platform)
 
@@ -283,7 +283,6 @@ module TestListen =
                             {
                                 Backlog = 8
                                 Queue = []
-                                Drained = false
                             }))
                     (systemOn platform)
 

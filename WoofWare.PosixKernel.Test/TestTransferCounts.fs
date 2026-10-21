@@ -750,6 +750,7 @@ module TestTransferCounts =
                                         Kind = SocketKind.Stream
                                         Protocol = SocketProtocol.Tcp
                                         Phase = SocketPhase.Idle
+                                        Drained = false
                                         Uid = UserId.root
                                         ReuseAddress = false
                                         Options = SocketOptions.initial

@@ -181,6 +181,7 @@ module TestKeventWriteData =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -456,7 +457,6 @@ module TestKeventWriteData =
                         {
                             Backlog = 1
                             Queue = []
-                            Drained = false
                         }),
                 darwinMachine None
                 "does not model",

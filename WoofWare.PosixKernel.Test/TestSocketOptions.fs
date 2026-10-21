@@ -636,7 +636,6 @@ module TestSocketOptions =
                         {
                             Backlog = 4
                             Queue = []
-                            Drained = false
                         })
             ]
 

@@ -948,7 +948,12 @@ it touches.
   - A Darwin `recv(MSG_PEEK)` with an error pending leaves it pending (2.15),
     where U1c's took it.
 - **U4. The blocking receive** (3.8): the park's fields, the primitive, the
-  finish, and close per flavour. `ReadRefusal.DatagramSleep` goes.
+  finish, and close per flavour. `ReadRefusal.DatagramSleep` goes. Darwin's
+  close drains the socket when a receive sleeps through the descriptor closed
+  (`udp-sleepers.c` V11, V12, V24-V29), as it drains a TCP socket
+  (`docs/plans/2026-10-07-tcp-byte-transfer/tcp-close-drain.c`): the drain is
+  `SocketDescription.Drained`, which `UnixDescriptor.close` sets and a TCP
+  read or write that would sleep answers `EBADF` for.
 - **U5. `sendmsg` and `recvmsg`**: their design note, then the calls (2.12).
 - **U6. Darwin `poll` and `kevent` on UDP sockets** (2.6), for issue #12.
 

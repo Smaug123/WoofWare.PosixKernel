@@ -152,6 +152,10 @@ module TestBlockingConnection =
             /// endpoint of once both FINs had arrived, whichever was first
             /// (`tcp-shutdown.c` section L, `bothfin-cfirst`).
             AbortReleased : Set<ConnectionEnd>
+            /// The ends whose socket a Darwin close has drained, ending every
+            /// call asleep on it: a later read or write there that would sleep
+            /// answers `EBADF` instead (`tcp-close-drain.c`).
+            Drained : Set<ConnectionEnd>
         }
 
     let private endOf (call : Call) : ConnectionEnd =
@@ -310,6 +314,11 @@ module TestBlockingConnection =
         | TcpTransferSeen.WouldBlock, _, model ->
             if r.NonBlocking.[connectionEnd] || dontWait then
                 Seen.Failed UnixError.EAGAIN, r
+            elif Set.contains connectionEnd r.Drained then
+                Seen.Failed UnixError.EBADF,
+                { r with
+                    Model = model
+                }
             else
                 Seen.Sleeps,
                 park
@@ -372,10 +381,12 @@ module TestBlockingConnection =
                     Model = model
                 }
 
-            if blocking then
-                Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, 0, call)) r
-            else
+            if not blocking then
                 Seen.Failed UnixError.EAGAIN, r
+            elif Set.contains connectionEnd r.Drained then
+                Seen.Failed UnixError.EBADF, r
+            else
+                Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, 0, call)) r
         | TcpTransferSeen.Wrote n, _, model ->
             let r =
                 { r with
@@ -383,7 +394,12 @@ module TestBlockingConnection =
                 }
 
             if n < count && blocking && not (returnsOnOwnReset connectionEnd r) then
-                Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, n, call)) r
+                // A drained socket's write answers EBADF where it would sleep,
+                // having taken what it took.
+                if Set.contains connectionEnd r.Drained then
+                    Seen.Failed UnixError.EBADF, marking connectionEnd call (n > 0) r
+                else
+                    Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, n, call)) r
             else
                 Seen.Wrote (int64 n), marking connectionEnd call (n > 0) r
         | seen, _, model ->
@@ -769,6 +785,13 @@ module TestBlockingConnection =
         /// shuts its send side; and the calls' end closes. Darwin's close is
         /// refused, ending the case; Linux's resets.
         | CloseBehindQueuedFin
+        /// Thread 0 sleeps reading through the calls' end, and thread 1 writing
+        /// through a `dup` of it, having filled the buffers; the calls' end then
+        /// closes. Darwin's close drains the socket, ending both with `EBADF`,
+        /// and a later read and a later write through the dup that would sleep
+        /// answer `EBADF` too, where a read with bytes queued answers them.
+        /// Linux's close ends nothing.
+        | DrainThroughDup
 
     /// A prefix of the property's steps that, from the connected pair the
     /// property starts on, reaches paths random steps reach too rarely to
@@ -947,6 +970,22 @@ module TestBlockingConnection =
                 BlockingConnectionOp.Shutdown (readEnd, 1)
                 BlockingConnectionOp.Shutdown (writeEnd, 1)
                 BlockingConnectionOp.Close readEnd
+            | ScenarioEnding.DrainThroughDup ->
+                // The dup takes the lowest free number, below both ends', so
+                // it is index 0 from here, and the ends follow it.
+                BlockingConnectionOp.Dup readEnd
+                BlockingConnectionOp.Read (0, readEnd + 1, 2048)
+                // Thread 0 is in a call, so index 0 among the idle is thread 1.
+                BlockingConnectionOp.Write (0, 0, filling)
+                BlockingConnectionOp.Close (readEnd + 1)
+                // The dup is index 0 and the peer 1.
+                BlockingConnectionOp.Wake
+                BlockingConnectionOp.Finish 0
+                BlockingConnectionOp.Finish 0
+                BlockingConnectionOp.Read (0, 0, 100)
+                BlockingConnectionOp.Write (0, 0, filling)
+                BlockingConnectionOp.Write (0, 1, 10)
+                BlockingConnectionOp.Read (0, 0, 100)
         ]
 
     let private scenarioGen : Gen<Scenario> =
@@ -974,6 +1013,7 @@ module TestBlockingConnection =
                             (Gen.elements [ 1 ; 2 ])
                             (Gen.elements [ true ; false ])
                         Gen.constant ScenarioEnding.CloseBehindQueuedFin
+                        Gen.constant ScenarioEnding.DrainThroughDup
                     ]
 
             return
@@ -1177,6 +1217,7 @@ module TestBlockingConnection =
                     Marked = Set.empty
                     Linger = Map.empty
                     AbortReleased = Set.empty
+                    Drained = Set.empty
                 }
 
             // Both ends' capacities are the same, so one pair describes both.
@@ -1398,16 +1439,22 @@ module TestBlockingConnection =
                     system <- settle thread seen (Option.get actual)
                     reference <- after
                 | BlockingConnectionOp.Close fd ->
-                    // Darwin's close ends every call made through `fd`, unless
-                    // something had already woken one, which is refused.
+                    // Darwin's close of a descriptor a call sleeps through
+                    // drains the socket, ending every call asleep on it through
+                    // whichever descriptor, unless something had already woken
+                    // one, which is refused.
+                    let drains =
+                        not linux
+                        && reference.Parks |> Map.exists (fun _ park -> park.Through = Some fd)
+
                     let through =
-                        if linux then
-                            []
-                        else
+                        if drains then
                             reference.Parks
-                            |> Map.filter (fun _ park -> park.Through = Some fd)
+                            |> Map.filter (fun _ park -> park.Through.IsSome && endOf park.Call = reference.Fds.[fd])
                             |> Map.keys
                             |> List.ofSeq
+                        else
+                            []
 
                     let refusedFor = through |> List.tryFind (fun thread -> wakesNow thread reference)
 
@@ -1521,6 +1568,9 @@ module TestBlockingConnection =
                             | Call.Reading _ -> cover "Darwin close: ends a read"
                             | Call.Writing _ -> cover "Darwin close: ends a write"
 
+                            if reference.Parks.[thread].Through <> Some fd then
+                                cover "Darwin close: ends a call made through another descriptor"
+
                         if
                             linux
                             && reference.Parks
@@ -1564,6 +1614,11 @@ module TestBlockingConnection =
                         reference <-
                             { reference with
                                 Marked = marked
+                                Drained =
+                                    if drains then
+                                        Set.add closing reference.Drained
+                                    else
+                                        reference.Drained
                                 Fds = Map.remove fd reference.Fds
                                 Parks =
                                     (reference.Parks, through)
@@ -2009,6 +2064,9 @@ module TestBlockingConnection =
                 "Darwin finish read: sleeps"
                 "Darwin finish read: EINTR"
                 "Darwin close: ends a read"
+                "Darwin close: ends a call made through another descriptor"
+                "Darwin read: EBADF"
+                "Darwin write: EBADF"
                 "Darwin close: close refused"
                 "Darwin finish read ended by a close: EBADF"
                 // A Linux recv of nothing sleeps; Darwin's answers at once.

@@ -2472,12 +2472,10 @@ WoofWare.PosixKernel.ListenAnswer.NewFailed [static method]: WoofWare.PosixKerne
 WoofWare.PosixKernel.ListenAnswer.NewListening [static method]: WoofWare.PosixKernel.SocketAddress -> WoofWare.PosixKernel.ListenAnswer
 WoofWare.PosixKernel.ListenAnswer.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ListenState inherit obj, implements WoofWare.PosixKernel.ListenState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ListenState System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.ListenState..ctor [constructor]: (int, WoofWare.PosixKernel.QueuedConnection list, bool)
+WoofWare.PosixKernel.ListenState..ctor [constructor]: (int, WoofWare.PosixKernel.QueuedConnection list)
 WoofWare.PosixKernel.ListenState.Backlog [property]: [read-only] int
-WoofWare.PosixKernel.ListenState.Drained [property]: [read-only] bool
 WoofWare.PosixKernel.ListenState.Equals [method]: (WoofWare.PosixKernel.ListenState, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.ListenState.get_Backlog [method]: unit -> int
-WoofWare.PosixKernel.ListenState.get_Drained [method]: unit -> bool
 WoofWare.PosixKernel.ListenState.get_Queue [method]: unit -> WoofWare.PosixKernel.QueuedConnection list
 WoofWare.PosixKernel.ListenState.Queue [property]: [read-only] WoofWare.PosixKernel.QueuedConnection list
 WoofWare.PosixKernel.MessageFlag inherit obj, implements WoofWare.PosixKernel.MessageFlag System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.MessageFlag System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 31 cases
@@ -4951,12 +4949,14 @@ WoofWare.PosixKernel.SocketAddressingModule.initial [static method]: WoofWare.Po
 WoofWare.PosixKernel.SocketAddressModule inherit obj
 WoofWare.PosixKernel.SocketAddressModule.toString [static method]: WoofWare.PosixKernel.SocketAddress -> string
 WoofWare.PosixKernel.SocketDescription inherit obj, implements WoofWare.PosixKernel.SocketDescription System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SocketDescription System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase, WoofWare.PosixKernel.UserId)
+WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase, bool, WoofWare.PosixKernel.UserId)
 WoofWare.PosixKernel.SocketDescription.Addressing [property]: [read-only] WoofWare.PosixKernel.SocketAddressing
 WoofWare.PosixKernel.SocketDescription.Domain [property]: [read-only] WoofWare.PosixKernel.SocketDomain
+WoofWare.PosixKernel.SocketDescription.Drained [property]: [read-only] bool
 WoofWare.PosixKernel.SocketDescription.Equals [method]: (WoofWare.PosixKernel.SocketDescription, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.SocketDescription.get_Addressing [method]: unit -> WoofWare.PosixKernel.SocketAddressing
 WoofWare.PosixKernel.SocketDescription.get_Domain [method]: unit -> WoofWare.PosixKernel.SocketDomain
+WoofWare.PosixKernel.SocketDescription.get_Drained [method]: unit -> bool
 WoofWare.PosixKernel.SocketDescription.get_Kind [method]: unit -> WoofWare.PosixKernel.SocketKind
 WoofWare.PosixKernel.SocketDescription.get_Options [method]: unit -> WoofWare.PosixKernel.SocketOptions
 WoofWare.PosixKernel.SocketDescription.get_Phase [method]: unit -> WoofWare.PosixKernel.SocketPhase

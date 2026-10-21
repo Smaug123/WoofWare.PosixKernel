@@ -425,7 +425,6 @@ module TestSockOpt =
                     {
                         Backlog = 5
                         Queue = []
-                        Drained = false
                     },
                 false
                 SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client), false

@@ -289,9 +289,10 @@ type SleepTarget<'Object> =
     /// Under Darwin, a close has ended the call, which waited on `object`. It
     /// holds nothing, and its finishing call answers what the close left it.
     ///
-    /// A pipe or connection transfer is ended by a close of the descriptor it
-    /// was made through; an accept by a close of the descriptor any accept on
-    /// the same listener was made through (see `ListenState.Drained`).
+    /// A pipe transfer is ended by a close of the descriptor it was made
+    /// through. An accept, or a connection transfer, is ended by a close of the
+    /// descriptor that any such call asleep on the same socket was made
+    /// through, which drains the socket (see `SocketDescription.Drained`).
     | EndedByClose of object : 'Object
 
 [<RequireQualifiedAccess>]
