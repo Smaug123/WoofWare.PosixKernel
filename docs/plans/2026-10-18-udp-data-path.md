@@ -1057,7 +1057,8 @@ it touches.
     is: unmeasured for UDP.
   - A signal with no handler run (`withoutHandler`) is unmeasured for a
     datagram receive, and so refused, as it was while the park was reserved.
-- **U5. `sendmsg` and `recvmsg`**: their design note, then the calls (2.12).
+- **U5. `sendmsg` and `recvmsg`**: their design note
+  (`docs/plans/2026-10-22-sendmsg-recvmsg.md`), then the calls (2.12).
 - **U6. Darwin `poll` and `kevent` on UDP sockets** (2.6), for issue #12.
 
 U3 and U4 are independent of each other once U1 lands. A client that needs
