@@ -2134,14 +2134,23 @@ module TestStepOracle =
 
                     match stepped with
                     | Ok stepped ->
+                        // A call that changed nothing holds the very system it
+                        // was made in, so `SteppedCall.system` is handed an
+                        // equal system that is not that one: answering it for
+                        // a case that holds a system is then seen.
+                        let stranger = Kernel.mapMachine id system
+
+                        if obj.ReferenceEquals (stranger, system) then
+                            failwith "Kernel.mapMachine id answered the system it was given, not a copy"
+
                         let expected =
                             match Stepped.heldSystems stepped with
-                            | [] -> system
+                            | [] -> stranger
                             | [ held ] -> held
                             | held ->
                                 failwith $"%A{call}: the answer holds %d{List.length held} systems, not at most one"
 
-                        if not (obj.ReferenceEquals (SteppedCall.system system stepped, expected)) then
+                        if not (obj.ReferenceEquals (SteppedCall.system stranger stepped, expected)) then
                             systemMismatch.Value <-
                                 Some
                                     $"%A{call} by %O{caller}: SteppedCall.system of %A{Stepped.view stepped} is not the system the answer holds, or the one the call was made in"
