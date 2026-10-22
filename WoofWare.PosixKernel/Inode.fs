@@ -165,21 +165,21 @@ type CharacterDevice =
     | URandom
     /// `/dev/zero`.
     ///
-    /// Nothing in this version makes a node for it. This kernel has no driver
-    /// for it, so `/dev` holds no `zero`, and `mknod` makes no character
-    /// device node at all: it fails or is refused.
+    /// Nothing in this version produces it: this kernel has no driver for it,
+    /// so a node holding its number, `/dev/zero` among them, is listed and
+    /// reported but cannot be opened.
     | Zero
     /// `/dev/random`.
     ///
-    /// Nothing in this version makes a node for it. This kernel has no driver
-    /// for it, so `/dev` holds no `random`, and `mknod` makes no character
-    /// device node at all: it fails or is refused.
+    /// Nothing in this version produces it: this kernel has no driver for it,
+    /// so a node holding its number, `/dev/random` among them, is listed and
+    /// reported but cannot be opened.
     | Random
     /// `/dev/tty`: the calling process's controlling terminal.
     ///
-    /// Nothing in this version makes a node for it. This kernel has no driver
-    /// for it, so `/dev` holds no `tty`, and `mknod` makes no character device
-    /// node at all: it fails or is refused.
+    /// Nothing in this version produces it: this kernel has no driver for it,
+    /// so a node holding its number, which a configuration may give `/dev`,
+    /// is listed and reported but cannot be opened.
     | Tty
 
 /// <summary>

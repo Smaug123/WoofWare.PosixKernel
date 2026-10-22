@@ -2155,7 +2155,7 @@ module UnixReadWrite =
         | CharacterDevice.Random
         | CharacterDevice.Tty ->
             failwith
-                $"UnixReadWrite.deviceWriteWithoutBytes: a write to %O{device}, which this kernel has no driver for yet, so nothing in this version makes its node (this is a bug in this library)."
+                $"UnixReadWrite.deviceWriteWithoutBytes: a write to %O{device}, which this kernel has no driver for yet, so no open file description names it (this is a bug in this library)."
         | CharacterDevice.URandom ->
 
         if count = 0 then
@@ -2194,7 +2194,7 @@ module UnixReadWrite =
         | CharacterDevice.Random
         | CharacterDevice.Tty ->
             failwith
-                $"UnixReadWrite.readDevice: a read of %O{device}, which this kernel has no driver for yet, so nothing in this version makes its node (this is a bug in this library)."
+                $"UnixReadWrite.readDevice: a read of %O{device}, which this kernel has no driver for yet, so no open file description names it (this is a bug in this library)."
         | CharacterDevice.URandom ->
 
         if count = 0 then
