@@ -55,6 +55,10 @@
 //       sendmsg with a good name from a socket bound to 127.0.0.1 and a
 //       recvmsg on an empty socket, non-blocking. Then the same total split
 //       over two iovecs of half the length each.
+//   Y7  how much of a long name sendmsg copies: a name of `namelen` bytes
+//       whose first `readable` are the last of a page, the next page mapped
+//       PROT_NONE, so that a copy of more faults. The address at the name's
+//       start is a good one, towards a receiver.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -749,6 +753,45 @@ static void section_y6(void)
             }
 }
 
+// ---------------------------------------------------------------- Y7
+
+static void section_y7(void)
+{
+    long pagesize = sysconf(_SC_PAGESIZE);
+    unsigned char *pages = mmap(NULL, 2 * pagesize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (pages == MAP_FAILED) { perror("mmap"); exit(1); }
+    if (mprotect(pages + pagesize, pagesize, PROT_NONE) != 0) { perror("mprotect"); exit(1); }
+    const socklen_t namelens[] = { 129, 200 };
+    const int readables[] = { 16, 127, 128, 129, 199, 200 };
+    for (size_t n = 0; n < sizeof namelens / sizeof *namelens; n++)
+        for (size_t k = 0; k < sizeof readables / sizeof *readables; k++) {
+            int r = bound_to(INADDR_LOOPBACK);
+            nonblocking(r);
+            int s = bound_to(INADDR_LOOPBACK);
+            struct sockaddr_in to = at(INADDR_LOOPBACK, portof(r));
+            unsigned char *name = pages + pagesize - readables[k];
+            memset(name, 0, (size_t)readables[k]);
+            memcpy(name, &to, sizeof to);
+            memset(iovs, 0, sizeof iovs);
+            iovs[0].iov_base = payload;
+            iovs[0].iov_len = 3;
+            struct msghdr m;
+            memset(&m, 0, sizeof m);
+            m.msg_name = name;
+            m.msg_namelen = namelens[n];
+            m.msg_iov = iovs;
+            m.msg_iovlen = 1;
+            ssize_t got = sendmsg(s, &m, 0);
+            int e = errno;
+            await_datagram(r, 30);
+            printf("Y7 namelen=%u readable=%d: answer=%s received=%s\n", (unsigned)namelens[n], readables[k], res(got, e),
+                   drain(r));
+            close(s);
+            close(r);
+        }
+    munmap(pages, 2 * pagesize);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -759,5 +802,6 @@ int main(void)
     section_y4();
     section_y5();
     section_y6();
+    section_y7();
     return 0;
 }

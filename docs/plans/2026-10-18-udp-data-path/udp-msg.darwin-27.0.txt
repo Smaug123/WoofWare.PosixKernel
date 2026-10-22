@@ -2385,3 +2385,15 @@ Y6 call=recvmsg iovecs=2 total=80000000: answer=-1 EINVAL
 Y6 call=recvmsg iovecs=2 total=ffffffff: answer=-1 EINVAL
 Y6 call=recvmsg iovecs=2 total=100000000: answer=-1 EINVAL
 Y6 call=recvmsg iovecs=2 total=7fffffffffffffff: answer=-1 EINVAL
+Y7 namelen=129 readable=16: answer=-1 EFAULT received=0
+Y7 namelen=129 readable=127: answer=-1 EFAULT received=0
+Y7 namelen=129 readable=128: answer=-1 EFAULT received=0
+Y7 namelen=129 readable=129: answer=3 received=1:3
+Y7 namelen=129 readable=199: answer=3 received=1:3
+Y7 namelen=129 readable=200: answer=3 received=1:3
+Y7 namelen=200 readable=16: answer=-1 EFAULT received=0
+Y7 namelen=200 readable=127: answer=-1 EFAULT received=0
+Y7 namelen=200 readable=128: answer=-1 EFAULT received=0
+Y7 namelen=200 readable=129: answer=-1 EFAULT received=0
+Y7 namelen=200 readable=199: answer=-1 EFAULT received=0
+Y7 namelen=200 readable=200: answer=3 received=1:3

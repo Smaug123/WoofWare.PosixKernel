@@ -230,6 +230,33 @@ module TestCallProgress =
             fun () ->
                 UnixReadWrite.sendtoWithAddress bytes Unchecked.defaultof<PausedSendToAddress<int, string>>
                 |> ignore<CallProgress<PausedSend<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithHeader",
+            fun () ->
+                UnixReadWrite.sendmsgWithHeader
+                    {
+                        MessageName = UserBuffer.Unmapped 0UL
+                        MessageNameLength = 0u
+                        MessageVectors = UserBuffer.Unmapped 0UL
+                        MessageVectorCount = 0UL
+                        MessageControl = UserBuffer.Unmapped 0UL
+                        MessageControlLength = 0UL
+                    }
+                    Unchecked.defaultof<PausedSendMsgHeader<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithName",
+            fun () ->
+                UnixReadWrite.sendmsgWithName bytes Unchecked.defaultof<PausedSendMsgName<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithVectors",
+            fun () ->
+                UnixReadWrite.sendmsgWithVectors
+                    ImmutableArray.Empty
+                    Unchecked.defaultof<PausedSendMsgVectors<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithBytes",
+            fun () ->
+                UnixReadWrite.sendmsgWithBytes ImmutableArray.Empty Unchecked.defaultof<PausedSendMsgBytes<int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
             "UnixReadWrite.recvfromWithLength",
             fun () ->
                 UnixReadWrite.recvfromWithLength 16u Unchecked.defaultof<PausedRecvFrom<int, string>>
@@ -294,8 +321,14 @@ module TestCallProgress =
                 )
                 |> Seq.map (fun (m : Reflection.MethodInfo) -> $"%s{t.Name}.%s{m.Name}")
             )
-            // What a paused call says of itself resumes nothing.
-            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange") && name <> "PausedRecvFrom.received")
+            // What a paused call says of itself resumes nothing, and nor does
+            // a case of the union of the copies a `sendmsg` stops at next.
+            |> Seq.filter (fun (name : string) ->
+                not (name.Contains ".copyRange")
+                && name <> "PausedRecvFrom.received"
+                && name <> "PausedSendMsgVectors.count"
+                && not (name.StartsWith ("SendMsgCopy", StringComparison.Ordinal))
+            )
             |> Set.ofSeq
 
         resumes |> shouldEqual (resumesOfNull |> List.map fst |> Set.ofList)

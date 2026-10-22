@@ -692,8 +692,9 @@ four queues (Y2). A pair answers as one of its two arguments alone in every
 row but those where an iovec count of 1 drops the iovec the other argument
 changed, so each flavour's answers order into the ladders below. Y3 makes a
 blocking `recvmsg` meet each fault, Y4 puts the header's faults through a
-closed descriptor and a pipe, Y5 is Z4 for `sendmsg`, and Y6 finds the
-longest iovecs each call lets through. Darwin 27.0.0 ran six times and Linux 6.18.5 twice. Every row repeated but one Darwin `sendmsg`
+closed descriptor and a pipe, Y5 is Z4 for `sendmsg`, Y6 finds the
+longest iovecs each call lets through, and Y7 how much of a long name a
+`sendmsg` copies, by putting it before a page that faults. Darwin 27.0.0 ran six times and Linux 6.18.5 twice. Every row repeated but one Darwin `sendmsg`
 from an erred socket with a zero-length name, which answers `EINVAL` and,
 in one run of six, found the error gone afterwards, as 2.15 saw for
 `MSG_OOB`; the recording is a run where it stayed.
@@ -706,9 +707,10 @@ signed `int`.
 
 1. the descriptor (Y4);
 2. the header's copy (`EFAULT`);
-3. the name: NULL, or a length of 0, is no name; a length above 128 is cut
-   to 128 (so 129 sends, where `sendto` answers `EINVAL`); its copy
-   (`EFAULT`);
+3. the name: NULL, or a length of 0, is no name; a length negative as an
+   `int` (`EINVAL`, Y4); a length above 128 is cut to 128 (so 129 sends,
+   where `sendto` answers `EINVAL`), and exactly 128 bytes are copied (Y7);
+   its copy (`EFAULT`);
 4. `msg_iovlen` above 1024 (`EMSGSIZE`). 0 is allowed: the iovecs hold no
    bytes;
 5. the iovec array's copy (`EFAULT`); a length negative as an `ssize_t`
@@ -735,7 +737,8 @@ signed `int`.
 4. the descriptor (Y4);
 5. the name: NULL is no name, whatever its length; otherwise its copy, as
    `sendto`'s rung 2 (`ENAMETOOLONG` above 255, so for a length of
-   0xffffffff; `EINVAL` below 2; `EFAULT`);
+   0xffffffff; `EINVAL` below 2; `EFAULT`), of every byte of its length
+   (Y7);
 6. the control buffer: NULL is none, whatever its length; 8 bytes, shorter
    than a `cmsghdr`, or 0x80000000 (`EINVAL`); its copy (`EFAULT`). 16 zero
    bytes send;

@@ -63,6 +63,7 @@ type internal SyscallRefusal<'Thread> =
     | Write of WriteRefusal
     | Send of SendRefusal
     | SendTo of SendRefusal
+    | SendMsg of SendRefusal
     | PWrite of PWriteRefusal
     | CopyFileRange of CopyFileRangeRefusal
     | Pipe2 of Pipe2Refusal
@@ -171,6 +172,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.Write refusal -> $"write: %s{WriteRefusal.describe refusal}"
         | SyscallRefusal.Send refusal -> $"send: %s{SendRefusal.describe refusal}"
         | SyscallRefusal.SendTo refusal -> $"sendto: %s{SendRefusal.describe refusal}"
+        | SyscallRefusal.SendMsg refusal -> $"sendmsg: %s{SendRefusal.describe refusal}"
         | SyscallRefusal.PWrite refusal -> $"pwrite: %s{PWriteRefusal.describe refusal}"
         | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
         | SyscallRefusal.Pipe2 refusal -> $"pipe2: %s{Pipe2Refusal.describe refusal}"
@@ -273,6 +275,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.Write inner -> WriteRefusal.kind inner
         | SyscallRefusal.Send inner
         | SyscallRefusal.SendTo inner -> SendRefusal.kind inner
+        | SyscallRefusal.SendMsg inner -> SendRefusal.kind inner
         | SyscallRefusal.PWrite inner -> PWriteRefusal.kind inner
         | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
         | SyscallRefusal.Pipe2 inner -> Pipe2Refusal.kind inner
@@ -1887,7 +1890,82 @@ module UnixSystem =
                 (fun _ -> throughDestination)
             |> Result.map SteppedCall.SendTo
             |> Result.mapError SyscallRefusal.SendTo
-        | Syscall.SendMsg _ -> reserved "Syscall.SendMsg"
+        | Syscall.SendMsg (fd, message, flags) ->
+            let operation = "UnixSystem.step of Syscall.SendMsg"
+
+            // Each copy after the header, from what `sent` says the caller's
+            // memory held. A call stops to copy only from storage it was told
+            // is readable.
+            let readable (what : string) (argument : CopiedArgument<'T>) : 'T =
+                match argument with
+                | CopiedArgument.Readable contents -> contents
+                | other ->
+                    failwith
+                        $"%s{operation}: the call stopped to copy its %s{what}, which it was given as %A{CopiedArgument.userBuffer other} rather than as readable storage (this is a bug in this library)."
+
+            let rec copied
+                (sent : SentMessage)
+                (progress :
+                    Result<
+                        CallProgress<
+                            SendMsgCopy<'Thread, 'Handler>,
+                            ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+                         >,
+                        SendRefusal
+                     >)
+                : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
+                =
+
+                progress
+                |> CallProgress.resumeWith (fun copy ->
+                    match copy with
+                    | SendMsgCopy.Name paused ->
+                        let contents = readable "name" sent.SentName
+
+                        UnixReadWrite.trySendMsgWithName
+                            (CopiedArgument.slice operation (PausedSendMsgName.copyRange paused) contents)
+                            paused
+                        |> copied sent
+                    | SendMsgCopy.Vectors paused ->
+                        let vectors = readable "iovec array" sent.SentVectors
+                        let count = PausedSendMsgVectors.count paused
+
+                        if vectors.Length < count then
+                            invalidOp
+                                $"%s{operation}: the call copies %d{count} iovecs, but the iovec array's contents (CopiedArgument.Readable) hold only %d{vectors.Length}. A readable iovec array holds every iovec the call copies (this is a bug in the caller)."
+
+                        UnixReadWrite.trySendMsgWithVectors
+                            (ImmutableArray.CreateRange (Seq.map SentMessage.vector (Seq.take count vectors)))
+                            paused
+                        |> copied sent
+                    | SendMsgCopy.Bytes paused ->
+                        let vectors = readable "iovec array" sent.SentVectors
+
+                        let bytes =
+                            Seq.map2
+                                (fun (range : CopyRange) (vector : SentVector) ->
+                                    if range.ByteCount = 0 then
+                                        ImmutableArray.Empty
+                                    else
+                                        CopiedArgument.slice operation range (readable "iovec" vector.SentBase)
+                                )
+                                (PausedSendMsgBytes.copyRanges paused)
+                                vectors
+                            |> ImmutableArray.CreateRange
+
+                        UnixReadWrite.trySendMsgWithBytes bytes paused
+                )
+
+            CopiedArgument.copyValue
+                operation
+                (fun (sent : SentMessage) paused ->
+                    UnixReadWrite.trySendMsgWithHeader (SentMessage.header sent) paused
+                    |> copied sent
+                )
+                message
+                (fun message -> UnixReadWrite.trySendMsg caller fd message flags system)
+            |> Result.map SteppedCall.SendMsg
+            |> Result.mapError SyscallRefusal.SendMsg
         | Syscall.PWrite (fd, buffer, count, offset) ->
             CopiedArgument.copyBytes
                 "UnixSystem.step of Syscall.PWrite"
@@ -2138,9 +2216,8 @@ module UnixSystem =
     /// user mode, as after the call made through its own function.
     ///
     /// A reserved case (`Syscall.Nanosleep`, `ClockNanosleep`, `Select`,
-    /// `PSelect`, `SigWait`, `SigWaitInfo`, `SigTimedWait`, `RecvFrom`,
-    /// `RecvMsg`, `SendTo` and `SendMsg`) is refused: this library does not
-    /// model those calls yet.
+    /// `PSelect`, `SigWait`, `SigWaitInfo`, `SigTimedWait` and `RecvMsg`) is
+    /// refused: this library does not model those calls yet.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`caller` is not a thread of one of the system's processes, or is asleep in another syscall, or owes a return to user mode. A `CopiedArgument.Readable` buffer ends before the bytes the call copies from it do, or is the default `ImmutableArray`.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`, nor `getresuid` nor `getresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give. This kernel is not Linux-flavoured, and only Linux has epoll. This kernel is not Darwin-flavoured, and only Darwin has kqueue. The simulated kernel has no `getrandom` system call, or no `getentropy` system call. This kernel is not Linux-flavoured, and only Linux has `getcpu`. A Darwin process has neither `rt_sigprocmask` nor `rt_sigsuspend`.</exception>

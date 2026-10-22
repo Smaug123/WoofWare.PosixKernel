@@ -182,16 +182,61 @@ type RecvMsgArguments =
     // (`docs/design/datagram-park-options.md`).
     internal | RecvMsgArguments
 
-/// The arguments of a `sendmsg(2)`: what `Syscall.SendMsg` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.SendMsg`.
+/// A `struct iovec` a `sendmsg(2)` sends from, with the bytes its storage
+/// held: what `SentMessage.SentVectors` holds.
 [<NoComparison>]
-type SendMsgArguments =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | SendMsgArguments
+type SentVector =
+    {
+        /// `iov_base`, and the bytes there: of real storage, at least
+        /// `SentLength` of them, or as many as the call copies.
+        SentBase : CopiedArgument<ImmutableArray<byte>>
+        /// `iov_len`, a `size_t`.
+        SentLength : uint64
+    }
+
+/// A `struct msghdr` a `sendmsg(2)` sends, with what the storage each of its
+/// pointers names held: what `Syscall.SendMsg` holds. Each count is as
+/// `MessageHeader` holds it, the raw bits of the flavour's field.
+[<NoComparison>]
+type SentMessage =
+    {
+        /// `msg_name`, and the bytes of the name there. A NULL one is
+        /// `CopiedArgument.Unmapped 0UL`.
+        SentName : CopiedArgument<ImmutableArray<byte>>
+        /// `msg_namelen`, a `socklen_t`.
+        SentNameLength : uint32
+        /// `msg_iov`, and the iovecs there: of real storage, at least as many
+        /// as the call copies, which is `SentVectorCount` where it copies any.
+        SentVectors : CopiedArgument<ImmutableArray<SentVector>>
+        /// `msg_iovlen`, as `MessageHeader.MessageVectorCount` holds it.
+        SentVectorCount : uint64
+        /// `msg_control`, and the bytes there. A NULL one is
+        /// `CopiedArgument.Unmapped 0UL`.
+        SentControl : CopiedArgument<ImmutableArray<byte>>
+        /// `msg_controllen`, as `MessageHeader.MessageControlLength` holds it.
+        SentControlLength : uint64
+    }
+
+[<RequireQualifiedAccess>]
+module internal SentMessage =
+    /// The header `message` is, as `UnixReadWrite.sendmsgWithHeader` takes
+    /// it: where each pointer goes, without what it held.
+    let header (message : SentMessage) : MessageHeader =
+        {
+            MessageName = CopiedArgument.userBuffer message.SentName
+            MessageNameLength = message.SentNameLength
+            MessageVectors = CopiedArgument.userBuffer message.SentVectors
+            MessageVectorCount = message.SentVectorCount
+            MessageControl = CopiedArgument.userBuffer message.SentControl
+            MessageControlLength = message.SentControlLength
+        }
+
+    /// The iovec `vector` is, as `UnixReadWrite.sendmsgWithVectors` takes it.
+    let vector (vector : SentVector) : IoVector =
+        {
+            VectorBase = CopiedArgument.userBuffer vector.SentBase
+            VectorLength = vector.SentLength
+        }
 
 /// A request to this kernel, as a value: one case for each call a thread makes
 /// of it, named for the call and holding the call's arguments, for a client
@@ -211,7 +256,7 @@ type SendMsgArguments =
 /// since what the call writes there is in its answer.
 ///
 /// `Nanosleep`, `ClockNanosleep`, `Select`, `PSelect`, `SigWait`,
-/// `SigWaitInfo`, `SigTimedWait`, `RecvMsg` and `SendMsg` are reserved: this kernel does not model those calls yet, their
+/// `SigWaitInfo`, `SigTimedWait` and `RecvMsg` are reserved: this kernel does not model those calls yet, their
 /// arguments' types have internal representations, and nothing in this
 /// version makes one.
 [<RequireQualifiedAccess ; NoComparison>]
@@ -402,8 +447,12 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
         flags : int *
         destination : CopiedArgument<ImmutableArray<byte>> *
         declaredLength : uint32
-    /// `sendmsg(2)`. Reserved: see `SendMsgArguments`.
-    | SendMsg of arguments : SendMsgArguments
+    /// `sendmsg(2)`, as `UnixReadWrite.sendmsg` makes it, then each of
+    /// `UnixReadWrite.sendmsgWithHeader`, `sendmsgWithName`,
+    /// `sendmsgWithVectors` and `sendmsgWithBytes` of what `message` says the
+    /// caller's memory held, where the call copies it. A NULL `message` is
+    /// `CopiedArgument.Unmapped 0UL`.
+    | SendMsg of fd : int * message : CopiedArgument<SentMessage> * flags : int
     /// `pwrite(2)`, as `UnixReadWrite.pwrite` makes it, then
     /// `UnixReadWrite.pwriteWithBytes` of the bytes of `buffer` it copies.
     | PWrite of fd : int * buffer : CopiedArgument<ImmutableArray<byte>> * count : uint64 * offset : int64
@@ -651,18 +700,6 @@ type SteppedRecvMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
     // (`docs/design/datagram-park-options.md`).
     internal | SteppedRecvMsg
 
-/// What `UnixSystem.step` answers for a `Syscall.SendMsg`: what
-/// `SteppedCall.SendMsg` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `Syscall.SendMsg`.
-[<NoEquality ; NoComparison>]
-type SteppedSendMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | SteppedSendMsg
-
 /// What `UnixSystem.step` answered: one case for each case of `Syscall`, named
 /// as that case is and in the same order, holding exactly what the call's own
 /// function answers. For a call that stops partway to copy from the caller's
@@ -814,8 +851,9 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// `UnixReadWrite.sendtoWithAddress`, or either of them or
     /// `UnixReadWrite.sendto` answers first.
     | SendTo of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
-    /// A `sendmsg(2)`. Reserved: see `SteppedSendMsg`.
-    | SendMsg of stepped : SteppedSendMsg<'Thread, 'Handler>
+    /// What `UnixReadWrite.sendmsg` answers, or any of the functions that
+    /// resume it after it.
+    | SendMsg of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
     /// What `UnixReadWrite.pwrite` answers, or `UnixReadWrite.pwriteWithBytes`
     /// after it.
     | PWrite of answer : WriteAnswer * system : UnixSystem<'Thread, 'Handler>
@@ -1045,7 +1083,8 @@ module SteppedCall =
         | SteppedCall.SigReturn system -> system
         | SteppedCall.Write (fate, _)
         | SteppedCall.Send fate
-        | SteppedCall.SendTo fate -> ofFate fate
+        | SteppedCall.SendTo fate
+        | SteppedCall.SendMsg fate -> ofFate fate
         | SteppedCall.ExitThread fate -> ofFate fate
         | SteppedCall.Kill fate
         | SteppedCall.PthreadKill fate -> ofFate fate
@@ -1074,7 +1113,6 @@ module SteppedCall =
         | SteppedCall.GetResGid _
         | SteppedCall.GetCpu _ -> madeIn
         | SteppedCall.RecvMsg _ -> reserved "RecvMsg"
-        | SteppedCall.SendMsg _ -> reserved "SendMsg"
         | SteppedCall.Select _ -> reserved "Select"
         | SteppedCall.PSelect _ -> reserved "PSelect"
         | SteppedCall.SigWait _ -> reserved "SigWait"
