@@ -175,3 +175,11 @@ Two PRs, each after the probe's rows it replays:
 
 Both refuse any socket but an IPv4 UDP one, and every flag `sendto` or
 `recvfrom` refuses, as those calls do.
+
+## Decisions
+
+Patrick, 2026-10-22: the recommendations, (A), (a), (i) and (α). The client
+decodes the header and the iovec array into typed values; each copy is its own
+pause, in each flavour's order, with a union of paused types where the orders
+part; `sendmsg` refuses any `msg_controllen` but 0; and `recvmsg` answers the
+bytes each iovec received.
