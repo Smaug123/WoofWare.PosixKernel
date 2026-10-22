@@ -96,6 +96,9 @@ output:
 - `udp-sleepers.c`: whom each wake reaches when threads sleep in a receive on
   one socket, and what each receiving call answers once woken (section
   2.16). Both flavours, 2026-10-21.
+- `udp-msg.c`: `sendmsg` and `recvmsg` with their arguments and the socket's
+  state crossed in pairs, to find which failure wins, and what each call
+  writes back to its header (section 2.17). Both flavours, 2026-10-22.
 
 Each probe was run more than once. Every row repeated, except the two that are
 races by nature: which of several sleeping receivers took a datagram (S1), and
@@ -678,6 +681,128 @@ on Darwin (V18); a NULL cell is `EFAULT` on Linux and writes no source on
 Darwin (V19); a cell of -1 is `EINVAL` on Linux and is written 16 on Darwin
 (V21); a source nothing maps is `EFAULT` on Linux, and on Darwin returns the
 datagram with the cell written 16 (V22).
+
+### 2.17 `sendmsg` and `recvmsg`: which failure wins (Y)
+
+`udp-msg.c` gives each argument a default under which the call succeeds,
+and runs, for each socket state, the call with every default, with each one
+argument changed, and with each two of different arguments changed: 1164
+`sendmsg` calls over four sender states (Y1) and 1112 `recvmsg` calls over
+four queues (Y2). A pair answers as one of its two arguments alone in every
+row but those where an iovec count of 1 drops the iovec the other argument
+changed, so each flavour's answers order into the ladders below. Y3 makes a
+blocking `recvmsg` meet each fault, Y4 puts the header's faults through a
+closed descriptor and a pipe, and Y5 is Z4 for `sendmsg`. Darwin 27.0.0 ran
+six times and Linux 6.18.5 twice. Every row repeated but one Darwin `sendmsg`
+from an erred socket with a zero-length name, which answers `EINVAL` and,
+in one run of six, found the error gone afterwards, as 2.15 saw for
+`MSG_OOB`; the recording is a run where it stayed.
+
+`msg_iovlen` and `msg_controllen` are each flavour's width (`size_t` on
+Linux; `int` and `socklen_t` on Darwin). Linux reads `msg_namelen` as a
+signed `int`.
+
+**`sendmsg` on Linux**, each rung ahead of the next:
+
+1. the descriptor (Y4);
+2. the header's copy (`EFAULT`);
+3. the name: NULL, or a length of 0, is no name; a length above 128 is cut
+   to 128 (so 129 sends, where `sendto` answers `EINVAL`); its copy
+   (`EFAULT`);
+4. `msg_iovlen` above 1024 (`EMSGSIZE`). 0 is allowed: the iovecs hold no
+   bytes;
+5. the iovec array's copy (`EFAULT`); each iovec's range (`EFAULT`: two
+   iovecs of `SSIZE_MAX` bytes, though one alone is let through and the
+   datagram is too long); a length negative as an `ssize_t` (`EINVAL`);
+6. the control buffer: longer than `INT_MAX` (`ENOBUFS`), then its copy
+   (`EFAULT`, a NULL buffer with a length included). None of these binds
+   the socket;
+7. `sendto`'s ladder from its rung 3 (the bind), with the iovecs' total as
+   the count and the name as the destination. A control message whose
+   `cmsg_len` is 0 (16 zero bytes) answers `EINVAL` after the destination's
+   checks and ahead of the pending error; 8 zero bytes hold no message and
+   send.
+
+**`sendmsg` on Darwin**:
+
+1. the header's copy (`EFAULT`), ahead of even the descriptor (Y4);
+2. `msg_iovlen` of 0, negative, or above 1024 (`EMSGSIZE`);
+3. the iovec array's copy (`EFAULT`); the iovecs' total, if any length is
+   negative as an `ssize_t` or the total overflows (`EINVAL`);
+4. the descriptor (Y4);
+5. the name: NULL is no name, whatever its length; otherwise its copy, as
+   `sendto`'s rung 2 (`ENAMETOOLONG` above 255, so for a length of
+   0xffffffff; `EINVAL` below 2; `EFAULT`);
+6. the control buffer: NULL is none, whatever its length; 8 bytes, shorter
+   than a `cmsghdr`, or 0x80000000 (`EINVAL`); its copy (`EFAULT`). 16 zero
+   bytes send;
+7. `sendto`'s ladder from its rung 3 (`MSG_OOB`), with the iovecs' total as
+   the count and the name as the destination: `EISCONN` for any name on a
+   connected socket.
+
+Nothing before rung 7 marks a Darwin socket as having sent, and everything
+from it on does (Y5), as for `sendto` (Z4).
+
+**`recvmsg` on Linux**:
+
+1. the descriptor (Y4);
+2. the header's copy (`EFAULT`);
+3. `msg_namelen` negative as an `int` (`EINVAL`), for a name that is not
+   NULL (a NULL name with such a length is unmeasured);
+4. `msg_iovlen` above 1024 (`EMSGSIZE`); 0 is allowed;
+5. the iovec array's copy, each iovec's range, a negative length, as for
+   `sendmsg`;
+6. the receive, as `recv`'s: the pending error, taken even by `MSG_PEEK`;
+   the queue; `EAGAIN` or, blocking, a sleep (Y3). The control buffer is not
+   looked at. `MSG_OOB` is ignored, and `MSG_TRUNC` returns the datagram's
+   length;
+7. the bytes, into the iovecs in order: a fault (`EFAULT`) comes after the
+   datagram is taken (a peek leaves it), with the iovecs before the one that
+   faulted written, and nothing written to the header;
+8. the source, if the name is not NULL, as `recvfrom` writes it (2.15):
+   `msg_namelen` written 16, whatever it held, and the first
+   `min(length, 16)` bytes of the address (`EFAULT`, with the datagram
+   taken). A NULL name leaves `msg_namelen` as it was;
+9. `msg_controllen` written 0, and `msg_flags`: `MSG_TRUNC` if the datagram
+   was longer than the iovecs, and nothing else, the call's own flags
+   included. A header that cannot be written (read-only) answers `EFAULT`
+   here, after the bytes are written and the datagram taken, with nothing
+   written to the name.
+
+A failed call writes nothing to the header.
+
+**`recvmsg` on Darwin**:
+
+1. the header's copy (`EFAULT`), ahead of the descriptor;
+2. `msg_iovlen` of 0, negative, or above 1024 (`EMSGSIZE`);
+3. the iovec array's copy (`EFAULT`); a negative or overflowing total
+   (`EINVAL`);
+4. the descriptor;
+5. `MSG_OOB` (`EOPNOTSUPP`);
+6. the receive, as `recv`'s: the queue, then the error, which `MSG_PEEK`
+   leaves pending; with neither, 0 if the iovecs hold no bytes, and `EAGAIN`
+   or, blocking, a sleep otherwise;
+7. the bytes: a fault answers `EFAULT` and leaves the datagram queued,
+   stripped, which 3.6 refuses;
+8. the source, if the name is not NULL: as `recvfrom`'s (2.15), the first
+   `min(length, 16)` bytes, a fault ignored, and `msg_namelen` written 16,
+   or 0 for a length of 0, or the length it held where the copy faulted; a
+   length of 0xffffffff copies 16. A receive of 0 with nothing queued writes
+   0. A NULL name leaves `msg_namelen` as it was;
+9. `msg_controllen` written 0 unless the control buffer is NULL, which
+   leaves it, and `msg_flags`: `MSG_TRUNC` if the datagram was longer than
+   the iovecs, or is empty and the iovecs hold no bytes, or with the
+   call's own `MSG_TRUNC`, and every other flag the call was made with
+   (`MSG_PEEK` as 0x2, `MSG_DONTWAIT` as 0x80). A read-only header answers
+   `EFAULT` here, after the bytes and the name are written and the datagram
+   taken.
+
+A failed call writes nothing to the header here either.
+
+**A blocking `recvmsg`** (Y3) reads its header and iovec array, and checks
+their counts and lengths, before it sleeps: each of those faults answers at
+once, on both flavours. A faulting iovec base, name or control buffer sleeps,
+and answers when a datagram comes, as rungs 7 and 8 say.
 
 ## 3. Design options
 

@@ -2,9 +2,9 @@
 
 Stage U5 of `docs/plans/2026-10-18-udp-data-path.md`, whose section 3.6 leaves
 the calls' argument shape, and what the kernel does with control messages, to
-a design note of their own. This is that note. Section 2.12 (`udp-transfer.c`
-section P) is its measured input so far; section 3 below lists what is still
-to measure.
+a design note of their own. This is that note. Its measured input is the
+plan's section 2.12 (`udp-transfer.c` section P) and section 2.17
+(`udp-msg.c`, which section 3 below planned).
 
 ## 1. What exists
 
@@ -45,20 +45,22 @@ the bytes of each iovec. `recvmsg` reads the header and the iovec array, and
 writes the bytes into the iovecs, the source into the name, and
 `msg_namelen`, `msg_controllen` and `msg_flags` back into the header.
 
-Kernel source suggests the two flavours read in different orders (to be
-measured, section 3):
+The two flavours read in different orders (measured, 2.17):
 
-- **Linux**: the header; the name (in `__copy_msghdr`); the check of
-  `msg_iovlen` against `UIO_MAXIOV`, 1024 (`EMSGSIZE`); the iovec array; the
-  control buffer; then `udp_sendmsg`'s checks, and the bytes.
-- **Darwin**: the header; the check of `msg_iovlen` (`EMSGSIZE` for 0, which
-  2.12 measured, and above 1024); the iovec array; then, in `sendit`, the name
-  and the control buffer.
+- **Linux**: the descriptor; the header; for `sendmsg`, the name; the check
+  of `msg_iovlen` against 1024 (`EMSGSIZE`); the iovec array; for `sendmsg`,
+  the control buffer; then `sendto`'s checks, and the bytes.
+- **Darwin**: the header; the check of `msg_iovlen` (`EMSGSIZE` for 0, and
+  above 1024); the iovec array; then the descriptor; and, for `sendmsg`, the
+  name and the control buffer.
 
-## 3. To measure first
+## 3. What was measured
 
-A probe, `udp-msg.c`, crossing each argument as `udp-sendto.c` crossed
-`sendto`'s (2.15):
+`udp-msg.c`, crossing each argument as `udp-sendto.c` crossed `sendto`'s
+(2.15). Its sections differ from this plan: Y1 and Y2 cross arguments in
+pairs rather than all at once, and so cover Y3's write-backs on every row;
+Y3 became a blocking `recvmsg` meeting each fault; Y4 the header against the
+descriptor; Y5 Darwin's mark of a socket that has sent. The plan was:
 
 - **Y1, `sendmsg`**: a header that faults; `msg_iovlen` of 0, 1, 1024, 1025
   and one with the top bit set (negative to Darwin's `int`); an iovec array
@@ -128,7 +130,8 @@ differ by flavour after the header, so the next copy is not fixed.
   under Darwin, a name the iovec array's fault would have.
 
 **Recommend (a)**, if the probe confirms the orders differ; if they agree, it
-is a plain chain, as `clonefile`'s is.
+is a plain chain, as `clonefile`'s is. They differ (2.17): after the header,
+a Linux `sendmsg` copies its name and a Darwin one its iovec array.
 
 ### 4.3 Control messages
 
