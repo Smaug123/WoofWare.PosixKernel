@@ -372,17 +372,14 @@ module UnixMachineState =
             OpenFiles = openFiles
         }
 
-    /// The type of filesystem `inode` is on: the root filesystem's mount, or,
-    /// for an inode on the device filesystem, tmpfs, which a Linux devtmpfs
-    /// is underneath (measured: its `f_type`, and its directories' sizes,
-    /// follow tmpfs's rules).
-    let internal fileSystemTypeOf (inode : InodeNumber) (machine : UnixMachineState) : EmulatedFileSystemType =
+    /// The filesystem `inode` is on: the root filesystem's mount, or, for an
+    /// inode on the device filesystem, tmpfs, which a Linux devtmpfs is
+    /// underneath, or Darwin's devfs.
+    let internal fileSystemOf (inode : InodeNumber) (machine : UnixMachineState) : InodeFileSystem =
         match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
-        | None, _ -> EmulatedMount.fileSystemType machine.Mount
-        | Some _, DeviceFileSystemMount.Devtmpfs _ -> EmulatedFileSystemType.Tmpfs
-        | Some root, DeviceFileSystemMount.Devfs ->
-            failwith
-                $"UnixMachineState.fileSystemTypeOf: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+        | None, _ -> InodeFileSystem.Typed (EmulatedMount.fileSystemType machine.Mount)
+        | Some _, DeviceFileSystemMount.Devtmpfs _ -> InodeFileSystem.Typed EmulatedFileSystemType.Tmpfs
+        | Some _, DeviceFileSystemMount.Devfs _ -> InodeFileSystem.Devfs
 
     /// `machine` after a read of `inode` at `now`: the inode's access time
     /// moved where the rule of the filesystem it is on says it moves
@@ -404,12 +401,22 @@ module UnixMachineState =
                 // listing of one of its directories moves the directory's atime
                 // under that rule (`docs/probes/devtmpfs-listing`).
                 | _ -> AccessTimeUpdate.Relative
-            | Some root, DeviceFileSystemMount.Devfs ->
-                failwith
-                    $"UnixMachineState.afterRead: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+            // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, TIMES
+            // rows): every listing call moved a devfs directory's atime to
+            // now, to the microsecond, however recently the last had, and an
+            // open or a lookup moved nothing. A read of a node moves its atime
+            // the same way (`docs/design/devices-raw/devfs-times.c`).
+            | Some _, DeviceFileSystemMount.Devfs _ -> AccessTimeUpdate.Always
 
         let times =
             (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem).Times
+
+        // devfs keeps its times to the microsecond.
+        let now =
+            match machine.DeviceMount, VirtualFileSystem.mountedRootOf inode machine.FileSystem with
+            | DeviceFileSystemMount.Devfs _, Some _ -> UnixTimestamp.truncateToMicroseconds now
+            | DeviceFileSystemMount.Devfs _, None
+            | DeviceFileSystemMount.Devtmpfs _, _ -> now
 
         match AccessTimeUpdate.afterRead rule now times with
         | None -> machine

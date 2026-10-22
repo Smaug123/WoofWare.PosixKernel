@@ -461,9 +461,9 @@ module TestWithFileSystemAndCurrentDirectory =
                             )
                         ])
                     "/"
-                // A directory on Darwin's devfs, which this kernel does not
-                // model.
-                startAt SimulatedUnixPlatform.macOsArm64 seed "/dev"
+                // A name past NAME_MAX on Darwin's devfs, whose lookup takes
+                // it where this kernel's walk checks the length first.
+                startAt SimulatedUnixPlatform.macOsArm64 seed ("/dev/" + System.String ('a', 256))
             ]
             |> List.choose (fun result ->
                 match result with

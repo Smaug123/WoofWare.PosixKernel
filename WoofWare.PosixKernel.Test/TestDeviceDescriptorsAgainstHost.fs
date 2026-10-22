@@ -318,7 +318,8 @@ module TestDeviceDescriptorsAgainstHost =
             | SimulatedUnixFlavour.Darwin ->
                 for path in [ "/dev/null" ; "/dev/urandom" ] do
                     match OpenFlagWords.openPath (PathArg.ofText path) reading 0 (booted flavour) with
-                    | Error (OpenRefusal.Path (PathRefusal.UnmodelledFileSystem _)) -> ()
+                    // This kernel has no Darwin driver yet.
+                    | Error (OpenRefusal.UndrivenDevice _) -> ()
                     | other -> failwith $"open %s{path} on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux ->
 

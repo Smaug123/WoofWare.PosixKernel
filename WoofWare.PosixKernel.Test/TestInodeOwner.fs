@@ -334,7 +334,12 @@ module TestInodeOwner =
                 (owner 0u 0u)
                 (mode 0o777)
                 UnixSystem.defaultDevtmpfsContents
-                epoch
+                {
+                    Access = epoch
+                    Modification = epoch
+                    StatusChange = epoch
+                    Birth = epoch
+                }
                 vfs
             |> ok
 

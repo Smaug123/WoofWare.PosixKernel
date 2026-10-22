@@ -459,8 +459,27 @@ module internal RenameRules =
             RenameVerdict.Refuse UnixError.ENOENT
         else
 
+        // Whether moving `moved` to the destination crosses a mount: XNU
+        // compares the moved object's mount with the destination directory's,
+        // and with the displaced object's where there is one, so renaming
+        // `/dev` itself, or onto it, is EXDEV too (measured on Darwin 27.0,
+        // `docs/probes/devfs-darwin`, NS rename rows).
+        let crossesMount (moved : InodeNumber) : bool =
+            match destination.Target with
+            | ResolvedTarget.Entry (destinationDirectory, _, destinationExisting) ->
+                VirtualFileSystem.mountedRootOf moved vfs
+                <> VirtualFileSystem.mountedRootOf destinationDirectory vfs
+                || (
+                    match destinationExisting with
+                    | Some displaced ->
+                        VirtualFileSystem.mountedRootOf displaced vfs
+                        <> VirtualFileSystem.mountedRootOf moved vfs
+                    | None -> false
+                )
+            | ResolvedTarget.Directory _ -> false
+
         match source.Target with
-        | ResolvedTarget.Directory (_, reachedBy) ->
+        | ResolvedTarget.Directory (inode, reachedBy) ->
             match reachedBy with
             | FinalNavigation.Root -> RenameVerdict.Refuse UnixError.EISDIR
             // No root special case, unlike Darwin's `unlink` and `rmdir`, which
@@ -479,12 +498,15 @@ module internal RenameRules =
             // So EXDEV is the mount boundary talking, and where it stays quiet
             // the root answers exactly what any other directory answers.
             //
-            // A rename out of the one mounted filesystem this library has, the
-            // device filesystem, is EXDEV before this verdict is asked, and
-            // nothing inside it can be renamed, so the EINVAL readings are the
-            // applicable ones.
+            // Across the device filesystem's mount it is EXDEV, `rename("/dev/.",
+            // "/tmp/x")` and `rename("/tmp/.", "/dev/n")` alike, and within it
+            // EINVAL (`docs/probes/devfs-darwin`, NS rename rows).
             | FinalNavigation.Current
-            | FinalNavigation.Parent -> RenameVerdict.Refuse UnixError.EINVAL
+            | FinalNavigation.Parent ->
+                if crossesMount inode then
+                    RenameVerdict.Refuse UnixError.EXDEV
+                else
+                    RenameVerdict.Refuse UnixError.EINVAL
         | ResolvedTarget.Entry (sourceDirectory, sourceName, sourceExisting) ->
 
         match sourceExisting with
@@ -508,16 +530,37 @@ module internal RenameRules =
         let displacedDirectory = RenameChecks.existingDirectory destinationExisting vfs
         let displacesNonDirectory = RenameChecks.namesNonDirectory destinationExisting vfs
 
-        if movedIsDirectory && displacesNonDirectory then
-            RenameVerdict.Refuse UnixError.ENOTDIR
-        elif not movedIsDirectory && displacedDirectory.IsSome then
-            RenameVerdict.Refuse UnixError.EISDIR
-        elif
+        // Darwin's devfs refuses an unprivileged caller every rename within it
+        // EPERM, ahead of the type rule, the subtree's EINVAL and the write
+        // checks, and behind only a free destination's trailing separator and
+        // a rename of a name onto itself, which the write check answers
+        // (measured on Darwin 27.0, `docs/probes/devfs-darwin`, NS rename
+        // rows: `rename("/dev/null", "/dev/monotonic")` is EPERM,
+        // `rename("/dev/null", "/dev/n/")` ENOENT and
+        // `rename("/dev/null", "/dev/null")` EACCES). A rename across its
+        // mount is EXDEV before this verdict is asked, and a privileged caller
+        // is refused before it.
+        // The type rule is about an existing destination and this arm about a
+        // free one, so neither ever shadows the other; this one is first
+        // because it beats the mount's EXDEV.
+        if
             destination.TrailingSeparatorDemanded
             && destinationExisting.IsNone
             && not movedIsDirectory
         then
             RenameVerdict.Refuse UnixError.ENOENT
+        elif crossesMount moved then
+            RenameVerdict.Refuse UnixError.EXDEV
+        elif
+            VirtualFileSystem.isOnDevfs sourceDirectory vfs
+            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && destinationExisting <> Some moved
+        then
+            RenameVerdict.Refuse UnixError.EPERM
+        elif movedIsDirectory && displacesNonDirectory then
+            RenameVerdict.Refuse UnixError.ENOTDIR
+        elif not movedIsDirectory && displacedDirectory.IsSome then
+            RenameVerdict.Refuse UnixError.EISDIR
         elif
             movedIsDirectory
             && VirtualFileSystem.isWithinSubtree moved destinationDirectory vfs

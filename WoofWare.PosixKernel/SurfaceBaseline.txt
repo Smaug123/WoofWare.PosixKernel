@@ -8702,6 +8702,7 @@ WoofWare.PosixKernel.UnixSystem.currentDirectoryInode [static method]: WoofWare.
 WoofWare.PosixKernel.UnixSystem.defaultCoreDumps [static property]: [read-only] WoofWare.PosixKernel.CoreDumps
 WoofWare.PosixKernel.UnixSystem.defaultCredentials [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.Credentials
 WoofWare.PosixKernel.UnixSystem.defaultCurrentDirectory [static property]: [read-only] WoofWare.PosixKernel.AbsoluteUnixPath
+WoofWare.PosixKernel.UnixSystem.defaultDevfsContents [static property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.defaultDevtmpfsContents [static property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.defaultEntropySeed [static property]: [read-only] System.UInt64
 WoofWare.PosixKernel.UnixSystem.defaultEphemeralPortRange [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> (System.UInt16 * System.UInt16)
@@ -8728,6 +8729,7 @@ WoofWare.PosixKernel.UnixSystem.fileModeCreationMask [static method]: WoofWare.P
 WoofWare.PosixKernel.UnixSystem.fileSystem [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.VirtualFileSystem
 WoofWare.PosixKernel.UnixSystem.get_defaultCoreDumps [static method]: unit -> WoofWare.PosixKernel.CoreDumps
 WoofWare.PosixKernel.UnixSystem.get_defaultCurrentDirectory [static method]: unit -> WoofWare.PosixKernel.AbsoluteUnixPath
+WoofWare.PosixKernel.UnixSystem.get_defaultDevfsContents [static method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.get_defaultDevtmpfsContents [static method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.get_defaultEntropySeed [static method]: unit -> System.UInt64
 WoofWare.PosixKernel.UnixSystem.get_defaultInotifyLimits [static method]: unit -> WoofWare.PosixKernel.InotifyLimits

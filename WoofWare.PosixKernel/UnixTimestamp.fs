@@ -129,3 +129,9 @@ module UnixTimestamp =
     /// reads before any time has passed.
     /// </remarks>
     let epoch : UnixTimestamp = UnixTimestamp (0L, 0)
+
+    /// The latest whole microsecond not after `timestamp`, which is what a
+    /// filesystem keeping its times to the microsecond stores for it.
+    let internal truncateToMicroseconds (timestamp : UnixTimestamp) : UnixTimestamp =
+        match timestamp with
+        | UnixTimestamp (seconds, nanoseconds) -> UnixTimestamp (seconds, nanoseconds - nanoseconds % 1000)

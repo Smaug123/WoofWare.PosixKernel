@@ -1,0 +1,246 @@
+# Darwin 27.0.0 arm64, Darwin Kernel Version 27.0.0: Tue Aug 11 21:06:40 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6050
+# euid=501 egid=20
+BOOT	1791357518	711458
+STAT	/dev	type=dir mode=0555 uid=0 gid=0 ino=335 nlink=4 size=5087 blksize=512 blocks=10 rdev=0,0 dev=0x52597f09 atime=1792619989.210281000 mtime=1791357518.000000000 ctime=1791357518.000000000 birth=0.000000000
+STAT	/dev/null	type=chr mode=0666 uid=0 gid=0 ino=338 nlink=1 size=0 blksize=65536 blocks=0 rdev=3,2 dev=0x52597f09 atime=1792619685.843100000 mtime=1792620044.597541000 ctime=1792620044.597541000 birth=0.000000000
+STAT	/dev/zero	type=chr mode=0666 uid=0 gid=0 ino=339 nlink=1 size=0 blksize=65536 blocks=0 rdev=3,3 dev=0x52597f09 atime=1791357518.000000000 mtime=1791357518.000000000 ctime=1791357518.000000000 birth=0.000000000
+STAT	/dev/random	type=chr mode=0666 uid=0 gid=0 ino=613 nlink=1 size=0 blksize=65536 blocks=0 rdev=17,0 dev=0x52597f09 atime=1792317280.735508000 mtime=1792619058.011355000 ctime=1792619058.011355000 birth=0.000000000
+STAT	/dev/urandom	type=chr mode=0666 uid=0 gid=0 ino=614 nlink=1 size=0 blksize=65536 blocks=0 rdev=17,1 dev=0x52597f09 atime=1792620043.184197000 mtime=1791357518.000000000 ctime=1791357518.000000000 birth=0.000000000
+STAT	/dev/monotonic	type=dir mode=0555 uid=0 gid=0 ino=620 nlink=2 size=14 blksize=512 blocks=1 rdev=0,0 dev=0x52597f09 atime=1792616739.423980000 mtime=1791357518.000000000 ctime=1791357518.000000000 birth=0.000000000
+STAT	/dev/monotonic/uncore	type=chr mode=0666 uid=0 gid=88 ino=621 nlink=1 size=0 blksize=65536 blocks=0 rdev=19,0 dev=0x52597f09 atime=1791357518.000000000 mtime=1791357518.000000000 ctime=1791357518.000000000 birth=0.000000000
+STAT	/dev/full	-> ENOENT
+DENT	/dev/monotonic	620	4	.
+DENT	/dev/monotonic	335	4	..
+DENT	/dev/monotonic	621	2	uncore
+DENT	/dev	335	4	.
+DENT	/dev	335	4	..
+DENT	/dev	338	2	null
+DENT	/dev	339	2	zero
+DENT	/dev	613	2	random
+DENT	/dev	614	2	urandom
+DENT	/dev	620	4	monotonic
+DENTS	/dev	records=369 sum_namelen_plus_8=5087 subdirectories=2 size=5087 nlink=4
+DIRFD	read(16)	-> ok
+DIRFD	lseek(0, SEEK_CUR) fresh	-> 12 
+DIRFD	lseek(0, SEEK_END)	-> 5087 
+DIRFD	lseek(0, SEEK_SET)	-> 0 
+DIRFD	after one call of 5 records lseek(0, SEEK_CUR)	-> 68
+DIRFD	lseek(5, SEEK_SET)	-> 5 
+DIRFD	lseek(-1, SEEK_SET)	-> -1 EINVAL
+DIRFD	fstatfs	-> type=19 name=devfs
+STATFS	/dev	type=19 name=devfs bsize=512 iosize=512 fsid=52597f09:00000013 owner=0 flags=0x4101000 flags_ext=0x0 subtype=0 on=/dev from=devfs blocks=427 bfree=0 bavail=0 files=739 ffree=0
+STATFS	/dev/null	type=19 name=devfs bsize=512 iosize=512 fsid=52597f09:00000013 owner=0 flags=0x4101000 flags_ext=0x0 subtype=0 on=/dev from=devfs blocks=427 bfree=0 bavail=0 files=739 ffree=0
+STATFS	/dev/monotonic	type=19 name=devfs bsize=512 iosize=512 fsid=52597f09:00000013 owner=0 flags=0x4101000 flags_ext=0x0 subtype=0 on=/dev from=devfs blocks=427 bfree=0 bavail=0 files=739 ffree=0
+TIMES	/dev	start	clock=1792620045.096723080 atime=1792620045.096694000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev	after-open	clock=1792620046.202493906 atime=1792620045.096694000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev	after-failed-lookup	clock=1792620047.312083960 atime=1792620045.096694000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev	after-call-of-3-records	clock=1792620048.418442965 atime=1792620048.418463000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev	after-second-call-of-3-records	clock=1792620049.527786016 atime=1792620049.527842000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev	after-call-at-end-of-0-records	clock=1792620050.637543917 atime=1792620050.637611000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	start	clock=1792620050.637731075 atime=1792620045.094651000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	after-open	clock=1792620051.747205019 atime=1792620045.094651000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	after-failed-lookup	clock=1792620052.850646973 atime=1792620045.094651000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	after-call-of-3-records	clock=1792620053.959927082 atime=1792620053.959960000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	after-second-call-of-0-records	clock=1792620055.069823027 atime=1792620055.069838000 mtime=1791357518.000000000 ctime=1791357518.000000000
+TIMES	/dev/monotonic	after-call-at-end-of-0-records	clock=1792620056.172550917 atime=1792620056.172576000 mtime=1791357518.000000000 ctime=1791357518.000000000
+NS	utimes(/dev/null, NULL)	-> ok
+TIMES	/dev/null	after-utimes-null	clock=1792620056.172694921 atime=1792620056.172700000 mtime=1792620056.172700000 ctime=1792620056.172752000
+NS	utimensat(/dev/null, NOW, NOW)	-> ok
+TIMES	/dev/null	after-utimensat-now-now	clock=1792620058.381184101 atime=1792620058.381185000 mtime=1792620058.381185000 ctime=1792620058.381318000
+NS	utimensat(/dev/null, NULL)	-> ok
+TIMES	/dev/null	after-utimensat-null	clock=1792620060.590406895 atime=1792620060.590408000 mtime=1792620060.590408000 ctime=1792620059.590500000
+NS	utimensat(/dev/null, explicit)	-> EACCES
+NS	utimensat(/dev/null, NOW, OMIT)	-> EACCES
+NS	utimes(/dev, NULL)	-> EACCES
+NS	open(/dev/n, O_CREAT|O_WRONLY)	-> EPERM
+NS	open(/dev/n, O_CREAT|O_RDONLY)	-> EPERM
+NS	open(/dev/n, O_CREAT|O_EXCL|O_WRONLY)	-> EPERM
+NS	open(/dev/null, O_CREAT|O_EXCL|O_WRONLY)	-> EEXIST
+NS	open(/dev/monotonic, O_CREAT|O_WRONLY)	-> EISDIR
+NS	open(/dev/monotonic, O_CREAT|O_EXCL|O_RDONLY)	-> EEXIST
+NS	open(/dev/n/, O_CREAT|O_WRONLY)	-> ENOENT
+NS	open(/dev/nope/x, O_CREAT|O_WRONLY)	-> ENOENT
+NS	open(/dev/null/x, O_CREAT|O_WRONLY)	-> ENOTDIR
+NS	open(/dev/monotonic/n, O_CREAT|O_WRONLY)	-> EPERM
+NS	open(/dev/monotonic/uncore, O_CREAT|O_EXCL|O_WRONLY)	-> EEXIST
+NS	open(/dev/<31 a>, O_RDONLY)	-> ENOENT
+NS	open(/dev/<31 a>, O_CREAT|O_WRONLY)	-> EPERM
+NS	mkdir(/dev/<31 a>)	-> EPERM
+NS	open(/dev/<32 a>, O_RDONLY)	-> ENOENT
+NS	open(/dev/<32 a>, O_CREAT|O_WRONLY)	-> EPERM
+NS	mkdir(/dev/<32 a>)	-> EPERM
+NS	open(/dev/<255 a>, O_RDONLY)	-> ENOENT
+NS	open(/dev/<255 a>, O_CREAT|O_WRONLY)	-> EPERM
+NS	mkdir(/dev/<255 a>)	-> EPERM
+NS	open(/dev/<256 a>, O_RDONLY)	-> ENOENT
+NS	open(/dev/<256 a>, O_CREAT|O_WRONLY)	-> EPERM
+NS	mkdir(/dev/<256 a>)	-> EPERM
+NS	mkdir(/dev/n)	-> EPERM
+NS	mkdir(/dev/n/)	-> EPERM
+NS	mkdir(/dev/null)	-> EEXIST
+NS	mkdir(/dev/monotonic)	-> EEXIST
+NS	mkdir(/dev/monotonic/)	-> EEXIST
+NS	mkdir(/dev/nope/x)	-> ENOENT
+NS	mkdir(/dev/null/x)	-> ENOTDIR
+NS	mkdir(/dev/monotonic/n)	-> EPERM
+NS	mkdir(/dev)	-> EEXIST
+NS	mkdir(/dev/.)	-> EEXIST
+NS	mkfifo(/dev/n)	-> EPERM
+NS	mkfifo(/dev/null)	-> EEXIST
+NS	mknod(/dev/n, S_IFCHR, 3,2)	-> EPERM
+NS	mknod(/dev/null, S_IFCHR, 3,2)	-> EPERM
+NS	mknod(/dev/n, S_IFIFO)	-> EPERM
+NS	symlink(x, /dev/n)	-> EPERM
+NS	symlink(x, /dev/null)	-> EPERM
+NS	symlink(x, /dev/monotonic)	-> EPERM
+NS	symlink(x, /dev/n/)	-> ENOENT
+NS	symlink(x, /dev/monotonic/n)	-> EPERM
+NS	link(/dev/null, /dev/n)	-> EPERM
+NS	link(/dev/null, /dev/zero)	-> EPERM
+NS	link(/dev/null, /dev/null)	-> EPERM
+NS	link(/dev/null, /dev/monotonic/n)	-> EPERM
+NS	link(/dev/null, tmp/l)	-> EPERM
+NS	link(/dev/nope, /dev/n)	-> ENOENT
+NS	link(/dev/nope, tmp/l)	-> ENOENT
+NS	link(/dev/monotonic, /dev/n)	-> EPERM
+NS	link(/dev/monotonic, tmp/l)	-> EPERM
+NS	link(tmp/f, /dev/n)	-> EPERM
+NS	link(tmp/f, /dev/null)	-> EPERM
+NS	link(tmp/nope, /dev/n)	-> ENOENT
+NS	link(tmp/sub, /dev/n)	-> EPERM
+NS	link(tmp/f, /dev/nope/x)	-> ENOENT
+NS	link(tmp/f, /dev/null/x)	-> ENOTDIR
+NS	link(/dev/null, /dev/nope/x)	-> ENOENT
+NS	link(/dev/null, tmp/f)	-> EPERM
+NS	link(/dev/null, tmp/nope)	-> EPERM
+NS	link(/dev/null, tmp/ro/n)	-> EPERM
+NS	link(/dev/null, tmp/nox/n)	-> EACCES
+NS	link(/dev/null, tmp/n/)	-> ENOENT
+NS	link(tmp/f, tmp/ro/n)	-> EACCES
+NS	rename(/dev/null, tmp/ro/n)	-> EXDEV
+NS	rename(/dev/null, tmp/nox/n)	-> EACCES
+NS	symlink(x, /dev)	-> EPERM
+NS	symlink(x, /dev/.)	-> EPERM
+NS	symlink(x, /dev/monotonic/..)	-> EPERM
+NS	link(/dev/null, tmp/.)	-> EPERM
+NS	link(tmp/f, /dev)	-> EPERM
+NS	link(tmp/f, /dev/.)	-> EPERM
+NS	link(/dev/null, /dev/.)	-> EPERM
+NS	link(/dev/monotonic/uncore, /dev/monotonic/..)	-> EPERM
+NS	clonefile(tmp/f, /dev)	-> EEXIST
+NS	mkdir(/dev/monotonic/..)	-> EEXIST
+NS	linkat(/dev/null, removed-dir, n)	-> ENOENT
+NS	linkat(tmp/f, removed-dir, n)	-> ENOENT
+NS	symlinkat(x, removed-dir, n)	-> ENOENT
+NS	clonefile(tmp/f, /dev/n)	-> EXDEV
+NS	clonefile(tmp/f, /dev/null)	-> EEXIST
+NS	clonefile(tmp/f, /dev/nope/x)	-> ENOENT
+NS	clonefile(/dev/null, tmp/n)	-> EINVAL
+NS	symlink(x, /dev/nope/x)	-> ENOENT
+NS	symlink(x, /dev/null/x)	-> ENOTDIR
+NS	symlink(x, /dev/monotonic/uncore)	-> EPERM
+NS	mkdir(/dev/monotonic/uncore)	-> EEXIST
+NS	mkfifo(/dev/monotonic)	-> EEXIST
+NS	mkfifo(/dev/n/)	-> ENOENT
+NS	unlink(/dev/null)	-> EPERM
+NS	unlink(/dev/null/)	-> ENOTDIR
+NS	unlink(/dev/null/x)	-> ENOTDIR
+NS	unlink(/dev/nope)	-> ENOENT
+NS	unlink(/dev/monotonic)	-> EPERM
+NS	unlink(/dev/monotonic/)	-> EPERM
+NS	unlink(/dev/monotonic/uncore)	-> EPERM
+NS	unlink(/dev/monotonic/nope)	-> ENOENT
+NS	rmdir(/dev/monotonic)	-> EPERM
+NS	rmdir(/dev/monotonic/)	-> EPERM
+NS	rmdir(/dev/monotonic/.)	-> EINVAL
+NS	rmdir(/dev/monotonic/..)	-> EBUSY
+NS	rmdir(/dev/null)	-> ENOTDIR
+NS	rmdir(/dev/nope)	-> ENOENT
+NS	rmdir(/dev/monotonic/uncore)	-> ENOTDIR
+NS	rmdir(/dev/monotonic/nope)	-> ENOENT
+NS	rename(/dev/null, /dev/n)	-> EPERM
+NS	rename(/dev/null, /dev/zero)	-> EPERM
+NS	rename(/dev/null, /dev/null)	-> EACCES
+NS	rename(/dev/null, /dev/monotonic)	-> EPERM
+NS	rename(/dev/null, /dev/monotonic/n)	-> EPERM
+NS	rename(/dev/null, /dev/monotonic/uncore)	-> EPERM
+NS	rename(/dev/null, /dev/n/)	-> ENOENT
+NS	rename(/dev/null/, /dev/n)	-> ENOTDIR
+NS	rename(/dev/monotonic, /dev/null)	-> EPERM
+NS	rename(/dev/monotonic, /dev/n)	-> EPERM
+NS	rename(/dev/monotonic, /dev/monotonic)	-> EACCES
+NS	rename(/dev/monotonic, /dev/monotonic/n)	-> EPERM
+NS	rename(/dev/monotonic/uncore, /dev/n)	-> EPERM
+NS	rename(/dev/monotonic/uncore, /dev/null)	-> EPERM
+NS	rename(/dev/nope, /dev/n)	-> ENOENT
+NS	rename(/dev/nope, /dev/null)	-> ENOENT
+NS	rename(/dev/nope, tmp/x)	-> ENOENT
+NS	rename(/dev/null, tmp/x)	-> EXDEV
+NS	rename(/dev/null, tmp/f)	-> EXDEV
+NS	rename(/dev/monotonic, tmp/sub)	-> EXDEV
+NS	rename(tmp/f, /dev/n)	-> EXDEV
+NS	rename(tmp/f, /dev/null)	-> EXDEV
+NS	rename(tmp/nope, /dev/n)	-> ENOENT
+NS	rename(tmp/nope, /dev/null)	-> ENOENT
+NS	rename(tmp/sub, /dev/n)	-> EXDEV
+NS	rename(tmp/sub, /dev/monotonic)	-> EXDEV
+NS	rename(/dev/null, tmp/sub)	-> EXDEV
+NS	rename(/dev/monotonic, tmp/f)	-> EXDEV
+NS	rename(tmp/f, /dev/monotonic)	-> EXDEV
+NS	rename(tmp/sub, /dev/null)	-> EXDEV
+NS	rename(/dev/null, tmp/n/)	-> ENOENT
+NS	rename(/dev/monotonic, tmp/n/)	-> EXDEV
+NS	rename(tmp/sub/, /dev/n)	-> EXDEV
+NS	rename(tmp/., /dev/n)	-> EXDEV
+NS	rename(/dev/., tmp/x)	-> EXDEV
+NS	rename(/dev/null, tmp/.)	-> EINVAL
+NS	rename(tmp/f, /dev/.)	-> EISDIR
+NS	rename(tmp/f, /dev)	-> EXDEV
+NS	rename(/dev/monotonic, /dev/.)	-> EINVAL
+NS	rename(/dev/monotonic, /dev/monotonic/..)	-> EINVAL
+NS	rename(/dev/null, /dev/monotonic/..)	-> EPERM
+NS	rename(/dev/null, /dev/monotonic/.)	-> EISDIR
+NS	rename(tmp/sub, /dev/.)	-> EINVAL
+NS	rename(tmp/f, /dev/monotonic/.)	-> EISDIR
+NS	rename(/dev/nope, /dev/.)	-> ENOENT
+NS	rename(/dev/monotonic/., tmp/x)	-> EXDEV
+NS	rename(/dev/null, /dev/nope/x)	-> ENOENT
+NS	rename(/dev/monotonic/, /dev/n)	-> EPERM
+NS	rename(/dev/monotonic, /dev/n/)	-> EPERM
+NS	rename(/dev/monotonic/uncore, /dev/monotonic/uncore)	-> EACCES
+NS	rename(/dev, tmp/x)	-> EXDEV
+NS	rename(/dev/., /dev/n)	-> EINVAL
+NS	rename(/dev/null, /dev/.)	-> EISDIR
+NS	rmdir(/dev)	-> EBUSY
+NS	unlink(/dev)	-> EBUSY
+NS	rmdir(/dev/.)	-> EBUSY
+NS	utimes(/dev/null, explicit)	-> EPERM
+NS	chmod(/dev/null, 0666)	-> EPERM
+NS	chmod(/dev/monotonic, 0555)	-> EPERM
+NS	chown(/dev/null, -1, -1)	-> ok
+NS	chown(/dev/null, self, -1)	-> EPERM
+NS	chown(/dev/monotonic, -1, -1)	-> ok
+NS	truncate(/dev/null, 0)	-> EINVAL
+NS	truncate(/dev/monotonic, 0)	-> EISDIR
+NS	access(/dev/null, R_OK|W_OK)	-> ok
+NS	access(/dev/null, X_OK)	-> EACCES
+NS	access(/dev, W_OK)	-> EACCES
+NS	access(/dev, R_OK|X_OK)	-> ok
+NS	access(/dev/monotonic, W_OK)	-> EACCES
+CONSOLE	chmod(same mode 0622)	-> EPERM clock=1792620060.595446110 mode=0622 ctime=1792614526.836020000
+CONSOLE	chown(same owner 501:20)	-> ok
+CONSOLE	utimensat(1000000000.123456789, 1000000001.987654321)	-> ok atime=1000000000.123456000 mtime=1000000001.987654000
+CONSOLE	utimensat(0.0 both)	-> ok atime=1792614528.595548000 mtime=1792614528.595548000 ctime=1792614528.595548000 birth=0.000000000 clock=1792620060.595539093
+CONSOLE	utimensat(0.999 both)	-> ok atime=1792614529.595568000 mtime=1792614529.595568000 ctime=1792614529.595568000 birth=0.000000000 clock=1792620060.595558882
+CONSOLE	utimensat(1.1000 both)	-> ok atime=1.000001000 mtime=1.000001000 ctime=1792614530.595587000 birth=0.000000000 clock=1792620060.595577955
+CONSOLE	utimensat(-1.500000000 both)	-> ok atime=-1.500000000 mtime=-1.500000000 ctime=1792614531.595606000 birth=0.000000000 clock=1792620060.595597029
+CONSOLE	utimensat(-1000000.0 both)	-> ok atime=-1000000.000000000 mtime=-1000000.000000000 ctime=1792614532.595625000 birth=0.000000000 clock=1792620060.595616102
+CONSOLE	utimensat(5.1500000000 both)	-> ok atime=5.1500000000 mtime=5.1500000000 ctime=1792614533.595652000 birth=0.000000000 clock=1792620060.595633984
+CONSOLE	utimensat(5.-3 both)	-> ok atime=5.000000000 mtime=5.000000000 ctime=1792614534.595672000 birth=0.000000000 clock=1792620060.595663071
+CONSOLE	utimensat(4294967296.5000 both)	-> ok atime=4294967296.000005000 mtime=4294967296.000005000 ctime=1792614535.595690000 birth=0.000000000 clock=1792620060.595680952
+CONSOLE	utimensat(8589934592.123456789 both)	-> ok atime=8589934592.123456000 mtime=8589934592.123456000 ctime=1792614536.595707000 birth=0.000000000 clock=1792620060.595699072
+CONSOLE	utimensat(9223372036.854775807 both)	-> ok atime=9223372036.854775000 mtime=9223372036.854775000 ctime=1792614537.595724000 birth=0.000000000 clock=1792620060.595715046
+CONSOLE	utimensat(9223372037.0 both)	-> ok atime=9223372037.000000000 mtime=9223372037.000000000 ctime=1792614538.595741000 birth=0.000000000 clock=1792620060.595732927
+CONSOLE	utimensat(9223372036854775807.999999999 both)	-> ok atime=9223372036854775807.999999000 mtime=9223372036854775807.999999000 ctime=1792614539.595760000 birth=0.000000000 clock=1792620060.595751047
+CONSOLE	utimensat(-9223372036854775808.0 both)	-> ok atime=-9223372036854775808.000000000 mtime=-9223372036854775808.000000000 ctime=1792614540.595777000 birth=0.000000000 clock=1792620060.595768929
+CONSOLE	restore times	-> ok atime=1791357518.000000000 mtime=1792614428.864158000

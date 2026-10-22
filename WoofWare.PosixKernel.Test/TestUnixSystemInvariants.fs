@@ -1201,7 +1201,7 @@ module TestUnixSystemInvariants =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    DeviceMount = DeviceFileSystemMount.Devfs
+                    DeviceMount = DeviceFileSystemMount.Devfs DevfsMount.defaults
                 }
             )
             linux

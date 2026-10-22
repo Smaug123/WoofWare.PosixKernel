@@ -104,8 +104,8 @@ type MountedFileSystem =
     /// holds (`UnixBootImage.withDeviceFileSystem`): no name can be created in
     /// it, and none removed.
     | Devtmpfs
-    /// Darwin's devfs, which this kernel does not model. A path that reaches it
-    /// is refused.
+    /// Darwin's devfs, which likewise holds what the machine's configuration
+    /// says it holds: no name can be created in it, and none removed.
     | Devfs
 
 /// One mounted filesystem.
@@ -594,6 +594,16 @@ module VirtualFileSystem =
     /// the root filesystem (or is not in the graph at all).
     let mountedRootOf (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeNumber option =
         Map.tryFind inode vfs.MountMembers
+
+    /// The mounted filesystem `inode` is on, or `None` if it is on the root
+    /// filesystem (or is not in the graph at all).
+    let internal mountedFileSystemOf (inode : InodeNumber) (vfs : VirtualFileSystem) : MountedFileSystem option =
+        Map.tryFind inode vfs.MountMembers
+        |> Option.map (fun root -> vfs.Mounts.[root].FileSystem)
+
+    /// Whether `inode` is on Darwin's devfs.
+    let internal isOnDevfs (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
+        mountedFileSystemOf inode vfs = Some MountedFileSystem.Devfs
 
     /// Fail unless `inode` is on the root filesystem. Every mounted filesystem
     /// this module holds is closed — nothing can be created in it or removed
@@ -2098,9 +2108,9 @@ module VirtualFileSystem =
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
     /// `permissions` owned by `owner`, holding the seed `contents` realised
     /// as `ofFileSystemSeed` realises one, with `owner` as its default owner
-    /// and `symlinkPermissions` as its links' bits, all created at `now`. The
-    /// root directory's own times do not move: a mount changes no directory of
-    /// the filesystem it covers.
+    /// and `symlinkPermissions` as its links' bits, every inode on it with
+    /// `times`. The root directory's own times do not move: a mount changes
+    /// no directory of the filesystem it covers.
     ///
     /// The root may already bind `name` to an empty directory, which the mount
     /// then covers; otherwise the mount covers a directory that held nothing,
@@ -2113,11 +2123,14 @@ module VirtualFileSystem =
         (owner : InodeOwner)
         (symlinkPermissions : PermissionBits)
         (contents : Map<DirectoryEntryName, SeedEntry>)
-        (now : UnixTimestamp)
+        (times : InodeTimes)
         (vfs : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
         =
         let name = DirectoryEntryName.assertValid "VirtualFileSystem.mountAtRoot" name
+        // What the builders below stamp; every inode the mount holds is given
+        // `times` once they are done.
+        let now = times.Modification
 
         let rootContent =
             match tryGetDirectory vfs.Root vfs with
@@ -2180,11 +2193,26 @@ module VirtualFileSystem =
 
         let vfs = installSeed now owner symlinkPermissions mountRoot contents vfs
 
+        let subtree = subtreeOf mountRoot vfs
+
         let members =
-            subtreeOf mountRoot vfs
+            subtree
             |> Set.fold (fun members inode -> Map.add inode mountRoot members) vfs.MountMembers
 
-        let root = vfs.Inodes.[vfs.Root]
+        let inodes =
+            subtree
+            |> Set.fold
+                (fun inodes inode ->
+                    Map.add
+                        inode
+                        { Map.find inode inodes with
+                            Times = times
+                        }
+                        inodes
+                )
+                vfs.Inodes
+
+        let root = inodes.[vfs.Root]
 
         Ok
             { vfs with
@@ -2194,7 +2222,7 @@ module VirtualFileSystem =
                         { root with
                             Times = rootTimes
                         }
-                        vfs.Inodes
+                        inodes
                 Mounts =
                     Map.add
                         mountRoot

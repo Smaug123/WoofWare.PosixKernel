@@ -7,10 +7,10 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// The device filesystem the kernel mounts over the root's `dev` at boot: on
-/// Linux a devtmpfs holding what `UnixBootImage.withDeviceFileSystem`
-/// configures, by default the memory-device driver's five nodes, and on Darwin
-/// devfs, which is not modelled and so refuses every path that reaches it.
+/// The device filesystem the kernel mounts over the root's `dev` at boot, on
+/// Linux: a devtmpfs holding what `UnixBootImage.withDeviceFileSystem`
+/// configures, by default the memory-device driver's five nodes. Darwin's
+/// devfs is `TestDevfs`'.
 ///
 /// The constants are the rows `devices.c` and `mountpoint.c` measured on Linux
 /// 6.18.5 (a devtmpfs at `/dev`, as root and as uid 1000) and Darwin 27.0 (uid
@@ -1552,7 +1552,7 @@ module TestDeviceFileSystem =
 
             UnixBootImage.tryWithDeviceFileSystem (plant depth contents) image
             |> Result.map ignore
-            |> shouldEqual (Error (DeviceFileSystemFault.NotMadeByDevtmpfs offenderName))
+            |> shouldEqual (Error (DeviceFileSystemFault.NotMadeByDeviceFileSystem offenderName))
 
         let offenderGen =
             Gen.elements
@@ -1571,7 +1571,7 @@ module TestDeviceFileSystem =
 
         UnixBootImage.tryWithDeviceFileSystem (Map.ofList [ long, SeedEntry.directory Map.empty ]) image
         |> Result.map ignore
-        |> shouldEqual (Error (DeviceFileSystemFault.NameTooLong long))
+        |> shouldEqual (Error (DeviceFileSystemFault.NameTooLong (long, 255)))
 
         // 255 bytes is Linux's NAME_MAX, which a devtmpfs holds.
         UnixBootImage.tryWithDeviceFileSystem
@@ -1579,11 +1579,6 @@ module TestDeviceFileSystem =
             image
         |> Result.isOk
         |> shouldEqual true
-
-        // Darwin's devfs is not modelled, so has no contents to set.
-        UnixBootImage.tryWithDeviceFileSystem Map.empty (UnixSystem.initial<int, string> darwin)
-        |> Result.map ignore
-        |> shouldEqual (Error DeviceFileSystemFault.Devfs)
 
     [<Test>]
     let ``a root seed holding a device node is refused, wherever it holds it`` () : unit =
@@ -1870,18 +1865,3 @@ module TestDeviceFileSystem =
         // After both, and recent: left alone.
         let atime, _ = atEnd (UnixSystem.advanceClock second system)
         atime |> shouldEqual (UnixTimestamp.ofSeconds (now + 1L))
-
-    // -------------------------------------------------------------- Darwin
-
-    [<Test>]
-    let ``on Darwin every path that reaches dev is refused`` () : unit =
-        let system = booted darwin
-
-        for path in [ "/dev" ; "/dev/null" ; "/dev/urandom" ; "/dev/x/y" ; "/d/../dev" ] do
-            match stat path system with
-            | Error (StatRefusal.Path (PathRefusal.UnmodelledFileSystem (_, MountedFileSystem.Devfs))) -> ()
-            | other -> failwith $"stat %s{path} on Darwin: expected a refusal, got %A{other}"
-
-        match UnixPathResolution.tryChdir (Callers.leader system) (PathArg.ofText "/dev") system with
-        | Error (PathRefusal.UnmodelledFileSystem _) -> ()
-        | other -> failwith $"chdir /dev on Darwin: expected a refusal, got %A{other}"
