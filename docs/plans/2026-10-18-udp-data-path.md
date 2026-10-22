@@ -692,8 +692,8 @@ four queues (Y2). A pair answers as one of its two arguments alone in every
 row but those where an iovec count of 1 drops the iovec the other argument
 changed, so each flavour's answers order into the ladders below. Y3 makes a
 blocking `recvmsg` meet each fault, Y4 puts the header's faults through a
-closed descriptor and a pipe, and Y5 is Z4 for `sendmsg`. Darwin 27.0.0 ran
-six times and Linux 6.18.5 twice. Every row repeated but one Darwin `sendmsg`
+closed descriptor and a pipe, Y5 is Z4 for `sendmsg`, and Y6 finds the
+longest iovecs each call lets through. Darwin 27.0.0 ran six times and Linux 6.18.5 twice. Every row repeated but one Darwin `sendmsg`
 from an erred socket with a zero-length name, which answers `EINVAL` and,
 in one run of six, found the error gone afterwards, as 2.15 saw for
 `MSG_OOB`; the recording is a run where it stayed.
@@ -711,9 +711,12 @@ signed `int`.
    (`EFAULT`);
 4. `msg_iovlen` above 1024 (`EMSGSIZE`). 0 is allowed: the iovecs hold no
    bytes;
-5. the iovec array's copy (`EFAULT`); each iovec's range (`EFAULT`: two
-   iovecs of `SSIZE_MAX` bytes, though one alone is let through and the
-   datagram is too long); a length negative as an `ssize_t` (`EINVAL`);
+5. the iovec array's copy (`EFAULT`); a length negative as an `ssize_t`
+   (`EINVAL`); each iovec's range (`EFAULT`), on its whole length where
+   there are several, so that two iovecs of half of `SSIZE_MAX` fault (Y6),
+   but on at most `MAX_RW_COUNT` (0x7ffff000) where there is one, which is
+   let through at any length short of negative. The total is then cut to
+   `MAX_RW_COUNT`;
 6. the control buffer: longer than `INT_MAX` (`ENOBUFS`), then its copy
    (`EFAULT`, a NULL buffer with a length included). None of these binds
    the socket;
@@ -727,8 +730,8 @@ signed `int`.
 
 1. the header's copy (`EFAULT`), ahead of even the descriptor (Y4);
 2. `msg_iovlen` of 0, negative, or above 1024 (`EMSGSIZE`);
-3. the iovec array's copy (`EFAULT`); the iovecs' total, if any length is
-   negative as an `ssize_t` or the total overflows (`EINVAL`);
+3. the iovec array's copy (`EFAULT`); a total above `INT_MAX`, 0x7fffffff,
+   one iovec or several (`EINVAL`, Y6);
 4. the descriptor (Y4);
 5. the name: NULL is no name, whatever its length; otherwise its copy, as
    `sendto`'s rung 2 (`ENAMETOOLONG` above 255, so for a length of
@@ -775,8 +778,7 @@ A failed call writes nothing to the header.
 
 1. the header's copy (`EFAULT`), ahead of the descriptor;
 2. `msg_iovlen` of 0, negative, or above 1024 (`EMSGSIZE`);
-3. the iovec array's copy (`EFAULT`); a negative or overflowing total
-   (`EINVAL`);
+3. the iovec array's copy (`EFAULT`); a total above `INT_MAX` (`EINVAL`);
 4. the descriptor;
 5. `MSG_OOB` (`EOPNOTSUPP`);
 6. the receive, as `recv`'s: the queue, then the error, which `MSG_PEEK`

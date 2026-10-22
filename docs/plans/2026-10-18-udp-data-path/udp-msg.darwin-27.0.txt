@@ -2357,3 +2357,31 @@ Y5 state=loopback header=mapped iovlen=2 array=mapped iov=good name=good control
 Y5 state=loopback header=mapped iovlen=2 array=mapped iov=good name=good control=zero16 flags=0: answer=3 fionread=42
 Y5 state=loopback header=mapped iovlen=2 array=mapped iov=good name=good control=big flags=0: answer=-1 EINVAL fionread=26
 Y5 state=loopback header=mapped iovlen=2 array=mapped iov=good name=good control=none flags=oob: answer=-1 EOPNOTSUPP fionread=42
+Y6 call=sendmsg iovecs=1 total=10000: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=1 total=7ffff000: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=1 total=7fffffff: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=1 total=80000000: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=1 total=ffffffff: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=1 total=100000000: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=1 total=7fffffffffffffff: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=2 total=10000: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=2 total=7ffff000: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=2 total=7fffffff: answer=-1 EMSGSIZE
+Y6 call=sendmsg iovecs=2 total=80000000: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=2 total=ffffffff: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=2 total=100000000: answer=-1 EINVAL
+Y6 call=sendmsg iovecs=2 total=7fffffffffffffff: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=1 total=10000: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=1 total=7ffff000: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=1 total=7fffffff: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=1 total=80000000: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=1 total=ffffffff: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=1 total=100000000: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=1 total=7fffffffffffffff: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=2 total=10000: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=2 total=7ffff000: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=2 total=7fffffff: answer=-1 EAGAIN
+Y6 call=recvmsg iovecs=2 total=80000000: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=2 total=ffffffff: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=2 total=100000000: answer=-1 EINVAL
+Y6 call=recvmsg iovecs=2 total=7fffffffffffffff: answer=-1 EINVAL

@@ -50,6 +50,11 @@
 //       sent nor received, marks it as having sent: FIONREAD after a later
 //       datagram of 10 bytes, 26 unmarked and 42 marked. On Linux the column
 //       is the datagram's own length.
+//   Y6  the longest iovec each call lets through: one iovec of each length,
+//       from a mapped buffer (the call fails before it copies so much), to a
+//       sendmsg with a good name from a socket bound to 127.0.0.1 and a
+//       recvmsg on an empty socket, non-blocking. Then the same total split
+//       over two iovecs of half the length each.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -712,6 +717,38 @@ static void section_y4(void)
     close(empty);
 }
 
+// ---------------------------------------------------------------- Y6
+
+static void section_y6(void)
+{
+    const uint64_t lengths[] = { 65536, 0x7ffff000, 0x7fffffff, 0x80000000, 0xffffffff, 0x100000000, 0x7fffffffffffffff };
+    for (int call = 0; call <= 1; call++)
+        for (int split = 0; split <= 1; split++)
+            for (size_t l = 0; l < sizeof lengths / sizeof *lengths; l++) {
+                int r = bound_to(INADDR_LOOPBACK);
+                nonblocking(r);
+                int s = bound_to(INADDR_LOOPBACK);
+                struct sockaddr_in to = at(INADDR_LOOPBACK, portof(r));
+                memset(iovs, 0, sizeof iovs);
+                iovs[0].iov_base = payload;
+                iovs[1].iov_base = payload;
+                iovs[0].iov_len = split ? (size_t)(lengths[l] / 2) : (size_t)lengths[l];
+                iovs[1].iov_len = split ? (size_t)(lengths[l] - lengths[l] / 2) : 0;
+                struct msghdr m;
+                memset(&m, 0, sizeof m);
+                m.msg_name = &to;
+                m.msg_namelen = sizeof to;
+                m.msg_iov = iovs;
+                m.msg_iovlen = split ? 2 : 1;
+                ssize_t got = call ? recvmsg(r, &m, 0) : sendmsg(s, &m, 0);
+                int e = errno;
+                printf("Y6 call=%s iovecs=%d total=%llx: answer=%s\n", call ? "recvmsg" : "sendmsg", split ? 2 : 1,
+                       (unsigned long long)lengths[l], res(got, e));
+                close(s);
+                close(r);
+            }
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -721,5 +758,6 @@ int main(void)
     section_y3();
     section_y4();
     section_y5();
+    section_y6();
     return 0;
 }
