@@ -82,6 +82,7 @@ module TestEpollCtl =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -95,7 +96,8 @@ module TestEpollCtl =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
             )
@@ -110,6 +112,7 @@ module TestEpollCtl =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite
@@ -298,7 +301,6 @@ module TestEpollCtl =
                     {
                         Backlog = 64
                         Queue = []
-                        Drained = false
                     })
                 system
         | "udp" -> withSocket SocketDomain.Inet SocketKind.Datagram SocketPhase.Idle system
@@ -530,7 +532,6 @@ module TestEpollCtl =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }),
                 0x0000u
                 "IPv4 TCP, listening, queue nonempty",
@@ -541,7 +542,6 @@ module TestEpollCtl =
                         {
                             Backlog = 8
                             Queue = [ ForgedConnection.queued queued ]
-                            Drained = false
                         }),
                 0x0041u
                 "IPv4 TCP, established, peer alive",

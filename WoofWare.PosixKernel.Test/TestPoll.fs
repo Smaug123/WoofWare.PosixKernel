@@ -117,6 +117,7 @@ module TestPoll =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -130,7 +131,8 @@ module TestPoll =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
             )
@@ -150,6 +152,7 @@ module TestPoll =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 accessMode
@@ -203,7 +206,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }),
                 0x0000s
                 "IPv4 TCP, listening, queue nonempty",
@@ -214,7 +216,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = [ ForgedConnection.queued queued ]
-                            Drained = false
                         }),
                 0x0041s
                 "IPv4 TCP, established, peer alive",
@@ -345,7 +346,6 @@ module TestPoll =
                     {
                         Backlog = 1
                         Queue = [ ForgedConnection.queued (ConnectionId 0L) ]
-                        Drained = false
                     })
                 linux
 

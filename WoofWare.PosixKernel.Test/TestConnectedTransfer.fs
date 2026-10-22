@@ -945,12 +945,12 @@ module TestConnectedTransfer =
 
             let mask (block : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadSigmask caller (how block) (Some sigterm) system with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
 
             let unblocked =
                 match UnixSignal.pthreadKill caller 0 (signo Signal.SIGTERM) (mask true system) with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> mask false system
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> mask false system
                 | other -> failwith $"%s{row}: raising a blocked SIGTERM answered %A{other}"
 
             match UnixSignal.tryOnReturnToUser caller unblocked with
@@ -978,8 +978,8 @@ module TestConnectedTransfer =
                     match
                         UnixSignal.sigaction caller (signo Signal.SIGPIPE) (Some SignalDisposition.Default) system
                     with
-                    | Ok (_, system) -> system
-                    | Error errno -> failwith $"%s{row}: sigaction: %O{errno}"
+                    | SigactionAnswer.Completed _, system -> system
+                    | SigactionAnswer.Failed errno, _ -> failwith $"%s{row}: sigaction: %O{errno}"
 
                 match UnixPipe.pipe2 caller 0 UserBuffer.Mapped system with
                 | Pipe2Answer.Created (readFd, writeFd), system ->
@@ -1453,7 +1453,15 @@ module TestConnectedTransfer =
         let system = sentAll client 10 system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
+            with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1494,7 +1502,13 @@ module TestConnectedTransfer =
 
             let system =
                 match
-                    UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system
+                    UnixConnection.tryAccept
+                        (Callers.thread 1 system)
+                        listener
+                        UserBuffer.Mapped
+                        (Some 0xFFFFFFFFu)
+                        0
+                        system
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
                 | other -> failwith $"accept: %A{other}"
@@ -1545,7 +1559,15 @@ module TestConnectedTransfer =
         let _, system = KeventWorld.connect client 40000us system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
+            with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1828,9 +1850,9 @@ module TestConnectedTransfer =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 serverSocket
-                                { machine.Sockets.[serverSocket] with
+                                { UnixMachineState.socket serverSocket machine with
                                     Phase = SocketPhase.Idle
                                 }
                                 machine.Sockets

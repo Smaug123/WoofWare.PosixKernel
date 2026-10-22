@@ -595,8 +595,8 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"connect: %A{other}"
 
         let server, system =
-            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let system = kernelClose listener system
@@ -708,7 +708,7 @@ module TestConnectedTransferAgainstHost =
 
         let readable =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         let socketId =

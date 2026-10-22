@@ -18,7 +18,8 @@ type internal UnixMachineState =
             /// (`UnixProcessState.FileDescriptors`) holds only which of these
             /// each descriptor names.
             OpenFiles : OpenFileTable
-            /// Every socket on the machine, by identity.
+            /// Every socket on the machine, by identity, with its UDP sockets
+            /// indexed by the port each is bound to (`SocketTable`).
             ///
             /// Separate from `OpenFiles` because a socket's lifetime is not
             /// a description's: an `OpenFileTarget.Socket` holds only the
@@ -29,12 +30,25 @@ type internal UnixMachineState =
             /// connection awaiting `accept(2)` is a `TcpConnection` in
             /// `Connections`, not a socket, precisely so this rule can stay
             /// strict.
-            Sockets : Map<SocketId, SocketDescription>
+            Sockets : SocketTable
             /// Every TCP connection the simulated kernel holds: established ends
             /// referenced from a socket's `SocketPhase`, and completed
             /// connections waiting in some listener's accept queue. An entry is
             /// removed when nothing references it any more (`UnixDescriptor.close`).
             Connections : Map<ConnectionId, TcpConnection>
+            /// The receive side of every UDP socket on the machine: the
+            /// datagrams each holds, what they cost its receive buffer, and
+            /// its pending error. A socket's entry is made with it
+            /// (`UnixSocket.socket`) and goes with it
+            /// (`ObjectLifetime.releaseDestroyed`), and
+            /// `UnixSystem.checkInvariants` holds the keys to the UDP sockets
+            /// in `Sockets`.
+            DatagramReceivers : Map<SocketId, DatagramReceiver>
+            /// Which datagrams that reach no socket the machine answers with
+            /// an ICMP port-unreachable error, and what it remembers of those
+            /// it has answered: a record for the whole machine, which outlives
+            /// the socket that sent the datagram.
+            PortUnreachableReplies : PortUnreachableReplies
             /// Every TCP connection end in TIME_WAIT whose connection both
             /// sockets have closed, keyed by its own endpoint and its peer's.
             /// An entry is made as the connection is forgotten, for the end
@@ -156,6 +170,18 @@ type internal UnixMachineState =
             /// per-flavour default; see `UnixBootImage.withTcpSendSpaceMax`.
             /// Only the Linux flavour reads it, through `TcpBufferSizing`.
             TcpSendSpaceMax : int
+            /// The receive buffer a new UDP socket starts with, in bytes:
+            /// Linux's `net.core.rmem_default` sysctl, Darwin's
+            /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`); see
+            /// `UnixBootImage.withUdpReceiveSpace`.
+            UdpReceiveSpace : int
+            /// The send buffer a new UDP socket starts with, in bytes: Linux's
+            /// `net.core.wmem_default` sysctl, and Darwin's
+            /// `net.inet.udp.maxdgram`, which is also the largest datagram a
+            /// Darwin UDP socket sends. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpSendSpace`).
+            UdpSendSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
             LocalIpv4Addresses : Ipv4Address list
@@ -365,9 +391,19 @@ module UnixMachineState =
         let rule =
             match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
             | None, _ -> AccessTimeUpdate.ofMount machine.Mount
-            // Measured (`docs/probes/devtmpfs-times`): no read moves a time
-            // of a devtmpfs node.
-            | Some _, DeviceFileSystemMount.Devtmpfs _ -> AccessTimeUpdate.Never
+            | Some _, DeviceFileSystemMount.Devtmpfs _ ->
+                match
+                    (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem)
+                        .Content
+                with
+                // Measured (`docs/probes/devtmpfs-times`): no read moves a time
+                // of a devtmpfs node; a device's driver, not the filesystem,
+                // answers the read.
+                | InodeContent.CharacterDevice _ -> AccessTimeUpdate.Never
+                // A devtmpfs is mounted `relatime` (`DevtmpfsMount.Flags`), and a
+                // listing of one of its directories moves the directory's atime
+                // under that rule (`docs/probes/devtmpfs-listing`).
+                | _ -> AccessTimeUpdate.Relative
             | Some root, DeviceFileSystemMount.Devfs ->
                 failwith
                     $"UnixMachineState.afterRead: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
@@ -421,11 +457,35 @@ module UnixMachineState =
     /// `checkInvariants` rejects a machine in which one of those names nothing.
     /// A `None` here would push that impossible case onto every call site.
     let internal socket (socketId : SocketId) (machine : UnixMachineState) : SocketDescription =
-        match Map.tryFind socketId machine.Sockets with
+        match SocketTable.tryFind socketId machine.Sockets with
         | Some socket -> socket
         | None ->
             failwith
                 $"UnixMachineState.socket: %O{socketId} names no socket in this kernel's socket table. Every SocketId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingSocket exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand, rather than anything the simulated process did."
+
+    /// The receive side of the UDP socket `socketId`. Loudly partial, as
+    /// `socket` is: `UnixSystem.checkInvariants` holds every UDP socket to
+    /// having one.
+    let internal datagramReceiver (socketId : SocketId) (machine : UnixMachineState) : DatagramReceiver =
+        match Map.tryFind socketId machine.DatagramReceivers with
+        | Some receiver -> receiver
+        | None ->
+            failwith
+                $"UnixMachineState.datagramReceiver: %O{socketId} has no receive side in this kernel. Every UDP socket is made with one, and UnixSystemDefect.UdpSocketWithoutReceiver exists to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
+
+    /// `machine` with the receive side of the UDP socket `socketId` replaced
+    /// by `receiver`. Loudly partial, as `datagramReceiver` is.
+    let internal withDatagramReceiver
+        (socketId : SocketId)
+        (receiver : DatagramReceiver)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        datagramReceiver socketId machine |> ignore
+
+        { machine with
+            DatagramReceivers = Map.add socketId receiver machine.DatagramReceivers
+        }
 
     /// A new kqueue for a Darwin `poll` about to sleep, holding `queue`: its
     /// identity, and the machine holding it.
@@ -466,13 +526,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            match description.Target with
-            | OpenFileTarget.Socket target when target = socketId -> Some descriptionId
-            | _ -> None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingSocket socketId machine.OpenFiles
 
     /// Every live open file description on the machine naming `pipeEnd` of
     /// `pipeId`.
@@ -482,14 +536,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            if description.Target = OpenFileTarget.Pipe (pipeId, pipeEnd) then
-                Some descriptionId
-            else
-                None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingPipeEnd pipeId pipeEnd machine.OpenFiles
 
     /// Whether `pipeEnd` of the pipe `pipeId`, which is `pipe`, is still open:
     /// whether some open file description on the machine names it, or the
@@ -649,7 +696,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : SocketId option
         =
-        machine.Sockets
+        SocketTable.all machine.Sockets
         |> Map.tryFindKey (fun _ socket -> SocketPhase.connectionEnd socket.Phase = Some (connectionId, connectionEnd))
 
     /// The readiness a socket presents right now, before any waiter's interest
@@ -689,6 +736,18 @@ module UnixMachineState =
                 { ReadinessLevel.none with
                     Out = true
                     Hup = true
+                }
+            | SocketKind.Datagram when SocketTable.receivesDatagrams target ->
+                // Measured (`udp-transfer.c` G1 to G4, L1 and L5, in
+                // docs/plans/2026-10-18-udp-data-path): OUT always, since a
+                // UDP send never waits; IN while a datagram is queued; ERR
+                // while an ICMP error is pending, whatever is queued.
+                let receiver = datagramReceiver socketId machine
+
+                { ReadinessLevel.none with
+                    In = not (DatagramReceiver.isEmpty receiver)
+                    Out = true
+                    Err = DatagramReceiver.errorPending receiver
                 }
             | SocketKind.Datagram ->
                 { ReadinessLevel.none with
@@ -856,7 +915,7 @@ module UnixMachineState =
         let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
         let unconnected =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.choose (fun (socketId, socket) ->
                 match socket.Ipv4Binding, SocketPhase.connectionEnd socket.Phase with
@@ -880,7 +939,7 @@ module UnixMachineState =
             | SocketKind.Stream ->
 
             let socketsByEnd : Map<ConnectionId * ConnectionEnd, SocketId * SocketDescription> =
-                machine.Sockets
+                SocketTable.all machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (socketId, socket) ->
                     SocketPhase.connectionEnd socket.Phase
@@ -1234,6 +1293,27 @@ module UnixMachineState =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 16384
         | SimulatedUnixFlavour.Darwin -> 131072
+
+    /// The UDP receive buffer sysctl's default on each flavour, measured on
+    /// the probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
+    /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    /// GitHub's `ubuntu-24.04` runners configure Linux's as 1048576.
+    let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 786896
+
+    /// The UDP send buffer sysctl's default on each flavour, measured on the
+    /// probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.wmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.maxdgram` 9216
+    /// on Darwin 27.0.0, as a fresh UDP socket's `SO_SNDBUF` reports.
+    let internal defaultUdpSendSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 9216
 
     /// The TCP receive buffer sysctl's default on each flavour, measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072

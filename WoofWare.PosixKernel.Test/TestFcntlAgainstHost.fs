@@ -120,9 +120,8 @@ module TestFcntlAgainstHost =
                     let host = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFl, 0))
                     List.iter (HostCalls.close >> ignore) opened
 
-                    match FcntlWorld.make kind (FcntlWorld.system (runFor platform)) with
-                    | Some (fd, system) -> (kind, FcntlWorld.statusFlags fd system) |> shouldEqual (kind, host)
-                    | None -> failwith $"the model makes no %s{kind}"
+                    let fd, system = FcntlWorld.make kind (FcntlWorld.system (runFor platform))
+                    (kind, FcntlWorld.statusFlags fd system) |> shouldEqual (kind, host)
             )
         )
 
@@ -145,9 +144,7 @@ module TestFcntlAgainstHost =
                         let after = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFl, 0))
                         List.iter (HostCalls.close >> ignore) opened
 
-                        match FcntlWorld.make kind (FcntlWorld.system (runFor platform)) with
-                        | None -> failwith $"the model makes no %s{kind}"
-                        | Some (fd, system) ->
+                        let fd, system = FcntlWorld.make kind (FcntlWorld.system (runFor platform))
 
                         match UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.SetFl word system with
                         | Error (FcntlRefusal.UnmodelledStatusFlags _) -> ()
@@ -173,8 +170,7 @@ module TestFcntlAgainstHost =
                     let after = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFd, 0))
                     List.iter (HostCalls.close >> ignore) opened
 
-                    let fd, system =
-                        FcntlWorld.make "file-rdwr" (FcntlWorld.system (runFor platform)) |> Option.get
+                    let fd, system = FcntlWorld.make "file-rdwr" (FcntlWorld.system (runFor platform))
 
                     let answer, system = FcntlWorld.fcntl fd FcntlWorld.SetFd word system
 

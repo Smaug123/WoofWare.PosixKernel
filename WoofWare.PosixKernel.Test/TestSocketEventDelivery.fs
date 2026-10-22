@@ -120,7 +120,7 @@ module TestSocketEventDelivery =
                     { machine with
                         Sockets =
                             machine.Sockets
-                            |> Map.add
+                            |> SocketTable.set
                                 socketId
                                 { UnixMachineState.socket socketId machine with
                                     Addressing =
@@ -138,7 +138,6 @@ module TestSocketEventDelivery =
                                             {
                                                 Backlog = 8
                                                 Queue = []
-                                                Drained = false
                                             }
                                 }
                     }

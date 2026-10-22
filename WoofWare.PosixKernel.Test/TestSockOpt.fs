@@ -68,15 +68,15 @@ module TestSockOpt =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            machine.Sockets
-                            |> Map.change
+                            let socket = UnixMachineState.socket (SocketId 0L) machine
+
+                            SocketTable.set
                                 (SocketId 0L)
-                                (Option.map (fun socket ->
-                                    { socket with
-                                        Phase = phase
-                                        Addressing = SocketAddressing.replaceBinding binding socket.Addressing
-                                    }
-                                ))
+                                { socket with
+                                    Phase = phase
+                                    Addressing = SocketAddressing.replaceBinding binding socket.Addressing
+                                }
+                                machine.Sockets
                     }
                 )
                 system
@@ -425,7 +425,6 @@ module TestSockOpt =
                     {
                         Backlog = 5
                         Queue = []
-                        Drained = false
                     },
                 false
                 SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client), false

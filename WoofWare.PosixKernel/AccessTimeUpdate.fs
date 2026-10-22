@@ -11,6 +11,10 @@ type internal AccessTimeUpdate =
     /// A read moves it to now when it is before the modification time, and
     /// leaves it alone otherwise, however old it is.
     | WhenBeforeModification
+    /// Linux's `relatime`: a read moves it to now when it is not after the
+    /// modification time, or not after the change time, or when its whole
+    /// seconds are at least 86400 behind now's.
+    | Relative
 
 [<RequireQualifiedAccess>]
 module internal AccessTimeUpdate =
@@ -42,6 +46,23 @@ module internal AccessTimeUpdate =
         | AccessTimeUpdate.Never -> None
         | AccessTimeUpdate.WhenBeforeModification ->
             if times.Access < times.Modification then
+                Some
+                    { times with
+                        Access = now
+                    }
+            else
+                None
+        | AccessTimeUpdate.Relative ->
+            // Measured on a Linux 6.18.5 devtmpfs (`docs/probes/devtmpfs-listing`):
+            // a listing moved the atime when it equalled the mtime and ctime,
+            // and when a chmod had put the ctime after it; not when it was
+            // after both, nor 86399 s later; and at 86400 s, counted in whole
+            // seconds of each.
+            if
+                times.Access <= times.Modification
+                || times.Access <= times.StatusChange
+                || UnixTimestamp.seconds now - UnixTimestamp.seconds times.Access >= 86400L
+            then
                 Some
                     { times with
                         Access = now

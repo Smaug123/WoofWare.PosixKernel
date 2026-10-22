@@ -93,11 +93,14 @@
         <Compile Include="PipeState.fs" />
         <Compile Include="TcpTransfer.fs" />
         <Compile Include="TcpConnection.fs" />
+        <Compile Include="DatagramReceiver.fs" />
+        <Compile Include="PortUnreachableReplies.fs" />
         <Compile Include="PortHolderRules.fs" />
         <Compile Include="FileSystemStatistics.fs" />
         <Compile Include="EntropyPool.fs" />
         <Compile Include="UnixProcess.fs" />
         <Compile Include="UnixSchedulingState.fs" />
+        <Compile Include="SocketTable.fs" />
         <Compile Include="UnixMachine.fs" />
         <Compile Include="TcpBufferSizing.fs" />
         <Compile Include="CallProgress.fs" />
@@ -105,6 +108,7 @@
         <Compile Include="UnixClock.fs" />
         <Compile Include="UnixSocket.fs" />
         <Compile Include="Readiness.fs" />
+        <Compile Include="DatagramDelivery.fs" />
         <Compile Include="KqueuePoll.fs" />
         <Compile Include="ObjectLifetime.fs" />
         <Compile Include="SyscallInterruption.fs" />

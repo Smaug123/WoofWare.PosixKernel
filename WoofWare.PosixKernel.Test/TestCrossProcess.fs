@@ -470,7 +470,9 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
+                match
+                    UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view
+                with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -735,6 +737,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -901,25 +904,25 @@ module TestCrossProcess =
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             match UnixSignal.pthreadSigmask caller (MaskHow.number numbering how) (Some set) machine with
-            | Ok (_, machine) -> machine
-            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, machine -> machine
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
 
         match ending with
         | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
         | Ending.Kill ->
             match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
-            | Ok fate -> ended "kill" fate
-            | Error errno -> failwith $"kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill: %O{errno}"
+            | fate -> ended "kill" fate
         | Ending.Raise ->
             match UnixSignal.pthreadKill caller 0 sigterm machine with
-            | Ok fate -> ended "pthread_kill" fate
-            | Error errno -> failwith $"pthread_kill: %O{errno}"
+            | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"pthread_kill: %O{errno}"
+            | fate -> ended "pthread_kill" fate
         | Ending.ReturnToUser ->
             let machine = machine |> mask SignalMaskChange.Block |> returned
 
             let machine =
                 match UnixSignal.pthreadKill caller 0 sigterm machine with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, machine) -> returned machine
                 | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
 
             machine
@@ -1214,6 +1217,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -1707,7 +1711,7 @@ module TestCrossProcess =
                 OpenFileTable.descriptions (UnixSystem.openFiles machine)
                 |> shouldEqual Map.empty
 
-                (Kernel.machine machine).Sockets |> shouldEqual Map.empty
+                SocketTable.all (Kernel.machine machine).Sockets |> shouldEqual Map.empty
                 (Kernel.machine machine).Connections |> shouldEqual Map.empty
             | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
@@ -1798,6 +1802,7 @@ module TestCrossProcess =
                                     CloseOnExec = false
                                     Synchronous = false
                                     DataSynchronous = false
+                                    NonBlocking = false
                                     Directory = false
                                 }
                                 0o644
@@ -1942,7 +1947,7 @@ module TestCrossProcess =
         let view = Machines.viewOf pid machine
 
         match UnixDescriptor.tryBytesAvailable (Caller.make pid (Proc.leader pid view)) fd UserBuffer.Mapped view with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
     /// `open(path, O_WRONLY|O_CREAT|O_EXCL)` and its close, by the process
@@ -1961,6 +1966,7 @@ module TestCrossProcess =
                     CloseOnExec = false
                     Synchronous = false
                     DataSynchronous = false
+                    NonBlocking = false
                     Directory = false
                 }
                 0o644

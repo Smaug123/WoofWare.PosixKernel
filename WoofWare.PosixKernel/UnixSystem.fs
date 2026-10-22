@@ -58,9 +58,11 @@ type internal SyscallRefusal<'Thread> =
     | LinkAt of LinkRefusal
     | Read of ReadRefusal
     | Recv of ReceiveRefusal
+    | RecvFrom of ReceiveRefusal
     | PRead of PReadRefusal
     | Write of WriteRefusal
     | Send of SendRefusal
+    | SendTo of SendRefusal
     | PWrite of PWriteRefusal
     | CopyFileRange of CopyFileRangeRefusal
     | Pipe2 of Pipe2Refusal
@@ -164,9 +166,11 @@ module internal SyscallRefusal =
         | SyscallRefusal.LinkAt refusal -> $"linkat: %s{LinkRefusal.describe refusal}"
         | SyscallRefusal.Read refusal -> $"read: %s{ReadRefusal.describe refusal}"
         | SyscallRefusal.Recv refusal -> $"recv: %s{ReceiveRefusal.describe refusal}"
+        | SyscallRefusal.RecvFrom refusal -> $"recvfrom: %s{ReceiveRefusal.describe refusal}"
         | SyscallRefusal.PRead refusal -> $"pread: %s{PReadRefusal.describe refusal}"
         | SyscallRefusal.Write refusal -> $"write: %s{WriteRefusal.describe refusal}"
         | SyscallRefusal.Send refusal -> $"send: %s{SendRefusal.describe refusal}"
+        | SyscallRefusal.SendTo refusal -> $"sendto: %s{SendRefusal.describe refusal}"
         | SyscallRefusal.PWrite refusal -> $"pwrite: %s{PWriteRefusal.describe refusal}"
         | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
         | SyscallRefusal.Pipe2 refusal -> $"pipe2: %s{Pipe2Refusal.describe refusal}"
@@ -263,10 +267,12 @@ module internal SyscallRefusal =
         | SyscallRefusal.Link inner -> LinkRefusal.kind inner
         | SyscallRefusal.LinkAt inner -> LinkRefusal.kind inner
         | SyscallRefusal.Read inner -> ReadRefusal.kind inner
-        | SyscallRefusal.Recv inner -> ReceiveRefusal.kind inner
+        | SyscallRefusal.Recv inner
+        | SyscallRefusal.RecvFrom inner -> ReceiveRefusal.kind inner
         | SyscallRefusal.PRead inner -> PReadRefusal.kind inner
         | SyscallRefusal.Write inner -> WriteRefusal.kind inner
-        | SyscallRefusal.Send inner -> SendRefusal.kind inner
+        | SyscallRefusal.Send inner
+        | SyscallRefusal.SendTo inner -> SendRefusal.kind inner
         | SyscallRefusal.PWrite inner -> PWriteRefusal.kind inner
         | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
         | SyscallRefusal.Pipe2 inner -> Pipe2Refusal.kind inner
@@ -366,8 +372,9 @@ type UnixSystemDefect<'Thread> =
     /// A description names an inode as the wrong kind of object: a
     /// `OpenFileTarget.File` onto a directory or a device, an
     /// `OpenFileTarget.Directory` onto anything but a directory, or an
-    /// `OpenFileTarget.CharacterDevice` onto anything but the node of the device
-    /// it names, or an `OpenFileTarget.Fifo` onto anything but a FIFO. `open` chooses the target by what it opened, so a directory's
+    /// `OpenFileTarget.CharacterDevice` onto anything but a node holding the
+    /// number of the device it names, or an `OpenFileTarget.Fifo` onto anything
+    /// but a FIFO. `open` chooses the target by what it opened, so a directory's
     /// position is always a place in its entries and never a byte offset, and a
     /// device's operations are the driver's own.
     | DescriptionKindMismatch of description : OpenFileDescriptionId * inode : InodeNumber
@@ -583,10 +590,12 @@ type UnixSystemDefect<'Thread> =
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wake` crashes.
     | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
-    /// A thread is asleep in an `accept` on a listener a close has drained
-    /// (`ListenState.Drained`): the close that drains a listener ends every
-    /// accept asleep on it, and `accept` refuses to sleep on one.
-    | ParkedAcceptOnDrainedListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
+    /// A thread is asleep in an `accept`, or a read or write of a connection,
+    /// on a socket a close has drained (`SocketDescription.Drained`): the close
+    /// that drains a socket ends every such call asleep on it, `accept`
+    /// refuses to sleep on a drained listener, and a read or write that would
+    /// sleep on a drained end answers `EBADF` instead.
+    | ParkedOnDrainedSocket of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// Under Darwin, a thread is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
@@ -602,9 +611,9 @@ type UnixSystemDefect<'Thread> =
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
     | ParkedCallEndedByCloseUnderLinux of thread : Caller<'Thread>
-    /// Under Linux, a listener records that a close has drained it
-    /// (`ListenState.Drained`), which only Darwin's close does.
-    | ListenerDrainedUnderLinux of socket : SocketId
+    /// Under Linux, a socket records that a close has drained it
+    /// (`SocketDescription.Drained`), which only Darwin's close does.
+    | SocketDrainedUnderLinux of socket : SocketId
     /// A thread is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wake` crashes.
@@ -899,6 +908,19 @@ type UnixSystemDefect<'Thread> =
     /// (`UnixWait.wake`) would miss a sleeper or ask about a thread asleep in
     /// nothing.
     | StaleParkIndex
+    /// A UDP socket has no receive side, so a datagram sent to it, or a
+    /// receive made of it, has nowhere to go.
+    | UdpSocketWithoutReceiver of socket : SocketId
+    /// The machine holds a receive side for `socket`, which is not a UDP
+    /// socket in the socket table.
+    | ReceiverWithoutUdpSocket of socket : SocketId
+    /// A UDP socket's receive side breaks its flavour's accounting
+    /// (`DatagramReceiver.violations`), or was made for the other flavour.
+    | DatagramReceiverBroken of socket : SocketId * violations : string list
+    /// The socket table's index of the UDP sockets by the port each is bound
+    /// to is not what its sockets say, so a datagram would miss a socket
+    /// that should take it.
+    | StaleDatagramPortIndex
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -940,6 +962,10 @@ type internal FileSystemSeedFault =
     /// its NUL: 1023 bytes on Darwin, 4095 on Linux), so no process of that
     /// flavour could have created it.
     | SeedSymlinkTargetTooLong of name : DirectoryEntryName * flavour : SimulatedUnixFlavour
+    /// The seed holds a device node, bound under `name`. This kernel holds
+    /// device nodes only in the device filesystem
+    /// (`UnixBootImage.withDeviceFileSystem`). Unmodelled.
+    | SeedHoldsDeviceNode of name : DirectoryEntryName
 
 [<RequireQualifiedAccess>]
 module internal FileSystemSeedFault =
@@ -957,6 +983,8 @@ module internal FileSystemSeedFault =
             $"the seed has a directory holding both %s{DirectoryEntryName.toEscaped first} and %s{DirectoryEntryName.toEscaped second}. A %O{flavour} filesystem takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it, so it holds at most one spelling of a name in a directory, and this library holds no Unicode tables to decide whether these two are spellings of one name. Keep one of them in that directory."
         | FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour) ->
             $"the seed holds a symbolic link named %s{DirectoryEntryName.toEscaped name} whose target is longer than a %O{flavour} kernel's symlink(2) copies in (PATH_MAX less its NUL), so no process of that flavour could have created it. Shorten the target, or simulate a flavour whose PATH_MAX admits it."
+        | FileSystemSeedFault.SeedHoldsDeviceNode name ->
+            $"the seed holds a device node named %s{DirectoryEntryName.toEscaped name}, and this kernel holds device nodes only in the device filesystem. Configure it there instead, with UnixBootImage.withDeviceFileSystem."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FileSystemSeedFault) : RefusalKind =
@@ -966,6 +994,43 @@ module internal FileSystemSeedFault =
         | FileSystemSeedFault.SeedCoversDeviceFileSystem _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedNamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
         | FileSystemSeedFault.SeedSymlinkTargetTooLong _ -> RefusalKind.Contradictory "seed"
+        | FileSystemSeedFault.SeedHoldsDeviceNode _ -> RefusalKind.Unmodelled
+
+/// Why `UnixBootImage.withDeviceFileSystem` refuses the contents it was given.
+[<RequireQualifiedAccess>]
+type internal DeviceFileSystemFault =
+    /// The machine's device filesystem is Darwin's devfs, which this kernel
+    /// does not model. Unmodelled.
+    | Devfs
+    /// The contents hold an entry whose name is past Linux's `NAME_MAX`, so
+    /// no devtmpfs could hold it. Contradictory.
+    | NameTooLong of name : DirectoryEntryName
+    /// The contents hold a regular file or a symbolic link, bound under
+    /// `name`. A devtmpfs makes only device nodes and the directories holding
+    /// them, at boot; anything else in it was made by a process afterwards,
+    /// at a time and with an access-time history this configuration does not
+    /// describe. Unmodelled.
+    | NotMadeByDevtmpfs of name : DirectoryEntryName
+
+[<RequireQualifiedAccess>]
+module internal DeviceFileSystemFault =
+    /// What this library knows about why it refused the contents, for a
+    /// client composing a diagnostic that names its own knob.
+    let describe (fault : DeviceFileSystemFault) : string =
+        match fault with
+        | DeviceFileSystemFault.Devfs ->
+            "the machine's device filesystem is Darwin's devfs, which this kernel does not model, so it has no contents to configure."
+        | DeviceFileSystemFault.NameTooLong name ->
+            $"the device filesystem's contents hold an entry named %s{DirectoryEntryName.toEscaped name}, which is past Linux's NAME_MAX, so no devtmpfs could hold it. Shorten the name."
+        | DeviceFileSystemFault.NotMadeByDevtmpfs name ->
+            $"the device filesystem's contents hold %s{DirectoryEntryName.toEscaped name}, which is a regular file or a symbolic link. A devtmpfs makes only device nodes and the directories holding them, at boot; anything else in it was made by a process afterwards, at a time and with an access-time history this configuration does not describe, so this kernel does not hold one."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (fault : DeviceFileSystemFault) : RefusalKind =
+        match fault with
+        | DeviceFileSystemFault.Devfs -> RefusalKind.Unmodelled
+        | DeviceFileSystemFault.NameTooLong _ -> RefusalKind.Contradictory "contents"
+        | DeviceFileSystemFault.NotMadeByDevtmpfs _ -> RefusalKind.Unmodelled
 
 /// Why `UnixSystem.launch` will not start a process.
 [<RequireQualifiedAccess>]
@@ -1009,15 +1074,16 @@ module internal ProcessCreationRefusal =
 [<RequireQualifiedAccess>]
 module UnixSystem =
 
-    /// Mount `mount` over the root's `dev`, as the kernel does at boot, with a
-    /// node for each device it has a driver for, all made at the epoch and
-    /// owned by root. The root directory's times do not move.
+    /// Mount `mount` over the root's `dev`, as the kernel does at boot,
+    /// holding `contents`, made at the epoch and owned by root unless an
+    /// entry says otherwise. The root directory's times do not move.
     ///
-    /// The directory and its nodes have the modes a measured devtmpfs and devfs
-    /// report: 0755 and 0555 respectively for the directory, 0666 for each
-    /// node.
+    /// The directory has the mode a measured devtmpfs and devfs report: 0755
+    /// and 0555 respectively. A devfs holds nothing this kernel models, so
+    /// `contents` must be empty for one.
     let internal mountDeviceFileSystem
         (mount : DeviceFileSystemMount)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
         (filesystem : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
         =
@@ -1027,30 +1093,64 @@ module UnixSystem =
                 Group = GroupId.parseOrFail "UnixSystem.mountDeviceFileSystem" 0u
             }
 
-        let permissions, devices =
+        let permissions =
             match mount with
-            | DeviceFileSystemMount.Devtmpfs _ ->
-                PermissionBits 0o755,
-                CharacterDevice.all
-                |> List.map (fun device -> CharacterDevice.name device, device, CharacterDevice.permissions device)
-            | DeviceFileSystemMount.Devfs -> PermissionBits 0o555, []
+            | DeviceFileSystemMount.Devtmpfs _ -> PermissionBits 0o755
+            | DeviceFileSystemMount.Devfs ->
+                if not (Map.isEmpty contents) then
+                    failwith
+                        $"UnixSystem.mountDeviceFileSystem: asked to mount Darwin's devfs holding %d{Map.count contents} entries, where this kernel models none (this is a bug in the caller)."
+
+                PermissionBits 0o555
 
         // Measured by `docs/probes/devtmpfs-times` over three boots of Linux
-        // 6.18.5 aarch64: devtmpfs makes its root and these nodes before the
-        // realtime clock is first set, so every one of their times is the
+        // 6.18.5 aarch64: devtmpfs makes its root and its first nodes before
+        // the realtime clock is first set, so every one of their times is the
         // uptime then, 0 to 4 ms past the epoch, whatever the clock later
         // reads and whenever the root filesystem was made. The exact
         // milliseconds depend on how fast the kernel booted, which nothing
-        // here states, so this is the epoch itself. An x86 kernel, which reads
-        // a CMOS clock before devtmpfs runs, has not been measured.
+        // here states, so this is the epoch itself. Nodes a driver registers
+        // later in boot have later times (`docs/probes/devtmpfs-contents`:
+        // 72 ms for the virtio consoles, and the realtime clock's time for
+        // vsock, registered after it was set), which this kernel does not
+        // distinguish. An x86 kernel, which reads a CMOS clock before
+        // devtmpfs runs, has not been measured.
         VirtualFileSystem.mountAtRoot
             (DeviceFileSystemMount.mounted mount)
             (DirectoryEntryName.parseOrFail "UnixSystem.mountDeviceFileSystem" "dev")
             permissions
             root
-            devices
+            // No symbolic link reaches here (`DeviceFileSystemFault`); this is
+            // what Linux, the one flavour with contents, gives every link.
+            (PermissionBits 0o777)
+            contents
             UnixTimestamp.epoch
             filesystem
+
+    /// The filesystem a machine on `platform` boots with: `seed` realised, and
+    /// `mount` mounted over its `dev` holding `deviceContents`.
+    let internal realiseFileSystem
+        (platform : SimulatedUnixPlatform)
+        (mount : DeviceFileSystemMount)
+        (seed : RootFileSystemSeed)
+        (deviceContents : Map<DirectoryEntryName, SeedEntry>)
+        : Result<VirtualFileSystem, MountFault>
+        =
+        VirtualFileSystem.ofFileSystemSeed
+            (SimulatedUnixPlatform.entryNameMatching platform)
+            seed.SeedCreatedAt
+            seed.SeedOwner
+            (SimulatedUnixPlatform.symlinkCreationPermissions platform SeedEntry.symlinkCreatorsUmask)
+            seed.SeedEntries
+        |> mountDeviceFileSystem mount deviceContents
+
+    /// What a Linux machine's devtmpfs holds when a client expresses no
+    /// preference: the nodes Linux's memory-device driver makes whatever the
+    /// kernel was configured with, which are `null` (1,3), `zero` (1,5),
+    /// `full` (1,7), `random` (1,8) and `urandom` (1,9), each 0666 and owned
+    /// by root. A starting point for `UnixBootImage.withDeviceFileSystem`.
+    let defaultDevtmpfsContents : Map<DirectoryEntryName, SeedEntry> =
+        DevtmpfsMount.defaultContents
 
     /// The first thread of the process `pid`, which it started with: its
     /// thread-group leader.
@@ -1312,7 +1412,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : SocketDescription option
         =
-        Map.tryFind socketId system.Machine.Sockets
+        SocketTable.tryFind socketId system.Machine.Sockets
 
     /// The kqueue of the sleeping Darwin `poll` whose park names `queue`
     /// (`ParkedKqueuePoll.Queue`), or `None` if the machine holds none by that
@@ -1651,7 +1751,14 @@ module UnixSystem =
             UnixReadWrite.tryRecv caller fd buffer count flags system
             |> Result.map SteppedCall.Recv
             |> Result.mapError SyscallRefusal.Recv
-        | Syscall.RecvFrom _ -> reserved "Syscall.RecvFrom"
+        | Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.RecvFrom"
+                UnixReadWrite.tryRecvFromWithLength
+                sourceLength
+                (fun sourceLength -> UnixReadWrite.tryRecvFrom caller fd buffer count flags source sourceLength system)
+            |> Result.map SteppedCall.RecvFrom
+            |> Result.mapError SyscallRefusal.RecvFrom
         | Syscall.RecvMsg _ -> reserved "Syscall.RecvMsg"
         | Syscall.PRead (fd, buffer, count, offset) ->
             UnixReadWrite.tryPread caller fd buffer count offset system
@@ -1678,7 +1785,33 @@ module UnixSystem =
                 (fun buffer -> UnixReadWrite.trySend caller fd buffer count flags system)
             |> Result.map SteppedCall.Send
             |> Result.mapError SyscallRefusal.Send
-        | Syscall.SendTo _ -> reserved "Syscall.SendTo"
+        | Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength) ->
+            let throughDestination =
+                CopiedArgument.copyBytes
+                    "UnixSystem.step of Syscall.SendTo"
+                    PausedSendToAddress.copyRange
+                    UnixReadWrite.trySendToWithAddress
+                    destination
+                    (fun destination ->
+                        UnixReadWrite.trySendTo
+                            caller
+                            fd
+                            (CopiedArgument.userBuffer buffer)
+                            count
+                            flags
+                            destination
+                            declaredLength
+                            system
+                    )
+
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.SendTo"
+                PausedSend.copyRange
+                UnixReadWrite.trySendWithBytes
+                buffer
+                (fun _ -> throughDestination)
+            |> Result.map SteppedCall.SendTo
+            |> Result.mapError SyscallRefusal.SendTo
         | Syscall.SendMsg _ -> reserved "Syscall.SendMsg"
         | Syscall.PWrite (fd, buffer, count, offset) ->
             CopiedArgument.copyBytes
@@ -1723,8 +1856,8 @@ module UnixSystem =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength) ->
-            UnixConnection.tryAccept caller fd destination declaredLength system
+        | Syscall.Accept (fd, destination, declaredLength, flags) ->
+            UnixConnection.tryAccept caller fd destination declaredLength flags system
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -1994,23 +2127,56 @@ module UnixSystem =
 
         let dangling =
             named
-            |> List.filter (fun (_, socketId) -> not (Map.containsKey socketId machine.Sockets))
+            |> List.filter (fun (_, socketId) -> not (SocketTable.containsKey socketId machine.Sockets))
             |> List.map UnixSystemDefect.DanglingSocket
 
         let namedIds = named |> List.map snd |> Set.ofList
 
         let unreferenced =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.map fst
             |> List.filter (fun socketId -> not (Set.contains socketId namedIds))
             |> List.map UnixSystemDefect.UnreferencedSocket
 
+        let receivers =
+            let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+            [
+                for KeyValue (socketId, socket) in SocketTable.all machine.Sockets do
+                    if SocketTable.receivesDatagrams socket then
+                        match Map.tryFind socketId machine.DatagramReceivers with
+                        | None -> UnixSystemDefect.UdpSocketWithoutReceiver socketId
+                        | Some receiver ->
+                            let violations =
+                                (if DatagramReceiver.flavour receiver <> flavour then
+                                     [
+                                         $"it is a %O{DatagramReceiver.flavour receiver} receiver on a %O{flavour} machine"
+                                     ]
+                                 else
+                                     [])
+                                @ DatagramReceiver.violations receiver
+
+                            if not violations.IsEmpty then
+                                UnixSystemDefect.DatagramReceiverBroken (socketId, violations)
+                for KeyValue (socketId, _) in machine.DatagramReceivers do
+                    match SocketTable.tryFind socketId machine.Sockets with
+                    | Some socket when SocketTable.receivesDatagrams socket -> ()
+                    | Some _
+                    | None -> UnixSystemDefect.ReceiverWithoutUdpSocket socketId
+            ]
+
+        let datagramPortIndex =
+            if SocketTable.indexFresh machine.Sockets then
+                []
+            else
+                [ UnixSystemDefect.StaleDatagramPortIndex ]
+
         // Against the table rather than against the descriptions: the table is
         // where a socket lives, so it is the table that must stay below the
         // counter even once a socket can outlive every descriptor of it.
         let freshness =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.map fst
             |> List.filter (fun socketId -> socketId >= machine.NextSocketId)
@@ -2041,6 +2207,8 @@ module UnixSystem =
             )
 
         let danglingInodes =
+            let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
             machine.OpenFiles
             |> OpenFileTable.descriptions
             |> Map.toList
@@ -2067,7 +2235,10 @@ module UnixSystem =
                 | OpenFileTarget.CharacterDevice (inode, device, _) ->
                     match VirtualFileSystem.tryGetContent inode machine.FileSystem with
                     | None -> Some (UnixSystemDefect.DanglingOpenInode (id, inode))
-                    | Some (InodeContent.CharacterDevice (node, _)) when node = device -> None
+                    | Some (InodeContent.CharacterDevice (number, _)) when
+                        CharacterDevice.driverOf flavour number = Some device
+                        ->
+                        None
                     | Some (InodeContent.CharacterDevice _)
                     | Some (InodeContent.Directory _)
                     | Some (InodeContent.RegularFile _)
@@ -2227,7 +2398,7 @@ module UnixSystem =
         // (`Some`), or through an accept queue (`None`), which has its own
         // defect case and its own no-duplicates rule.
         let connectionReferences =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.collect (fun (socketId, socket) ->
                 match socket.Phase with
@@ -2418,7 +2589,7 @@ module UnixSystem =
             sysctls @ entries
 
         let phaseKindMismatches =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.choose (fun (socketId, socket) ->
                 let mismatched =
@@ -2439,14 +2610,13 @@ module UnixSystem =
             match SimulatedUnixPlatform.flavour machine.UnixPlatform with
             | SimulatedUnixFlavour.Darwin -> []
             | SimulatedUnixFlavour.Linux ->
-                machine.Sockets
+                SocketTable.all machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (socketId, socket) ->
-                    match socket.Phase with
-                    | SocketPhase.Listening {
-                                                Drained = true
-                                            } -> Some (UnixSystemDefect.ListenerDrainedUnderLinux socketId)
-                    | _ -> None
+                    if socket.Drained then
+                        Some (UnixSystemDefect.SocketDrainedUnderLinux socketId)
+                    else
+                        None
                 )
 
         let connectionFreshness =
@@ -2549,7 +2719,7 @@ module UnixSystem =
                        |> Option.exists (fun holds -> holds > 0)
                     ->
                     // A description onto an absent socket is `DanglingSocket`'s.
-                    match Map.tryFind socketId machine.Sockets with
+                    match SocketTable.tryFind socketId machine.Sockets with
                     | Some socket when ObjectLifetime.lingerCanRefuseRelease socket ->
                         Some (UnixSystemDefect.LingeringSocketHeldOnlyByCalls (id, socketId))
                     | Some _
@@ -2648,7 +2818,7 @@ module UnixSystem =
 
         // Addresses no bind, listen or connect could have produced.
         let bindings =
-            machine.Sockets
+            SocketTable.all machine.Sockets
             |> Map.toList
             |> List.collect (fun (socketId, socket) ->
                 let unboundListener =
@@ -3128,6 +3298,8 @@ module UnixSystem =
 
         dangling
         @ unreferenced
+        @ receivers
+        @ datagramPortIndex
         @ freshness
         @ foreignObjects
         @ danglingInodes
@@ -3262,12 +3434,15 @@ module UnixSystem =
                 match Map.tryFind description descriptions with
                 | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, description) ]
                 | Some found ->
+                    // Whether the socket is an end of a connection, and if so
+                    // whether a close has drained it.
                     let connected =
                         match found.Target with
                         | OpenFileTarget.Socket socketId ->
-                            match Map.tryFind socketId system.Machine.Sockets with
-                            | Some socket -> (SocketPhase.connectionEnd socket.Phase).IsSome
-                            | None -> false
+                            match SocketTable.tryFind socketId system.Machine.Sockets with
+                            | Some socket when (SocketPhase.connectionEnd socket.Phase).IsSome -> Some socket.Drained
+                            | Some _
+                            | None -> None
                         | OpenFileTarget.File _
                         | OpenFileTarget.Directory _
                         | OpenFileTarget.CharacterDevice _
@@ -3275,11 +3450,12 @@ module UnixSystem =
                         | OpenFileTarget.Inotify _
                         | OpenFileTarget.Pipe _
                         | OpenFileTarget.Kqueue _
-                        | OpenFileTarget.Epoll _ -> false
+                        | OpenFileTarget.Epoll _ -> None
 
-                    if connected then
-                        enteredThrough thread fd description
-                    else
+                    match connected with
+                    | Some false -> enteredThrough thread fd description
+                    | Some true -> [ UnixSystemDefect.ParkedOnDrainedSocket (caller thread, description) ]
+                    | None ->
                         [
                             UnixSystemDefect.ParkedConnectionTransferOnNonConnection (caller thread, description)
                         ]
@@ -3481,7 +3657,7 @@ module UnixSystem =
                                     FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
                                 with
                                 | Some (OpenFileTarget.Socket socketId) as target ->
-                                    match Map.tryFind socketId system.Machine.Sockets with
+                                    match SocketTable.tryFind socketId system.Machine.Sockets with
                                     | Some socket when DarwinReadiness.modelsSocket socket ->
                                         if
                                             not (List.contains key queue.Active)
@@ -3552,10 +3728,10 @@ module UnixSystem =
                         let listening =
                             match description.Target with
                             | OpenFileTarget.Socket socketId ->
-                                match Map.tryFind socketId system.Machine.Sockets with
-                                | Some {
-                                           Phase = SocketPhase.Listening listenState
-                                       } -> Some listenState.Drained
+                                match SocketTable.tryFind socketId system.Machine.Sockets with
+                                | Some ({
+                                            Phase = SocketPhase.Listening _
+                                        } as socket) -> Some socket.Drained
                                 | Some _
                                 | None -> None
                             | OpenFileTarget.File _
@@ -3569,7 +3745,7 @@ module UnixSystem =
 
                         match listening with
                         | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (caller thread, listener) ]
-                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (caller thread, listener) ]
+                        | Some true -> [ UnixSystemDefect.ParkedOnDrainedSocket (caller thread, listener) ]
                         | Some false -> enteredThrough thread fd listener
                 | Some (ParkedSyscall.PipeRead read) ->
                     let progress =
@@ -4166,14 +4342,20 @@ module UnixSystem =
 
         let deviceMount = DeviceFileSystemMount.defaultFor flavour
 
+        let rootSeed : RootFileSystemSeed =
+            {
+                SeedCreatedAt = UnixTimestamp.epoch
+                SeedOwner = InodeOwner.ofProcess (defaultCredentials flavour)
+                SeedEntries = FileSystemSeed.empty
+            }
+
+        let deviceContents =
+            match deviceMount with
+            | DeviceFileSystemMount.Devtmpfs _ -> defaultDevtmpfsContents
+            | DeviceFileSystemMount.Devfs -> Map.empty
+
         let filesystem =
-            match
-                VirtualFileSystem.empty
-                    (SimulatedUnixPlatform.entryNameMatching platform)
-                    UnixTimestamp.epoch
-                    (InodeOwner.ofProcess (defaultCredentials flavour))
-                |> mountDeviceFileSystem deviceMount
-            with
+            match realiseFileSystem platform deviceMount rootSeed deviceContents with
             | Ok filesystem -> filesystem
             | Error fault ->
                 failwith
@@ -4194,7 +4376,7 @@ module UnixSystem =
             Machine =
                 {
                     OpenFiles = OpenFileTable.empty
-                    Sockets = Map.empty
+                    Sockets = SocketTable.empty
                     Pipes = Map.empty
                     NextPipeId = PipeId 0L
                     // Any start would do; one, because no filesystem hands out
@@ -4202,6 +4384,8 @@ module UnixSystem =
                     NextPipeInode = InodeNumber 1L
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
+                    DatagramReceivers = Map.empty
+                    PortUnreachableReplies = PortUnreachableReplies.defaultFor flavour
                     TimeWaits = Map.empty
                     TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L
@@ -4222,6 +4406,8 @@ module UnixSystem =
                     Ipv6OnlyByDefault = false
                     TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace flavour
                     TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax flavour
+                    UdpReceiveSpace = UnixMachineState.defaultUdpReceiveSpace flavour
+                    UdpSendSpace = UnixMachineState.defaultUdpSendSpace flavour
                     LocalIpv4Addresses = defaultLocalIpv4Addresses
                     LocalRoutes = defaultLocalRoutes
                     BootTime = UnixTimestamp.epoch
@@ -4235,6 +4421,8 @@ module UnixSystem =
                     ProtectedFiles = ProtectedFiles.off
                 }
             ProcessId = defaultProcessId
+            RootSeed = rootSeed
+            DeviceContents = deviceContents
         }
 
     /// The machine's administrator writes Linux's `kernel.pid_max` sysctl

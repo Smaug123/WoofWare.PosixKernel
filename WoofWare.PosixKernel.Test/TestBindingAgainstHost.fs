@@ -92,6 +92,7 @@ module TestBindingAgainstHost =
                 materialise path children
                 File.SetUnixFileMode (path, enum<UnixFileMode> (PermissionBits.toInt permissions))
             | SeedEntry.Symlink (_, _) -> failwith "the probe tree holds no symlinks"
+            | SeedEntry.CharacterDevice _ -> failwith "the probe tree holds no device nodes"
 
     /// Remove a probe tree through the host's own tools rather than `System.IO`:
     /// a row may have bound a name that is not UTF-8, which a `string` cannot

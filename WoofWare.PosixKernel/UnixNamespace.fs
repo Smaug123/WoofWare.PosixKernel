@@ -9,10 +9,16 @@ open System.Collections.Immutable
 [<RequireQualifiedAccess>]
 type UnmodelledOpenFlag =
     /// `O_NOCTTY`, on both flavours.
+    ///
+    /// Nothing in this version produces it: `open(2)` answers a word holding
+    /// it, since no file this kernel opens is a terminal.
     | NoControllingTerminal
     /// `O_APPEND`, on both flavours.
     | Append
     /// `O_NONBLOCK`, on both flavours.
+    ///
+    /// Nothing in this version produces it: `open(2)` gives the description
+    /// it makes `O_NONBLOCK`, as `fcntl(F_SETFL)` would.
     | NonBlocking
     /// `O_ASYNC` (Linux's `FASYNC`), on both flavours.
     | Asynchronous
@@ -80,8 +86,9 @@ module UnmodelledOpenFlag =
 /// flavour.
 ///
 /// Every field is a flag this kernel acts on, or (`CloseOnExec`,
-/// `Synchronous`, `DataSynchronous`) one whose only effect here is what
-/// `fcntl` reports. A word
+/// `Synchronous`, `DataSynchronous`, `NonBlocking`) one whose only effect on
+/// what `open(2)` makes is what `fcntl` reports. `O_NOCTTY` has no field: it
+/// acts only on a terminal, and no file this kernel opens is one. A word
 /// holding any other bit its flavour defines never becomes one of these: the
 /// decoder refuses it, so the kernel cannot guess at a flag it does not
 /// model.
@@ -125,6 +132,13 @@ type internal OpenFlags =
         /// Darwin when the word holds it, which the decoder admits only beside
         /// `O_SYNC`.
         DataSynchronous : bool
+        /// `O_NONBLOCK`: give the description `O_NONBLOCK`, exactly as
+        /// `fcntl(F_SETFL)` would once it was open. Measured on both, it
+        /// changes nothing else about an open of a regular file or a directory
+        /// (`open-flags.c`), or what a read of a character device does
+        /// (`devices.c`). A FIFO, whose open it does change, is not opened by
+        /// this kernel.
+        NonBlocking : bool
         /// `O_DIRECTORY`: fail ENOTDIR unless the path names a directory.
         ///
         /// Modelled only as `opendir(3)` uses it: with `O_RDONLY`, and without
@@ -213,7 +227,9 @@ module DirectoryEntryKind =
 type DirectoryRecord =
     {
         /// `d_ino`: the inode the entry names. For `.` that is the directory
-        /// itself and for `..` its parent, as `stat` would report them.
+        /// itself and for `..` its parent, as `stat` would report them, but
+        /// for the root of the device filesystem `..` is that root itself,
+        /// its own parent within the filesystem mounted there.
         Inode : InodeNumber
         /// `d_name`.
         Name : PathComponent
@@ -239,11 +255,6 @@ type internal ReadDirectoryRefusal =
     /// `DirectoryPosition.Unenumerable`), and what each filesystem yields from
     /// an offset it did not hand out is its own.
     | UnenumerablePosition of inode : InodeNumber * offset : int64
-    /// The description is onto `inode`, a directory of the device filesystem.
-    /// A real one lists a node for every device the machine has and this
-    /// kernel's holds only the nodes of the devices it has drivers for, so a
-    /// listing would leave out names a real one reports.
-    | DeviceFileSystem of inode : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal ReadDirectoryRefusal =
@@ -253,14 +264,11 @@ module internal ReadDirectoryRefusal =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition (inode, offset) ->
             $"the description onto directory %O{inode} is at offset %d{offset}, where lseek put it. Both kernels accept that offset, but what the next read yields from it is each filesystem's own (tmpfs resumes from the entry with the greatest offset at or below it; APFS skips that many entries, or answers EAGAIN, depending on the high word), and this kernel's position is a name rather than an offset. Only offset 0, which rewinds, is readable from."
-        | ReadDirectoryRefusal.DeviceFileSystem inode ->
-            $"the description is onto directory %O{inode}, on the device filesystem. A real one lists a node for every device the machine has, and this kernel's holds only the nodes of the devices it has drivers for, so its listing would leave out names a real one reports."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadDirectoryRefusal) : RefusalKind =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition _ -> RefusalKind.Unmodelled
-        | ReadDirectoryRefusal.DeviceFileSystem _ -> RefusalKind.Unmodelled
 
 /// How far `rename(2)` had got with its source when it stopped to copy its
 /// *destination* pathname in — which is not the same point on the two flavours.
@@ -546,6 +554,11 @@ type internal OpenRefusal =
     | UnmodelledDirectoryOpen of flags : int
     /// This kernel will not resolve the path. Nothing was read or changed.
     | Path of PathRefusal
+    /// The path names `inode`, a character device node holding `number`, for
+    /// which this kernel has no driver. Every check that could fail the open
+    /// passed, so what happens next is the driver's. Nothing was read or
+    /// changed.
+    | UndrivenDevice of inode : InodeNumber * number : DeviceNumber
 
 [<RequireQualifiedAccess>]
 module internal OpenRefusal =
@@ -563,6 +576,8 @@ module internal OpenRefusal =
         | OpenRefusal.UnmodelledDirectoryOpen flags ->
             $"flags 0x%x{flags} ask for O_DIRECTORY with a write access mode, O_TRUNC or O_NOFOLLOW. Only O_DIRECTORY|O_RDONLY (what opendir(3) opens with) is modelled; where ENOTDIR falls among EISDIR, EACCES and ELOOP for any other combination is not."
         | OpenRefusal.Path refusal -> PathRefusal.describe refusal
+        | OpenRefusal.UndrivenDevice (inode, number) ->
+            $"the path names inode %O{inode}, a character device node holding device number %O{number}, which this kernel has no driver for. The open passed every check a kernel makes before it reaches the driver, so what it answers is that driver's."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : OpenRefusal) : RefusalKind =
@@ -572,6 +587,7 @@ module internal OpenRefusal =
         | OpenRefusal.IoctlOnlyAccessMode _ -> RefusalKind.Unmodelled
         | OpenRefusal.UnmodelledDirectoryOpen _ -> RefusalKind.Unmodelled
         | OpenRefusal.Path inner -> PathRefusal.kind inner
+        | OpenRefusal.UndrivenDevice _ -> RefusalKind.Unmodelled
 
 /// `open(2)`'s flag word, in the simulated flavour's own `<fcntl.h>`
 /// numbering, read as the kernel reads it.
@@ -600,6 +616,11 @@ module internal OpenFlagWord =
         | Synchronous
         /// `O_DSYNC`, which `O_SYNC` beside it subsumes.
         | DataSynchronous
+        | NonBlocking
+        /// `O_NOCTTY`, which acts only on a terminal. No file this kernel
+        /// opens is one: the only character devices with nodes are
+        /// `/dev/null` and `/dev/urandom`, so it is read as nothing.
+        | NoControllingTerminal
         | Unmodelled of UnmodelledOpenFlag
 
     // Each flavour's numbering of every bit it defines above the access mode,
@@ -626,10 +647,10 @@ module internal OpenFlagWord =
         [
             0x40, Meaning.Create
             OpenFlagNumbering.LinuxExclusive, Meaning.Exclusive
-            0x100, Meaning.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+            0x100, Meaning.NoControllingTerminal
             0x200, Meaning.Truncate
             OpenFlagNumbering.LinuxAppend, Meaning.Unmodelled UnmodelledOpenFlag.Append
-            OpenFlagNumbering.LinuxNonBlock, Meaning.Unmodelled UnmodelledOpenFlag.NonBlocking
+            OpenFlagNumbering.LinuxNonBlock, Meaning.NonBlocking
             OpenFlagNumbering.LinuxDataSynchronous, Meaning.DataSynchronous
             OpenFlagNumbering.LinuxAsynchronous, Meaning.Unmodelled UnmodelledOpenFlag.Asynchronous
             direct, Meaning.Unmodelled UnmodelledOpenFlag.Direct
@@ -646,7 +667,7 @@ module internal OpenFlagWord =
 
     let private darwinBits : (int * Meaning) list =
         [
-            OpenFlagNumbering.DarwinNonBlock, Meaning.Unmodelled UnmodelledOpenFlag.NonBlocking
+            OpenFlagNumbering.DarwinNonBlock, Meaning.NonBlocking
             OpenFlagNumbering.DarwinAppend, Meaning.Unmodelled UnmodelledOpenFlag.Append
             0x10, Meaning.Unmodelled UnmodelledOpenFlag.SharedLock
             0x20, Meaning.Unmodelled UnmodelledOpenFlag.ExclusiveLock
@@ -659,7 +680,7 @@ module internal OpenFlagWord =
             0x1000, Meaning.Unmodelled UnmodelledOpenFlag.ResolveBeneath
             0x2000, Meaning.Unmodelled UnmodelledOpenFlag.Unique
             0x8000, Meaning.Unmodelled UnmodelledOpenFlag.EventOnly
-            0x20000, Meaning.Unmodelled UnmodelledOpenFlag.NoControllingTerminal
+            0x20000, Meaning.NoControllingTerminal
             0x100000, Meaning.Directory
             0x200000, Meaning.Unmodelled UnmodelledOpenFlag.Symlink
             OpenFlagNumbering.DarwinDataSynchronous, Meaning.DataSynchronous
@@ -696,7 +717,9 @@ module internal OpenFlagWord =
                 | Meaning.Directory
                 | Meaning.CloseOnExec
                 | Meaning.Synchronous
-                | Meaning.DataSynchronous -> None
+                | Meaning.DataSynchronous
+                | Meaning.NonBlocking
+                | Meaning.NoControllingTerminal -> None
             )
 
         // Refused first: a flag this kernel does not model can lift a screen
@@ -735,6 +758,7 @@ module internal OpenFlagWord =
                     match flavour with
                     | SimulatedUnixFlavour.Linux -> has Meaning.Synchronous
                     | SimulatedUnixFlavour.Darwin -> has Meaning.DataSynchronous
+                NonBlocking = has Meaning.NonBlocking
                 Directory = has Meaning.Directory
             }
 
@@ -772,6 +796,20 @@ module UnixNamespace =
         | None ->
             failwith
                 $"%s{context}: about to create an inode in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
+
+    /// The refusal owed for binding `name` in `directory`, if `directory` is
+    /// on the device filesystem. Asked once every errno the call owes has
+    /// been answered: a real devtmpfs answers them as any tmpfs does, and
+    /// only a call that would then bind the name is past this kernel.
+    let private deviceFileSystemNewName
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (vfs : VirtualFileSystem)
+        : PathRefusal option
+        =
+        match VirtualFileSystem.mountedRootOf directory vfs with
+        | Some _ -> Some (PathRefusal.DeviceFileSystemNewName (directory, name))
+        | None -> None
 
     /// A new empty regular file bound as `name` in `directory`, which a walk
     /// has just found free, with the permission bits a creating `open(2)`
@@ -879,9 +917,9 @@ module UnixNamespace =
 
         /// Hand out a descriptor onto `inode`, which the walk reached
         /// `through`, for the access that was asked for, with the descriptor
-        /// flag and the status flags the word asked for. `truncatedExisting` is
-        /// whether this open's `O_TRUNC` truncated a file that was there before
-        /// it.
+        /// flag, the status flags and the `O_NONBLOCK` the word asked for.
+        /// `truncatedExisting` is whether this open's `O_TRUNC` truncated a
+        /// file that was there before it.
         let opened
             (truncatedExisting : bool)
             (through : ReachedThrough)
@@ -904,24 +942,33 @@ module UnixNamespace =
             // A directory gets a description positioned in its entries rather
             // than at a byte offset. It can only be here for reading: every
             // writable or truncating open of one answered EISDIR before this.
-            let fd, registry =
+            let opening =
                 match VirtualFileSystem.tryGetContent inode system.Machine.FileSystem with
                 | Some (InodeContent.Directory _) ->
                     FileDescriptorRegistry.openDirectory
                         descriptorFlags
                         status
+                        flags.NonBlocking
                         through
                         inode
                         (UnixSystemState.fileDescriptors system)
-                | Some (InodeContent.CharacterDevice (device, _)) ->
-                    FileDescriptorRegistry.openCharacterDevice
-                        descriptorFlags
-                        status
-                        through
-                        inode
-                        device
-                        flags.Access
-                        (UnixSystemState.fileDescriptors system)
+                    |> Ok
+                // A node reaches the driver registered for its number, as a
+                // real kernel's does once the open's own checks have passed.
+                | Some (InodeContent.CharacterDevice (number, _)) ->
+                    match CharacterDevice.driverOf flavour number with
+                    | None -> Error (OpenRefusal.UndrivenDevice (inode, number))
+                    | Some device ->
+                        FileDescriptorRegistry.openCharacterDevice
+                            descriptorFlags
+                            status
+                            flags.NonBlocking
+                            through
+                            inode
+                            device
+                            flags.Access
+                            (UnixSystemState.fileDescriptors system)
+                        |> Ok
                 | Some (InodeContent.Socket _) ->
                     failwith
                         $"UnixNamespace.openPath: inode %O{inode} is a socket. Nothing in this version makes one: InodeContent.Socket is unreachable until pathname sockets are modelled (this is a bug in this library)."
@@ -934,12 +981,17 @@ module UnixNamespace =
                     FileDescriptorRegistry.openFile
                         descriptorFlags
                         status
+                        flags.NonBlocking
                         through
                         inode
                         flags.Access
                         (UnixSystemState.fileDescriptors system)
+                    |> Ok
 
-            Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
+            match opening with
+            | Error refusal -> Error refusal
+            | Ok (fd, registry) ->
+                Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
 
         if
             flags.Directory
@@ -1010,6 +1062,10 @@ module UnixNamespace =
         with
         | CreatingOpenVerdict.Refuse error -> Ok (DescriptorAnswer.Failed error, system)
         | CreatingOpenVerdict.Create (directory, name) ->
+            match deviceFileSystemNewName directory name system.Machine.FileSystem with
+            | Some refusal -> Error (OpenRefusal.Path refusal)
+            | None ->
+
             let inode, system =
                 createRegularFile "UnixNamespace.openPath" directory name mode system
 
@@ -1629,10 +1685,6 @@ module UnixNamespace =
             | SimulatedUnixFlavour.Darwin -> ReservedFifo.fail "UnixNamespace.getdents" inode
         | OpenFileTarget.Directory (inode, position) ->
 
-        match VirtualFileSystem.mountedRootOf inode system.Machine.FileSystem with
-        | Some _ -> Error (ReadDirectoryRefusal.DeviceFileSystem inode)
-        | None ->
-
         let withPosition (position : DirectoryPosition) (system : ProcessView<'Thread, 'Handler>) =
             UnixSystemState.withFileDescriptors
                 (FileDescriptorRegistry.setDirectoryPosition fd position (UnixSystemState.fileDescriptors system))
@@ -1658,8 +1710,26 @@ module UnixNamespace =
             )
         | _, false, DirectoryPosition.Cursor cursor ->
 
+        // The directory's access time moves where its filesystem's rule says
+        // for a call that returns an entry, on both flavours, and for one at
+        // the end on Linux alone, whose `iterate_dir` asks `file_accessed`
+        // whatever it yields (measured, `docs/probes/atime`: getdents and
+        // getdents-eof; on Linux the rows of the `relatime` tmpfs, where the
+        // call at the end moved an atime before the mtime).
+        let read =
+            { system with
+                Machine =
+                    UnixMachineState.afterRead
+                        inode
+                        (UnixMachineState.realtime system.Scheduling system.Machine)
+                        system.Machine
+            }
+
         match VirtualFileSystem.nextDirectoryEntry inode cursor system.Machine.FileSystem with
-        | None -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
+        | None ->
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> Ok (ReadDirectoryAnswer.EndOfDirectory, read)
+            | SimulatedUnixFlavour.Darwin -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
         | Some (name, target, next) ->
 
         let kind =
@@ -1670,9 +1740,16 @@ module UnixNamespace =
         // directory the mount covers, not the mounted root's: measured on both
         // flavours, `readdir("/")` reports `dev` as 14 and `stat("/dev")` as 1
         // on Linux (`mountpoint.c`).
+        //
+        // A mounted filesystem's root is its own parent within that
+        // filesystem, so its `..` reports the root itself: measured on Linux's
+        // devtmpfs, where `readdir("/dev")` reports `..` as 1, `/dev`'s own
+        // `st_ino` (`docs/probes/devtmpfs-listing`). A directory below the
+        // root reports its parent, as on the root filesystem.
         let reported =
             match name, VirtualFileSystem.mountOf target system.Machine.FileSystem with
             | PathComponent.Name _, Some mount -> mount.Covered
+            | PathComponent.Parent, _ when (VirtualFileSystem.mountOf inode system.Machine.FileSystem).IsSome -> inode
             | _, _ -> target
 
         let record : DirectoryRecord =
@@ -1680,18 +1757,6 @@ module UnixNamespace =
                 Inode = reported
                 Name = name
                 Kind = kind
-            }
-
-        // A call that returns an entry moves the directory's access time
-        // where its filesystem's rule says, and one at the end does not
-        // (measured, `docs/probes/atime`: getdents and getdents-eof).
-        let read =
-            { system with
-                Machine =
-                    UnixMachineState.afterRead
-                        inode
-                        (UnixMachineState.realtime system.Scheduling system.Machine)
-                        system.Machine
             }
 
         Ok (ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) read)
@@ -1726,7 +1791,8 @@ module UnixNamespace =
     ///
     /// A call that yields an entry moves the directory's access time as
     /// `UnixReadWrite.read` moves a file's: it is a `getdents(2)` into a
-    /// buffer with room for one record. A call at the end moves nothing.
+    /// buffer with room for one record. A call at the end moves it the same
+    /// way on Linux, and moves nothing on Darwin.
     let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -1773,6 +1839,10 @@ module UnixNamespace =
         with
         | MkDirVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkDirVerdict.Create (directory, name, parentPermissions) ->
+
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error refusal
+        | None ->
 
         let permissions =
             MkDirRules.createdPermissions rules parentPermissions system.Process.Umask mode
@@ -1958,6 +2028,10 @@ module UnixNamespace =
         | MkNodVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkNodVerdict.Refused refusal -> Error refusal
         | MkNodVerdict.CreateRegularFile (directory, name) ->
+            match deviceFileSystemNewName directory name system.Machine.FileSystem with
+            | Some refusal -> Error (MkNodRefusal.Path refusal)
+            | None ->
+
             let _, system = createRegularFile "UnixNamespace.mknod" directory name mode system
             Ok (SyscallAnswer.Completed 0L, system)
 
@@ -2636,7 +2710,7 @@ module UnixNamespace =
 
         let verdict =
             RenameRules.verdict
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                rules.RefusalOrder
                 (SimulatedUnixPlatform.bindableEntryNames system.Machine.UnixPlatform)
                 system.Process.Credentials
                 sourceResolution
@@ -3210,6 +3284,10 @@ module UnixNamespace =
         | SymlinkVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | SymlinkVerdict.Create (directory, name) ->
 
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error (SymlinkRefusal.Path refusal)
+        | None ->
+
         match paused.Target with
         | None -> Error SymlinkRefusal.EmptyTarget
         | Some target ->
@@ -3531,6 +3609,10 @@ module UnixNamespace =
         with
         | LinkVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | LinkVerdict.Create (directory, name) ->
+
+        match deviceFileSystemNewName directory name system.Machine.FileSystem with
+        | Some refusal -> Error (LinkRefusal.Path refusal)
+        | None ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 

@@ -45,7 +45,7 @@ module TestProcessView =
             [
                 2, Gen.map2 (fun p port -> Op.Listener (p, port)) small small
                 3, Gen.map2 (fun p port -> Op.Client (p, port)) small small
-                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Accept (fd, UserBuffer.Mapped, 16u))) small fd
+                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Accept (fd, UserBuffer.Mapped, (Some 16u), 0))) small fd
                 2, Gen.map (fun p -> Op.Call (p, Syscall.Pipe2 (UserBuffer.Mapped, 0))) small
                 2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Dup fd)) small fd
                 3, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Close fd)) small fd

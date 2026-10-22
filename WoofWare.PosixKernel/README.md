@@ -88,7 +88,7 @@ In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left
 ## Booting a machine
 
 `UnixSystem.initial` builds the *boot image* of a machine of the given `SimulatedUnixPlatform` that has not done anything yet: a `UnixBootImage`, which no syscall takes.
-Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
+Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withDeviceFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
 Sysctls are configuration too: `UnixBootImage.withInotifyLimits` sets Linux's `fs.inotify` limits (`InotifyLimits`), which default to `UnixSystem.defaultInotifyLimits` (128 instances and 8192 watches per user, 16384 records per instance).
 `UnixBootImage.withUnprivilegedPortStart` sets Linux's `net.ipv4.ip_unprivileged_port_start`, the lowest port a process without privilege may bind, which defaults to `UnixSystem.defaultUnprivilegedPortStart` (1024, where Darwin's privileged ports always end); and `UnixBootImage.withEphemeralPortRange` sets the range `bind` of port 0 draws from. Linux's sysctls keep the range at or above the unprivileged port start, so `UnixBootImage.boot` refuses a Linux image whose range starts below it, whichever setter ran first. Darwin's keep both ends within 1024 to 65535, so the setter refuses a Darwin range that starts below 1024; Darwin also takes a low end above the high end and searches downwards, which the setter refuses as unmodelled.
 Since no setter takes a booted system, configuration can only describe the machine from the moment it booted.
@@ -147,10 +147,11 @@ system |> mkdir |> mkdir |> ignore
 
 A machine boots with an empty filesystem, apart from the device filesystem the kernel mounts over `/dev` (see "Flavours and divergence from host platforms").
 `UnixBootImage.withFileSystem (createdAt : UnixTimestamp) (defaultOwner : InodeOwner) (seed : Map<DirectoryEntryName, SeedEntry>)` replaces it with the tree `seed` describes, created at `createdAt`.
-A `SeedEntry` is a file, a directory or a symbolic link, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
+A `SeedEntry` is a file, a directory, a symbolic link or a character device node, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
 `SeedEntry.file` and `SeedEntry.directory` give the modes a `umask 022` process would have created; the `SeedEntry.File` and `SeedEntry.Directory` cases take a mode and an owner of their own.
 It throws `ArgumentException` for a name the flavour could never have created, for a symbolic link whose target is longer than the flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux, whatever the filesystem's type), and for anything at `/dev` but an empty directory.
-On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
+On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem"), and on either flavour for a device node, which this kernel holds only in the device filesystem.
+The device filesystem keeps what `UnixBootImage.withDeviceFileSystem` set, whichever of the two setters ran first.
 
 The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size`, every file's `st_blksize` and `st_blocks`, and where `lseek(2)` with `SEEK_END` lands on a directory.
 `FileStatus` states each of those two as `None` where nothing in the machine determines it: both on NFS, where they are the mount's and the server's, and the `st_blocks` of an APFS regular file holding any bytes, which APFS allocates as it writes the file back, by when and how quickly the writes came. A client filling a `struct stat` chooses what to report for `None`.
@@ -160,6 +161,7 @@ Path resolution keeps its flavour's limits whichever type is chosen.
 
 Whether a read moves an access time is a mount option, and each type is mounted with one, which `statfs(2)` reports.
 The Linux tmpfs is mounted `noatime`, so only `utimensat(2)` moves an access time there.
+Linux's devtmpfs at `/dev` is mounted `relatime`: a directory read, whether it yields an entry or is at the end, moves a directory's access time to now when it is not after the modification time or the change time, or is at least 86400 whole seconds old; nothing moves a device node's.
 The Darwin APFS volume has APFS's default options: a `read(2)` or `pread(2)` of at least one byte from a file, even one that answers 0 at end-of-file or `EFAULT`, and a directory read that yields an entry, move the access time to now when it is before the modification time, and nothing else moves it (`readlink(2)` and a path through a symbolic link included).
 On NFS no read moves it, which is unmeasured: an NFS file's times are the server's.
 
@@ -248,8 +250,10 @@ A syscall answers what the kernel does: perhaps an errno (a `UnixError`), or the
 A call that can end the process answers a `ProcessFate`: `ProcessFate.Continues (outcome, system)`, with the call's own outcome and the system the process carries on as, or `ProcessFate.ProcessEnded (ended, system)`, with how the process ended and the system without it, since the process is gone from the system as it ends (see "Threads, and the end of the process").
 Those calls are a write or `send` that raises `SIGPIPE`, `kill` and `pthreadKill`, the return to user mode, and a thread's exit.
 
-A few functions answer a `Result` whose `Error` is an errno: those whose own failure is a value the client reports to the process, such as `UnixSignal.kill` and `UnixClock.clockGettime`, and the four that answer nothing else, `UnixSignal.sigaction`, `UnixSignal.sigactionSyscall`, `UnixSignal.pthreadSigmask` and `UnixSignal.rtSigprocmask`.
-A function that cannot fail, such as `UnixClock.gettimeofday`, answers without a `Result` at all.
+A syscall's errno is the `Failed` case of the call's own answer, such as `SyscallAnswer.Failed`, `DescriptorAnswer.Failed` or `ClockGettimeAnswer.Failed`, and never the `Error` of a `Result`.
+A failing call comes back with the system wherever a succeeding one does, unchanged where the failure changed nothing.
+`pthread_kill(3)`, `pthread_sigmask(3)` and `posix_fadvise(3)` return their error rather than setting errno, and their answers' `Failed` cases say so.
+A function that cannot fail, such as `UnixClock.gettimeofday`, answers its value alone.
 The errors of the parsers that build a value, such as `UnixByteString.ofString`'s, say what was wrong with the input.
 
 Where this library will not say what the kernel does, the call throws `UnmodelledException`, and the docstrings say the call is refused.
@@ -364,7 +368,7 @@ A `DescriptorAnswer` is the descriptor a call that makes one returns (`Descripto
 | `ftruncate(2)` | `UnixDescriptor.ftruncate (caller : Caller) (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
 | `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (caller : Caller) (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
 | `close(2)` | `UnixDescriptor.close (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
+| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer * UnixSystem` |
 | `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `SyscallAnswer * UnixSystem` |
 | `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (caller : Caller) (fd : int)` | `TerminalAttributesAnswer` |
 
@@ -447,12 +451,16 @@ The cases exist so that a client's matches already handle them when pathname soc
 | --- | --- | --- |
 | `read(2)` | `UnixReadWrite.read (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
 | `recv(2)` | `UnixReadWrite.recv (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
+| `recvfrom(2)` | `UnixReadWrite.recvfrom (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int) (source : UserBuffer) (sourceLength : UserBuffer)` | `CallProgress<PausedRecvFrom, RecvFromOutcome * UnixSystem>` |
+| `recvfrom(2)`, given the length cell | `UnixReadWrite.recvfromWithLength (length : uint32) (paused : PausedRecvFrom)` | `RecvFromOutcome * UnixSystem` |
 | `pread(2)` | `UnixReadWrite.pread (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
 | `write(2)` | `UnixReadWrite.write (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (caller : Caller)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome> * Delivery option` |
 | `send(2)` | `UnixReadWrite.send (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `send(2)`, given the bytes | `UnixReadWrite.sendWithBytes (bytes : ImmutableArray<byte>) (paused : PausedSend)` | `ProcessFate<WriteOutcome>` |
+| `sendto(2)` | `UnixReadWrite.sendto (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int) (destination : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedSendToAddress, CallProgress<PausedSend, ProcessFate<WriteOutcome>>>` |
+| `sendto(2)`, given the destination | `UnixReadWrite.sendtoWithAddress (copied : ImmutableArray<byte>) (paused : PausedSendToAddress)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `pwrite(2)` | `UnixReadWrite.pwrite (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
 | `pwrite(2)`, given the bytes | `UnixReadWrite.pwriteWithBytes (bytes : ImmutableArray<byte>) (paused : PausedPWrite)` | `WriteAnswer * UnixSystem` |
 | `copy_file_range(2)` | `UnixReadWrite.copyFileRange (caller : Caller) (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
@@ -468,7 +476,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `connect(2)` | `UnixConnection.connect (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
 | `connect(2)`, given the bytes | `UnixConnection.connectWithAddress (copied : ImmutableArray<byte>) (paused : PausedConnect)` | `SyscallOutcome * UnixSystem` |
 | `listen(2)` | `UnixSocket.listen (caller : Caller) (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
-| `accept(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
+| `accept(2)`, and Linux's `accept4(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32 option) (flags : int)` | `AcceptOutcome * UnixSystem` |
 | `shutdown(2)` | `UnixConnection.shutdown (caller : Caller) (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
 | `getsockname(2)` | `UnixSocket.getsockname (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
 | `getpeername(2)` | `UnixSocket.getpeername (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
@@ -478,6 +486,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `getsockopt(2)`, given the length | `UnixSocket.getsockoptWithLength (declaredLength : uint32) (paused : PausedGetSockOpt)` | `GetSockOptAnswer * UnixSystem` |
 
 An address crosses the syscall boundary as bytes, laid out as the platform's `struct sockaddr`: `bind` and `connect` take them, and `getsockname`, `getpeername` and `accept` answer them.
+An `accept` through a NULL destination (`UserBuffer.Unmapped 0UL`, with no declared length) answers no address, `PeerAddressCopy.NotRequested`: neither flavour reads or writes the length cell then.
 Where the kernel hands out an address already decoded, in an answer or a socket's `SocketPhase.DatagramPeer`, it is a `SocketAddress`: an `Ipv4Endpoint`, an `Ipv6Endpoint`, or a `UnixSocketName`, whose representation is hidden and which `UnixSocketName.view` reads as a path or a Linux abstract name (`UnixSocketNameView`).
 `BindAnswer.Bound` and `ListenAnswer.Listening` carry the address as `getsockname` would report it at once, and so in the socket's own family: a dual-mode IPv6 socket (`IPV6_V6ONLY` off) bound to an IPv4 address answers it v4-mapped, `::ffff:a.b.c.d`.
 This kernel's IPv6 sockets reach only IPv4 peers, through v4-mapped addresses, so a refused `connect` names the IPv4 endpoint it resolved, even from an IPv6 socket.
@@ -492,9 +501,11 @@ A socket also carries a uid, `SocketDescription.Uid`, fixed for its life: the ef
 Darwin's `bind` consults it: a socket whose uid is not root's, binding beside a socket of another uid at an overlapping address that is not the wildcard on both sides, is answered `EADDRINUSE`, whatever either's `SO_REUSEADDR`. The same holds beside a TCP end whose socket has closed, in `TIME_WAIT` or not, which carries the uid its socket carried; beside such an end of root's the answer is unmeasured, and the bind throws `UnmodelledException`.
 Linux compares uids only for `SO_REUSEPORT`, which this kernel does not model; its sockets carry their uid all the same, so the field means the same on both flavours.
 
-A connected TCP socket's `read` and `write` move bytes through its connection, which holds each direction's bytes in the sender's send buffer and the receiver's receive buffer, sized from the machine's TCP sysctls, each direction's FIN (not sent, queued behind unsent bytes, or arrived), and each end's state: open, reset, or closed. A close over bytes left unread resets the peer; otherwise it sends a FIN behind what it had sent. A close under `SO_LINGER` {1, 0} resets the peer unless both FINs have arrived, when it is the ordinary close, and frees the closer's endpoint at once wherever it resets (and, under Darwin, even where it does not); a client that resets while its connection waits in an accept queue leaves the accept a reset socket. A listener's last close resets every client still in its accept queue, oldest first, whatever the listener's `SO_LINGER`. Each queued connection keeps the options the listener held when it completed (`QueuedConnection`), so a change to a listener's options does not reach the connections already queued, and the socket `accept` makes for one holds them; under Darwin a listener lingering for no time gives it a linger of 120 seconds. `poll`, epoll and kqueue read a connected socket's readiness from the same state, and each transfer wakes the waiters each flavour wakes: every arrival of bytes, and room freed in a send buffer (on Linux once after a write ran out of room, when the buffer has drained to two thirds full; on Darwin as bytes leave it). `FIONREAD` reports what waits to be read, and `SO_ERROR` takes a reset's error. A blocking read with nothing to answer sleeps until bytes, a FIN or a reset arrive; a blocking write takes what fits and sleeps for the rest, woken on Linux once its send buffer has drained to two thirds full and on Darwin once there is room for it to take something, and it returns once every byte is taken, unless something ends it first; under Linux, one whose own bytes reset the connection, because its peer has closed or resets what arrives, returns the count it took without sleeping. Every thread asleep on a socket wakes for what it waits on.
+A connected TCP socket's `read` and `write` move bytes through its connection, which holds each direction's bytes in the sender's send buffer and the receiver's receive buffer, sized from the machine's TCP sysctls, each direction's FIN (not sent, queued behind unsent bytes, or arrived), and each end's state: open, reset, or closed. A close over bytes left unread resets the peer; otherwise it sends a FIN behind what it had sent. A close under `SO_LINGER` {1, 0} resets the peer unless both FINs have arrived, when it is the ordinary close, and frees the closer's endpoint at once wherever it resets (and, under Darwin, even where it does not); a client that resets while its connection waits in an accept queue leaves the accept a reset socket. A listener's last close resets every client still in its accept queue, oldest first, whatever the listener's `SO_LINGER`. Each queued connection keeps the options the listener held when it completed (`QueuedConnection`), so a change to a listener's options does not reach the connections already queued, and the socket `accept` makes for one holds them; under Darwin a listener lingering for no time gives it a linger of 120 seconds. `poll`, epoll and kqueue read a connected socket's readiness from the same state, and each transfer wakes the waiters each flavour wakes: every arrival of bytes, and room freed in a send buffer (on Linux once after a write ran out of room, when the buffer has drained to two thirds full; on Darwin as bytes leave it). `FIONREAD` reports what waits to be read, and `SO_ERROR` takes a reset's error. A blocking read with nothing to answer sleeps until bytes, a FIN or a reset arrive; a blocking write takes what fits and sleeps for the rest, woken on Linux once its send buffer has drained to two thirds full and on Darwin once there is room for it to take something, and it returns once every byte is taken, unless something ends it first; under Linux, one whose own bytes reset the connection, because its peer has closed or resets what arrives, returns the count it took without sleeping. Under Darwin, closing a descriptor that a blocking read, write or `accept` sleeps through drains the socket: every such call asleep on it, through that descriptor or another, ends (a read or write with `EBADF`, an `accept` with `ECONNABORTED`), and from then on a read or write there that would sleep answers `EBADF` instead, a write having first taken the room there was; a call asleep only through another descriptor drains nothing, and Linux's close ends no call. Every thread asleep on a socket wakes for what it waits on.
 
 `shutdown` shuts a connected TCP socket's sides by each flavour's measured rules: shutting the send side sends a FIN behind what is still unsent, and every later write answers `EPIPE`; shutting the receive side makes reads answer end of file once what was queued is read, which Darwin discards, and an arrival at a Darwin socket shut for receiving, or a Linux one shut both ways, resets the connection. Linux answers 0 to every call on a connection neither reset nor done with its FINs, and `ENOTCONN` otherwise; Darwin answers `ENOTCONN` to a side already shut and applies `SHUT_RDWR` side by side. The socket's readiness, its waiters, its sleeping reads and writes, `getpeername`, Darwin's `setsockopt` and the endpoint it holds follow: an end whose FIN was made after the peer's and has arrived frees its endpoint, open or closed (on Linux, an explicitly bound port only once the socket closes), where one made first holds it. While an end holds its endpoint, a `bind` of it is refused as one over a connected socket is, whether the end's socket is open or has closed: on Linux unless both that socket and the new one carry `SO_REUSEADDR` (a closed end keeps the flag its socket carried), and on Darwin unless the new one does. Linux judges an end in `TIME_WAIT` by the flag it had on entering it, so a Linux `setsockopt` changing the flag there is refused. A connection is forgotten once neither socket refers to it, and if both its FINs had arrived, the end whose FIN was made first is then left in `TIME_WAIT`, unless a Darwin close under `SO_LINGER` {1, 0} freed its endpoint. A FIN still queued behind bytes the peer's closed socket never read does not arrive, so a Darwin connection left so holds neither end's port once both sockets have closed. An end in `TIME_WAIT` holds its endpoint and its four-tuple as it did once its socket had closed, with the `SO_REUSEADDR` that socket carried, against `bind`, `listen` and every search for a port, but for one place: Linux's connect search, which shares a port connect's own bind chose with connections to other destinations, also takes the end's four-tuple over, on loopback, once `net.ipv4.tcp_tw_reuse_delay` (1000 ms) has passed since it entered `TIME_WAIT`, unless it entered it in the machine's first second of uptime. A connect towards its peer from a socket bound at its endpoint takes the four-tuple over at once on Linux, and on Darwin answers `EADDRINUSE`, the socket left bound and unconnected; and a connect from its peer's endpoint to its own ends the `TIME_WAIT` on both, accepted or refused. The end entered `TIME_WAIT` once both FINs had arrived, and it holds for as long as it was measured to hold at least, counted from then: 60 seconds on Linux (`TCP_TIMEWAIT_LEN`), and twice `net.inet.tcp.msl` (15000 ms) on Darwin. When it ends after that is unmeasured, so a call whose answer then depends on it throws `UnmodelledException`, as does a Linux connect that would take its four-tuple over off loopback, from a search within 10 ms of the reuse delay, or from a bound socket where the end entered `TIME_WAIT` in the first second of uptime. The machine's `TIME_WAIT` sysctls are each flavour's defaults, which no setter changes yet. No other TCP timer is modelled, so an end that still holds its endpoint once its socket has closed goes on holding it until a reset reaches the connection, its passive FIN arrives, or its peer's socket closes too. Refused: a listener, a Linux socket with no connection (whose `ENOTCONN` still shuts its sides), and Darwin's receive side shut before the peer's unsent bytes, after which only a timer decides; so is Darwin's close behind its own queued FIN once the peer's has arrived, over bytes unread.
+
+A UDP socket holds the datagrams that reach it, connected or not, and `read` and `recv` take them one at a time, each truncated to what fits. A connected UDP socket's `write` and `send` send a datagram to its peer, which the socket bound at the destination takes: one bound to its address before one bound to the wildcard, and one connected to the sender before one unconnected. A datagram finding its receiver full is lost, the send succeeding all the same. A receiver's capacity is each flavour's own accounting, as measured: Linux charges each datagram its buffer's size, and gives the charge of what is taken back in batches; Darwin charges its bytes, its source address and a control record against two budgets. `FIONREAD` reports what each flavour does, and Linux's `poll` and epoll read IN while a datagram waits. A datagram no socket takes is answered with an ICMP port-unreachable error, which leaves `ECONNREFUSED` pending at the socket a reply would reach, if that socket is connected: Linux answers every such datagram, and Darwin none on the four-tuple of the last one it answered within 100 ms of it, the default of `net.inet.udp.port_unreach_rlc_bucket_ms`. A receive, a send or an `SO_ERROR` read takes the error where its flavour does (Linux's zero-length `read`, and its send on an unconnected socket, leave it), and so does a Darwin `connect` that connects; Linux's `poll` and epoll read ERR while it is pending. `sendto` sends to the destination it names, binding the socket first where its flavour does, and `recvfrom` writes the source of the datagram it takes, with Linux's `MSG_TRUNC` returning the datagram's whole length; which of their failures wins, and what each writes on the way, is each flavour's own, as measured. Refused, for now: a blocking receive with nothing queued, a datagram two sockets are equally placed to take (or whose error they are), a Darwin receive into an unmapped buffer, a `sendto` with a destination or a `recvfrom` on any socket but an IPv4 UDP one, and Darwin's `poll` and `kevent` on a UDP socket. `sendmsg` and `recvmsg` are still reserved.
 
 `recv` and `send` reach a connected TCP socket through the same transfer, sleep and wake as `read` and `write`, and take their flag word raw, in the flavour's numbering (`MessageFlag.number`). `MSG_PEEK` answers bytes without taking them, `MSG_DONTWAIT` makes a `recv`, and a Linux `send`, non-blocking (Darwin's `send` ignores it), and `MSG_NOSIGNAL` keeps an `EPIPE` from raising `SIGPIPE`; any other flag is refused, naming it. Where they part from `read` and `write` is measured: Linux screens their buffer before it looks up the descriptor, a Linux `recv` of nothing waits as a longer one would, and Darwin's `send` marks no description written.
 
@@ -523,7 +534,9 @@ a name created, removed or renamed is `IN_CREATE`, `IN_DELETE`, or `IN_MOVED_FRO
 an inode's gained or lost link (a hard link, an unlink, a rename over it) is `IN_ATTRIB` at its own watch;
 and `chmod`, `chown`, `utimensat` or an `open` with `O_TRUNC` through a path is one record, `IN_ATTRIB` or `IN_MODIFY` as Linux chooses, at the watch on the directory of the name the path reached and then at the inode's own.
 A change made through a descriptor (`write`, `pwrite`, `copy_file_range`, `ftruncate`, `fchmod`, `fchown`, `futimens`, or the empty path under `AT_EMPTY_PATH`) is reported the same way, under the name the descriptor was opened through, which each open file description records:
-a rename of that name moves it, and an unlink of it, a `rmdir` of it or a rename over it leaves it in place, unlinked, and the change is still reported there, except that a watch with `IN_EXCL_UNLINK`, on the directory or on the inode, hears nothing of a write through an unlinked name (it does hear its `ftruncate`, `fchmod` and the rest, and the `IN_ATTRIB` of the set-ID bits a write clears).
+a rename of that name moves it, and an unlink of it, a `rmdir` of it or a rename over it leaves it in place, unlinked, and the change is still reported there, except that a watch with `IN_EXCL_UNLINK`, on the directory or on the inode, hears nothing of a write or a release through an unlinked name (it does hear its `ftruncate`, `fchmod` and the rest, and the `IN_ATTRIB` of the set-ID bits a write clears).
+A `write` or `pwrite` to a device that moves a byte is `IN_MODIFY` at the device's own watch alone, never at the watch on its directory; one that moves none raises nothing.
+The release of an open file description onto a file, a directory or a device, once nothing references it (no descriptor names it, whether `close`, a `dup2` over it or the process's end let go of the last, and no call in flight holds it), is reported the same way: `IN_CLOSE_WRITE` if it was opened for writing, whether or not anything was written, and `IN_CLOSE_NOWRITE` otherwise, before the going of anything the release lets go of.
 A file unlinked while open holds the directory it was named in, as Linux's does, so that directory outlives its own `rmdir` until the file is closed.
 A record repeating the newest queued is dropped, and a full queue takes one `IN_Q_OVERFLOW` record; `inotify_rm_watch` queues `IN_IGNORED`.
 A rename is `IN_MOVE_SELF` at the moved inode's own watch, after the other records of the rename.
@@ -532,7 +545,7 @@ an unlink, `rmdir` or rename over a name no description was opened through, or t
 Its watches then queue `IN_DELETE_SELF` if they ask for it, and `IN_IGNORED`, and end, before the `IN_DELETE` of the name at its directory; afterwards `inotify_rm_watch` of one answers `EINVAL`.
 So a file opened through one name and unlinked through another goes at that unlink, though the descriptor still reads it; a directory, having one name, goes when nothing holds it, a process standing in it included.
 A change to a directory whose last name has gone (by `rmdir`, or a rename over it), reached by "." or ".." (from the current directory, say) or through a descriptor opened that way, is reported as one through a name since unlinked: at the watch on the directory it was last named in, under the name it had when that name went, and then at its own.
-A watch asking for an event this kernel does not raise, `IN_ACCESS`, `IN_OPEN`, `IN_CLOSE_WRITE`, `IN_CLOSE_NOWRITE` or `IN_UNMOUNT`, or carrying `IN_ONESHOT`, is refused.
+A watch asking for an event this kernel does not raise, `IN_ACCESS`, `IN_OPEN` or `IN_UNMOUNT`, or carrying `IN_ONESHOT`, is refused.
 Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
@@ -566,13 +579,13 @@ Every other command Linux has, and any command without `FUTEX_PRIVATE_FLAG`, thr
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `kill(2)` | `UnixSignal.kill (caller : Caller) (pid : int) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (caller : Caller) (target : 'Thread) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `sigaction(3)` | `UnixSignal.sigaction (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (caller : Caller) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `kill(2)` | `UnixSignal.kill (caller : Caller) (pid : int) (signo : int)` | `ProcessFate<KillAnswer>` |
+| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (caller : Caller) (target : 'Thread) (signo : int)` | `ProcessFate<KillAnswer>` |
+| `sigaction(3)` | `UnixSignal.sigaction (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `SigactionAnswer * UnixSystem` |
+| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `SigactionAnswer * UnixSystem` |
+| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (caller : Caller) (how : int) (set : SignalMask option)` | `SignalMaskAnswer * UnixSystem` |
+| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (caller : Caller) (how : int) (set : SignalMask option)` | `SignalMaskAnswer * UnixSystem` |
+| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (caller : Caller) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `SignalMaskAnswer * UnixSystem` |
 | `sigpending(2)` | `UnixSignal.sigpending (caller : Caller)` | `SignalMask` |
 | `sigsuspend(2)` | `UnixSignal.sigsuspend (caller : Caller) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
 | Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (caller : Caller) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
@@ -588,7 +601,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
+| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `ClockGettimeAnswer` |
 | `gettimeofday(2)` | `UnixClock.gettimeofday (caller : Caller)` | `UnixTimestamp` |
 | Linux's `getrandom(2)` | `UnixEntropy.getRandom (caller : Caller) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
@@ -615,14 +628,14 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 #### What is not modelled
 
-These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendto`, `recvfrom`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex` operations other than a private wait and wake and their bitset forms, Darwin's `__ulock` and `__psynch` calls, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
+These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex` operations other than a private wait and wake and their bitset forms, Darwin's `__ulock` and `__psynch` calls, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
 "What the kernel leaves to the client" says which of those are the client's by design.
 
 #### Calls that copy in from the caller's memory
 
 A real kernel copies an argument in from the caller's memory at a point in the call, and what happens before that point is observable: a bad descriptor is `EBADF` whatever the buffer holds.
 So a call that copies bytes in stops there.
-`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`, and `UnixWait.finish` holds `finishWrite`'s in `FinishedCall.PipeWrite` and `FinishedCall.ConnectionWrite`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
+`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.sendto`, `UnixReadWrite.recvfrom`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`, and `UnixWait.finish` holds `finishWrite`'s in `FinishedCall.PipeWrite` and `FinishedCall.ConnectionWrite`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
 The paused call's `copyRange` says which bytes of the caller's buffer to copy, and its resume function (`UnixReadWrite.writeWithBytes`, `sendWithBytes`, `pwriteWithBytes`, `UnixSocket.bindWithAddress`, `UnixConnection.connectWithAddress`, `UnixSocket.setsockoptWithValue`) takes exactly those and finishes the call, answering the same type `CallProgress.Answered` carries; `writeWithBytes` answers beside it the bytes the write delivered out of the machine (see "The far end of a launched pipe").
 A `getsockopt` stops where the kernel reads the caller's length cell instead, and `UnixSocket.getsockoptWithLength` takes the `socklen_t` it holds.
 Nothing else can be done to the system in between, since the paused call holds it.
@@ -643,7 +656,7 @@ An argument the call copies in from the caller's memory is what that memory held
 A buffer's copy is the bytes of `CopiedArgument.Readable` that the paused call's `copyRange` names, so the contents hold at least as many bytes as the call copies, and may hold more, which it does not read; `step` throws `InvalidOperationException` for contents that end before the bytes it copies.
 A buffer the call writes to stays a `UserBuffer`, since what the call writes is in its answer.
 The finishing functions, the return to user mode, `UnixScheduling.dispatch`, `UnixDescriptor.setNonBlocking` and `UnixDescriptor.isNonBlocking` have no case: no thread makes any of them as a call of its own.
-`Syscall.Nanosleep`, `Syscall.ClockNanosleep`, `Syscall.Select`, `Syscall.PSelect`, `Syscall.SigWait`, `Syscall.SigWaitInfo`, `Syscall.SigTimedWait`, `Syscall.RecvFrom`, `Syscall.RecvMsg`, `Syscall.SendTo` and `Syscall.SendMsg` are reserved for calls this library does not model yet (see "What is not modelled"): the types their arguments and answers are held in have internal representations, nothing makes one, and `step` throws `UnmodelledException` for one.
+`Syscall.Nanosleep`, `Syscall.ClockNanosleep`, `Syscall.Select`, `Syscall.PSelect`, `Syscall.SigWait`, `Syscall.SigWaitInfo`, `Syscall.SigTimedWait`, `Syscall.RecvMsg` and `Syscall.SendMsg` are reserved for calls this library does not model yet (see "What is not modelled"): the types their arguments and answers are held in have internal representations, nothing makes one, and `step` throws `UnmodelledException` for one.
 Whatever the call, `getpid` included, `caller` must be one of the process's threads, not asleep in another call and owing no return to user mode, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
 
 A call that can end the process answers through `step` as through its own function: `SteppedCall.Kill`, `SteppedCall.PthreadKill` and `SteppedCall.ExitThread` hold a `ProcessFate`, which is `ProcessFate.ProcessEnded` where the call ended the process, and `SteppedCall.ExitGroup` holds the ended process beside the system without it.
@@ -691,10 +704,10 @@ let make (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSyst
     | SteppedCall.Accept (AcceptOutcome.WouldBlock _, asleep) ->
         printfn "thread %d sleeps in accept" (Caller.thread caller)
         asleep
-    | SteppedCall.SigAction (Ok (_, system))
+    | SteppedCall.SigAction (SigactionAnswer.Completed _, system)
     | SteppedCall.Listen (ListenAnswer.Listening _, system)
     | SteppedCall.Spawn (SpawnAnswer.Spawned _, system)
-    | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+    | SteppedCall.PthreadKill (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
         snd (returnToUser caller system)
     | stepped -> failwith $"unexpected from %A{call}: %A{stepped}"
 
@@ -722,7 +735,7 @@ let listener, opened =
 
 // It listens on the socket, which nothing will connect to, and starts thread 1, which
 // accepts on it and sleeps. Thread 0 sends thread 1 SIGUSR1.
-let accept = Syscall.Accept (listener, UserBuffer.Mapped, 16u)
+let accept = Syscall.Accept (listener, UserBuffer.Mapped, Some 16u, 0)
 
 let signalled =
     opened
@@ -776,7 +789,7 @@ Every answer is a `ProcessFate<WriteOutcome>` (`writeWithBytes` answers a `Deliv
 * `WriteOutcome.WouldBlock condition`: the call sleeps, as above.
 * `WriteOutcome.Interrupted`: a signal interrupted the sleep before anything was written, and the call fails with `EINTR` or restarts as the thread's return to user mode says. Only `finishWrite` answers this.
 
-`send` is the same with `UnixReadWrite.send` and `UnixReadWrite.sendWithBytes`, and is woken with `finishWrite` as a write is; `pwrite` with `UnixReadWrite.pwrite` and `UnixReadWrite.pwriteWithBytes`, never sleeps or raises a signal, and answers `WriteAnswer * UnixSystem`.
+`send` is the same with `UnixReadWrite.send` and `UnixReadWrite.sendWithBytes`, and is woken with `finishWrite` as a write is. `sendto` with a NULL destination (`UserBuffer.Unmapped 0UL`) is `send`; with one, it first stops at the copy of the destination, which `UnixReadWrite.sendtoWithAddress` takes the bytes `PausedSendToAddress.copyRange` names of, and then answers or stops at `send`'s copy. `recvfrom` stops, where what the caller's length cell holds decides its answer, for `UnixReadWrite.recvfromWithLength` of the `socklen_t` there, read once the bytes `PausedRecvFrom.received` names are in the caller's buffer; `pwrite` with `UnixReadWrite.pwrite` and `UnixReadWrite.pwriteWithBytes`, never sleeps or raises a signal, and answers `WriteAnswer * UnixSystem`.
 
 **Buffers.** Where a real kernel would check a buffer's address, the client describes the address as a `UserBuffer`, and the library decides whether and when the call answers `EFAULT`, against the limit set by `UnixBootImage.withUserAddressLimit`.
 A client with a flat address space uses `UserBuffer.Mapped` for an address whose bytes it can read or write and `UserBuffer.Unmapped address` for one it cannot.
@@ -928,7 +941,7 @@ printfn "processes left: %d" (UnixSystem.processIds remaining).Count
 
 ## Signals
 
-`UnixSignal.kill` and `UnixSignal.pthreadKill` generate a signal, and answer a `ProcessFate<KillOutcome>`: the process runs on (`KillOutcome.ProcessRuns`), with the signal pending or discarded; the signal stopped it (`KillOutcome.ProcessStopped`); or the signal killed it at once (`ProcessFate.ProcessEnded`).
+`UnixSignal.kill` and `UnixSignal.pthreadKill` generate a signal, and answer a `ProcessFate<KillAnswer>`: the process runs on (`KillAnswer.Completed KillOutcome.ProcessRuns`), with the signal pending or discarded; the signal stopped it (`KillAnswer.Completed (KillOutcome.ProcessStopped _)`); the signal killed it at once (`ProcessFate.ProcessEnded`); or the call failed, sending nothing (`KillAnswer.Failed`).
 `kill` of a pid that names no process on the machine, and under Linux no thread either, is `ESRCH` (under Darwin, a number that is no signal is `EINVAL` first); a process that has ended is gone, as if its parent had reaped it.
 `kill` of another process, of a process group, of process 1 (which every real machine has, and a `UnixSystem` never holds), or under Linux of a thread's ID, is refused.
 Under Linux a pending signal counts against `RLIMIT_SIGPENDING`, the receiving process's limit on the signals queued for its real user in all that user's processes (`ProcessLaunch.withPendingSignalLimit`, by default `UnixSystem.defaultPendingSignalLimit`).
@@ -1005,13 +1018,13 @@ let resumed (fate : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit>) : Un
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
 // pthread_sigmask(how, {SIGTERM}, NULL), with `how` under Linux's numbering:
-// SIG_BLOCK is 0 and SIG_UNBLOCK 1. Its Error is an errno.
+// SIG_BLOCK is 0 and SIG_UNBLOCK 1. Its errno is SignalMaskAnswer.Failed.
 let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
 let mask (how : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
     match UnixSignal.pthreadSigmask leader how (Some sigterm) system with
-    | Ok (_previous, system) -> system
-    | Error errno -> failwith $"pthread_sigmask failed: %O{errno}"
+    | SignalMaskAnswer.Completed _previous, system -> system
+    | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask failed: %O{errno}"
 
 let blocked = booted |> mask 0 |> returnToUser |> resumed
 
@@ -1021,9 +1034,9 @@ let pending =
     let signo = Signal.toRawSignoUnder numbering Signal.SIGTERM
 
     match UnixSignal.kill leader pid signo blocked with
-    | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system |> returnToUser |> resumed
-    | Ok outcome -> failwith $"unexpected kill: %A{outcome}"
-    | Error errno -> failwith $"kill failed: %O{errno}"
+    | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> system |> returnToUser |> resumed
+    | ProcessFate.Continues (KillAnswer.Failed errno, _) -> failwith $"kill failed: %O{errno}"
+    | outcome -> failwith $"unexpected kill: %A{outcome}"
 
 // Unblocking it: as thread 0 returns to user mode it takes SIGTERM, whose
 // default action ends the process.
@@ -1082,8 +1095,8 @@ let handled =
     let action = SignalDisposition.Catch { SignalCatch.ofHandler "on-usr1" with Restart = true }
 
     match UnixSignal.sigaction first usr1 (Some action) booted with
-    | Ok (_, system) -> snd (returnToUser first system)
-    | Error errno -> failwith $"sigaction failed: %O{errno}"
+    | SigactionAnswer.Completed _, system -> snd (returnToUser first system)
+    | SigactionAnswer.Failed errno, _ -> failwith $"sigaction failed: %O{errno}"
 
 let readFd, piped =
     match UnixPipe.pipe2 first 0 UserBuffer.Mapped handled with
@@ -1102,7 +1115,7 @@ let signalled =
     match read spawned with
     | ReadOutcome.WouldBlock _, asleep ->
         match UnixSignal.pthreadKill first 1 usr1 asleep with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> snd (returnToUser first system)
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> snd (returnToUser first system)
         | other -> failwith $"unexpected from pthread_kill: %A{other}"
     | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
 
@@ -1358,10 +1371,14 @@ Where the flavours disagree, the platform says which answer applies, down to who
 The filesystem type is chosen separately (see "Giving the machine files"), from those its flavour has been seen to report.
 
 The kernel mounts a device filesystem over `/dev` at boot, as a real one does.
-On Linux it is a devtmpfs holding a node for each device the kernel has a driver for (`/dev/null` and `/dev/urandom`); since a real devtmpfs holds hundreds, any other name in it is refused rather than answered ENOENT, and so are listing it and adding or removing a name in it.
+On Linux it is a devtmpfs, which holds what the machine's configuration says: `UnixBootImage.withDeviceFileSystem` takes a seed of device nodes (`SeedEntry.CharacterDevice`) and the directories holding them, and without it the devtmpfs holds `UnixSystem.defaultDevtmpfsContents`, the five nodes Linux's memory-device driver makes on every kernel: `null`, `zero`, `full`, `random` and `urandom`.
+A real machine's devtmpfs holds many more, according to its kernel's configuration and its hardware, and a client describing one configures them.
+Listing `/dev` and `stat(2)` of anything in it answer from that configuration, and a name it does not hold is ENOENT. A call that would create, remove or rename a name in it is refused once every check that could fail it has passed: an unprivileged process is EACCES there, as on a real machine, and root is refused.
+A node holds nothing but its device's number (`DeviceNumber`, the `(major, minor)` pair `stat` reports in the flavour's encoding as `st_rdev`), and opening it reaches the driver this kernel has registered under that number, as a real kernel's does.
 Opening a node gives a descriptor whose syscalls are the driver's: `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
-Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. No read or write moves them, and mounting `/dev` moves none of the root directory's times.
-`CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so no node names any of them.
+Opening a node whose number this kernel has no driver for is refused, once every check that could fail the open has passed.
+Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. A node a real kernel registers later in boot has a later time, which this kernel does not distinguish. No read or write of a node moves its times, and mounting `/dev` moves none of the root directory's times.
+`CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so a node holding one of their numbers, `/dev/zero` and `/dev/random` among them, is listed and reported but cannot be opened.
 On Darwin it is devfs, which is not modelled, so any path that reaches `/dev` is refused.
 
 Some interfaces are one flavour's alone, and the other flavour refuses every call of them rather than answering: no kernel of that flavour has the call, so there is no answer to measure.

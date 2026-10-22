@@ -43,6 +43,7 @@ module TestDeviceDescriptors =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -288,6 +289,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
@@ -296,6 +298,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
@@ -304,6 +307,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -316,6 +320,7 @@ module TestDeviceDescriptors =
         FileDescriptorRegistry.openCharacterDevice
             (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
             (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            false
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -327,9 +332,9 @@ module TestDeviceDescriptors =
 
     [<Test>]
     let ``a description of a device this kernel has no driver for breaks the invariants`` () : unit =
-        // No node names such a device (`VirtualFileSystem.checkInvariants`
-        // reports one as `ReservedContent`), so a description naming one names
-        // a node of some other device.
+        // `open` refuses a node whose number has no driver, so no description
+        // names such a device: not through another device's node, nor through
+        // a node holding the device's own number.
         let urandom =
             match
                 UnixPathResolution.tryStat
@@ -346,6 +351,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device
@@ -364,6 +370,24 @@ module TestDeviceDescriptors =
 
             VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
             |> shouldEqual []
+
+            let ownNumber =
+                VirtualFileSystem.Unchecked.setContent
+                    urandom
+                    (InodeContent.CharacterDevice (
+                        CharacterDevice.number SimulatedUnixFlavour.Linux device,
+                        PermissionBits.parseOrFail "TestDeviceDescriptors" 0o666
+                    ))
+                    (UnixSystem.fileSystem system)
+
+            system
+            |> Kernel.mapMachine (fun machine ->
+                { machine with
+                    CommittedFileSystem = CommittedFileSystem.initial ownNumber
+                }
+            )
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
     [<Test>]
     let ``fstatfs through a device's descriptor is statfs of its path`` () : unit =
@@ -584,6 +608,8 @@ module TestDeviceDescriptors =
                 match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 count) 0L returned with
                 | Ok (PWriteAdmission.Transfer (transfer, _)) -> transfer |> shouldEqual count
                 | Ok (PWriteAdmission.Answered answer) -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                | Ok (PWriteAdmission.DeviceAnswered _ as answered) ->
+                    failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
                 | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                 | Error other -> failwith $"admitPWrite: %A{other}"
             else
@@ -904,9 +930,12 @@ module TestDeviceDescriptors =
             | CharacterDevice.Zero, _
             | CharacterDevice.Random, _
             | CharacterDevice.Tty, _ -> failwith $"%O{device} has no node, so it cannot have been opened"
-            | CharacterDevice.Null, _ ->
-                admission
-                |> shouldEqual (PWriteAdmission.Answered (WriteAnswer.Completed (int64 count)))
+            | CharacterDevice.Null, PWriteAdmission.Answered answer ->
+                count |> shouldEqual 0UL
+                answer |> shouldEqual (WriteAnswer.Completed 0L)
+            | CharacterDevice.Null, PWriteAdmission.DeviceAnswered (answer, _, _) ->
+                answer |> shouldEqual (WriteAnswer.Completed (int64 count))
+            | CharacterDevice.Null, other -> failwith $"/dev/null's pwrite reached %A{other}"
             | CharacterDevice.URandom, PWriteAdmission.Answered answer ->
                 count |> shouldEqual 0UL
                 answer |> shouldEqual (WriteAnswer.Completed 0L)
@@ -921,6 +950,8 @@ module TestDeviceDescriptors =
                 | Error refusal -> failwith $"pwrite refused: %A{refusal}"
             | CharacterDevice.URandom, (PWriteAdmission.Faults _ as faults) ->
                 failwith $"a mapped buffer faulted: %A{faults}"
+            | CharacterDevice.URandom, (PWriteAdmission.DeviceAnswered _ as answered) ->
+                failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
 
         let offsetGen =
             Gen.oneof
@@ -1029,6 +1060,7 @@ module TestDeviceDescriptors =
 
                 for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Opaque ] do
                     UnixDescriptor.tryBytesAvailable (Callers.leader system) fd destination system
+                    |> Result.map fst
                     |> shouldEqual (Ok (BytesAvailableAnswer.Failed expected))
 
                 UnixDescriptor.terminalAttributes (Callers.leader system) fd system

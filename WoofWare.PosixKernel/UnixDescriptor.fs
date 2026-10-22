@@ -1569,13 +1569,36 @@ module UnixDescriptor =
         (fd : int)
         (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<BytesAvailableAnswer, BytesAvailableRefusal>
+        : Result<BytesAvailableAnswer * ProcessView<'Thread, 'Handler>, BytesAvailableRefusal>
         =
+        // A UDP socket's count: on Linux the oldest datagram's length, which
+        // a call finding the reader queue empty refills it to read, before it
+        // writes the count, so the refill stands though the destination
+        // faults (`udp-release.c` in docs/plans/2026-10-18-udp-data-path); on
+        // Darwin the receive buffer's byte count (`udp-transfer.c` F).
+        let system, datagrams =
+            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            | Some (OpenFileTarget.Socket socketId) when
+                SocketTable.receivesDatagrams (UnixMachineState.socket socketId system.Machine)
+                ->
+                let count, receiver =
+                    DatagramReceiver.queried (UnixMachineState.datagramReceiver socketId system.Machine)
+
+                { system with
+                    Machine = UnixMachineState.withDatagramReceiver socketId receiver system.Machine
+                },
+                Some count
+            | _ -> system, None
+
         // Measured by pipe-syscalls.c on both flavours: a descriptor that is not
         // open is EBADF through a bad pointer, and a pipe end is EFAULT through
         // one -- NULL included, and the write end included, though it reports 0
         // on Darwin.
         let held =
+            match datagrams with
+            | Some count -> Ok (Ok count)
+            | None ->
+
             match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
             | None -> Ok (Error UnixError.EBADF)
             | Some (OpenFileTarget.File _)
@@ -1629,14 +1652,14 @@ module UnixDescriptor =
 
         match held with
         | Error refusal -> Error refusal
-        | Ok (Error error) -> Ok (BytesAvailableAnswer.Failed error)
+        | Ok (Error error) -> Ok (BytesAvailableAnswer.Failed error, system)
         | Ok (Ok count) ->
 
         match destination with
-        | UserBuffer.Unmapped _ -> Ok (BytesAvailableAnswer.Failed UnixError.EFAULT)
+        | UserBuffer.Unmapped _ -> Ok (BytesAvailableAnswer.Failed UnixError.EFAULT, system)
         | UserBuffer.Opaque -> Error (BytesAvailableRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (BytesAvailableRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped -> Ok (BytesAvailableAnswer.Reported count)
+        | UserBuffer.Mapped -> Ok (BytesAvailableAnswer.Reported count, system)
 
     /// `bytesAvailable`, with a refusal answered as the `Error` rather than raised.
     let internal tryBytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1644,13 +1667,13 @@ module UnixDescriptor =
         (fd : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BytesAvailableAnswer, BytesAvailableRefusal>
+        : Result<BytesAvailableAnswer * UnixSystem<'Thread, 'Handler>, BytesAvailableRefusal>
         =
         Entry.call
             "UnixDescriptor.bytesAvailable"
             CallerRequirement.Running
             caller
-            Shape.answer
+            (Shape.result Shape.withSystem)
             (tryBytesAvailableIn fd destination)
             system
 
@@ -1661,19 +1684,24 @@ module UnixDescriptor =
     /// On Linux both ends of a pipe report the bytes the pipe holds, even once
     /// the read end has closed; on Darwin the read end reports them and the
     /// write end reports 0. A connected socket reports what waits in its
-    /// receive buffer. EBADF for a descriptor that is not open, whatever the
+    /// receive buffer. A UDP socket reports, on Linux, the oldest datagram's
+    /// length, and on Darwin its receive buffer's count, which charges each
+    /// datagram its source address and a control record beside its bytes. EBADF for a descriptor that is not open, whatever the
     /// destination; EFAULT for an unmapped destination, whatever is held. A
     /// device answers its driver's errno whatever the destination: under
     /// Linux, `ENOTTY` for `/dev/null` and `EINVAL` for `/dev/urandom`.
     /// Refused for every other descriptor.
     ///
-    /// Changes nothing.
+    /// The system comes back with the answer, changed only for a Linux UDP
+    /// socket, whose call moves the datagrams that have arrived into the
+    /// queue a receive takes from, as Linux's does, which decides when the
+    /// receive buffer has room again.
     let bytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
-        : BytesAvailableAnswer
+        : BytesAvailableAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryBytesAvailable caller fd destination system
         |> Refusal.orRaise "UnixDescriptor.bytesAvailable" BytesAvailableRefusal.kind BytesAvailableRefusal.describe
@@ -1951,6 +1979,52 @@ module UnixDescriptor =
             | SleepTarget.Waiting (description, entered) -> description = closingId && entered = fd
             | SleepTarget.EndedByClose _ -> false
 
+        // Measured on Darwin 27.0.0 (`close-ends-call.c` sections A3, A4 and
+        // A7, and `tcp-close-drain.c`): closing the descriptor that an accept,
+        // or a read or write of a connection, sleeps through drains the
+        // socket. It ends every such call asleep on the socket, through that
+        // descriptor or a dup of it and in either direction, and leaves the
+        // socket drained (`SocketDescription.Drained`). A call asleep through a
+        // dup alone drains nothing (`tcp-close-drain.c` T1, T13), and nor does
+        // a poll through the descriptor closed (T19). Every call asleep on the
+        // socket is this process's, since nothing passes a descriptor to
+        // another.
+        let drainsSocket =
+            darwin
+            && parks
+               |> List.exists (fun (_, parked) ->
+                   match parked with
+                   | ParkedSyscall.Accept accept -> enteredHere accept.Listener
+                   | ParkedSyscall.ConnectionRead read -> enteredHere read.Socket
+                   | ParkedSyscall.ConnectionWrite write -> enteredHere write.Socket
+                   // Reserved: nothing parks a thread in it yet. A Darwin select
+                   // through the descriptor closed drains a socket too
+                   // (`tcp-close-drain.c` T20), but holds no description, so
+                   // `parks` never shows it.
+                   | ParkedSyscall.Select _
+                   | ParkedSyscall.EpollWait _
+                   | ParkedSyscall.Kevent _
+                   | ParkedSyscall.Flock _
+                   | ParkedSyscall.Poll _
+                   | ParkedSyscall.KqueuePoll _
+                   | ParkedSyscall.PipeRead _
+                   | ParkedSyscall.PipeWrite _
+                   | ParkedSyscall.SigSuspend
+                   | ParkedSyscall.Sleep _
+                   | ParkedSyscall.SignalWait _
+                   | ParkedSyscall.DatagramReceive _
+                   | ParkedSyscall.DatagramSend _
+                   | ParkedSyscall.Connect _
+                   | ParkedSyscall.Futex _
+                   | ParkedSyscall.FifoOpen _
+                   | ParkedSyscall.InotifyRead _ -> false
+               )
+
+        // Whether the drain ends `target`'s call: it sleeps on the closing
+        // description, through whichever descriptor.
+        let drainedHere (target : SleepTarget<'Object>) : bool =
+            drainsSocket && SleepTarget.description target = Some closingId
+
         // Under Darwin, a close of the descriptor an flock was entered through
         // does not return until the flock has (measured,
         // `open-file-references.c` section D), and the park does not record
@@ -2004,17 +2078,16 @@ module UnixDescriptor =
                         with
                         | true -> None
                         | false -> Some (CloseRefusal.DarwinWokenTransfer (closingId, thread))
-                    | ParkedSyscall.ConnectionRead read when enteredHere read.Socket ->
-                        // Measured (`tcp-blocking.c` section R-close): the close
-                        // ends the read with EBADF. Nothing else answers a read
-                        // so, so any wake at all is one the close races.
-                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
-                            None
-                        else
-                            Some (CloseRefusal.DarwinWokenTransfer (closingId, thread))
-                    | ParkedSyscall.ConnectionWrite write when enteredHere write.Socket ->
-                        // Measured (`tcp-blocking.c` section W-close): the close
-                        // ends the write with EBADF, as above.
+                    | ParkedSyscall.ConnectionRead {
+                                                       Socket = socket
+                                                   }
+                    | ParkedSyscall.ConnectionWrite {
+                                                        Socket = socket
+                                                    } when drainedHere socket ->
+                        // Measured (`tcp-blocking.c` sections R-close and
+                        // W-close, `tcp-close-drain.c`): the drain ends the
+                        // call with EBADF. Nothing else answers a transfer so,
+                        // so any wake at all is one the close races.
                         if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
                             None
                         else
@@ -2097,40 +2170,12 @@ module UnixDescriptor =
         // descriptor a sleeping call was made through ends the call before the
         // close returns. A pipe `read` or `write` ends alone, and every call
         // asleep through that descriptor with it (section P5), but none asleep
-        // through a `dup` (P6, P7). An `accept` ends every accept asleep on the
-        // listener, whichever descriptor it was made through (A3, A4), and
-        // leaves the listener drained (A7). Each ended call has returned by the
-        // time the close does, so it holds nothing from here on: its
-        // description goes now if no descriptor names it, and the pipe's
-        // timestamps move now (P8). What it answers waits in its park for its
-        // finishing call.
-        let drainsListener =
-            darwin
-            && parks
-               |> List.exists (fun (_, parked) ->
-                   match parked with
-                   | ParkedSyscall.Accept accept -> enteredHere accept.Listener
-                   | ParkedSyscall.EpollWait _
-                   | ParkedSyscall.Kevent _
-                   | ParkedSyscall.Flock _
-                   | ParkedSyscall.Poll _
-                   | ParkedSyscall.KqueuePoll _
-                   | ParkedSyscall.PipeRead _
-                   | ParkedSyscall.PipeWrite _
-                   | ParkedSyscall.SigSuspend
-                   | ParkedSyscall.Sleep _
-                   | ParkedSyscall.Select _
-                   | ParkedSyscall.SignalWait _
-                   | ParkedSyscall.DatagramReceive _
-                   | ParkedSyscall.DatagramSend _
-                   | ParkedSyscall.Connect _
-                   | ParkedSyscall.Futex _
-                   | ParkedSyscall.FifoOpen _
-                   | ParkedSyscall.InotifyRead _
-                   | ParkedSyscall.ConnectionRead _
-                   | ParkedSyscall.ConnectionWrite _ -> false
-               )
-
+        // through a `dup` (P6, P7, and `tcp-close-drain.c` P1-P4). A drain
+        // ends every accept and connection transfer on the socket (above).
+        // Each ended call has returned by the time the close does, so it holds
+        // nothing from here on: its description goes now if no descriptor
+        // names it, and the pipe's timestamps move now (P8). What it answers
+        // waits in its park for its finishing call.
         let pipeOfClosing () : PipeId =
             match closing.Target with
             | OpenFileTarget.Pipe (pipeId, _) -> pipeId
@@ -2143,24 +2188,17 @@ module UnixDescriptor =
             | OpenFileTarget.Socket socketId -> socketId
             | target ->
                 failwith
-                    $"UnixDescriptor.close: a connection transfer sleeps through fd %d{fd}, which names %A{target} rather than a socket (this is a bug in this library, or in a caller that assembled the state by hand)."
+                    $"UnixDescriptor.close: an accept or a connection transfer sleeps through fd %d{fd}, which names %A{target} rather than a socket (this is a bug in this library, or in a caller that assembled the state by hand)."
 
         let ended (parked : ParkedSyscall) : ParkedSyscall option =
             match parked with
-            | ParkedSyscall.Accept accept when
-                drainsListener && SleepTarget.description accept.Listener = Some closingId
-                ->
-                match closing.Target with
-                | OpenFileTarget.Socket socketId ->
-                    Some (
-                        ParkedSyscall.Accept
-                            { accept with
-                                Listener = SleepTarget.EndedByClose socketId
-                            }
-                    )
-                | target ->
-                    failwith
-                        $"UnixDescriptor.close: an accept sleeps through fd %d{fd}, which names %A{target} rather than a socket (this is a bug in this library, or in a caller that assembled the state by hand)."
+            | ParkedSyscall.Accept accept when drainedHere accept.Listener ->
+                Some (
+                    ParkedSyscall.Accept
+                        { accept with
+                            Listener = SleepTarget.EndedByClose (socketOfClosing ())
+                        }
+                )
             | ParkedSyscall.PipeRead read when darwin && enteredHere read.Reader ->
                 Some (
                     ParkedSyscall.PipeRead
@@ -2175,14 +2213,14 @@ module UnixDescriptor =
                             Writer = SleepTarget.EndedByClose (pipeOfClosing ())
                         }
                 )
-            | ParkedSyscall.ConnectionRead read when darwin && enteredHere read.Socket ->
+            | ParkedSyscall.ConnectionRead read when drainedHere read.Socket ->
                 Some (
                     ParkedSyscall.ConnectionRead
                         { read with
                             Socket = SleepTarget.EndedByClose (socketOfClosing ())
                         }
                 )
-            | ParkedSyscall.ConnectionWrite write when darwin && enteredHere write.Socket ->
+            | ParkedSyscall.ConnectionWrite write when drainedHere write.Socket ->
                 Some (
                     ParkedSyscall.ConnectionWrite
                         { write with
@@ -2244,34 +2282,20 @@ module UnixDescriptor =
             )
 
         let machine =
-            if not drainsListener then
+            if not drainsSocket then
                 machine
             else
-                match closing.Target with
-                | OpenFileTarget.Socket socketId ->
-                    let socket = UnixMachineState.socket socketId machine
+                let socketId = socketOfClosing ()
 
-                    match socket.Phase with
-                    | SocketPhase.Listening listenState ->
-                        { machine with
-                            Sockets =
-                                Map.add
-                                    socketId
-                                    { socket with
-                                        Phase =
-                                            SocketPhase.Listening
-                                                { listenState with
-                                                    Drained = true
-                                                }
-                                    }
-                                    machine.Sockets
-                        }
-                    | phase ->
-                        failwith
-                            $"UnixDescriptor.close: an accept sleeps on socket %O{socketId}, which is in %A{phase} rather than listening (this is a bug in this library, or in a caller that assembled the state by hand)."
-                | target ->
-                    failwith
-                        $"UnixDescriptor.close: an accept sleeps through fd %d{fd}, which names %A{target} rather than a socket (this is a bug in this library, or in a caller that assembled the state by hand)."
+                { machine with
+                    Sockets =
+                        SocketTable.set
+                            socketId
+                            { UnixMachineState.socket socketId machine with
+                                Drained = true
+                            }
+                            machine.Sockets
+                }
 
         // Each ended call keeps its park, for its finishing call to read, and
         // lets go of the hold it had on what it slept on.
@@ -2557,19 +2581,22 @@ module UnixDescriptor =
     /// Under Darwin a close of the descriptor a sleeping pipe `read` or `write`
     /// was made through ends every such call made through it, and none made
     /// through another descriptor: the read with end of file, the write with
-    /// `EPIPE` and `SIGPIPE`, whatever it had put in. A sleeping `read` or
-    /// `write` of a connected socket is ended alike, with `EBADF`, whatever it
-    /// had taken, and no signal. A close of the
-    /// descriptor a sleeping `accept` was made through ends every accept asleep
-    /// on the listener, through any descriptor, with `ECONNABORTED`, and drains
-    /// the listener (`ListenState.Drained`). Darwin's close returns only once
+    /// `EPIPE` and `SIGPIPE`, whatever it had put in. A close of the
+    /// descriptor that a sleeping `accept`, or a sleeping `read` or `write` of
+    /// a connected socket, was made through drains the socket
+    /// (`SocketDescription.Drained`): it ends every such call asleep on the
+    /// socket, through any descriptor, an accept with `ECONNABORTED` and a
+    /// transfer with `EBADF`, whatever it had taken, and no signal. A close
+    /// with such a call asleep only through another descriptor drains
+    /// nothing. Darwin's close returns only once
     /// such a call has, so an ended call holds nothing from the close on
     /// (`SleepTarget.EndedByClose`): the description goes at the close if no
     /// descriptor names it, the pipe's timestamps move as the call's return
     /// moves them, an ended write's `SIGPIPE` is generated for the process
     /// (refused where that would end the process),
-    /// and the thread, still parked, learns its answer from its finishing call. A pipe or connection transfer that something had
-    /// already woken is refused.
+    /// and the thread, still parked, learns its answer from its finishing call. A close that would end a
+    /// pipe or connection transfer that something had already woken is
+    /// refused.
     ///
     /// Every kqueue registration made through `fd` goes with it, in each kqueue
     /// the process owns and in the kqueue of every

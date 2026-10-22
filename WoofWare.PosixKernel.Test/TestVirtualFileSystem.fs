@@ -1181,41 +1181,26 @@ module TestVirtualFileSystem =
         |> shouldHaveDefects [ VirtualFileSystemDefect.ReservedContent two ]
 
     [<Test>]
-    let ``ReservedContent: the node of a device this kernel has no driver for`` () : unit =
-        // Every case, by reflection, so that a device added later is checked
-        // here whether or not it joins `CharacterDevice.all`.
-        let everyDevice =
-            Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<CharacterDevice>
-            |> Array.map (fun case ->
-                Microsoft.FSharp.Reflection.FSharpValue.MakeUnion (case, [||])
-                |> unbox<CharacterDevice>
-            )
-            |> List.ofArray
-
-        let withoutDriver =
-            everyDevice
-            |> List.filter (fun device -> not (List.contains device CharacterDevice.all))
-
-        withoutDriver
-        |> shouldEqual [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ]
-
-        for device in everyDevice do
-            let expected =
-                if List.contains device withoutDriver then
-                    [ VirtualFileSystemDefect.ReservedContent two ]
-                else
-                    []
-
+    let ``a device node holding any number is sound, whether or not a driver is registered under it`` () : unit =
+        let property (major : uint32) (minor : uint32) : unit =
             VirtualFileSystem.Unchecked.ofParts
                 EntryNameMatching.Bytes
                 (Map.ofList
                     [
                         one, dir one [ "d", two ]
-                        two, inodeOf (InodeContent.CharacterDevice (device, CharacterDevice.permissions device))
+                        two,
+                        inodeOf (
+                            InodeContent.CharacterDevice (
+                                DeviceNumber (major, minor),
+                                PermissionBits.parseOrFail "test" 0o666
+                            )
+                        )
                     ])
                 one
                 three
-            |> shouldHaveDefects expected
+            |> shouldHaveDefects []
+
+        Check.QuickThrowOnFailure property
 
     [<Test>]
     let ``ParentMismatch`` () : unit =

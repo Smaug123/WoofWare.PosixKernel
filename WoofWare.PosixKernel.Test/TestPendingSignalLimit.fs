@@ -405,16 +405,16 @@ module TestPendingSignalLimit =
                     match
                         UnixSignal.sigaction leader (Signal.toRawSignoUnder numbering signal) (Some caught) system
                     with
-                    | Ok (_, system) -> ReturnsToUser.untilResumed leader system
-                    | Error errno -> failwith $"sigaction: %O{errno}"
+                    | SigactionAnswer.Completed _, system -> ReturnsToUser.untilResumed leader system
+                    | SigactionAnswer.Failed errno, _ -> failwith $"sigaction: %O{errno}"
                 )
 
             let mask =
                 SignalMask.ofSignals numbering (Set.ofList [ Signal.SIGUSR1 ; rtmin ; rtmin1 ])
 
             match UnixSignal.pthreadSigmask leader (MaskHow.block numbering) (Some mask) system with
-            | Ok (_, system) -> ReturnsToUser.untilResumed leader system
-            | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, system -> ReturnsToUser.untilResumed leader system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
 
         UnixSystem.initial SimulatedUnixPlatform.linuxX64
         |> Launched.bootWith (ProcessLaunch.withPendingSignalLimit limit) UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -439,9 +439,12 @@ module TestPendingSignalLimit =
             | other -> failwith $"no method %s{other}"
 
         match answer with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> "0", ReturnsToUser.untilResumed caller system
-        | Ok other -> failwith $"%s{method} of %O{signal}: %A{other}"
-        | Error errno -> string<UnixError> errno, system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) ->
+            "0", ReturnsToUser.untilResumed caller system
+        | ProcessFate.Continues (KillAnswer.Failed errno, after) ->
+            after |> shouldEqual system
+            string<UnixError> errno, system
+        | other -> failwith $"%s{method} of %O{signal}: %A{other}"
 
     /// Thread 0 of the first process takes one instance of `signal`: unblocks
     /// it, runs its handler and blocks it again.
@@ -456,8 +459,8 @@ module TestPendingSignalLimit =
 
         let system =
             match UnixSignal.pthreadSigmask leader (MaskHow.unblock numbering) (Some only) system with
-            | Ok (_, system) -> system
-            | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, system -> system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
 
         let system =
             match UnixSignal.onReturnToUser leader system with
@@ -466,8 +469,8 @@ module TestPendingSignalLimit =
             | other -> failwith $"taking %O{signal}: %A{other}"
 
         match UnixSignal.pthreadSigmask leader (MaskHow.block numbering) (Some only) system with
-        | Ok (_, system) -> ReturnsToUser.untilResumed leader system
-        | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+        | SignalMaskAnswer.Completed _, system -> ReturnsToUser.untilResumed leader system
+        | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
 
     /// The probe's `sigq=` for the default user: every instance charged to it,
     /// in every process, over the first process's limit.
@@ -576,13 +579,13 @@ module TestPendingSignalLimit =
 
         let system =
             match UnixSignal.sigaction siblingThread (Signal.toRawSignoUnder numbering rtmin) (Some caught) system with
-            | Ok (_, system) -> ReturnsToUser.untilResumed siblingThread system
-            | Error errno -> failwith $"sigaction: %O{errno}"
+            | SigactionAnswer.Completed _, system -> ReturnsToUser.untilResumed siblingThread system
+            | SigactionAnswer.Failed errno, _ -> failwith $"sigaction: %O{errno}"
 
         let system =
             match UnixSignal.pthreadSigmask siblingThread (MaskHow.block numbering) (Some only) system with
-            | Ok (_, system) -> ReturnsToUser.untilResumed siblingThread system
-            | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+            | SignalMaskAnswer.Completed _, system -> ReturnsToUser.untilResumed siblingThread system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
 
         let system =
             (system, [ 1..4 ])
@@ -685,16 +688,16 @@ module TestPendingSignalLimit =
                     (Some SignalDisposition.Ignore)
                     system
             with
-            | Ok (_, system) -> ReturnsToUser.untilResumed leader system
-            | Error errno -> failwith $"sigaction: %O{errno}"
+            | SigactionAnswer.Completed _, system -> ReturnsToUser.untilResumed leader system
+            | SigactionAnswer.Failed errno, _ -> failwith $"sigaction: %O{errno}"
 
         let system =
             if blocked then
                 system
             else
                 match UnixSignal.pthreadSigmask leader (MaskHow.unblock numbering) (Some only) system with
-                | Ok (_, system) -> ReturnsToUser.untilResumed leader system
-                | Error errno -> failwith $"pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> ReturnsToUser.untilResumed leader system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask: %O{errno}"
 
         let threadKilled, system = send pid "pthread_kill" rtmin system
         let killed, system = send pid "kill" rtmin system

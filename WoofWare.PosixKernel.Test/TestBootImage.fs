@@ -95,6 +95,7 @@ module TestBootImage =
             <| List.sort
                 [
                     "withBootTime"
+                    "withDeviceFileSystem"
                     "withEntropySeed"
                     "withEphemeralPortRange"
                     "withFileSystem"
@@ -111,6 +112,7 @@ module TestBootImage =
                     "withTcpReceiveSpace"
                     "withTcpSendSpace"
                     "withTcpSendSpaceMax"
+                    "withUdpReceiveSpace"
                     "withUnprivilegedPortStart"
                     "withUserAddressLimit"
                 ]

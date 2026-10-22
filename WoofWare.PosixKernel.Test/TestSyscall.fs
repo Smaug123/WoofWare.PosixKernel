@@ -74,9 +74,11 @@ module TestSyscall =
             "UnixNamespace.linkat", "LinkAt"
             "UnixReadWrite.read", "Read"
             "UnixReadWrite.recv", "Recv"
+            "UnixReadWrite.recvfrom", "RecvFrom"
             "UnixReadWrite.pread", "PRead"
             "UnixReadWrite.write", "Write"
             "UnixReadWrite.send", "Send"
+            "UnixReadWrite.sendto", "SendTo"
             "UnixReadWrite.pwrite", "PWrite"
             "UnixReadWrite.copyFileRange", "CopyFileRange"
             "UnixPipe.pipe2", "Pipe2"
@@ -169,9 +171,7 @@ module TestSyscall =
             "SigWait"
             "SigWaitInfo"
             "SigTimedWait"
-            "RecvFrom"
             "RecvMsg"
-            "SendTo"
             "SendMsg"
         ]
 
@@ -231,9 +231,11 @@ module TestSyscall =
             "LinkAt"
             "Read"
             "Recv"
+            "RecvFrom"
             "PRead"
             "Write"
             "Send"
+            "SendTo"
             "PWrite"
             "CopyFileRange"
             "Pipe2"
@@ -353,8 +355,8 @@ module TestSyscall =
         let cases = caseOfFunction |> List.map snd
 
         cases |> List.distinct |> shouldEqual cases
-        List.length cases |> shouldEqual 106
-        List.length reserved |> shouldEqual 11
+        List.length cases |> shouldEqual 108
+        List.length reserved |> shouldEqual 9
 
         Set.intersect (Set.ofList cases) (Set.ofList reserved) |> shouldEqual Set.empty
 

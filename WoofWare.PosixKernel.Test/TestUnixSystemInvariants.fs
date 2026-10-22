@@ -102,7 +102,7 @@ module TestUnixSystemInvariants =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         SocketId 0L,
                                         {
@@ -112,6 +112,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = phase
+                                            Drained = false
                                             Uid = UserId.root
                                         }
                                     ]
@@ -286,7 +287,7 @@ module TestUnixSystemInvariants =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         SocketId 0L,
                                         {
@@ -296,6 +297,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = SocketPhase.Established (connection, ConnectionEnd.Client)
+                                            Drained = false
                                             Uid = UserId.root
                                         }
                                     ]
@@ -726,6 +728,7 @@ module TestUnixSystemInvariants =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -745,7 +748,8 @@ module TestUnixSystemInvariants =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
             )
@@ -766,7 +770,6 @@ module TestUnixSystemInvariants =
             {
                 Backlog = 8
                 Queue = []
-                Drained = false
             }
 
     [<Test>]

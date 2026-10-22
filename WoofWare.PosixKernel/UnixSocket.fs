@@ -1099,6 +1099,7 @@ module UnixSocket =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Drained = false
                 // Measured (`docs/probes/socket-creator-uid`, CREATE rows on
                 // Linux; `docs/probes/darwin-root/bind-uids.c`, CRED rows on
                 // Darwin): the effective uid at socket(2), which a later change
@@ -1106,11 +1107,24 @@ module UnixSocket =
                 Uid = system.Process.Credentials.EffectiveUser
             }
 
+        // A UDP socket's receive side is made with it.
+        let receivers =
+            if SocketTable.receivesDatagrams socket then
+                Map.add
+                    socketId
+                    (DatagramReceiver.create
+                        (SimulatedUnixPlatform.datagramReceiveRules system.Machine.UnixPlatform)
+                        system.Machine.UdpReceiveSpace)
+                    system.Machine.DatagramReceivers
+            else
+                system.Machine.DatagramReceivers
+
         fd,
         { system with
             Machine =
                 { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+                    Sockets = SocketTable.set socketId socket system.Machine.Sockets
+                    DatagramReceivers = receivers
                     NextSocketId = SocketId (raw + 1L)
                 }
         }
@@ -1407,7 +1421,7 @@ module UnixSocket =
                     Machine =
                         { system.Machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
                                         Addressing = SocketAddressing.replaceBinding (Some bound) socket.Addressing
@@ -1446,7 +1460,7 @@ module UnixSocket =
             { system with
                 Machine =
                     { system.Machine with
-                        Sockets = Map.add socketId socket system.Machine.Sockets
+                        Sockets = SocketTable.set socketId socket system.Machine.Sockets
                     }
             }
 
@@ -1899,7 +1913,6 @@ module UnixSocket =
                     {
                         Backlog = backlog
                         Queue = []
-                        Drained = false
                     }
 
         let system =
@@ -1907,7 +1920,7 @@ module UnixSocket =
                 Machine =
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Addressing = SocketAddressing.Inet (Some bound)
@@ -2727,7 +2740,7 @@ module UnixSocket =
                 { system with
                     Machine =
                         { system.Machine with
-                            Sockets = Map.add socketId updated system.Machine.Sockets
+                            Sockets = SocketTable.set socketId updated system.Machine.Sockets
                         }
                 }
 
@@ -2936,7 +2949,7 @@ module UnixSocket =
                                 Machine =
                                     { system.Machine with
                                         Sockets =
-                                            Map.add
+                                            SocketTable.set
                                                 socketId
                                                 { socket with
                                                     Phase = SocketPhase.Refused RefusalError.Reported
@@ -2979,6 +2992,25 @@ module UnixSocket =
                                         connectionId
                                         transfer
                                         system.Machine
+                            }
+                    // A UDP socket's pending error is an ICMP error's, which
+                    // the read takes before the copy-out as a refusal's is,
+                    // connected or not (measured, `udp-error.c` Y5 and Y7 in
+                    // docs/plans/2026-10-18-udp-data-path: ECONNREFUSED, then
+                    // 0, through a null value buffer and at length 0 too).
+                    | SocketPhase.Idle
+                    | SocketPhase.DatagramPeer _ when SocketTable.receivesDatagrams socket ->
+                        match
+                            DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine)
+                        with
+                        | None, _ -> ints [ 0 ], system
+                        | Some error, after ->
+                            ints
+                                [
+                                    UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
+                                ],
+                            { system with
+                                Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
                             }
                     | SocketPhase.Idle
                     | SocketPhase.Listening _
@@ -3415,10 +3447,11 @@ module UnixSocket =
     ///   hundredths over 100, rounded toward zero).
     /// - `SO_ERROR` is the raw ECONNREFUSED of a refusal still pending
     ///   (`SocketPhase.Refused RefusalError.Pending`), the raw error a reset
-    ///   left pending on a connected socket, and 0
+    ///   left pending on a connected socket, the raw ECONNREFUSED an ICMP
+    ///   port-unreachable error left pending on a UDP socket, and 0
     ///   otherwise. Reading a pending error takes it: a refused socket is left
-    ///   `Refused RefusalError.Reported`, and a connected one with nothing
-    ///   pending, whether the copy-out then succeeds
+    ///   `Refused RefusalError.Reported`, and a connected or UDP one with
+    ///   nothing pending, whether the copy-out then succeeds
     ///   or not. Only a call that fails before reading the option leaves the
     ///   error pending: one answered before the cell is read, or a Linux one
     ///   declaring a negative length.

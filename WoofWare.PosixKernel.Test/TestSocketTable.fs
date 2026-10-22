@@ -108,7 +108,19 @@ module TestSocketTable =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = sockets |> List.map (fun (id, socket) -> SocketId id, socket) |> Map.ofList
+                    Sockets =
+                        (SocketTable.empty, sockets)
+                        ||> List.fold (fun table (id, socket) -> SocketTable.set (SocketId id) socket table)
+                    // Each UDP socket comes with its receive side, as
+                    // `socket(2)` makes it.
+                    DatagramReceivers =
+                        (machine, sockets)
+                        ||> List.fold (fun forged (id, socket) ->
+                            { forged with
+                                DatagramReceivers = ForgedSocket.receivers (SocketId id) socket forged
+                            }
+                        )
+                        |> fun forged -> forged.DatagramReceivers
                     NextSocketId = SocketId nextSocketId
                 }
             )
@@ -121,6 +133,7 @@ module TestSocketTable =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
             Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
@@ -157,7 +170,7 @@ module TestSocketTable =
         let _, kernel =
             NewSocket.create SocketDomain.Unix SocketKind.Datagram SocketProtocol.Default kernel
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 2
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 2
         (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 2L)
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
@@ -169,13 +182,13 @@ module TestSocketTable =
         let fd, kernel =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
 
         match closeFd fd kernel with
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> shouldEqual Map.empty
+        SocketTable.all (Kernel.machine kernel).Sockets |> shouldEqual Map.empty
         // Not rewound: identities are never reused, so the next socket does not
         // take the dead one's name.
         (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 1L)
@@ -205,7 +218,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         // And the surviving descriptor still resolves to it.
@@ -241,7 +254,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// A description naming a socket the table does not hold. `UnixMachineState.socket`
@@ -442,6 +455,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openDirectory
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
@@ -449,6 +463,7 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openFile
                                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
                                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly
@@ -626,7 +641,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued queue
-                                    Drained = false
                                 }
                     }
                 ]
@@ -786,7 +800,6 @@ module TestSocketTable =
                                 {
                                     Backlog = backlog
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                 for i in 1..clients -> int64 i, someSocket
@@ -1015,7 +1028,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1133,7 +1146,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                     1L, someSocket
@@ -1176,7 +1188,7 @@ module TestSocketTable =
                     { machine with
                         Sockets =
                             machine.Sockets
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     ReuseAddress = true
@@ -1445,7 +1457,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = [ ForgedConnection.queued (ConnectionId 5L) ]
-                                    Drained = false
                                 }
                     }
                 ]
@@ -1533,7 +1544,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued [ ConnectionId 0L ; ConnectionId 0L ]
-                                    Drained = false
                                 }
                     }
                 ]
@@ -1648,7 +1658,6 @@ module TestSocketTable =
             {
                 Backlog = 8
                 Queue = List.map ForgedConnection.queued connections
-                Drained = false
             }
 
     /// A connection has one client and one server: the server end is queued
@@ -1738,7 +1747,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
@@ -1847,7 +1856,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1954,7 +1963,7 @@ module TestSocketTable =
                                     else
                                         machine.UnixPlatform
                                 Sockets =
-                                    Map.add
+                                    SocketTable.set
                                         (SocketId 0L)
                                         { someSocket with
                                             Addressing =
@@ -2106,7 +2115,7 @@ module TestSocketTable =
                     { machine with
                         Sockets =
                             machine.Sockets
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 0L)
                                 { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
@@ -2120,7 +2129,7 @@ module TestSocketTable =
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) machine).Addressing
                                 }
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -2152,7 +2161,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId socketId)
                                 { someSocket with
                                     Addressing =
@@ -2243,7 +2252,7 @@ module TestSocketTable =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =

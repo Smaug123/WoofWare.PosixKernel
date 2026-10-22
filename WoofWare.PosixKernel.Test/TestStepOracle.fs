@@ -281,6 +281,11 @@ module TestStepOracle =
             UnixReadWrite.tryRecv caller fd buffer count flags system
             |> Result.map SteppedCall.Recv
             |> Result.mapError SyscallRefusal.Recv
+        | Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength) ->
+            UnixReadWrite.tryRecvFrom caller fd buffer count flags source (bufferOf sourceLength) system
+            |> CallProgress.resumeWith (fun paused -> UnixReadWrite.tryRecvFromWithLength (cell sourceLength) paused)
+            |> Result.map SteppedCall.RecvFrom
+            |> Result.mapError SyscallRefusal.RecvFrom
         | Syscall.PRead (fd, buffer, count, offset) ->
             UnixReadWrite.tryPread caller fd buffer count offset system
             |> Result.map SteppedCall.PRead
@@ -301,6 +306,16 @@ module TestStepOracle =
             )
             |> Result.map SteppedCall.Send
             |> Result.mapError SyscallRefusal.Send
+        | Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength) ->
+            UnixReadWrite.trySendTo caller fd (bufferOf buffer) count flags (bufferOf destination) declaredLength system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.trySendToWithAddress (copied destination (PausedSendToAddress.copyRange paused)) paused
+            )
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.trySendWithBytes (copied buffer (PausedSend.copyRange paused)) paused
+            )
+            |> Result.map SteppedCall.SendTo
+            |> Result.mapError SyscallRefusal.SendTo
         | Syscall.PWrite (fd, buffer, count, offset) ->
             UnixReadWrite.tryPwrite caller fd (bufferOf buffer) count offset system
             |> CallProgress.resumeWith (fun paused ->
@@ -338,8 +353,8 @@ module TestStepOracle =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength) ->
-            UnixConnection.tryAccept caller fd destination declaredLength system
+        | Syscall.Accept (fd, destination, declaredLength, flags) ->
+            UnixConnection.tryAccept caller fd destination declaredLength flags system
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -645,11 +660,44 @@ module TestStepOracle =
         let system = system |> stream 10 |> connect 10
 
         let system =
-            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
+            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (11, _), system) -> system
             | other -> failwith $"setting up, accept: %A{other}"
 
         system |> stream 12 |> connect 12
+
+    /// The address the world's unconnected UDP socket is bound to.
+    let private datagramAt : Ipv4Endpoint =
+        Ipv4Endpoint.ofParts Ipv4Address.loopback 5002us
+
+    /// `system` with two UDP sockets, made by its leader: 14, bound at
+    /// `datagramAt`, and 15, connected to 14, which has sent it a datagram of
+    /// three bytes.
+    let private withDatagramSockets
+        (platform : SimulatedUnixPlatform)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let datagram (expected : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system with
+            | fd, system when fd = expected -> system
+            | fd, _ -> failwith $"setting up, socket: %d{fd}, not %d{expected}"
+
+        let system = system |> datagram 14 |> datagram 15
+
+        let system =
+            match CopyIn.bind 14 UserBuffer.Mapped 16u (CopyIn.inet platform datagramAt) system with
+            | Ok (BindAnswer.Bound _, system) -> system
+            | other -> failwith $"setting up, bind: %A{other}"
+
+        let system =
+            match CopyIn.connect 15 UserBuffer.Mapped 16u (CopyIn.inet platform datagramAt) system with
+            | Ok (SyscallAnswer.Completed 0L, system) -> system
+            | other -> failwith $"setting up, connect: %A{other}"
+
+        match WriteOutcomes.admitThenSend 0 15 UserBuffer.Mapped (ImmutableArray.Create<byte> "abc"B) 0 system with
+        | Ok (WriteStep.Returns (WriteAnswer.Completed 3L, system)) -> system
+        | other -> failwith $"setting up, send: %A{other}"
 
     /// `system` with 13 an event queue watching 10 for input and 11 for
     /// output: under Linux an epoll instance, whose registrations are
@@ -719,8 +767,8 @@ module TestStepOracle =
         let signo = Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some action) system with
-        | Ok (_, system) -> leaderReturned system
-        | Error error -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
+        | SigactionAnswer.Completed _, system -> leaderReturned system
+        | SigactionAnswer.Failed error, _ -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
 
     /// `system` with SIGUSR1 caught, blocked by the leader, and pending on the
     /// process.
@@ -735,11 +783,11 @@ module TestStepOracle =
 
         let system =
             match UnixSignal.pthreadSigmask (Callers.leader system) (MaskHow.block numbering) (Some usr1) system with
-            | Ok (_, system) -> leaderReturned system
-            | Error error -> failwith $"setting up, pthread_sigmask: %O{error}"
+            | SignalMaskAnswer.Completed _, system -> leaderReturned system
+            | SignalMaskAnswer.Failed error, _ -> failwith $"setting up, pthread_sigmask: %O{error}"
 
         match UnixSignal.kill (Callers.leader system) pid (Signal.toRawSignoUnder numbering Signal.SIGUSR1) system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> leaderReturned system
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> leaderReturned system
         | other -> failwith $"setting up, kill: %A{other}"
 
     /// `system` with its leader inside a handler for SIGUSR2, whose frame is
@@ -756,7 +804,7 @@ module TestStepOracle =
             Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGUSR2
 
         match UnixSignal.pthreadKill leader 0 usr2 system with
-        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+        | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) ->
             match UnixSignal.onReturnToUser leader system with
             | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system) when
                 frame.Id = HandlerFrameId 0L
@@ -770,7 +818,8 @@ module TestStepOracle =
     /// with `/f` open read-write as 3, `/d` as 4, `/d/g` as 5 and `/f` again,
     /// read-only, as 6. Under Linux, 7 is an inotify instance watching `/d` as
     /// watch 1, and under Darwin, `/d/e`. Then 8 to 12 are the sockets of
-    /// `withSockets`, and 13 the event queue of `withEventQueue`.
+    /// `withSockets`, 13 the event queue of `withEventQueue`, and 14 and 15
+    /// the UDP sockets of `withDatagramSockets`.
     ///
     /// SIGUSR1 has a handler, every thread blocks it, and it is pending on
     /// the process. The leader runs on processor 0, inside a handler for
@@ -824,6 +873,7 @@ module TestStepOracle =
             system
             |> withSockets platform
             |> withEventQueue flavour
+            |> withDatagramSockets platform
             |> withPendingSignal flavour
 
         // Thread 1 starts with the leader's mask, before the leader enters its
@@ -860,7 +910,7 @@ module TestStepOracle =
     let private fdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
         Gen.frequency
             [
-                8, Gen.choose (0, 13)
+                8, Gen.choose (0, 15)
                 1, Gen.elements [ -1 ; 99 ; 1023 ; 1024 ]
                 2, Gen.constant (AtDirectory.atFdCwd flavour)
             ]
@@ -961,6 +1011,10 @@ module TestStepOracle =
     let private connectedFdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
         Gen.frequency [ 3, Gen.elements [ 10 ; 11 ] ; 1, socketFdGen flavour ]
 
+    /// Mostly the world's UDP sockets, for a call that moves datagrams.
+    let private datagramFdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
+        Gen.frequency [ 3, Gen.elements [ 14 ; 15 ] ; 1, socketFdGen flavour ]
+
     /// Mostly what the world can write to: `/f` through 3, the drained
     /// standard output and error, and the connected sockets.
     let private writableFdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
@@ -1059,6 +1113,26 @@ module TestStepOracle =
 
         Gen.elements [ 0 ; 2 ; dontWait ; noSignal ; dontWait ||| noSignal ; 2 ||| dontWait ; 1 ]
 
+    /// `recvfrom(2)` flag words in `flavour`'s numbering: `recv(2)`'s, and
+    /// `MSG_TRUNC`, alone and with `MSG_PEEK` and `MSG_DONTWAIT`.
+    let private receiveFromFlagsGen (flavour : SimulatedUnixFlavour) : Gen<int> =
+        let dontWait, truncate =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> 0x40, 0x20
+            | SimulatedUnixFlavour.Darwin -> 0x80, 0x10
+
+        Gen.oneof
+            [
+                messageFlagsGen flavour
+                Gen.elements
+                    [
+                        truncate
+                        truncate ||| 2
+                        truncate ||| dontWait
+                        truncate ||| 2 ||| dontWait
+                    ]
+            ]
+
     /// `open(2)` flag words on `platform`: an access mode and a few of the
     /// bits its `<fcntl.h>` defines.
     let private openFlagsGen (platform : SimulatedUnixPlatform) : Gen<int> =
@@ -1078,6 +1152,7 @@ module TestStepOracle =
         let endpoints =
             [
                 listening
+                datagramAt
                 Ipv4Endpoint.ofParts Ipv4Address.loopback 5001us
                 Ipv4Endpoint.ofParts Ipv4Address.loopback 0us
                 Ipv4Endpoint.ofParts Ipv4Address.any 0us
@@ -1169,6 +1244,12 @@ module TestStepOracle =
         match flavour with
         | SimulatedUnixFlavour.Linux -> Gen.elements [ 0 ; 0x80000 ; 0x800 ; 0x80800 ; 0x4000 ; 0x80 ; 0x1 ]
         | SimulatedUnixFlavour.Darwin -> Gen.elements [ 0 ; 0x1000000 ; 0x4 ; 0x1000004 ; 0x1 ]
+
+    /// `accept4(2)` flag words in Linux's numbering: `SOCK_NONBLOCK`,
+    /// `SOCK_CLOEXEC`, both, and words with a bit it rejects. Any word but 0 is
+    /// refused under Darwin, which has no `accept4`.
+    let private acceptFlagsGen : Gen<int> =
+        Gen.elements [ 0 ; 0x800 ; 0x80000 ; 0x80800 ; 0x1 ; Int32.MinValue ]
 
     let private optionLengthGen : Gen<uint32> =
         Gen.frequency
@@ -1295,6 +1376,7 @@ module TestStepOracle =
         let fd = fdGen flavour
         let socketFd = socketFdGen flavour
         let connectedFd = connectedFdGen flavour
+        let datagramFd = datagramFdGen flavour
         let writableFd = writableFdGen flavour
         let platform = platformOf flavour
         let paths = distinct2 pathGen pathGen
@@ -1510,6 +1592,15 @@ module TestStepOracle =
                 let! count = countGen
                 return Syscall.Recv (fd, buffer, count, flags)
             }
+            "RecvFrom",
+            gen {
+                let! fd, flags = distinct2 datagramFd (receiveFromFlagsGen flavour)
+                let! buffer = userBufferGen
+                let! count = countGen
+                let! source = userBufferGen
+                let! sourceLength = copiedGen (Gen.oneof [ socklenGen ; Gen.elements [ 0u ; 16u ; UInt32.MaxValue ] ])
+                return Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength)
+            }
             "PRead",
             gen {
                 let! fd = fd
@@ -1529,6 +1620,14 @@ module TestStepOracle =
                 let! fd, flags = distinct2 connectedFd (messageFlagsGen flavour)
                 let! buffer, count = bufferAndCountGen
                 return Syscall.Send (fd, buffer, count, flags)
+            }
+            "SendTo",
+            gen {
+                let! fd, flags = distinct2 datagramFd (messageFlagsGen flavour)
+                let! buffer, count = bufferAndCountGen
+                let! destination = copiedGen (sockaddrGen platform)
+                let! declaredLength = sockaddrLengthGen
+                return Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength)
             }
             "PWrite",
             gen {
@@ -1578,7 +1677,18 @@ module TestStepOracle =
             Gen.zip socketFd (Gen.elements [ -1 ; 0 ; 1 ; 4 ; 128 ; Int32.MaxValue ])
             |> Gen.filter (fun (fd, backlog) -> fd <> backlog)
             |> Gen.map Syscall.Listen
-            "Accept", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.Accept
+            "Accept",
+            Gen.map4
+                (fun fd destination declaredLength flags -> Syscall.Accept (fd, destination, declaredLength, flags))
+                socketFd
+                userBufferGen
+                (Gen.optionOf socklenGen)
+                acceptFlagsGen
+            |> Gen.filter (fun call ->
+                match call with
+                | Syscall.Accept (fd, _, _, flags) -> fd <> flags
+                | _ -> true
+            )
             "Shutdown",
             Gen.zip socketFd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ])
             |> Gen.filter (fun (fd, how) -> fd <> how)
@@ -1874,6 +1984,25 @@ module TestStepOracle =
             UnixReadWrite.tryWrite caller fd (bufferOf buffer) count system |> stopped
         | Syscall.Send (fd, buffer, count, flags) ->
             UnixReadWrite.trySend caller fd (bufferOf buffer) count flags system |> stopped
+        | Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength) ->
+            match
+                UnixReadWrite.trySendTo
+                    caller
+                    fd
+                    (bufferOf buffer)
+                    count
+                    flags
+                    (bufferOf destination)
+                    declaredLength
+                    system
+            with
+            | Ok (CallProgress.NeedsCopyIn _)
+            | Ok (CallProgress.Answered (CallProgress.NeedsCopyIn _)) -> true
+            | Ok (CallProgress.Answered (CallProgress.Answered _))
+            | Error _ -> false
+        | Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength) ->
+            UnixReadWrite.tryRecvFrom caller fd buffer count flags source (bufferOf sourceLength) system
+            |> stopped
         | Syscall.PWrite (fd, buffer, count, offset) ->
             UnixReadWrite.tryPwrite caller fd (bufferOf buffer) count offset system
             |> stopped
@@ -1899,6 +2028,8 @@ module TestStepOracle =
         [
             "Write"
             "Send"
+            "SendTo"
+            "RecvFrom"
             "PWrite"
             "Bind"
             "Connect"

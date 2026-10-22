@@ -85,6 +85,7 @@ module TestSocketWait =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -98,7 +99,8 @@ module TestSocketWait =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add (SocketId 0L) socket machine.Sockets
+                    Sockets = SocketTable.set (SocketId 0L) socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers (SocketId 0L) socket machine
                     NextSocketId = SocketId 1L
                 }
             )
@@ -196,6 +198,7 @@ module TestSocketWait =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly

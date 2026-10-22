@@ -131,7 +131,12 @@ module TestLink =
         | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"refused: %s{LinkRefusal.describe refusal}"
 
+    /// Darwin's devfs, which this library does not model, refused.
     let private refusedForDevices (answer : string) : bool = answer.StartsWith "refused: the path"
+
+    /// A name the call would bind in Linux's devtmpfs, refused.
+    let private refusedForNewDeviceName (answer : string) : bool =
+        answer.StartsWith "refused: the call would bind"
 
     let private kindAt (p : string) (system : UnixSystem<int, string>) : string * int64 * int64 =
         match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
@@ -306,10 +311,10 @@ module TestLink =
         ]
         |> shouldEqual []
 
-    /// LINKDEV: across the root filesystem and /dev. This library's device
-    /// filesystem holds only the nodes it has drivers for, so a name it does
-    /// not hold there is refused rather than looked up; every other row is
-    /// answered as measured.
+    /// LINKDEV: across the root filesystem and /dev. Darwin's devfs is not
+    /// modelled, and this library's devtmpfs holds what it was configured with
+    /// and nothing a process adds, so a link that binds a name there is
+    /// refused; every other row is answered as measured.
     let private replayLinkDevices (envelope : Envelope) : unit =
         let rows = section envelope.Resource "LINKDEV"
         rows.Length |> shouldEqual 6
@@ -324,19 +329,17 @@ module TestLink =
 
                 let actual = Eager.tryLink (text pair.[0]) (text pair.[1]) system |> rendered
 
-                let refusedHere =
+                let ok =
                     match SimulatedUnixPlatform.flavour envelope.Platform with
                     // Darwin's devfs is not modelled at all.
-                    | SimulatedUnixFlavour.Darwin ->
+                    | SimulatedUnixFlavour.Darwin when
                         pair.[0].StartsWith "/dev" || (pair.[1].StartsWith "/dev" && pair.[0] <> "nx")
-                    // Only the device nodes this library has drivers for exist.
-                    | SimulatedUnixFlavour.Linux -> pair.[0] = "/dev/nx" || (pair.[1] = "/dev/n" && pair.[0] <> "nx")
-
-                let ok =
-                    if refusedHere then
+                        ->
                         refusedForDevices actual
-                    else
-                        actual = probe
+                    // Where the kernel bound the name, in /dev.
+                    | SimulatedUnixFlavour.Linux when pair.[1] = "/dev/n" && probe = "ok" ->
+                        refusedForNewDeviceName actual
+                    | _ -> actual = probe
 
                 if not ok then
                     yield $"%s{row.[0]}: the probe answered %s{probe}, this library %s{actual}"
@@ -512,16 +515,14 @@ module TestLink =
                     let system = rulesSystem darwinFlavour protection caller
                     let actual = Eager.tryLink (text source) (text dest) system |> rendered
 
-                    // A free name in /dev is refused unless the source alone
-                    // decides the call: this library's device filesystem knows
-                    // only the nodes it has drivers for.
-                    let sourceDecides =
-                        source = "nx"
-                        || (source = "s/sf" && (darwinFlavour || caller <> 0))
-                        || (darwinFlavour && source = "d")
+                    // A name in Darwin's devfs, which is not modelled, is
+                    // refused unless the source alone decides the call. Every
+                    // Linux source is on the root filesystem, so a link into
+                    // /dev is EXDEV as measured.
+                    let sourceDecides = source = "nx" || source = "s/sf" || source = "d"
 
                     let ok =
-                        if dest = "/dev/n" && not sourceDecides then
+                        if darwinFlavour && dest = "/dev/n" && not sourceDecides then
                             refusedForDevices actual
                         else
                             actual = probe
@@ -670,6 +671,7 @@ module TestLink =
                 CloseOnExec = false
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = false
             }
 
@@ -863,15 +865,7 @@ module TestLink =
 
                 let expected = expectedEmptyPath caller fd "" linuxEmptyPath probe
 
-                // A free name in /dev is refused: this library's device
-                // filesystem knows only the nodes it has drivers for.
-                let ok =
-                    if caller = 0 && label = "\"/dev/n\"" then
-                        refusedForDevices actual
-                    else
-                        actual = expected
-
-                if not ok then
+                if actual <> expected then
                     yield
                         $"caller=%d{caller} %s{label}: the probe answered %s{probe}, so this library must answer %s{expected}; it answered %s{actual}"
         ]

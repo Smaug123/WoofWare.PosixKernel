@@ -339,6 +339,7 @@ module TestKqueue =
                     ReuseAddress = false
                     Options = SocketOptions.initial
                     Phase = SocketPhase.Idle
+                    Drained = false
                     Uid = UserId.root
                 }
 
@@ -354,7 +355,8 @@ module TestKqueue =
             Kernel.mapMachine
                 (fun machine ->
                     { machine with
-                        Sockets = Map.add machine.NextSocketId socket machine.Sockets
+                        Sockets = SocketTable.set machine.NextSocketId socket machine.Sockets
+                        DatagramReceivers = ForgedSocket.receivers machine.NextSocketId socket machine
                         NextSocketId = SocketId (raw + 1L)
                     }
                 )
@@ -366,6 +368,7 @@ module TestKqueue =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly

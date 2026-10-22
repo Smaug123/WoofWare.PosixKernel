@@ -226,6 +226,14 @@ module TestCallProgress =
             fun () ->
                 UnixReadWrite.sendWithBytes bytes Unchecked.defaultof<PausedSend<int, string>>
                 |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+            "UnixReadWrite.sendtoWithAddress",
+            fun () ->
+                UnixReadWrite.sendtoWithAddress bytes Unchecked.defaultof<PausedSendToAddress<int, string>>
+                |> ignore<CallProgress<PausedSend<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.recvfromWithLength",
+            fun () ->
+                UnixReadWrite.recvfromWithLength 16u Unchecked.defaultof<PausedRecvFrom<int, string>>
+                |> ignore<RecvFromOutcome * UnixSystem<int, string>>
             "UnixReadWrite.pwriteWithBytes",
             fun () ->
                 UnixReadWrite.pwriteWithBytes bytes Unchecked.defaultof<PausedPWrite<int, string>>
@@ -286,7 +294,8 @@ module TestCallProgress =
                 )
                 |> Seq.map (fun (m : Reflection.MethodInfo) -> $"%s{t.Name}.%s{m.Name}")
             )
-            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange"))
+            // What a paused call says of itself resumes nothing.
+            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange") && name <> "PausedRecvFrom.received")
             |> Set.ofSeq
 
         resumes |> shouldEqual (resumesOfNull |> List.map fst |> Set.ofList)

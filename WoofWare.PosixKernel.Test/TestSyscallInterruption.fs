@@ -170,6 +170,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -179,6 +180,7 @@ module TestSyscallInterruption =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -237,7 +239,8 @@ module TestSyscallInterruption =
                     (Callers.thread thread world.System)
                     world.Listener
                     UserBuffer.Mapped
-                    16u
+                    (Some 16u)
+                    0
                     world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
@@ -798,7 +801,9 @@ module TestSyscallInterruption =
                 {
                     Listener = waiting
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 }
             ParkedSyscall.PipeRead
                 {
@@ -1032,7 +1037,7 @@ module TestSyscallInterruption =
 
             let system =
                 match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
             let woken, system = Lone.wake system

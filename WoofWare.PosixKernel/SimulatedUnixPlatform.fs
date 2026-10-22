@@ -65,13 +65,33 @@ type DarwinKernelVersion =
     override this.ToString () : string =
         $"%d{this.VersionMajor}.%d{this.VersionMinor}.%d{this.VersionRevision}"
 
+/// How a Linux kernel was built, for the facts this library derives from it
+/// that follow the configuration its source was compiled with, rather than
+/// the source's version or the architecture: two kernels of one version, built
+/// for one architecture, can differ in these.
+///
+/// That is one fact so far: what a socket receiving a datagram over loopback
+/// is charged for the smallest buffer the datagram can arrive in (its
+/// `truesize`). The charge of every larger datagram follows from it. Only
+/// builds that have been measured are cases.
+[<RequireQualifiedAccess>]
+type LinuxKernelBuild =
+    /// The smallest buffer is charged 832 bytes, and holds a datagram of up to
+    /// 197 bytes. Measured on Apple's `container` kernel, 6.18.5 for arm64
+    /// (`docs/plans/2026-10-18-udp-data-path/udp-truesize.c`).
+    | SmallBuffer832
+    /// The smallest buffer is charged 960 bytes, and holds a datagram of up to
+    /// 325 bytes. Measured on the Azure kernels of GitHub's `ubuntu-24.04`
+    /// runners, 6.17.0-1022 and 7.0.0-1017, each for x86-64 and arm64.
+    | SmallBuffer960
+
 /// Which kernel a `SimulatedUnixPlatform` runs, and the version of the source
 /// it was built from, which the facts this library derives from that source
 /// may vary over.
 [<RequireQualifiedAccess>]
 type SimulatedUnixKernel =
-    /// Linux, built from this version's source.
-    | Linux of LinuxKernelVersion
+    /// Linux, built from this version's source as `build` says.
+    | Linux of version : LinuxKernelVersion * build : LinuxKernelBuild
     /// Darwin, built from this version's source.
     | Darwin of DarwinKernelVersion
 
@@ -108,8 +128,8 @@ type SimulatedUnixPlatformError =
 /// letting the host leak in here would change their *control flow* between
 /// runs.
 ///
-/// Modelled as a kernel (a flavour, and the version of the source it was built
-/// from), an architecture, a page size and a release string, each of
+/// Modelled as a kernel (a flavour, the version of the source it was built
+/// from, and for Linux how it was built), an architecture, a page size and a release string, each of
 /// which a kernel image is built with, rather than as a bag of loose
 /// `utsname` fields, so that the facts we report stay mutually consistent as
 /// more of `utsname` gets modelled: its machine field would be a total
@@ -139,7 +159,7 @@ type SimulatedUnixPlatform =
     override this.ToString () : string =
         let kernel =
             match this.Kernel with
-            | SimulatedUnixKernel.Linux version -> $"Linux %O{version}"
+            | SimulatedUnixKernel.Linux (version, build) -> $"Linux %O{version} (%O{build})"
             | SimulatedUnixKernel.Darwin version -> $"Darwin %O{version}"
 
         $"%s{kernel} %O{this.Architecture} %O{this.PageSize} %s{this.Release}"
@@ -260,6 +280,26 @@ type GetSockNameFaultLength =
     /// call would have reported -- because the kernel stored that before
     /// attempting the copy that then faulted.
     | AlreadyReported
+
+/// How a Linux UDP socket decides whether a datagram arriving at it fits its
+/// receive buffer (`SO_RCVBUF`), against a charge that includes what was taken
+/// and not yet given back.
+[<RequireQualifiedAccess>]
+type internal LinuxDatagramAdmission =
+    /// Admitted while the charge already held is at most the buffer, so the
+    /// datagram admitted last may take the charge past it.
+    | WhileHeldFits
+    /// Admitted only when the charge held and the datagram's own fit the buffer
+    /// together.
+    | WhenBothFit
+
+/// The rules a platform's UDP receive side keeps that a platform fact varies:
+/// on Linux the build's charges and the version's admission. Darwin's follow
+/// from its flavour alone.
+[<RequireQualifiedAccess>]
+type internal DatagramReceiveRules =
+    | Linux of build : LinuxKernelBuild * admission : LinuxDatagramAdmission
+    | Darwin
 
 /// What a kernel does with the buffer size a `readlink(2)` caller passed,
 /// before it copies anything. `SimulatedUnixPlatform.readlinkCapacity`.
@@ -450,12 +490,14 @@ module SimulatedUnixPlatform =
     let linuxX64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.linuxX64"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 17u
                     Patch = 0u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer960
+            ))
             SimulatedUnixArchitecture.X64
             SimulatedPageSize.FourKiB
             "6.17.0-1022-azure"
@@ -466,12 +508,14 @@ module SimulatedUnixPlatform =
     let linuxArm64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.linuxArm64"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer832
+            ))
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.FourKiB
             "6.18.5"
@@ -586,7 +630,7 @@ module SimulatedUnixPlatform =
     /// length cell when the address copy faults. See `GetSockNameFaultLength`.
     let getSockNameFaultLength (platform : SimulatedUnixPlatform) : GetSockNameFaultLength =
         match kernel platform with
-        | SimulatedUnixKernel.Linux version ->
+        | SimulatedUnixKernel.Linux (version, _) ->
             // Commit 1fb0e471611d ("net: remove one stac/clac pair from
             // move_addr_to_user()"), first released in 6.18, moved the length's
             // store ahead of the address's copy.
@@ -602,6 +646,32 @@ module SimulatedUnixPlatform =
             else
                 GetSockNameFaultLength.Untouched
         | SimulatedUnixKernel.Darwin _ -> GetSockNameFaultLength.Untouched
+
+    /// What this platform's UDP receive side charges and admits by. See
+    /// `DatagramReceiveRules`.
+    let internal datagramReceiveRules (platform : SimulatedUnixPlatform) : DatagramReceiveRules =
+        match kernel platform with
+        | SimulatedUnixKernel.Linux (version, build) ->
+            // Commit 9aaec660b5be ("udp: refine __udp_enqueue_schedule_skb()
+            // test"), first released in 6.18, stopped letting the last
+            // datagram take the charge past the buffer. Measured on both sides
+            // (`udp-truesize.c`): every fill on 6.17.0 admits one datagram more
+            // than fits, and none on 6.18.5 or 7.0.0.
+            let dropsWhatDoesNotFit =
+                {
+                    Major = 6u
+                    Minor = 18u
+                    Patch = 0u
+                }
+
+            let admission =
+                if version >= dropsWhatDoesNotFit then
+                    LinuxDatagramAdmission.WhenBothFit
+                else
+                    LinuxDatagramAdmission.WhileHeldFits
+
+            DatagramReceiveRules.Linux (build, admission)
+        | SimulatedUnixKernel.Darwin _ -> DatagramReceiveRules.Darwin
 
     /// The number every descriptor this kernel hands out lies below: the soft
     /// `RLIMIT_NOFILE` it assumes the process has at least. A call that would
@@ -1020,18 +1090,34 @@ module SimulatedUnixPlatform =
             }
 
     /// Everything this platform's `rename(2)` does differently. See
-    /// `RenameRules`, whose field this picks; the walk is
-    /// `finalNameTrailingSeparator`'s, and the ordering of the refusals —
-    /// which is most of the divergence — follows from the flavour alone.
+    /// `RenameRules`, whose fields this picks; the walk is
+    /// `finalNameTrailingSeparator`'s.
     let renameRules (platform : SimulatedUnixPlatform) : RenameRules =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux ->
+        match kernel platform with
+        | SimulatedUnixKernel.Linux (version, _) ->
+            // Commit 5c8752729970 ("VFS/nfsd/ovl: introduce start_renaming()
+            // and end_renaming()"), first released in 6.19, moved the check of a
+            // destination that is the source's ancestor into the locking of the
+            // two parents, ahead of the trailing-separator checks.
+            let checksAncestorWhileLocking =
+                {
+                    Major = 6u
+                    Minor = 19u
+                    Patch = 0u
+                }
+
             {
                 WalkOrder = RenameWalkOrder.ParentsThenFinals
+                RefusalOrder =
+                    if version >= checksAncestorWhileLocking then
+                        RenameRefusalOrder.Linux RenameAncestorCheck.BeforeTrailingSeparators
+                    else
+                        RenameRefusalOrder.Linux RenameAncestorCheck.AfterTrailingSeparators
             }
-        | SimulatedUnixFlavour.Darwin ->
+        | SimulatedUnixKernel.Darwin _ ->
             {
                 WalkOrder = RenameWalkOrder.SourceThenDestination
+                RefusalOrder = RenameRefusalOrder.Darwin
             }
 
     /// Whether this platform's kernel screens a read or write buffer before it

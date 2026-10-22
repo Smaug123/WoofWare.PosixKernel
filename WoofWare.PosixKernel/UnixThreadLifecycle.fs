@@ -10,6 +10,17 @@ type KillOutcome =
     /// The signal stops the whole process.
     | ProcessStopped of signal : Signal
 
+/// What a `kill(2)` or `pthread_kill(3)` answered, if it did not end the
+/// calling process (see `ProcessFate`).
+[<RequireQualifiedAccess>]
+type KillAnswer =
+    /// The call returned 0, and did `outcome` to the calling process.
+    | Completed of outcome : KillOutcome
+    /// The call sent nothing, and failed with `error`: `kill` returns -1 and
+    /// the client stores `error` wherever its libc keeps errno, and
+    /// `pthread_kill` returns `error` itself, leaving errno alone.
+    | Failed of error : UnixError
+
 /// Why this library will not end a process: what closing its descriptors
 /// would do has not been measured.
 [<RequireQualifiedAccess>]
@@ -170,9 +181,12 @@ module UnixThreadLifecycle =
         // First what nothing references any more: what the process's calls in
         // flight held, whose holds went with its threads, and what the call that
         // ended the process let go of as it returned. These go as the calls
-        // return when their threads die, before the process's files are closed;
-        // the order between the two has not been measured. On a machine no
-        // process's end has left so, no description is unreferenced.
+        // return when their threads die, before the process's files are closed.
+        // Measured on Linux 6.18.5 for a description only a sleeping `flock`
+        // held, beside one held at a descriptor: the `flock`'s went first in
+        // each of 200 runs (`docs/probes/inotify-close`, section X). Darwin's
+        // order is unmeasured. On a machine no process's end has left so, no
+        // description is unreferenced.
         let unreferenced =
             OpenFileTable.descriptions dead.Machine.OpenFiles
             |> Map.keys

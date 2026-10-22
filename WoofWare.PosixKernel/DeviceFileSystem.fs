@@ -35,10 +35,27 @@ module internal DevtmpfsMount =
             Flags = 0x1022L
         }
 
+    /// What a devtmpfs holds when a client expresses no preference: the nodes
+    /// Linux's memory-device driver makes on every kernel, which are `null`,
+    /// `zero`, `full`, `random` and `urandom`, each 0666 and owned by root.
+    let defaultContents : Map<DirectoryEntryName, SeedEntry> =
+        // `drivers/char/mem.c` registers these five whatever the kernel was
+        // configured with; every other node a devtmpfs holds is there because
+        // of a configuration option (kmsg for CONFIG_PRINTK, tty and console
+        // for CONFIG_TTY, mem for CONFIG_DEVMEM) or of the machine's hardware.
+        // Each node's number, mode and owner are measured on Linux 6.18.5
+        // (`docs/probes/devtmpfs-contents`, ENTRY rows).
+        [ "null", 3u ; "zero", 5u ; "full", 7u ; "random", 8u ; "urandom", 9u ]
+        |> List.map (fun (name, minor) ->
+            DirectoryEntryName.parseOrFail "DevtmpfsMount.defaultContents" name,
+            SeedEntry.CharacterDevice (DeviceNumber (1u, minor), PermissionBits 0o666, None)
+        )
+        |> Map.ofList
+
 /// The filesystem a machine has mounted at `/dev`.
 [<RequireQualifiedAccess>]
 type internal DeviceFileSystemMount =
-    /// Linux's devtmpfs, holding a node for each `CharacterDevice`.
+    /// Linux's devtmpfs, holding what the machine's configuration says.
     | Devtmpfs of DevtmpfsMount
     /// Darwin's devfs, which this kernel does not model: a path that reaches
     /// `/dev` is refused.
@@ -70,39 +87,16 @@ module internal DeviceFileSystemMount =
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module CharacterDevice =
-    /// Every device this kernel has a driver for, in the order a devtmpfs
-    /// makes their nodes. A devtmpfs holds a node for each of these and for
-    /// nothing else.
+    /// Every device this kernel has a driver for: a character device node can
+    /// be opened only if it holds the number one of these is registered under.
     let all : CharacterDevice list = [ CharacterDevice.Null ; CharacterDevice.URandom ]
-
-    /// The name of the device's node in `/dev`.
-    let name (device : CharacterDevice) : DirectoryEntryName =
-        match device with
-        | CharacterDevice.Null -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "null"
-        | CharacterDevice.URandom -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "urandom"
-        | CharacterDevice.Zero -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "zero"
-        | CharacterDevice.Random -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "random"
-        | CharacterDevice.Tty -> DirectoryEntryName.parseOrFail "CharacterDevice.name" "tty"
-
-    /// The permission bits of the device's node.
-    let permissions (device : CharacterDevice) : PermissionBits =
-        // Measured on both flavours: crw-rw-rw- for all five nodes
-        // (`devices.c`, STAT rows: mode 020666 for null, zero, random and
-        // urandom, on Linux 6.18.5 and on Darwin 27.0.0; `darwin-devfs.c`,
-        // STAT rows: the same for tty, on both).
-        match device with
-        | CharacterDevice.Null
-        | CharacterDevice.URandom
-        | CharacterDevice.Zero
-        | CharacterDevice.Random
-        | CharacterDevice.Tty -> PermissionBits 0o666
 
     /// What an `ioctl(2)` the device's Linux driver does not recognise answers:
     /// `FIONREAD` and `TCGETS` (`tcgetattr`) among them, neither device being a
     /// queue or a terminal. The buffer the request names is never looked at.
     ///
     /// Linux only: this kernel holds no device on Darwin. Only for a device in
-    /// `CharacterDevice.all`: no other device has a node to ask through.
+    /// `CharacterDevice.all`: no other device can be opened to ask through.
     let internal unrecognisedIoctl (device : CharacterDevice) : UnixError =
         // Measured on Linux 6.18.5 (`devices-l2.c`, FIONREAD and TCGETATTR
         // rows, through descriptors opened for reading and for writing): null
@@ -115,30 +109,55 @@ module CharacterDevice =
         | CharacterDevice.Random
         | CharacterDevice.Tty ->
             failwith
-                $"CharacterDevice.unrecognisedIoctl: asked about %O{device}, which this kernel has no driver for yet, so nothing in this version makes its node (this is a bug in the caller)."
+                $"CharacterDevice.unrecognisedIoctl: asked about %O{device}, which this kernel has no driver for yet, so no open file description names it (this is a bug in the caller)."
 
-    /// `st_rdev` for the device's node under a kernel of `flavour`, in that
-    /// flavour's `dev_t` encoding.
+    /// The number a kernel of `flavour` registers the device's driver under,
+    /// which its node holds.
     ///
     /// Linux only: this kernel holds no device on Darwin.
-    let internal specialFileDevice (flavour : SimulatedUnixFlavour) (device : CharacterDevice) : int64 =
+    let internal number (flavour : SimulatedUnixFlavour) (device : CharacterDevice) : DeviceNumber =
         match flavour with
         | SimulatedUnixFlavour.Darwin ->
             failwith
-                $"CharacterDevice.specialFileDevice: asked for the number of %O{device} on Darwin, where this kernel holds no device (this is a bug in the caller)."
+                $"CharacterDevice.number: asked for the number of %O{device} on Darwin, where this kernel holds no device (this is a bug in the caller)."
         | SimulatedUnixFlavour.Linux ->
 
         // The mem driver's registrations, which are fixed: 1,3 for null, 1,5
         // for zero, 1,8 for random and 1,9 for urandom, measured on Linux
         // 6.18.5 (`devices.c`, STAT rows). The tty driver's `/dev/tty` is 5,0,
         // also fixed, measured there too (`darwin-devfs.c`, STAT rows).
-        let major, minor =
-            match device with
-            | CharacterDevice.Null -> 1L, 3L
-            | CharacterDevice.Zero -> 1L, 5L
-            | CharacterDevice.Random -> 1L, 8L
-            | CharacterDevice.URandom -> 1L, 9L
-            | CharacterDevice.Tty -> 5L, 0L
+        match device with
+        | CharacterDevice.Null -> DeviceNumber (1u, 3u)
+        | CharacterDevice.Zero -> DeviceNumber (1u, 5u)
+        | CharacterDevice.Random -> DeviceNumber (1u, 8u)
+        | CharacterDevice.URandom -> DeviceNumber (1u, 9u)
+        | CharacterDevice.Tty -> DeviceNumber (5u, 0u)
+
+    /// The driver that opening a character device node holding `held` reaches
+    /// under a kernel of `flavour`, or `None` if this kernel has no driver
+    /// registered for that number.
+    let internal driverOf (flavour : SimulatedUnixFlavour) (held : DeviceNumber) : CharacterDevice option =
+        match flavour with
+        | SimulatedUnixFlavour.Darwin -> None
+        | SimulatedUnixFlavour.Linux -> all |> List.tryFind (fun device -> number flavour device = held)
+
+[<RequireQualifiedAccess>]
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module internal DeviceNumber =
+    /// `st_rdev` for a node holding `number` under a kernel of `flavour`, in
+    /// that flavour's `dev_t` encoding.
+    ///
+    /// Linux only: this kernel holds no device on Darwin.
+    let specialFileDevice (flavour : SimulatedUnixFlavour) (number : DeviceNumber) : int64 =
+        match flavour with
+        | SimulatedUnixFlavour.Darwin ->
+            failwith
+                $"DeviceNumber.specialFileDevice: asked to encode %O{number} on Darwin, where this kernel holds no device (this is a bug in the caller)."
+        | SimulatedUnixFlavour.Linux ->
+
+        let (DeviceNumber (major, minor)) = number
+        let major = int64 major
+        let minor = int64 minor
 
         // glibc's `makedev`, which is how a 64-bit Linux `stat` encodes the pair:
         // measured, 1,3 is reported as 259 and 1,9 as 265.

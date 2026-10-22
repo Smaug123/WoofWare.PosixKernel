@@ -50,6 +50,7 @@ module TestListen =
             ReuseAddress = reuse
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
             Uid = UserId.root
         }
 
@@ -72,7 +73,8 @@ module TestListen =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
             )
@@ -190,7 +192,6 @@ module TestListen =
                         {
                             Backlog = 8
                             Queue = List.map ForgedConnection.queued queued
-                            Drained = false
                         }))
                 (systemOn platform)
 
@@ -220,6 +221,7 @@ module TestListen =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -281,7 +283,6 @@ module TestListen =
                             {
                                 Backlog = 8
                                 Queue = []
-                                Drained = false
                             }))
                     (systemOn platform)
 

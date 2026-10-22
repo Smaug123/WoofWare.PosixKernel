@@ -164,7 +164,7 @@ module TestInotifyDeliveryMeasured =
     let ``section E: what each operation queues on a watched directory`` () : unit =
         let skipped = [ "truncate" ]
 
-        actual skipped (operations "e" modelledEvents)
+        actual skipped (operations "e" closeEvents)
         |> shouldEqual (expected probe "E" skipped)
 
     [<Test>]
@@ -208,7 +208,7 @@ module TestInotifyDeliveryMeasured =
             boot root [ "c", directory 0o755 [ "f", file "seed" ; "g", file "seed" ] ]
 
         let fd, s = init1 nonblock system
-        let _, s = watch fd "c" modelledEvents s
+        let _, s = watch fd "c" graphEvents s
 
         let f, s = openFd (openFlags FileAccessMode.WriteOnly false false false) "c/f" 0 s
 
@@ -316,7 +316,7 @@ module TestInotifyDeliveryMeasured =
 
         let available =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         produced.Add ("fionread-full", $"%d{available} bytes after %d{changes} alternating chmods")
@@ -402,7 +402,7 @@ module TestInotifyDeliveryMeasured =
 
     [<Test>]
     let ``delivery section V: utimensat of both times, one, or neither`` () : unit =
-        actual [] (timesUnder "all" modelledEvents @ timesUnder "dotnet" dotnetMask)
+        actual [] (timesUnder "all" graphEvents @ timesUnder "dotnet" dotnetMask)
         |> shouldEqual (expected deliveryProbe "V" [])
 
     /// The probe's `fillToOneShort`: chmods alternating between `a` and `b`
@@ -420,7 +420,7 @@ module TestInotifyDeliveryMeasured =
             ||> List.fold (fun system i -> chmod (if i % 2 = 1 then a else b) (0o600 + i % 2) system)
 
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) when count = (limit - 1) * 32 -> system
+        | Ok (BytesAvailableAnswer.Reported count, _) when count = (limit - 1) * 32 -> system
         | other -> failwith $"filled to %A{other}, not %d{(limit - 1) * 32} bytes"
 
     [<Test>]
@@ -444,7 +444,7 @@ module TestInotifyDeliveryMeasured =
             system <- chmod $"%s{d}/f" 0o6755 system
             let before = modeOf $"%s{d}/f" system
             let fd, s = init1 nonblock system
-            let _, s = watch fd d modelledEvents s
+            let _, s = watch fd d graphEvents s
 
             system <-
                 if full then
@@ -495,7 +495,7 @@ module TestInotifyDeliveryMeasured =
             system <- chmod $"%s{d}/f" 0o6755 system
             let before = modeOf $"%s{d}/f" system
             let fd, s = init1 nonblock system
-            let _, s = watch fd d modelledEvents s
+            let _, s = watch fd d graphEvents s
 
             system <-
                 if full then
@@ -587,7 +587,7 @@ module TestInotifyDeliveryMeasured =
 
             system <- chmod $"%s{d}/f" 0o6755 system
             let fd, s = init1 nonblock system
-            let _, s = watch fd d modelledEvents s
+            let _, s = watch fd d graphEvents s
 
             system <-
                 if full then
@@ -629,9 +629,9 @@ module TestInotifyDeliveryMeasured =
             boot root [ "y", directory 0o755 [ "d", directory 0o755 [] ; "f", file "x" ] ]
 
         let fd, s = init1 nonblock system
-        let wp, s = watch fd "y" modelledEvents s
-        let wf, s = watch fd "y/f" modelledEvents s
-        let wd, s = watch fd "y/d" modelledEvents s
+        let wp, s = watch fd "y" graphEvents s
+        let wf, s = watch fd "y/f" graphEvents s
+        let wd, s = watch fd "y/d" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"parent=%d{wp} f=%d{wf} d=%d{wd}")
@@ -654,7 +654,7 @@ module TestInotifyDeliveryMeasured =
         system <- utimensat "y/f" TimesArgument.Null system
         row "utimensat-file"
         let fd2, s = init1 nonblock system
-        let _, s = watch fd2 "y" modelledEvents s
+        let _, s = watch fd2 "y" graphEvents s
         system <- chmod "y/f" 0o644 s
         row "two-instances-first"
         let drained, _ = drain fd2 system
@@ -666,8 +666,8 @@ module TestInotifyDeliveryMeasured =
     let ``delivery section X: a link count goes to the inode's own watch, before the parent's name`` () : unit =
         let mutable system = boot root [ "x", directory 0o755 [ "f", file "x" ] ]
         let fd, s = init1 nonblock system
-        let wp, s = watch fd "x" modelledEvents s
-        let wf, s = watch fd "x/f" modelledEvents s
+        let wp, s = watch fd "x" graphEvents s
+        let wf, s = watch fd "x/f" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"parent=%d{wp} f=%d{wf}")
@@ -682,7 +682,7 @@ module TestInotifyDeliveryMeasured =
         system <- unlink "x/g" system
         row "unlink-other-name"
         system <- mkdir "x/d" 0o755 system
-        let wd, s = watch fd "x/d" modelledEvents system
+        let wd, s = watch fd "x/d" graphEvents system
         let _, s = drain fd s
         system <- mkdir "x/d/sub" 0o755 s
         let drained, s = drain fd system
@@ -712,9 +712,9 @@ module TestInotifyDeliveryMeasured =
                 ]
 
         let fd, s = init1 nonblock system
-        let wp, s = watch fd "r" modelledEvents s
-        let wb, s = watch fd "r/b" modelledEvents s
-        let wt, s = watch fd "r/td" modelledEvents s
+        let wp, s = watch fd "r" graphEvents s
+        let wb, s = watch fd "r/b" graphEvents s
+        let wt, s = watch fd "r/td" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"parent=%d{wp} b=%d{wb} td=%d{wt}")
@@ -728,7 +728,7 @@ module TestInotifyDeliveryMeasured =
         row "over-watched-file"
         system <- rename "r/sd" "r/td" system
         row "over-watched-empty-dir"
-        let we, s = watch fd "r/e" modelledEvents system
+        let we, s = watch fd "r/e" graphEvents system
 
         let opened, s =
             openFd (openFlags FileAccessMode.ReadOnly false false false) "r/e" 0 s
@@ -758,8 +758,8 @@ module TestInotifyDeliveryMeasured =
                 ]
 
         let fd, s = init1 nonblock system
-        let wp, s = watch fd "p" modelledEvents s
-        let wd, s = watch fd "p/d" modelledEvents s
+        let wp, s = watch fd "p" graphEvents s
+        let wd, s = watch fd "p/d" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"p=%d{wp} d=%d{wd}")
@@ -780,8 +780,8 @@ module TestInotifyDeliveryMeasured =
         system <- close fd system
 
         let rootFd, s = init1 nonblock system
-        let wr, s = watch rootFd "/" modelledEvents s
-        let wdev, s = watch rootFd "/dev" modelledEvents s
+        let wr, s = watch rootFd "/" graphEvents s
+        let wdev, s = watch rootFd "/dev" graphEvents s
         system <- chmod "/dev" (modeOf "/dev" s) s
         let drained, s = drain rootFd system
         system <- close rootFd s
@@ -789,8 +789,8 @@ module TestInotifyDeliveryMeasured =
 
         system <- mkdir "p/gone" 0o755 system
         let gone, s = init1 nonblock system
-        let wpg, s = watch gone "p" modelledEvents s
-        let wg, s = watch gone "p/gone" modelledEvents s
+        let wpg, s = watch gone "p" graphEvents s
+        let wg, s = watch gone "p/gone" graphEvents s
         system <- s |> chdir "p/gone" |> rmdir "../gone"
         let drained, s = drain gone system
         system <- s
@@ -807,7 +807,7 @@ module TestInotifyDeliveryMeasured =
             boot root [ "t", directory 0o755 [ "existing", file "seed" ; "empty", file "" ] ]
 
         let fd, s = init1 nonblock system
-        let _, s = watch fd "t" modelledEvents s
+        let _, s = watch fd "t" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
 
@@ -837,7 +837,7 @@ module TestInotifyDeliveryMeasured =
             boot root [ "c", directory 0o755 [ "f", fileOwnedBy 1000u "x" ] ]
 
         let fd, s = init1 nonblock system
-        let _, s = watch fd "c" modelledEvents s
+        let _, s = watch fd "c" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
 

@@ -369,8 +369,8 @@ module TestPeerNameAgainstHost =
             | other -> failwith $"the model's listen answered %A{other}"
 
         let accept (listener : int) (system : UnixSystem<int, string>) =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"the model's accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =

@@ -245,6 +245,7 @@ module internal FcntlWorld =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -299,11 +300,13 @@ module internal FcntlWorld =
         | Ok (_, system) -> system
         | Error refusal -> failwith $"connect: %s{ConnectRefusal.describe refusal}"
 
-    /// A socket accepted from a listener at `port`, after a client connected
-    /// to it: the accepted descriptor.
+    /// A socket accepted, with the `accept4` flag word `flags`, from a
+    /// listener at `port` after a client connected to it: the accepted
+    /// descriptor.
     let accepted
         (port : uint16)
         (nonBlocking : bool)
+        (flags : int)
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
@@ -314,14 +317,15 @@ module internal FcntlWorld =
 
         let system = connect client port system
 
-        match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        match
+            UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) flags system
+        with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept: %A{other}"
 
-    /// A fresh descriptor of the probe's kind `kind`, or `None` for one made by
-    /// `accept4`, which this kernel does not model. Fails for a kind the probe
-    /// did not make on `system`'s flavour.
-    let make (kind : string) (system : UnixSystem<int, string>) : (int * UnixSystem<int, string>) option =
+    /// A fresh descriptor of the probe's kind `kind`. Fails for a kind the
+    /// probe did not make on `system`'s flavour.
+    let make (kind : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let platform = UnixSystem.platform system
         let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
@@ -330,75 +334,67 @@ module internal FcntlWorld =
                 NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Default
 
             match UnixSocket.trySocket (Callers.leader system) domain (kind ||| extra) protocol system with
-            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket with 0x%x{extra}: %A{other}"
 
         let socket domain kind =
-            Some (NewSocket.create domain kind SocketProtocol.Default system)
+            (NewSocket.create domain kind SocketProtocol.Default system)
 
         match kind with
-        | "file-rdonly" -> Some (openWith (opening FileAccessMode.ReadOnly) "f" system)
-        | "file-wronly" -> Some (openWith (opening FileAccessMode.WriteOnly) "f" system)
-        | "file-rdwr" -> Some (openWith (opening FileAccessMode.ReadWrite) "f" system)
+        | "file-rdonly" -> (openWith (opening FileAccessMode.ReadOnly) "f" system)
+        | "file-wronly" -> (openWith (opening FileAccessMode.WriteOnly) "f" system)
+        | "file-rdwr" -> (openWith (opening FileAccessMode.ReadWrite) "f" system)
         | "file-rdonly-cloexec" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadOnly with
-                        CloseOnExec = true
-                    }
-                    "f"
-                    system
-            )
+            (openWith
+                { opening FileAccessMode.ReadOnly with
+                    CloseOnExec = true
+                }
+                "f"
+                system)
         | "file-rdwr-cloexec" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadWrite with
-                        CloseOnExec = true
-                    }
-                    "f"
-                    system
-            )
+            (openWith
+                { opening FileAccessMode.ReadWrite with
+                    CloseOnExec = true
+                }
+                "f"
+                system)
         | "file-rdwr-sync" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadWrite with
-                        Synchronous = true
-                        DataSynchronous = linux
-                    }
-                    "f"
-                    system
-            )
-        | "dir" -> Some (openWith (opening FileAccessMode.ReadOnly) "d" system)
+            (openWith
+                { opening FileAccessMode.ReadWrite with
+                    Synchronous = true
+                    DataSynchronous = linux
+                }
+                "f"
+                system)
+        | "dir" -> (openWith (opening FileAccessMode.ReadOnly) "d" system)
         | "dir-o_directory" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadOnly with
-                        Directory = true
-                    }
-                    "d"
-                    system
-            )
-        | "foreign-rdonly" -> Some (openWith (opening FileAccessMode.ReadOnly) "foreign" system)
-        | "pipe-r" -> pipe 0 system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe-w" -> pipe 0 system |> fun ((_, w), system) -> Some (w, system)
+            (openWith
+                { opening FileAccessMode.ReadOnly with
+                    Directory = true
+                }
+                "d"
+                system)
+        | "foreign-rdonly" -> (openWith (opening FileAccessMode.ReadOnly) "foreign" system)
+        | "pipe-r" -> pipe 0 system |> fun ((r, _), system) -> (r, system)
+        | "pipe-w" -> pipe 0 system |> fun ((_, w), system) -> (w, system)
         | "pipe2-nonblock-r" ->
             pipe (OpenFlagWords.nonBlock platform) system
-            |> fun ((r, _), system) -> Some (r, system)
+            |> fun ((r, _), system) -> (r, system)
         | "pipe2-nonblock-w" ->
             pipe (OpenFlagWords.nonBlock platform) system
-            |> fun ((_, w), system) -> Some (w, system)
+            |> fun ((_, w), system) -> (w, system)
         | "pipe2-cloexec-r" ->
             pipe (OpenFlagWords.closeOnExec platform) system
-            |> fun ((r, _), system) -> Some (r, system)
+            |> fun ((r, _), system) -> (r, system)
         | "pipe2-cloexec-w" ->
             pipe (OpenFlagWords.closeOnExec platform) system
-            |> fun ((_, w), system) -> Some (w, system)
+            |> fun ((_, w), system) -> (w, system)
         | "pipe2-clofork-r" when not linux ->
             pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
-            |> fun ((r, _), system) -> Some (r, system)
+            |> fun ((r, _), system) -> (r, system)
         | "pipe2-clofork-w" when not linux ->
             pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
-            |> fun ((_, w), system) -> Some (w, system)
+            |> fun ((_, w), system) -> (w, system)
         | "inet-stream" -> socket SocketDomain.Inet SocketKind.Stream
         | "inet-dgram" -> socket SocketDomain.Inet SocketKind.Datagram
         | "inet6-stream" -> socket SocketDomain.Inet6 SocketKind.Stream
@@ -406,27 +402,26 @@ module internal FcntlWorld =
         | "unix-dgram" -> socket SocketDomain.Unix SocketKind.Datagram
         | "inet-stream-sock_nonblock" when linux -> socketWith LinuxSocketNonBlock
         | "inet-stream-sock_cloexec" when linux -> socketWith LinuxSocketCloseOnExec
-        | "accepted" -> Some (accepted 5000us false system)
-        | "accepted-from-nonblocking" -> Some (accepted 5000us true system)
+        | "accepted" -> (accepted 5000us false 0 system)
+        | "accepted-from-nonblocking" -> (accepted 5000us true 0 system)
+        | "accept4-sock_nonblock" when linux -> (accepted 5000us false LinuxSocketNonBlock system)
+        | "accept4-sock_cloexec" when linux -> (accepted 5000us false LinuxSocketCloseOnExec system)
         | "port" when linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
-            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1(0): %A{other}"
         | "port-cloexec" when linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) LinuxEpollCloseOnExec system with
-            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1(EPOLL_CLOEXEC): %A{other}"
         | "port" ->
             match UnixKqueue.tryKqueue (Callers.leader system) system with
-            | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue: %O{error}"
             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
-        | "null-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)
-        | "null-wronly" when linux -> Some (openWith (opening FileAccessMode.WriteOnly) "/dev/null" system)
-        | "null-rdwr" when linux -> Some (openWith (opening FileAccessMode.ReadWrite) "/dev/null" system)
-        | "urandom-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/urandom" system)
-        | "urandom-rdwr" when linux -> Some (openWith (opening FileAccessMode.ReadWrite) "/dev/urandom" system)
-        // Linux's accept4, which this kernel does not model.
-        | "accept4-sock_nonblock"
-        | "accept4-sock_cloexec" -> None
+        | "null-rdonly" when linux -> (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)
+        | "null-wronly" when linux -> (openWith (opening FileAccessMode.WriteOnly) "/dev/null" system)
+        | "null-rdwr" when linux -> (openWith (opening FileAccessMode.ReadWrite) "/dev/null" system)
+        | "urandom-rdonly" when linux -> (openWith (opening FileAccessMode.ReadOnly) "/dev/urandom" system)
+        | "urandom-rdwr" when linux -> (openWith (opening FileAccessMode.ReadWrite) "/dev/urandom" system)
         | other -> failwith $"the probe made a %s{other} on %O{platform}, which FcntlWorld does not make"

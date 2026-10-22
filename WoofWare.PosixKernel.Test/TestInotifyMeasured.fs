@@ -130,7 +130,7 @@ module TestInotifyMeasured =
     let private maskCreate : uint32 = 0x10000000u
 
     /// `IN_ALL_EVENTS` without the events this kernel does not raise.
-    let private modelledEvents : uint32 = 0xFC6u
+    let private graphEvents : uint32 = 0xFC6u
 
     /// The probe's `rc`.
     let private rc (answer : SyscallAnswer) : string =
@@ -316,7 +316,7 @@ module TestInotifyMeasured =
 
     let private fionread (fd : int) (system : UnixSystem<int, string>) : string =
         match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> $"%d{count}"
+        | Ok (BytesAvailableAnswer.Reported count, _) -> $"%d{count}"
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
     let private pollIn (fd : int) (events : int16) (system : UnixSystem<int, string>) : string =
@@ -469,30 +469,30 @@ module TestInotifyMeasured =
             rc answer
 
         let actual = ResizeArray<string * string> ()
-        let wd1 = add "w/d1" modelledEvents
-        let wd2 = add "w/d2" modelledEvents
-        let again = add "w/d1" modelledEvents
-        let dotted = add "./w/d1/." modelledEvents
+        let wd1 = add "w/d1" graphEvents
+        let wd2 = add "w/d2" graphEvents
+        let again = add "w/d1" graphEvents
+        let dotted = add "./w/d1/." graphEvents
         actual.Add ("numbering", $"d1=%s{wd1} d2=%s{wd2} d1-again=%s{again} ./w/d1/.=%s{dotted}")
         let drained, s = drain fd system
         system <- s
         actual.Add ("events-from-adding", drained)
-        actual.Add ("onlydir-file", add "w/f" (modelledEvents ||| onlyDir))
-        actual.Add ("file", add "w/f" modelledEvents)
-        actual.Add ("missing", add "w/missing" modelledEvents)
+        actual.Add ("onlydir-file", add "w/f" (graphEvents ||| onlyDir))
+        actual.Add ("file", add "w/f" graphEvents)
+        actual.Add ("missing", add "w/missing" graphEvents)
         actual.Add ("mask-0", add "w/d1" 0u)
         actual.Add ("mask-flags-only", $"""ONLYDIR alone=%s{add "w/d2" onlyDir}""")
-        actual.Add ("symlink-followed", $"""add w/l (no DONT_FOLLOW)=%s{add "w/l" modelledEvents} (d1's wd=%s{wd1})""")
-        let wl = add "w/l" (modelledEvents ||| dontFollow)
+        actual.Add ("symlink-followed", $"""add w/l (no DONT_FOLLOW)=%s{add "w/l" graphEvents} (d1's wd=%s{wd1})""")
+        let wl = add "w/l" (graphEvents ||| dontFollow)
         actual.Add ("symlink-dont-follow", $"add w/l DONT_FOLLOW=%s{wl}")
 
         actual.Add (
             "symlink-dont-follow-onlydir",
-            $"""add w/l DONT_FOLLOW|ONLYDIR=%s{add "w/l" (modelledEvents ||| dontFollow ||| onlyDir)}"""
+            $"""add w/l DONT_FOLLOW|ONLYDIR=%s{add "w/l" (graphEvents ||| dontFollow ||| onlyDir)}"""
         )
 
         let badFd =
-            match Eager.tryInotifyAddWatch 999 (PathArg.ofText "w/d1") modelledEvents system with
+            match Eager.tryInotifyAddWatch 999 (PathArg.ofText "w/d1") graphEvents system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -504,7 +504,7 @@ module TestInotifyMeasured =
         system <- s
 
         let onRegular =
-            match Eager.tryInotifyAddWatch regular (PathArg.ofText "w/d1") modelledEvents system with
+            match Eager.tryInotifyAddWatch regular (PathArg.ofText "w/d1") graphEvents system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -569,7 +569,7 @@ module TestInotifyMeasured =
         let drained, s = drain fd system
         system <- s
         actual.Add ("rm-events", drained)
-        actual.Add ("re-add-after-rm", $"""d1=%s{add "w/d1" modelledEvents} (was %s{wd1}, highest so far %s{wl})""")
+        actual.Add ("re-add-after-rm", $"""d1=%s{add "w/d1" graphEvents} (was %s{wd1}, highest so far %s{wl})""")
         let drained, s = drain fd system
         system <- s
         actual.Add ("re-add-events", drained)
@@ -601,17 +601,7 @@ module TestInotifyMeasured =
         let fd, system = init1 nonblock system
 
         Eager.tryInotifyAddWatch fd (PathArg.ofText "w/d1") 0xFFFu system
-        |> shouldEqual (
-            Error (
-                InotifyAddWatchRefusal.UnmodelledEvents
-                    [
-                        InotifyEvent.Access
-                        InotifyEvent.CloseWrite
-                        InotifyEvent.CloseNoWrite
-                        InotifyEvent.Open
-                    ]
-            )
-        )
+        |> shouldEqual (Error (InotifyAddWatchRefusal.UnmodelledEvents [ InotifyEvent.Access ; InotifyEvent.Open ]))
 
         // An add that fails anyway answers its errno.
         match Eager.tryInotifyAddWatch fd (PathArg.ofText "w/missing") 0xFFFu system with
@@ -1125,7 +1115,7 @@ module TestInotifyMeasured =
                     ||| 0x80u
                     ||| onlyDir
                     ||| 0x04000000u
-                yield modelledEvents
+                yield graphEvents
             ]
 
         let unreadable = PathArgumentBytes.Unreadable
@@ -1508,7 +1498,7 @@ module TestInotifyMeasured =
 
         let fionreadNull =
             match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd (UserBuffer.Unmapped 0UL) system with
-            | Ok (BytesAvailableAnswer.Failed error) -> $"-1 %O{error}"
+            | Ok (BytesAvailableAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
         let fadvise =

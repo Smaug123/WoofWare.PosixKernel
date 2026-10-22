@@ -79,8 +79,8 @@ module TestPollTimeout =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }
+                Drained = false
                 Uid = UserId.root
             }
 
@@ -94,7 +94,8 @@ module TestPollTimeout =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.add socketId socket machine.Sockets
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
             )
@@ -117,7 +118,7 @@ module TestPollTimeout =
             (fun machine ->
                 { machine with
                     Sockets =
-                        Map.add
+                        SocketTable.set
                             socketId
                             { socket with
                                 Phase =
@@ -125,7 +126,6 @@ module TestPollTimeout =
                                         {
                                             Backlog = 8
                                             Queue = List.map ForgedConnection.queued queue
-                                            Drained = false
                                         }
                             }
                             machine.Sockets
@@ -286,7 +286,7 @@ module TestPollTimeout =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Phase = SocketPhase.Refused RefusalError.Pending
@@ -441,6 +441,7 @@ module TestPollTimeout =
             FileDescriptorRegistry.openDirectory
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                false
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -485,6 +486,7 @@ module TestPollTimeout =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly

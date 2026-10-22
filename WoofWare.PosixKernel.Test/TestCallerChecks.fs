@@ -183,7 +183,7 @@ module TestCallerChecks =
                 "UnixDescriptor.bytesAvailable"
                 (fun caller system ->
                     UnixDescriptor.bytesAvailable caller 0 UserBuffer.Mapped system
-                    |> ignore<BytesAvailableAnswer>
+                    |> ignore<BytesAvailableAnswer * UnixSystem<int, string>>
                 )
             running
                 "UnixDescriptor.fileClone"
@@ -239,7 +239,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixConnection.connect caller 0 UserBuffer.Mapped 16u system |> ignore)
             running
                 "UnixConnection.accept"
-                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u system |> ignore)
+                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped (Some 16u) 0 system |> ignore)
             running "UnixConnection.shutdown" (fun caller system -> UnixConnection.shutdown caller 0 2 system |> ignore)
             finishing
                 "UnixConnection.finishAccept"
@@ -425,10 +425,7 @@ module TestCallerChecks =
                 (fun caller system -> UnixClock.gettimeofday caller system |> ignore<UnixTimestamp>)
             running
                 "UnixClock.clockGettime"
-                (fun caller system ->
-                    UnixClock.clockGettime caller 0 system
-                    |> ignore<Result<UnixTimestamp, UnixError>>
-                )
+                (fun caller system -> UnixClock.clockGettime caller 0 system |> ignore<ClockGettimeAnswer>)
             running
                 "UnixEntropy.getRandom"
                 (fun caller system -> UnixEntropy.getRandom caller UserBuffer.Mapped 8UL 0u system |> ignore)
@@ -743,7 +740,7 @@ module TestCallerChecks =
                 | DescriptorAnswer.Returned _, view -> UnixDescriptor.close leader listener view |> snd
                 | other -> failwith $"dup2 of the listener: %A{other}"
 
-            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
+            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped (Some 16u) 0 view with
             | AcceptOutcome.WouldBlock _, view -> view
             | other -> failwith $"the accept: expected it to sleep, got %A{other}"
 
@@ -829,15 +826,15 @@ module TestCallerChecks =
 
             let send (sender : Caller<int>) (target : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadKill sender target usr1 view with
-                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view)) -> view
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, view) -> view
                 | other -> failwith $"pthread_kill of %d{target}: %A{other}"
 
             let view =
                 match
                     UnixSignal.sigaction leader usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"sigaction: %O{error}"
+                | SigactionAnswer.Completed _, view -> view
+                | SigactionAnswer.Failed error, _ -> failwith $"sigaction: %O{error}"
 
             let view =
                 let usr1Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
@@ -849,8 +846,8 @@ module TestCallerChecks =
                         (Some usr1Mask)
                         view
                 with
-                | Ok (_, view) -> view
-                | Error error -> failwith $"pthread_sigmask: %O{error}"
+                | SignalMaskAnswer.Completed _, view -> view
+                | SignalMaskAnswer.Failed error, _ -> failwith $"pthread_sigmask: %O{error}"
 
             let view =
                 send leader interruptedDebtor view

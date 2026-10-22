@@ -111,6 +111,7 @@ module TestTransferCounts =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -560,7 +561,8 @@ module TestTransferCounts =
                 // The call answers EFAULT once the file's write has run.
                 | Ok (PWriteAdmission.Faults _) -> Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EFAULT))
                 | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
-                | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device)) ->
+                | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device _))
+                | Ok (PWriteAdmission.DeviceAnswered _) ->
                     failwith $"%A{case}: a regular file's pwrite came to a device's"
                 | Error (PWriteRefusal.Buffer refusal) -> Error refusal
                 | Error other ->
@@ -694,6 +696,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     mode
@@ -710,6 +713,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     registry
@@ -738,7 +742,7 @@ module TestTransferCounts =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     {
@@ -746,6 +750,7 @@ module TestTransferCounts =
                                         Kind = SocketKind.Stream
                                         Protocol = SocketProtocol.Tcp
                                         Phase = SocketPhase.Idle
+                                        Drained = false
                                         Uid = UserId.root
                                         ReuseAddress = false
                                         Options = SocketOptions.initial
@@ -767,6 +772,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -785,6 +791,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -852,6 +859,8 @@ module TestTransferCounts =
             match Lone.UnixReadWrite.tryAdmitPWrite fd buffer count 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
+            | Ok (PWriteAdmission.DeviceAnswered (WriteAnswer.Failed error, _, _)) -> Seen.Errno error
+            | Ok (PWriteAdmission.DeviceAnswered (WriteAnswer.Completed written, _, _)) -> Seen.Moved (int written)
             | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count
             | Ok (PWriteAdmission.Faults _) -> Seen.Errno UnixError.EFAULT
             | Error _ -> Seen.Refused
@@ -974,6 +983,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -1050,6 +1060,7 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)

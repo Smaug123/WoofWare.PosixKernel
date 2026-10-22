@@ -122,6 +122,7 @@ module BindingProbes =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 

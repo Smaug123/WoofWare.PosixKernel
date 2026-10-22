@@ -396,6 +396,7 @@ module TestAttributeChangeAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -764,6 +765,7 @@ module TestAttributeChangeAt =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 

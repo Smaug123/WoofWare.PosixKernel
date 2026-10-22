@@ -2,6 +2,30 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
+/// What an `accept(2)` that took a connection wrote of the connection's peer
+/// address.
+[<RequireQualifiedAccess ; NoComparison>]
+type PeerAddressCopy =
+    /// The kernel wrote `copiedOut` to the start of the caller's address buffer
+    /// and `reportedLength` to its length cell: the client's address as this
+    /// platform's socket address structure for the listener's family (so far
+    /// only ever a `struct sockaddr_in`: this kernel has no IPv6 listener), cut
+    /// to the length the caller declared and so possibly empty, and that
+    /// structure's untruncated size. As for `getsockname`, the declared length
+    /// bounds what is written and not what is reported: a call declaring 8
+    /// writes eight bytes and still reports 16.
+    ///
+    /// A `recvfrom(2)` writes its datagram's source so, but for Darwin's whose
+    /// copy of the source faulted, which writes nothing to the buffer and the
+    /// length the cell held back to the cell, and its writes of 0 to the
+    /// cell for a length of 0 or a receive of nothing.
+    | Written of copiedOut : ImmutableArray<byte> * reportedLength : int
+    /// The caller's address buffer was NULL, so the kernel wrote nothing: not
+    /// the buffer, and not the length cell either, which it never read. A
+    /// `recvfrom(2)` answers this too where it copies no source and writes
+    /// nothing to the cell: for a NULL source, or a NULL cell.
+    | NotRequested
+
 /// What became of an `accept(2)` this kernel could answer.
 [<RequireQualifiedAccess ; NoComparison>]
 type AcceptOutcome =
@@ -13,17 +37,9 @@ type AcceptOutcome =
     /// this rides with.
     | Failed of error : UnixError
     /// A connection was dequeued and a socket materialised onto it. `fd` is the
-    /// descriptor that socket is open on.
-    ///
-    /// The kernel wrote `copiedOut` to the start of the caller's address buffer
-    /// and `reportedLength` to its length cell: the client's address as this
-    /// platform's socket address structure for the listener's family (so far
-    /// only ever a `struct sockaddr_in`: this kernel has no IPv6 listener), cut
-    /// to the length the caller declared and so possibly empty, and that
-    /// structure's untruncated size. As for
-    /// `getsockname`, the declared length bounds what is written and not what
-    /// is reported: a call declaring 8 writes eight bytes and still reports 16.
-    | Accepted of fd : int * copiedOut : ImmutableArray<byte> * reportedLength : int
+    /// descriptor that socket is open on, and `address` what the kernel wrote
+    /// of the connection's peer address.
+    | Accepted of fd : int * address : PeerAddressCopy
     /// The call failed with this errno after it had taken the oldest connection
     /// off the accept queue, and the connection is gone: its server end is
     /// closed as `close` closes an accepted socket, so the client sees an
@@ -84,17 +100,14 @@ type internal AcceptRefusal =
     /// length in the caller's cell, answers EFAULT and loses the connection,
     /// while Darwin ignores the fault and succeeds; neither is an outcome this
     /// library can return, since neither a failure that writes the cell nor a
-    /// success whose address the caller must not write is one. A NULL
-    /// destination (`Unmapped 0UL`) is refused here too, although no kernel
-    /// faults on it: both skip the copy and the length cell, which this
-    /// library has no outcome for either.
+    /// success whose address the caller must not write is one.
     | UnmeasuredCopyOutFault of listener : SocketId
     /// The accept was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
     /// The accept would sleep on a listener a close has drained
-    /// (`ListenState.Drained`): its queue is empty and the description it was
-    /// made through blocking.
+    /// (`SocketDescription.Drained`): its queue is empty and the description it
+    /// was made through blocking.
     ///
     /// Darwin answers such a sleep with `ECONNABORTED` once anything wakes it,
     /// and a connection wakes one sleeper and stays queued, so a second sleeper
@@ -111,6 +124,13 @@ type internal AcceptRefusal =
     /// wakes a sleeping accept for as long as a connection is queued, so it
     /// would wake the other.
     | SignalBesideConsumedWake of listener : OpenFileDescriptionId
+    /// The call carries flags, which only Linux's `accept4` takes, and this
+    /// kernel is of another flavour.
+    | FlagsNotProvided of flavour : SimulatedUnixFlavour
+    /// The call supplied a declared length for a NULL destination
+    /// (`nullDestination`), which no kernel reads; or none for any other
+    /// destination, whose length cell a kernel reads.
+    | LengthContradictsDestination of nullDestination : bool
 
 [<RequireQualifiedAccess>]
 module internal AcceptRefusal =
@@ -126,12 +146,18 @@ module internal AcceptRefusal =
             $"the descriptor is socket %O{socket}, which is a %O{kind} socket, and what `accept(2)` answers for one is unmeasured. Measure it rather than guessing: SOCK_SEQPACKET does accept connections, so a guess of EOPNOTSUPP there would be a wrong answer rather than an approximate one."
         | AcceptRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | AcceptRefusal.UnmeasuredCopyOutFault listener ->
-            $"socket %O{listener} has a connection to hand over, so this call takes it off the queue and copies the peer address out -- but the destination is unmapped, so that copy faults. Measured, Linux stores the untruncated length in the caller's length cell, answers EFAULT and loses the connection, while Darwin ignores the fault and succeeds; this kernel's accept has no outcome for either. (A NULL destination is not copied to at all, and neither is the length cell; that has no outcome here either.)"
+            $"socket %O{listener} has a connection to hand over, so this call takes it off the queue and copies the peer address out -- but the destination is unmapped, so that copy faults. Measured, Linux stores the untruncated length in the caller's length cell, answers EFAULT and loses the connection, while Darwin ignores the fault and succeeds; this kernel's accept has no outcome for either."
         | AcceptRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
         | AcceptRefusal.SignalBesideConsumedWake listener ->
             $"an accept woken by a connection on the listener open file description %O{listener} names has a signal with a handler deliverable to its thread, and another thread is asleep in an accept on the same listener. Measured on Darwin (docs/probes/first-wake), the woken accept fails with EINTR and the connection stays queued without waking the other accepter. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake the other."
         | AcceptRefusal.DarwinDrainedListener listener ->
             $"socket %O{listener} is a listener on which a close of the descriptor an accept was asleep through has ended every accept, and this accept would sleep on it. Measured on Darwin (close-ends-call.c section A7), such a sleep answers ECONNABORTED as soon as anything wakes it, a connection or a signal, and one connection wakes one such sleeper, the connection staying queued, so a second sleeper sleeps on through it. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake every such sleeper for one connection."
+        | AcceptRefusal.FlagsNotProvided flavour ->
+            $"the call carries flags, and this kernel is %O{flavour}-flavoured; only Linux has accept4, so no program could have made the call."
+        | AcceptRefusal.LengthContradictsDestination true ->
+            "the destination is NULL, which neither flavour reads the length cell for, yet the call supplies the length the cell holds. Pass no length."
+        | AcceptRefusal.LengthContradictsDestination false ->
+            "the destination is not NULL, so the kernel reads the caller's length cell, yet the call supplies no length. Pass the 32-bit word the cell holds."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : AcceptRefusal) : RefusalKind =
@@ -144,6 +170,57 @@ module internal AcceptRefusal =
         | AcceptRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | AcceptRefusal.DarwinDrainedListener _ -> RefusalKind.Unmodelled
         | AcceptRefusal.SignalBesideConsumedWake _ -> RefusalKind.Unmodelled
+        | AcceptRefusal.FlagsNotProvided _ -> RefusalKind.NotOnPlatform
+        | AcceptRefusal.LengthContradictsDestination _ -> RefusalKind.Contradictory "declaredLength"
+
+/// What an `accept4` flag word asks of the socket the call makes.
+type internal AcceptFlags =
+    {
+        /// `SOCK_NONBLOCK`: the new socket's open file description is
+        /// non-blocking.
+        AsksNonBlocking : bool
+        /// `SOCK_CLOEXEC`: the new descriptor has `FD_CLOEXEC`.
+        AsksCloseOnExec : bool
+    }
+
+[<RequireQualifiedAccess>]
+module internal AcceptFlags =
+    /// Linux's `accept4` flag word `flags`, or `None` if it carries a bit other
+    /// than `SOCK_NONBLOCK` and `SOCK_CLOEXEC`.
+    let ofLinux (flags : int) : AcceptFlags option =
+        if
+            flags
+            &&& ~~~(OpenFlagNumbering.LinuxNonBlock ||| OpenFlagNumbering.LinuxCloseOnExec)
+            <> 0
+        then
+            None
+        else
+            Some
+                {
+                    AsksNonBlocking = flags &&& OpenFlagNumbering.LinuxNonBlock <> 0
+                    AsksCloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
+                }
+
+/// Where an `accept` copies the peer address out to, as its two pointers say.
+[<RequireQualifiedAccess>]
+type internal AcceptDestination =
+    /// The address pointer is NULL. Neither flavour copies an address or reads
+    /// or writes the length cell then.
+    | Null
+    /// Any other address pointer, never NULL, and the 32-bit word the caller's
+    /// length cell holds.
+    | Buffer of destination : UserBuffer * declaredLength : uint32
+
+[<RequireQualifiedAccess>]
+module internal AcceptDestination =
+    /// The destination a call names by `destination` and `declaredLength`,
+    /// which is `None` exactly when `destination` is NULL.
+    let parse (destination : UserBuffer) (declaredLength : uint32 option) : Result<AcceptDestination, AcceptRefusal> =
+        match destination, declaredLength with
+        | UserBuffer.Unmapped 0UL, None -> Ok AcceptDestination.Null
+        | UserBuffer.Unmapped 0UL, Some _ -> Error (AcceptRefusal.LengthContradictsDestination true)
+        | _, Some declaredLength -> Ok (AcceptDestination.Buffer (destination, declaredLength))
+        | _, None -> Error (AcceptRefusal.LengthContradictsDestination false)
 
 /// What `shutdown(2)` answered.
 [<RequireQualifiedAccess>]
@@ -521,7 +598,7 @@ module UnixConnection =
                 Machine =
                     { system.Machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { sock with
                                     Phase = phase
@@ -867,7 +944,7 @@ module UnixConnection =
             else
 
             let listeners =
-                system.Machine.Sockets
+                SocketTable.all system.Machine.Sockets
                 |> Map.toList
                 |> List.choose (fun (otherId, other) ->
                     match other.Phase with
@@ -1010,14 +1087,14 @@ module UnixConnection =
                             { system.Machine with
                                 Sockets =
                                     system.Machine.Sockets
-                                    |> Map.add
+                                    |> SocketTable.set
                                         socketId
                                         { sock with
                                             Addressing =
                                                 SocketAddressing.replaceBinding (Some clientBinding) sock.Addressing
                                             Phase = clientPhase
                                         }
-                                    |> Map.add
+                                    |> SocketTable.set
                                         listenerId
                                         { listenerSocket with
                                             Phase =
@@ -1120,7 +1197,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1152,7 +1229,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1186,7 +1263,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1277,7 +1354,7 @@ module UnixConnection =
                             Machine =
                                 { system.Machine with
                                     Sockets =
-                                        Map.add
+                                        SocketTable.set
                                             socketId
                                             { sock with
                                                 Addressing =
@@ -1434,7 +1511,7 @@ module UnixConnection =
                                     Machine =
                                         { machine with
                                             Sockets =
-                                                Map.add
+                                                SocketTable.set
                                                     socketId
                                                     { sock with
                                                         Addressing =
@@ -1497,7 +1574,7 @@ module UnixConnection =
                         Machine =
                             { system.Machine with
                                 Sockets =
-                                    Map.add
+                                    SocketTable.set
                                         socketId
                                         { sock with
                                             Addressing =
@@ -1572,7 +1649,7 @@ module UnixConnection =
                                 Machine =
                                     { system.Machine with
                                         Sockets =
-                                            Map.add
+                                            SocketTable.set
                                                 socketId
                                                 { sock with
                                                     Addressing =
@@ -1652,7 +1729,7 @@ module UnixConnection =
                                     Machine =
                                         { machine with
                                             Sockets =
-                                                Map.add
+                                                SocketTable.set
                                                     socketId
                                                     { sock with
                                                         Addressing =
@@ -1730,7 +1807,7 @@ module UnixConnection =
             // resolved afresh, and how it refuses that is unmeasured.
             let duplicate =
                 flavour = SimulatedUnixFlavour.Darwin
-                && system.Machine.Sockets
+                && SocketTable.all system.Machine.Sockets
                    |> Map.exists (fun otherId other ->
                        otherId <> socketId
                        && other.Kind = SocketKind.Datagram
@@ -1747,7 +1824,7 @@ module UnixConnection =
                     Machine =
                         { system.Machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { sock with
                                         Addressing = SocketAddressing.replaceBinding (Some binding) sock.Addressing
@@ -1757,7 +1834,23 @@ module UnixConnection =
                         }
                 }
 
-            completed system
+            // Measured (`udp-error.c` Y1 and Y7, and `udp-transfer.c` L7, in
+            // docs/plans/2026-10-18-udp-data-path): a Darwin connect that
+            // connects the socket answers its pending error, and takes it,
+            // the socket connected all the same; one that fails leaves the
+            // error pending, as every Linux connect does.
+            match flavour with
+            | SimulatedUnixFlavour.Darwin when SocketTable.receivesDatagrams sock ->
+                match DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine) with
+                | Some error, after ->
+                    failed
+                        error
+                        { system with
+                            Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
+                        }
+                | None, _ -> completed system
+            | SimulatedUnixFlavour.Darwin
+            | SimulatedUnixFlavour.Linux -> completed system
 
     /// What `connectDecoded` reads of `copied`, the bytes a connect on
     /// `socket` copied in, declared `declaredLength` long.
@@ -2143,6 +2236,7 @@ module UnixConnection =
                     ReuseAddress = queued.ReuseAddress
                     Options = queued.Options
                     Phase = SocketPhase.Established (connectionId, ConnectionEnd.Server)
+                    Drained = false
                     // Measured by `docs/probes/socket-creator-uid` (ACCEPT
                     // rows), with the listener made under one uid and the
                     // accept made under another: Darwin's accepted socket
@@ -2161,8 +2255,8 @@ module UnixConnection =
                     { system.Machine with
                         Sockets =
                             system.Machine.Sockets
-                            |> Map.add acceptedId accepted
-                            |> Map.add
+                            |> SocketTable.set acceptedId accepted
+                            |> SocketTable.set
                                 socketId
                                 { listener with
                                     Phase =
@@ -2211,7 +2305,7 @@ module UnixConnection =
         let connectionId = queued.Connection
 
         let sockets =
-            Map.add
+            SocketTable.set
                 socketId
                 { listener with
                     Phase = SocketPhase.Listening listenState
@@ -2223,7 +2317,7 @@ module UnixConnection =
         // once, and only this one held it. Closing the server end leaves the
         // client half-closed, and the connection lives while the client does.
         let clients =
-            sockets
+            SocketTable.all sockets
             |> Map.toList
             |> List.choose (fun (survivorId, survivor) ->
                 match survivor.Phase with
@@ -2283,12 +2377,13 @@ module UnixConnection =
     /// `nonBlocking` is the listening description's `O_NONBLOCK` as the
     /// connection is handed over, which is what Darwin's accepted socket
     /// inherits (measured, `blocking-accept.c` section F: a flag set while the
-    /// call slept was inherited).
+    /// call slept was inherited). `flags` is what the call's Linux `accept4`
+    /// flags asked of the new socket, which it has from the moment it exists.
     let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
-        (destination : UserBuffer)
-        (declaredLength : uint32)
+        (flags : AcceptFlags)
+        (destination : AcceptDestination)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
@@ -2307,30 +2402,71 @@ module UnixConnection =
         | Error refusal -> Error (AcceptRefusal.DescriptorLimit refusal)
         | Ok () ->
 
-        let reportedLength = SimulatedUnixPlatform.internetSocketAddressSize
+        // Take the connection, and write of its client's address what
+        // `address` says.
+        let take
+            (address : Ipv4Endpoint -> PeerAddressCopy)
+            : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+            =
+            let acceptedFd, connection, system = acceptConnection socketId system
+
+            // `O_NONBLOCK` inheritance is the flavour's answer rather than this
+            // kernel's convenience: Darwin's `accept(2)` copies the listening
+            // description's flag onto the accepted socket and Linux's does not
+            // (measured; see `acceptedSocketInheritsNonBlocking`). It is inherited
+            // from the description the call was made through, so a `dup` of a
+            // non-blocking listener passes the flag on too. Linux's comes from
+            // `SOCK_NONBLOCK` alone (measured, `docs/probes/accept4-flags`,
+            // section C).
+            let inherited =
+                nonBlocking
+                && SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking system.Machine.UnixPlatform
+
+            let registry = UnixSystemState.fileDescriptors system
+
+            let registry =
+                if inherited || flags.AsksNonBlocking then
+                    FileDescriptorRegistry.setNonBlocking acceptedFd true registry
+                else
+                    registry
+
+            let registry =
+                if flags.AsksCloseOnExec then
+                    FileDescriptorRegistry.setFlags
+                        acceptedFd
+                        (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) true)
+                        registry
+                else
+                    registry
+
+            let system = UnixSystemState.withFileDescriptors registry system
+
+            Ok (AcceptOutcome.Accepted (acceptedFd, address connection.ClientAddress), system)
+
+        match destination with
+        | AcceptDestination.Null ->
+            // Measured on both flavours (`socket-address-length.c`, the
+            // `O4 accept NULL` rows): the call takes the connection at every
+            // declared length, the negative ones included on Linux, and leaves
+            // the length cell as it was. Neither kernel reads the cell.
+            take (fun _ -> PeerAddressCopy.NotRequested)
+        | AcceptDestination.Buffer (UserBuffer.Addressless, _) ->
+            // Whether the kernel reads the length cell, and whether it writes
+            // anything at all, turns on whether the address is NULL, which a
+            // client with no number for it cannot say.
+            Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen)
+        | AcceptDestination.Buffer (buffer, declaredLength) ->
 
         // Measured (`socket-address-length.c`): Linux reads the length cell as
         // an `int` only once it holds the connection, and answers EINVAL for a
         // negative one without touching the destination -- so the connection
-        // is lost. Unless the destination is NULL, when it reads no length at
-        // all; that is refused below, as for any other length.
-        let linuxNegative =
+        // is lost.
+        if
             SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
             && int declaredLength < 0
-
-        let dropped () : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal> =
+        then
             Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, dropConnection socketId system)
-
-        match linuxNegative, destination with
-        | true, UserBuffer.Addressless ->
-            // Whether the kernel reads the length at all turns on whether the
-            // address is NULL, which a client with no number for it cannot say.
-            Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen)
-        | true, UserBuffer.Mapped
-        | true, UserBuffer.Opaque -> dropped ()
-        | true, UserBuffer.Unmapped address when address <> 0UL -> dropped ()
-        | true, UserBuffer.Unmapped _
-        | false, _ ->
+        else
 
         // The destination is screened after the queue and before the dequeue,
         // which is the only place it can go: there is nothing to copy out until
@@ -2340,52 +2476,46 @@ module UnixConnection =
             if declaredLength = 0u then
                 None
             else
-                match destination with
+                match buffer with
                 | UserBuffer.Mapped -> None
                 | UserBuffer.Opaque -> Some (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
-                | UserBuffer.Addressless -> Some (AcceptRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
                 | UserBuffer.Unmapped _ -> Some (AcceptRefusal.UnmeasuredCopyOutFault socketId)
+                | UserBuffer.Addressless ->
+                    failwith
+                        "UnixConnection.accept: an addressless destination reached the copy-out, but it is refused before the length is read (this is a bug in this library)."
 
         match destinationRefusal with
         | Some refusal -> Error refusal
         | None ->
 
-        let acceptedFd, connection, system = acceptConnection socketId system
-
-        // `O_NONBLOCK` inheritance is the flavour's answer rather than this
-        // kernel's convenience: Darwin's `accept(2)` copies the listening
-        // description's flag onto the accepted socket and Linux's does not
-        // (measured; see `acceptedSocketInheritsNonBlocking`). It is inherited
-        // from the description the call was made through, so a `dup` of a
-        // non-blocking listener passes the flag on too.
-        let system =
-            if
-                nonBlocking
-                && SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking system.Machine.UnixPlatform
-            then
-                UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setNonBlocking acceptedFd true (UnixSystemState.fileDescriptors system))
-                    system
-            else
-                system
-
-        let copiedOut =
-            SimulatedUnixPlatform.copyOutInternetSockaddr
-                system.Machine.UnixPlatform
-                connection.ClientAddress
-                declaredLength
-
-        Ok (AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), system)
+        take (fun clientAddress ->
+            PeerAddressCopy.Written (
+                SimulatedUnixPlatform.copyOutInternetSockaddr system.Machine.UnixPlatform clientAddress declaredLength,
+                SimulatedUnixPlatform.internetSocketAddressSize
+            )
+        )
 
     /// `tryAccept` once `Entry` has admitted its caller.
     let private tryAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32)
+        (declaredLength : uint32 option)
+        (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
+        match AcceptDestination.parse destination declaredLength with
+        | Error refusal -> Error refusal
+        | Ok parsedDestination ->
+
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        match flavour with
+        | SimulatedUnixFlavour.Darwin when flags <> 0 -> Error (AcceptRefusal.FlagsNotProvided flavour)
+        | SimulatedUnixFlavour.Darwin
+        | SimulatedUnixFlavour.Linux ->
+
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
         // descriptor answers EBADF and a non-socket ENOTSOCK whatever the
@@ -2393,6 +2523,13 @@ module UnixConnection =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (AcceptOutcome.Failed UnixError.EBADF, system)
         | Some (descriptionId, description) ->
+
+        // Measured (`docs/probes/accept4-flags`, sections A and B): an unknown
+        // flag is EINVAL right after EBADF, ahead of every other answer, the
+        // descriptor limit's included, and leaves the queue alone.
+        match AcceptFlags.ofLinux flags with
+        | None -> Ok (AcceptOutcome.Failed UnixError.EINVAL, system)
+        | Some acceptFlags ->
 
         // Measured (`fcntl-dup.c`, LIMIT rows): Linux takes the new descriptor
         // right after EBADF, so with none left below the limit even a file's
@@ -2466,26 +2603,32 @@ module UnixConnection =
             // too.
             if description.NonBlocking then
                 Ok (AcceptOutcome.Failed UnixError.EAGAIN, system)
-            elif listenState.Drained then
+            elif socket.Drained then
                 Error (AcceptRefusal.DarwinDrainedListener socketId)
             else
+                // Measured (`docs/probes/accept4-flags`, section D):
+                // `SOCK_NONBLOCK` is the new socket's, so the call sleeps, and
+                // the socket it hands over on waking has the flags.
                 let parked =
                     ParkedSyscall.Accept
                         {
                             Listener = SleepTarget.Waiting (descriptionId, fd)
                             Destination = destination
                             DeclaredLength = declaredLength
+                            NewSocketNonBlocking = acceptFlags.AsksNonBlocking
+                            NewSocketCloseOnExec = acceptFlags.AsksCloseOnExec
                         }
 
                 Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
-        | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
+        | _ :: _ -> handOver socketId description.NonBlocking acceptFlags parsedDestination system
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32)
+        (declaredLength : uint32 option)
+        (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
@@ -2494,7 +2637,7 @@ module UnixConnection =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryAcceptIn (Caller.thread caller) fd destination declaredLength)
+            (tryAcceptIn (Caller.thread caller) fd destination declaredLength flags)
             system
 
     /// `accept(2)`, made by `caller`: take the oldest completed connection off
@@ -2513,8 +2656,19 @@ module UnixConnection =
     /// off the queue, which loses it (`AcceptOutcome.DroppedConnection`).
     /// Darwin reads it as the `socklen_t` it is, so no length is an error there.
     ///
-    /// A call that writes nothing never looks at `destination`: at a declared
-    /// length of zero every buffer succeeds, including one naming no storage.
+    /// A NULL `destination` (`UserBuffer.Unmapped 0UL`) takes no length, and
+    /// `declaredLength` is then `None`; for any other destination it is `Some`,
+    /// and a call that breaks either rule throws `ArgumentException`. Neither
+    /// flavour reads or writes the length cell through a NULL destination, so
+    /// such a call takes the connection and writes nothing
+    /// (`PeerAddressCopy.NotRequested`), whatever the cell holds; a cell that is
+    /// itself NULL, as in `accept(fd, NULL, NULL)`, is never dereferenced.
+    ///
+    /// A call that writes nothing through a destination other than NULL never
+    /// looks at it: at a declared length of zero every such buffer succeeds,
+    /// including one naming no storage. A `UserBuffer.Addressless` one is the
+    /// exception, refused once a connection is there to take, since whether the
+    /// kernel writes the length cell turns on whether it is NULL.
     ///
     /// Every `AcceptOutcome.Failed` leaves the listener exactly as it was, the
     /// queue included.
@@ -2530,7 +2684,7 @@ module UnixConnection =
     /// Under Darwin, a close of the descriptor a sleeping accept was made
     /// through ends every accept asleep on the listener, through that
     /// descriptor or another, and leaves the listener drained
-    /// (`ListenState.Drained`); see `UnixDescriptor.close`. A later accept on
+    /// (`SocketDescription.Drained`); see `UnixDescriptor.close`. A later accept on
     /// it that finds a connection queued takes it, and a non-blocking one that
     /// finds none answers `EAGAIN`; one that would sleep is refused.
     ///
@@ -2539,16 +2693,25 @@ module UnixConnection =
     /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client whose
     /// own sockets want one answer on every platform clears it itself.
     ///
+    /// `flags` is Linux's `accept4(2)` flag word, and 0 is `accept(2)`. Its
+    /// `SOCK_NONBLOCK` makes the new socket non-blocking and its `SOCK_CLOEXEC`
+    /// gives the new descriptor `FD_CLOEXEC`, from the moment the call makes
+    /// them, a call that slept included; neither changes whether the call
+    /// itself sleeps. Any other bit is `EINVAL`, after `EBADF` and ahead of
+    /// every other answer. Darwin has no `accept4`, so there a `flags` other
+    /// than 0 throws `PlatformNotSupportedException`.
+    ///
     /// The caller's thread must not already be parked.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32)
+        (declaredLength : uint32 option)
+        (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryAccept caller fd destination declaredLength system
+        tryAccept caller fd destination declaredLength flags system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
     /// Whether a thread of any process on the machine but `thread` of this one
@@ -2629,10 +2792,10 @@ module UnixConnection =
 
         let finished = (UnixParkState.unpark thread system)
 
-        match (UnixMachineState.socket socketId system.Machine).Phase with
-        | SocketPhase.Listening {
-                                    Drained = true
-                                } ->
+        let socket = UnixMachineState.socket socketId system.Machine
+
+        match socket.Phase with
+        | SocketPhase.Listening _ when socket.Drained ->
             failwith
                 $"UnixConnection.finishAccept: thread %O{thread}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
         | SocketPhase.Listening {
@@ -2644,7 +2807,15 @@ module UnixConnection =
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
             | Ok SyscallInterruption.Completion.Completes ->
-                handOver socketId description.NonBlocking parked.Destination parked.DeclaredLength finished
+                let flags =
+                    {
+                        AsksNonBlocking = parked.NewSocketNonBlocking
+                        AsksCloseOnExec = parked.NewSocketCloseOnExec
+                    }
+
+                match AcceptDestination.parse parked.Destination parked.DeclaredLength with
+                | Error refusal -> Error refusal
+                | Ok destination -> handOver socketId description.NonBlocking flags destination finished
             | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
                 // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the
                 // two-sleeper accept rows): an accepter woken by a connection
@@ -2851,7 +3022,7 @@ module UnixConnection =
                           transfer
                           system.Machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Phase = phase

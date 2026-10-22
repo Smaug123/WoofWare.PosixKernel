@@ -253,6 +253,7 @@ module TestUnblockForAnotherThread =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -262,6 +263,7 @@ module TestUnblockForAnotherThread =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -361,7 +363,7 @@ module TestUnblockForAnotherThread =
                 system
             |> parkedOrNot "the poll"
         | Sleep.Accept ->
-            UnixConnection.tryAccept (Callers.thread thread system) world.Listener UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread thread system) world.Listener UserBuffer.Mapped (Some 16u) 0 system
             |> parkedOrNot "the accept"
         | Sleep.Flock ->
             UnixDescriptor.tryFlock (Callers.thread thread system) world.WaitingThrough 2 system
@@ -406,10 +408,19 @@ module TestUnblockForAnotherThread =
             UnixSignal.tryPause (Callers.thread thread system) system
             |> parkedOrNot "the pause"
 
-    let private orFail (what : string) (result : Result<'a * UnixSystem<int, string>, 'e>) : UnixSystem<int, string> =
-        match result with
-        | Ok (_, system) -> system
-        | Error e -> failwith $"%s{what}: %A{e}"
+    let private sigactionOrFail (answer : SigactionAnswer<string> * UnixSystem<int, string>) : UnixSystem<int, string> =
+        match answer with
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed e, _ -> failwith $"sigaction: %A{e}"
+
+    let private maskOrFail
+        (what : string)
+        (answer : SignalMaskAnswer * UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match answer with
+        | SignalMaskAnswer.Completed _, system -> system
+        | SignalMaskAnswer.Failed e, _ -> failwith $"%s{what}: %A{e}"
 
     /// `system` with the case's signal generated, failing the test if the
     /// generation did anything but leave the process running.
@@ -430,7 +441,7 @@ module TestUnblockForAnotherThread =
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
 
         match outcome with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
         | other -> failwith $"%A{case}: generating the signal answered %A{other}"
 
     /// What the unblocker's call answered.
@@ -443,10 +454,10 @@ module TestUnblockForAnotherThread =
         let numbering = HostPlatform.signalNumberingOf case.Flavour
         let s = SignalMask.ofSignals numbering (Set.singleton (signalOf case.Disposition))
 
-        let answered (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : Unblocked =
-            match result with
-            | Ok (_, system) -> Unblocked.Answered system
-            | Error errno -> failwith $"%A{case}: the mask call failed with %O{errno}"
+        let answered (answer : SignalMaskAnswer * UnixSystem<int, string>) : Unblocked =
+            match answer with
+            | SignalMaskAnswer.Completed _, system -> Unblocked.Answered system
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"%A{case}: the mask call failed with %O{errno}"
 
         match case.Route with
         | Route.PthreadSigmaskUnblock ->
@@ -496,13 +507,13 @@ module TestUnblockForAnotherThread =
                     (signo case.Flavour signal)
                     (Some disposition)
                     world.System
-                |> orFail "sigaction"
+                |> sigactionOrFail
 
         let system =
             (system, threads)
             ||> List.fold (fun system thread ->
                 UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.setMask numbering) (Some s) system
-                |> orFail "pthread_sigmask"
+                |> maskOrFail "pthread_sigmask"
             )
 
         if case.GeneratedBeforeSleep then

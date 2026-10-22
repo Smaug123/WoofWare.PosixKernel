@@ -88,6 +88,7 @@ module TestDeviceDescriptorsAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -196,7 +197,8 @@ module TestDeviceDescriptorsAgainstHost =
                     $"pwrite 16@%d{offset}",
                     hostAnswer (int64 (hostPWrite (host, Array.zeroCreate 16, 16un, offset))),
                     (match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 16UL offset system with
-                     | Ok (PWriteAdmission.Answered answer) -> ofWrite answer
+                     | Ok (PWriteAdmission.Answered answer)
+                     | Ok (PWriteAdmission.DeviceAnswered (answer, _, _)) -> ofWrite answer
                      | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                      | Ok (PWriteAdmission.Transfer (count, into)) ->
                          match
@@ -234,8 +236,8 @@ module TestDeviceDescriptorsAgainstHost =
                 "FIONREAD",
                 hostFionread host,
                 (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
-                 | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
-                 | Ok (BytesAvailableAnswer.Failed error) -> Error error
+                 | Ok (BytesAvailableAnswer.Reported count, _) -> Ok (int64 count)
+                 | Ok (BytesAvailableAnswer.Failed error, _) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",

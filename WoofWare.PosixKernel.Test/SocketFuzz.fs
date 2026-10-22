@@ -340,7 +340,7 @@ module SocketFuzz =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { sock with
                                         Addressing =
@@ -358,7 +358,6 @@ module SocketFuzz =
                                                 {
                                                     Backlog = 8
                                                     Queue = []
-                                                    Drained = false
                                                 }
                                     }
                                     machine.Sockets

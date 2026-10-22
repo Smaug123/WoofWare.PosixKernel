@@ -12,8 +12,14 @@ open WoofWare.PosixKernel
 /// and a record of the epoll instances registering each description and of the
 /// kqueues registering through each descriptor of each process, which
 /// `OpenFileTable.epollsRegistering` and
-/// `OpenFileTable.kqueuesRegisteringThrough` read. Over random walks of the
-/// table's own changes, each answers what a scan of every description answers.
+/// `OpenFileTable.kqueuesRegisteringThrough` read; and a record of the
+/// descriptions of each socket and pipe end and of the kqueues registering
+/// each socket, which `OpenFileTable.descriptionsNamingSocket`,
+/// `OpenFileTable.descriptionsNamingPipeEnd` and
+/// `OpenFileTable.kqueuesOnSocket` read, and through which
+/// `OpenFileTable.signalEpollInstances` finds what a wake signals. Over random
+/// walks of the table's own changes, each answers what a scan of every
+/// description answers.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestOpenFileIndex =
@@ -137,6 +143,16 @@ module TestOpenFileIndex =
             )
         )
 
+    /// The sockets a walk opens, and one it never does.
+    let private sockets : SocketId list = [ SocketId 0L ; SocketId 1L ; SocketId 9L ]
+
+    /// The live descriptions of `target`, by a scan of every description.
+    let private namingByScan (target : OpenFileTarget) (table : OpenFileTable) : Set<OpenFileDescriptionId> =
+        OpenFileTable.toSeq table
+        |> Seq.filter (fun (_, description) -> description.Target = target)
+        |> Seq.map fst
+        |> Set.ofSeq
+
     /// Every question the indexes answer about `table`, answered by them and
     /// by a scan, which must agree.
     let private agree (table : OpenFileTable) : unit =
@@ -147,6 +163,13 @@ module TestOpenFileIndex =
                     |> Seq.exists (fun (_, description) -> description.Target = OpenFileTarget.Pipe (pipe, pipeEnd))
 
                 OpenFileTable.describesPipeEnd pipe pipeEnd table |> shouldEqual scanned
+
+                OpenFileTable.descriptionsNamingPipeEnd pipe pipeEnd table
+                |> shouldEqual (namingByScan (OpenFileTarget.Pipe (pipe, pipeEnd)) table)
+
+        for socket in sockets do
+            OpenFileTable.descriptionsNamingSocket socket table
+            |> shouldEqual (namingByScan (OpenFileTarget.Socket socket) table)
 
         // A requester need not be live: one that has gone, or never was, asks
         // too.
@@ -211,6 +234,21 @@ module TestOpenFileIndex =
         )
         |> List.ofSeq
 
+    /// What a walk's epoll registrations ask for: some of what wakes carry,
+    /// and a one-shot registration that has reported, which no wake queues.
+    let private epollMasks : uint32 list =
+        [
+            EpollEvents.In
+            EpollEvents.Out
+            EpollEvents.In ||| EpollEvents.Out
+            EpollEvents.OneShot
+        ]
+
+    /// The keys a walk's wakes carry: none, as a connect completing carries,
+    /// and two that some registrations ask for and others do not.
+    let private wakeKeys : uint32 option list =
+        [ None ; Some EpollEvents.In ; Some EpollEvents.Out ]
+
     /// One of the table's own changes, at random, to `table`, weighted
     /// towards making epoll instances and kqueues and changing what they
     /// register.
@@ -254,9 +292,9 @@ module TestOpenFileIndex =
                 else
                     let registration : EpollRegistration =
                         {
-                            Events = EpollEvents.In
+                            Events = pick epollMasks
                             Data = 0UL
-                            RegisteredAt = 0L
+                            RegisteredAt = int64 (rng.Next 1000)
                         }
 
                     let added = OpenFileTable.addEpollRegistration epoll key registration table
@@ -274,7 +312,10 @@ module TestOpenFileIndex =
                 let kqueue, state = pick kqueues
                 let key = pick fds, pick [ KqueueFilter.Read ; KqueueFilter.Write ]
 
-                if Map.containsKey key state.Registrations then
+                // A registration already there is deleted, or, as `EV_ADD`
+                // of it again does, replaced; here, however unsoundly, by one
+                // attached to another socket now and then.
+                if Map.containsKey key state.Registrations && rng.Next 2 = 0 then
                     OpenFileTable.unregisterFromKqueue kqueue key table
                 else
                     let registration : KqueueRegistration =
@@ -282,13 +323,13 @@ module TestOpenFileIndex =
                             Clear = false
                             Receipt = false
                             UserData = 0UL
-                            RegisteredAt = 0L
-                            Socket = SocketId 0L
+                            RegisteredAt = int64 (rng.Next 1000)
+                            Socket = pick sockets
                         }
 
                     let added = OpenFileTable.registerInKqueue kqueue key registration table
 
-                    if rng.Next 2 = 0 then
+                    if rng.Next 2 = 0 || List.contains key state.Active then
                         added
                     else
                         match OpenFileTable.tryFind kqueue added with
@@ -325,8 +366,8 @@ module TestOpenFileIndex =
                                 Clear = false
                                 Receipt = false
                                 UserData = 0UL
-                                RegisteredAt = 0L
-                                Socket = SocketId 0L
+                                RegisteredAt = int64 (rng.Next 1000)
+                                Socket = pick sockets
                             }
 
                         { state with
@@ -368,9 +409,10 @@ module TestOpenFileIndex =
                     )
                     table
         | 7 ->
-            // A change that rewrites every epoll instance's ready list and
-            // nothing it registers.
-            OpenFileTable.signalEpollInstances (Set.ofList (live table)) None table
+            // A change that rewrites some epoll instances' ready lists and
+            // nothing they register.
+            let naming = live table |> List.filter (fun _ -> rng.Next 2 = 0) |> Set.ofList
+            OpenFileTable.signalEpollInstances naming (pick wakeKeys) table
         | 8 ->
             // A close, which drops every registration made through the
             // descriptor in a kqueue of the closing process's.
@@ -431,10 +473,82 @@ module TestOpenFileIndex =
                 table
         )
 
+    /// What `OpenFileTable.signalEpollInstances` must make of `table`, by a
+    /// scan of every epoll instance's every registration: each registration
+    /// of a description in `naming` that is armed, not pending already, and
+    /// asks for something `wakeKey` carries (or any, with no key) is appended
+    /// to its instance's ready list, newest-registered first.
+    let private signalledByScan
+        (naming : Set<OpenFileDescriptionId>)
+        (wakeKey : uint32 option)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        (table, epolls table)
+        ||> List.fold (fun table (epoll, state) ->
+            let entering =
+                state.Registrations
+                |> Map.toList
+                |> List.filter (fun ((_, target as key), registration) ->
+                    Set.contains target naming
+                    && EpollRegistration.isArmed registration
+                    && not (List.contains key state.Ready)
+                    && (
+                        match wakeKey with
+                        | None -> true
+                        | Some wake -> wake &&& registration.Events <> 0u
+                    )
+                )
+                |> List.sortByDescending (fun (_, registration) -> registration.RegisteredAt)
+                |> List.map fst
+
+            match entering with
+            | [] -> table
+            | entering ->
+                OpenFileTable.mapDescription
+                    "TestOpenFileIndex"
+                    epoll
+                    (fun description ->
+                        { description with
+                            Target =
+                                OpenFileTarget.Epoll
+                                    { state with
+                                        Ready = state.Ready @ entering
+                                    }
+                        }
+                    )
+                    table
+        )
+
     /// Every question the epoll and kqueue indexes answer about `table`,
     /// answered by them and by a scan, which must agree; and what the table
     /// says of its own indexes and of the epoll instances' registrations.
     let private registrationsAgree (table : OpenFileTable) : unit =
+        for socket in sockets do
+            let scanned =
+                kqueues table
+                |> List.choose (fun (kqueue, state) ->
+                    let keys =
+                        state.Registrations
+                        |> Map.filter (fun _ registration -> registration.Socket = socket)
+                        |> Map.keys
+                        |> Set.ofSeq
+
+                    if Set.isEmpty keys then None else Some (kqueue, keys)
+                )
+
+            OpenFileTable.kqueuesOnSocket socket table |> shouldEqual scanned
+
+        // Each description woken alone, every one at once, and none, with
+        // each key a wake carries.
+        let namings =
+            Set.empty :: Set.ofList (live table) :: (live table |> List.map Set.singleton)
+
+        for naming in namings do
+            for wakeKey in wakeKeys do
+                OpenFileTable.descriptions (OpenFileTable.signalEpollInstances naming wakeKey table)
+                |> shouldEqual (OpenFileTable.descriptions (signalledByScan naming wakeKey table))
+
         for target in OpenFileDescriptionId 1000L :: live table do
             let scanned =
                 epolls table

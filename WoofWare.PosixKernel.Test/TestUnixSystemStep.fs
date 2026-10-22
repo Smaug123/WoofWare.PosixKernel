@@ -84,6 +84,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -118,6 +119,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 accessMode
@@ -297,6 +299,7 @@ module TestUnixSystemStep =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
             Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
@@ -316,7 +319,7 @@ module TestUnixSystemStep =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.ofList [ socketZero, socketDescription ]
+                    Sockets = ForgedSocket.table [ socketZero, socketDescription ]
                 }
             )
             system
@@ -337,7 +340,7 @@ module TestUnixSystemStep =
             (fun machine ->
                 { machine with
                     Sockets =
-                        Map.ofList
+                        ForgedSocket.table
                             [
                                 socketZero,
                                 { socketDescription with
@@ -425,7 +428,6 @@ module TestUnixSystemStep =
                     {
                         ListenState.Backlog = 4
                         ListenState.Queue = []
-                        ListenState.Drained = false
                     }
                 SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client)
                 SocketPhase.EstablishedPendingReport (ConnectionId 0L)
@@ -447,7 +449,7 @@ module TestUnixSystemStep =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with
@@ -689,6 +691,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = refused
+                Drained = false
                 Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
@@ -704,7 +707,7 @@ module TestUnixSystemStep =
             Kernel.mapMachine
                 (fun machine ->
                     { machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
                 )
                 linux
@@ -731,7 +734,7 @@ module TestUnixSystemStep =
                 (fun machine ->
                     { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     { socket with
@@ -798,6 +801,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = SocketPhase.Idle
+                Drained = false
                 Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
@@ -814,7 +818,7 @@ module TestUnixSystemStep =
             Kernel.mapMachine
                 (fun machine ->
                     { machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
                 )
                 flavour
@@ -880,6 +884,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadOnly
@@ -1935,6 +1940,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -2159,6 +2165,7 @@ module TestUnixSystemStep =
                         CloseOnExec = false
                         Synchronous = false
                         DataSynchronous = false
+                        NonBlocking = false
                         Directory = false
                     }
                     0
@@ -2307,6 +2314,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -2926,6 +2934,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -2942,6 +2951,7 @@ module TestUnixSystemStep =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadWrite
@@ -4710,6 +4720,7 @@ module TestUnixSystemStep =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -5690,7 +5701,7 @@ module TestUnixSystemStep =
         Kernel.mapMachine
             (fun machine ->
                 { machine with
-                    Sockets = Map.ofList [ socketZero, bound ]
+                    Sockets = ForgedSocket.table [ socketZero, bound ]
                 }
             )
             system
@@ -5868,7 +5879,7 @@ module TestUnixSystemStep =
                     (fun machine ->
                         { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with
@@ -6268,6 +6279,7 @@ module TestUnixSystemStep =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system held)
                 held
                 FileAccessMode.ReadOnly

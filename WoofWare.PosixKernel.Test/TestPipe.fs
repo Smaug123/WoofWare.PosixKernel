@@ -802,7 +802,7 @@ module TestPipe =
                         stepAs
                             (fun stepped ->
                                 match stepped with
-                                | SteppedCall.BytesAvailable answer -> Some answer
+                                | SteppedCall.BytesAvailable (answer, _) -> Some answer
                                 | _ -> None
                             )
                             call
@@ -1370,14 +1370,17 @@ module TestPipe =
             let _, system = writeOrFail w (payload 0 5) system
 
             UnixDescriptor.tryBytesAvailable (Callers.leader system) 99 (UserBuffer.Unmapped 8UL) system
+            |> Result.map fst
             |> shouldEqual (Ok (BytesAvailableAnswer.Failed UnixError.EBADF))
 
             for fd in [ r ; w ] do
                 UnixDescriptor.tryBytesAvailable (Callers.leader system) fd (UserBuffer.Unmapped 0UL) system
+                |> Result.map fst
                 |> shouldEqual (Ok (BytesAvailableAnswer.Failed UnixError.EFAULT))
 
             // The launched standard streams are pipes too, and empty.
             UnixDescriptor.tryBytesAvailable (Callers.leader system) 1 UserBuffer.Mapped system
+            |> Result.map fst
             |> shouldEqual (Ok (BytesAvailableAnswer.Reported 0))
 
             let socketFd, system =
@@ -1404,6 +1407,7 @@ module TestPipe =
                 | SimulatedUnixFlavour.Darwin -> 0
 
             UnixDescriptor.tryBytesAvailable (Callers.leader system) w UserBuffer.Mapped system
+            |> Result.map fst
             |> shouldEqual (Ok (BytesAvailableAnswer.Reported expected))
 
     [<Test>]

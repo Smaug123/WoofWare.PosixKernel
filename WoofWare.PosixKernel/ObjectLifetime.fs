@@ -282,7 +282,9 @@ module ObjectLifetime =
     /// was opened through, since unlinked (`ChangeNotice.NameReleased`), its
     /// inode once nothing names or holds it, and the directory of the name it
     /// was opened through likewise — in `system`, whose open file table no
-    /// longer holds the description.
+    /// longer holds the description. The release of a description onto an
+    /// inode is reported to the inotify instances watching it first
+    /// (`ChangeNotice.Released`).
     ///
     /// Destroying a connected stream socket's description closes its end of
     /// the connection (`TcpTransfer.close`): the peer gets a FIN, behind
@@ -323,6 +325,28 @@ module ObjectLifetime =
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
         | OpenFileTarget.CharacterDevice (inode, _, _) ->
+            // The release itself, as Linux's `fsnotify_close` reports it, under
+            // the name the description was opened through, before anything the
+            // release lets go of goes (measured, `docs/probes/inotify-close`
+            // section U).
+            let system =
+                match destroyedDescription.OpenedThrough with
+                | None ->
+                    failwith
+                        $"ObjectLifetime.releaseDestroyed: the description of %A{destroyed.Target} records no name it was opened through, which every description onto an inode records (FileDescriptorRegistryDefect.OpenedThroughMismatch; this is a bug in this library)."
+                | Some through ->
+                    { system with
+                        Machine =
+                            UnixMachineState.commitFileSystem
+                                (ChangeNotice.Released (
+                                    inode,
+                                    through,
+                                    FileAccessMode.permitsWrite destroyed.AccessMode
+                                ))
+                                (VirtualFileSystem.unchanged system.Machine.FileSystem)
+                                system.Machine
+                    }
+
             // The description may have been the last holding a name of a file
             // since unlinked, which goes as it does (Linux's dentry): an
             // inotify watch on the file, if it has no link left, hears of its
@@ -389,13 +413,13 @@ module ObjectLifetime =
         | OpenFileTarget.Socket socketId ->
 
         let dying =
-            match Map.tryFind socketId system.Machine.Sockets with
+            match SocketTable.tryFind socketId system.Machine.Sockets with
             | Some socket -> socket
             | None ->
                 failwith
                     $"ObjectLifetime.releaseDestroyed: the description names socket %O{socketId}, which this system's socket table does not hold. Releasing a description is the only operation here that removes a socket, and it removes it together with the description that named it, so a live description onto an absent socket means the two tables were built out of step. There is nothing to repair it with: the objects this release would have freed cannot be found (this is a bug in this library or in whatever assembled this system)."
 
-        let sockets = Map.remove socketId system.Machine.Sockets
+        let sockets = SocketTable.remove socketId system.Machine.Sockets
 
         // A connection lives while any socket phase or accept queue
         // references it. The dying socket may have been the last such
@@ -414,7 +438,7 @@ module ObjectLifetime =
             | SocketPhase.Connecting _ -> []
 
         let stillReferenced (connection : ConnectionId) : bool =
-            sockets
+            SocketTable.all sockets
             |> Map.exists (fun _ survivor ->
                 match survivor.Phase with
                 | SocketPhase.Established (c, _)
@@ -534,6 +558,7 @@ module ObjectLifetime =
         let machine =
             ({ system.Machine with
                 Sockets = sockets
+                DatagramReceivers = Map.remove socketId system.Machine.DatagramReceivers
                 Connections = connections
              },
              candidates)

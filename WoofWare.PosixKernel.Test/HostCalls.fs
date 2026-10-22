@@ -73,6 +73,26 @@ module internal HostCalls =
     [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
     extern nativeint writePointer(int fd, nativeint buffer, unativeint count)
 
+    /// `send(2)` of `buffer`'s first `count` bytes with the raw flag word
+    /// `flags`.
+    [<DllImport("libc", EntryPoint = "send", SetLastError = true)>]
+    extern nativeint send(int fd, byte[] buffer, unativeint count, int flags)
+
+    /// `send(2)` of `count` bytes from the address `buffer`, which may be one
+    /// the process has not mapped.
+    [<DllImport("libc", EntryPoint = "send", SetLastError = true)>]
+    extern nativeint sendPointer(int fd, nativeint buffer, unativeint count, int flags)
+
+    /// `recv(2)` of at most `count` bytes into `buffer` with the raw flag word
+    /// `flags`.
+    [<DllImport("libc", EntryPoint = "recv", SetLastError = true)>]
+    extern nativeint recv(int fd, byte[] buffer, unativeint count, int flags)
+
+    /// `recv(2)` of at most `count` bytes to the address `buffer`, which may be
+    /// one the process has not mapped.
+    [<DllImport("libc", EntryPoint = "recv", SetLastError = true)>]
+    extern nativeint recvPointer(int fd, nativeint buffer, unativeint count, int flags)
+
     /// `open(2)` of the path `path` names. `mode` is variadic in C, and Apple's
     /// arm64 ABI passes a variadic argument on the stack, where this one is
     /// not: there, the mode of a file this creates is not `mode`. `path` and

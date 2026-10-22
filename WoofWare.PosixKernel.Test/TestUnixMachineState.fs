@@ -42,6 +42,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 fileInode
                 FileAccessMode.ReadOnly
@@ -51,6 +52,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openDirectory
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 ReachedThrough.Unnamed
                 directoryInode
                 withFile
@@ -92,6 +94,7 @@ module TestUnixMachineState =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                false
                 through
                 fileInode
                 FileAccessMode.ReadOnly

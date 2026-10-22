@@ -1,0 +1,45 @@
+Y0 /proc/sys/net/ipv4/icmp_ratelimit=1000
+Y0 /proc/sys/net/ipv4/icmp_ratemask=6168
+Y0 /proc/sys/net/ipv4/icmp_msgs_per_sec=1000
+Y0 /proc/sys/net/ipv4/icmp_msgs_burst=50
+Y0 /proc/sys/net/core/rmem_default=212992
+Y1 connect elsewhere: 0; then SO_ERROR=111; peer 127.0.0.1:40068; self 127.0.0.1:53976
+Y1 connect to the same peer: 0; then SO_ERROR=111; peer 127.0.0.1:40672; self 127.0.0.1:47459
+Y1 connect AF_UNSPEC, length 16: 0; then SO_ERROR=111; getpeername ENOTCONN; self 127.0.0.1:0
+Y1 connect to 127.0.0.1:0: 0; then SO_ERROR=111; getpeername ENOTCONN; self 127.0.0.1:38256
+Y1 connect with family 200: -1 EAFNOSUPPORT; then SO_ERROR=111; peer 127.0.0.1:54801; self 127.0.0.1:32887
+Y1 connect with length 8: -1 EINVAL; then SO_ERROR=111; peer 127.0.0.1:50124; self 127.0.0.1:46945
+Y1 connect to 255.255.255.255:9: -1 EACCES; then SO_ERROR=111; peer 127.0.0.1:59305; self 127.0.0.1:33382
+Y1 connect from an unmapped address: -1 EFAULT; then SO_ERROR=111; peer 127.0.0.1:34454; self 127.0.0.1:51030
+Y2 write of 9217: -1 ECONNREFUSED; then SO_ERROR=0
+Y2 send of 9217: -1 ECONNREFUSED; then SO_ERROR=0
+Y2 write of 65507: -1 ECONNREFUSED; then SO_ERROR=0
+Y2 send of 65507: -1 ECONNREFUSED; then SO_ERROR=0
+Y2 write of 65508: -1 EMSGSIZE; then SO_ERROR=111
+Y2 send of 65508: -1 EMSGSIZE; then SO_ERROR=111
+Y2 write of 65536: -1 EMSGSIZE; then SO_ERROR=111
+Y2 send of 65536: -1 EMSGSIZE; then SO_ERROR=111
+Y3 write of 1 from an unmapped buffer: -1 ECONNREFUSED; then SO_ERROR=0
+Y3 send of 1 from an unmapped buffer: -1 ECONNREFUSED; then SO_ERROR=0
+Y4 read of 1 into an unmapped buffer: -1 ECONNREFUSED; then SO_ERROR=0
+Y4 recv of 1 into an unmapped buffer: -1 ECONNREFUSED; then SO_ERROR=0
+Y5 FIONREAD: 0, value 0; then SO_ERROR=111
+Y5 getsockname and getpeername: self 127.0.0.1:49782; peer 127.0.0.1:57139; then SO_ERROR=111
+Y5 bind again: -1 EINVAL; then SO_ERROR=111
+Y5 SO_ERROR into a null value buffer: -1 EFAULT; then SO_ERROR=0
+Y5 SO_ERROR with length 0: 0, length 0, value -1; then SO_ERROR=0
+Y6 a send with the error pending: -1 ECONNREFUSED; then SO_ERROR=0, then SO_ERROR=0
+Y7 disconnected by AF_UNSPEC, then write of 1: -1 EDESTADDRREQ; then SO_ERROR=111; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then write of 0: -1 EDESTADDRREQ; then SO_ERROR=111; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then send of 1: -1 EDESTADDRREQ; then SO_ERROR=111; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then read of 1: -1 ECONNREFUSED; then SO_ERROR=0; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then read of 0: 0; then SO_ERROR=111; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then recv of 1: -1 ECONNREFUSED; then SO_ERROR=0; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then recv of 0: -1 ECONNREFUSED; then SO_ERROR=0; getpeername ENOTCONN
+Y7 disconnected by AF_UNSPEC, then connect elsewhere: 0; then SO_ERROR=111; peer 127.0.0.1:47712
+Y7 disconnected by AF_UNSPEC, then SO_ERROR: 111; then SO_ERROR=0; getpeername ENOTCONN
+Y8 epoll IN|OUT|ET registered with the error pending: 1:0xc, again 0; write of 1: -1 ECONNREFUSED; then 0:0x0
+Y8 epoll IN|OUT|ET registered with the error pending: 1:0xc, again 0; recv of 1: -1 ECONNREFUSED; then 0:0x0
+Y8 epoll IN|OUT|ET registered with the error pending: 1:0xc, again 0; SO_ERROR: 111; then 0:0x0
+Y8 epoll IN|OUT|ET registered with the error pending: 1:0xc, again 0; connect elsewhere: 0; then 0:0x0
+Y8 epoll IN|OUT|ET on a socket connected to an unheld port: registered 1:0x4; a send 1; then 1:0xc; again 0
