@@ -1813,9 +1813,13 @@ module TestBlockingConnection =
                     let expected, after = referenceFinish thread reference
 
                     // `UnixWait.finish` answers as the family's finishing
-                    // function does.
+                    // function does, and refuses a Syscall that does not
+                    // describe the call.
                     let woken = Woken.thread thread system
                     FinishOracle.agree (Callers.thread thread woken) woken |> ignore<string>
+
+                    for label in FinishOracle.refusesMisuse (Callers.thread thread woken) woken do
+                        cover label
 
                     let seen, actual =
                         match park.Call with
@@ -2040,6 +2044,10 @@ module TestBlockingConnection =
                 ] do
                 if coverage.Count $"%s{flavour} %s{what}" = 0 then
                     failwith $"never reached: %s{flavour} %s{what}"
+
+        // A send, finished as the `sendto` with no destination that it is.
+        if coverage.Count "a send finished as a sendto with no destination" = 0 then
+            failwith "never reached: a send finished as a sendto with no destination"
 
         for label in
             [

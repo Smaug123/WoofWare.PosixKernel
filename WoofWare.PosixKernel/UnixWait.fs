@@ -87,7 +87,10 @@ type FinishedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : 
 /// What a woken thread's call answered once `UnixWait.finish` finished it: one
 /// case for each kind of call a thread parks in, named as that kind's
 /// `ParkedSyscall` case is, holding exactly what that kind's own finishing
-/// function answers.
+/// function answers. For a write, which stops partway to copy from the
+/// caller's buffer, that is what its resumption answers once given what the
+/// buffer of the `Syscall` that `finish` was given holds, since `finish` never
+/// stops partway.
 ///
 /// As those answers do, it may hold the call's answer, the thread asleep in
 /// the call again, waiting for a new wake, or the call interrupted by a signal
@@ -114,18 +117,16 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A `read(2)` of a pipe, as `UnixReadWrite.finishRead` answers it.
     | PipeRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
-    /// A `write(2)` to a pipe, as `UnixReadWrite.finishWrite` answers it: the
-    /// call's answer, or the call stopped where the kernel copies its next
-    /// bytes, which `UnixReadWrite.writeWithBytes` takes.
-    | PipeWrite of
-        progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+    /// A `write(2)` to a pipe, as `UnixReadWrite.finishWrite` answers it, or
+    /// `UnixReadWrite.writeWithBytes` after it.
+    | PipeWrite of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
     /// A `read(2)` or `recv(2)` of a connected socket, as
     /// `UnixReadWrite.finishRead` answers it.
     | ConnectionRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A `write(2)` or `send(2)` to a connected socket, as
-    /// `UnixReadWrite.finishWrite` answers it, as for `PipeWrite`.
-    | ConnectionWrite of
-        progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+    /// `UnixReadWrite.finishWrite` answers it, or
+    /// `UnixReadWrite.writeWithBytes` after it.
+    | ConnectionWrite of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
     /// A `sigsuspend(2)`, `rt_sigsuspend(2)` or `pause(2)`, as
     /// `UnixSignal.finishSigsuspend` answers it.
     | SigSuspend of outcome : SigsuspendOutcome * system : UnixSystem<'Thread, 'Handler>
@@ -166,16 +167,16 @@ type internal ViewFinishedCall<'View, 'Thread, 'Handler when 'Thread : compariso
     | KqueuePoll of outcome : PollOutcome * view : 'View
     | Accept of outcome : AcceptOutcome * view : 'View
     | PipeRead of outcome : ReadOutcome * view : 'View
-    | PipeWrite of progress : CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'View>>
+    | PipeWrite of fate : ViewFate<WriteOutcome<'Thread>, 'View>
     | ConnectionRead of outcome : ReadOutcome * view : 'View
-    | ConnectionWrite of progress : CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'View>>
+    | ConnectionWrite of fate : ViewFate<WriteOutcome<'Thread>, 'View>
     | SigSuspend of outcome : SigsuspendOutcome * view : 'View
     | InotifyRead of outcome : ReadOutcome * view : 'View
     | Futex of outcome : SyscallOutcome * view : 'View
 
 /// Why this library will not finish a woken call (`UnixWait.finish`): the
-/// refusal of the finishing function of the call's family, or a reserved park,
-/// which has none.
+/// refusal of the finishing function of the call's family, a reserved park,
+/// which has none, or a `Syscall` that does not describe the call.
 [<RequireQualifiedAccess>]
 type internal FinishRefusal =
     | Flock of FLockRefusal
@@ -190,6 +191,13 @@ type internal FinishRefusal =
     /// The thread is parked in `parked`, a reserved park: nothing parks a
     /// thread in one yet, and no finishing function finishes one.
     | Reserved of parked : ParkedSyscall
+    /// The thread is parked in `parked`, which no call of the `Syscall` case
+    /// given parks a thread in.
+    | NotTheParkedCall of parked : ParkedSyscall
+    /// The thread is parked in `parked`, a write that stopped to copy from a
+    /// buffer it was made with as readable, which the `Syscall` now gives as
+    /// `buffer`.
+    | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
 
 [<RequireQualifiedAccess>]
 module internal FinishRefusal =
@@ -208,6 +216,10 @@ module internal FinishRefusal =
         | FinishRefusal.Futex refusal -> FutexRefusal.describe refusal
         | FinishRefusal.Reserved parked ->
             $"the thread is parked in %A{parked}, a call this library parks no thread in yet, and has no finishing function for."
+        | FinishRefusal.NotTheParkedCall parked ->
+            $"the thread is parked in %A{parked}, which no call of the Syscall case given parks a thread in; pass the Syscall the thread made."
+        | FinishRefusal.UnreadableBuffer (parked, buffer) ->
+            $"the thread is parked in %A{parked}, a write made with a readable buffer, which stopped to copy from it; the Syscall gives the buffer as %A{buffer}, and this library does not model a write's buffer ceasing to be readable while the call sleeps."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FinishRefusal) : RefusalKind =
@@ -222,6 +234,8 @@ module internal FinishRefusal =
         | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.kind refusal
         | FinishRefusal.Futex refusal -> FutexRefusal.kind refusal
         | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
+        | FinishRefusal.NotTheParkedCall _ -> RefusalKind.Contradictory "call"
+        | FinishRefusal.UnreadableBuffer _ -> RefusalKind.Unmodelled
 
 /// Deciding which parked threads a system wakes, and finishing a woken
 /// thread's call.
@@ -634,21 +648,97 @@ module UnixWait =
         | ViewFinishedCall.Accept (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Accept
         | ViewFinishedCall.PipeRead (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.PipeRead
-        | ViewFinishedCall.PipeWrite progress ->
-            shapes.Map (Shape.progress Shape.fate) progress |> FinishedCall.PipeWrite
+        | ViewFinishedCall.PipeWrite fate -> shapes.Map Shape.fate fate |> FinishedCall.PipeWrite
         | ViewFinishedCall.ConnectionRead (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.ConnectionRead
-        | ViewFinishedCall.ConnectionWrite progress ->
-            shapes.Map (Shape.progress Shape.fate) progress |> FinishedCall.ConnectionWrite
+        | ViewFinishedCall.ConnectionWrite fate -> shapes.Map Shape.fate fate |> FinishedCall.ConnectionWrite
         | ViewFinishedCall.SigSuspend (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.SigSuspend
         | ViewFinishedCall.InotifyRead (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.InotifyRead
         | ViewFinishedCall.Futex (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Futex
 
+    /// Whether a thread parked in `parked` could have parked there in a call
+    /// of `call`'s case. A reserved park is made by no call.
+    let private parksIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        : bool
+        =
+        match parked, call with
+        | ParkedSyscall.EpollWait _, Syscall.EpollWait _
+        | ParkedSyscall.Kevent _, Syscall.Kevent _
+        | ParkedSyscall.Flock _, Syscall.FLock _
+        | ParkedSyscall.Poll _, Syscall.Poll _
+        | ParkedSyscall.KqueuePoll _, Syscall.Poll _
+        | ParkedSyscall.Accept _, Syscall.Accept _
+        | ParkedSyscall.PipeRead _, Syscall.Read _
+        | ParkedSyscall.PipeWrite _, Syscall.Write _
+        | ParkedSyscall.InotifyRead _, Syscall.Read _
+        | ParkedSyscall.SigSuspend, (Syscall.SigSuspend _ | Syscall.RtSigSuspend _ | Syscall.Pause)
+        | ParkedSyscall.Futex _, Syscall.Futex _ -> true
+        | ParkedSyscall.ConnectionRead read, (Syscall.Read _ | Syscall.Recv _) ->
+            match read.Call, call with
+            | TcpReceiveCall.Read, Syscall.Read _
+            | (TcpReceiveCall.Receive | TcpReceiveCall.Peek), Syscall.Recv _ -> true
+            | _, _ -> false
+        | ParkedSyscall.ConnectionWrite write, (Syscall.Write _ | Syscall.Send _ | Syscall.SendTo _) ->
+            match write.Call, call with
+            | TcpSendCall.Write, Syscall.Write _
+            | TcpSendCall.Send _, Syscall.Send _ -> true
+            // A `sendto` with no destination is a `send`; with one, it parks in
+            // no connection.
+            | TcpSendCall.Send _, Syscall.SendTo (_, _, _, _, destination, _) ->
+                destination = CopiedArgument.Unmapped 0UL
+            | _, _ -> false
+        | _, _ -> false
+
+    /// The woken `write` or `send` `thread` is parked in, finished by
+    /// `UnixReadWrite`'s finishing body, and, where that stops at its copy,
+    /// resumed with the bytes it names of the buffer `call` holds.
+    let private tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, FinishRefusal>
+        =
+        match UnixReadWrite.tryFinishWriteIn thread system with
+        | Error refusal -> Error (FinishRefusal.Write refusal)
+        | Ok (CallProgress.Answered fate) -> Ok fate
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let buffer =
+                match call with
+                | Syscall.Write (_, buffer, _)
+                | Syscall.Send (_, buffer, _, _)
+                | Syscall.SendTo (_, buffer, _, _, _, _) -> buffer
+                | _ ->
+                    failwith
+                        $"UnixWait.finish: the thread is parked in %A{parked}, a write, but was admitted with a Syscall that is not a write, a send or a sendto (this is a bug in this library)."
+
+            match buffer with
+            | CopiedArgument.Readable contents ->
+                let bytes =
+                    CopiedArgument.slice "UnixWait.finish" (PausedWrite.copyRange paused) contents
+
+                match UnixReadWrite.tryWriteWithBytesIn bytes paused with
+                | Error refusal -> Error (FinishRefusal.Write refusal)
+                | Ok (fate, None) -> Ok fate
+                // A blocking write into a pipe a client drains never sleeps, so
+                // a woken write is never into one.
+                | Ok (_, Some delivery) ->
+                    failwith
+                        $"UnixWait.finish: the woken write the thread is parked in, %A{parked}, delivered %A{delivery} out of the machine, which only a write into a pipe a client drains does, and such a write never sleeps (this is a bug in this library)."
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer buffer))
+
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
-    /// parked in, finished by the finishing body of its family.
+    /// parked in, which `call` describes, finished by the finishing body of
+    /// its family.
     let private tryFinishIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (call : Syscall<'Thread, 'Handler>)
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<ViewFinishedCall<ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, FinishRefusal>
@@ -656,6 +746,14 @@ module UnixWait =
         let parked = UnixThreadTable.requireParked "UnixWait.finish" thread system.Threads
 
         match parked with
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.DatagramReceive _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> Error (FinishRefusal.Reserved parked)
+        | _ when not (parksIn parked call) -> Error (FinishRefusal.NotTheParkedCall parked)
         | ParkedSyscall.EpollWait _ ->
             UnixPoll.tryFinishEpollWaitIn thread system
             |> Result.map ViewFinishedCall.EpollWait
@@ -685,17 +783,15 @@ module UnixWait =
             |> Result.map ViewFinishedCall.PipeRead
             |> Result.mapError FinishRefusal.Read
         | ParkedSyscall.PipeWrite _ ->
-            UnixReadWrite.tryFinishWriteIn thread system
+            tryFinishWriteIn parked call thread system
             |> Result.map ViewFinishedCall.PipeWrite
-            |> Result.mapError FinishRefusal.Write
         | ParkedSyscall.ConnectionRead _ ->
             UnixReadWrite.tryFinishReadIn thread system
             |> Result.map ViewFinishedCall.ConnectionRead
             |> Result.mapError FinishRefusal.Read
         | ParkedSyscall.ConnectionWrite _ ->
-            UnixReadWrite.tryFinishWriteIn thread system
+            tryFinishWriteIn parked call thread system
             |> Result.map ViewFinishedCall.ConnectionWrite
-            |> Result.mapError FinishRefusal.Write
         | ParkedSyscall.SigSuspend ->
             UnixSignal.tryFinishSigsuspendIn thread system
             |> Result.map ViewFinishedCall.SigSuspend
@@ -708,17 +804,11 @@ module UnixWait =
             UnixFutex.tryFinishFutexWaitIn thread system
             |> Result.map ViewFinishedCall.Futex
             |> Result.mapError FinishRefusal.Futex
-        | ParkedSyscall.Sleep _
-        | ParkedSyscall.FifoOpen _
-        | ParkedSyscall.Select _
-        | ParkedSyscall.SignalWait _
-        | ParkedSyscall.DatagramReceive _
-        | ParkedSyscall.DatagramSend _
-        | ParkedSyscall.Connect _ -> Error (FinishRefusal.Reserved parked)
 
     /// `finish`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<FinishedCall<'Thread, 'Handler>, FinishRefusal>
         =
@@ -727,13 +817,21 @@ module UnixWait =
             CallerRequirement.Woken
             caller
             (Shape.result (Shape.union finishedCases))
-            (tryFinishIn (Caller.thread caller))
+            (tryFinishIn call (Caller.thread caller))
             system
 
     /// Finish the call `caller` is parked in, once `wake` has woken it, through
     /// the finishing function of that call's family, and answer the
     /// `FinishedCall` case named as the call's `ParkedSyscall` case is, holding
     /// exactly what that function answers.
+    ///
+    /// `call` is the `Syscall` the thread made, as `UnixSystem.step` takes it,
+    /// with what the caller's memory holds now: a woken write copies the next
+    /// of its bytes from its buffer as the buffer is when the call is
+    /// finished, and `finish` hands the write's resumption, which
+    /// `UnixReadWrite.writeWithBytes` is, the bytes of `call`'s buffer it
+    /// copies, so that it never stops partway. Every other call is finished
+    /// without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
@@ -746,12 +844,21 @@ module UnixWait =
     /// `UnmodelledException` for a thread parked in one of the reserved calls
     /// (`ParkedSyscall.Sleep`, `FifoOpen`, `Select`, `SignalWait`,
     /// `DatagramReceive`, `DatagramSend` and `Connect`), which nothing parks a
-    /// thread in yet. Otherwise it throws what the family's finishing function
-    /// throws.
+    /// thread in yet. Throws `ArgumentException` if `call`'s case is not one
+    /// that parks a thread where `caller` is parked (`Syscall.Write` for a
+    /// write to a pipe, and `Syscall.Write` for a write to a connected socket
+    /// and `Syscall.Send` for a send to one, or `Syscall.SendTo` with a NULL
+    /// destination, which is that send). For a write that copies, throws
+    /// `InvalidOperationException` if `call`'s buffer holds contents that end
+    /// before the bytes it copies, as `step` does, and `UnmodelledException`
+    /// if `call` gives the buffer as anything but readable, which it was when
+    /// the call was made. Otherwise it throws what the family's finishing
+    /// function throws.
     let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
         : FinishedCall<'Thread, 'Handler>
         =
-        tryFinish caller system
+        tryFinish caller call system
         |> Refusal.orRaise "UnixWait.finish" FinishRefusal.kind FinishRefusal.describe

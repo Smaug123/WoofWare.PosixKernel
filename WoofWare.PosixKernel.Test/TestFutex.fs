@@ -119,7 +119,9 @@ module TestFutex =
         (system : UnixSystem<int, string>)
         : SyscallOutcome * UnixSystem<int, string>
         =
-        match UnixWait.finish (Caller.make pid thread) system with
+        let caller = Caller.make pid thread
+
+        match UnixWait.finish caller (ParkedCall.ofThread caller system) system with
         | FinishedCall.Futex (outcome, system) -> outcome, system
         | other -> failwith $"finish answered %s{UnionCaseName.ofValue other}"
 
@@ -767,7 +769,12 @@ module TestFutex =
 
         let pid, system = woken (seconds 2L 0L)
 
-        (fun () -> UnixWait.finish (Caller.make pid 1) system |> ignore<FinishedCall<int, string>>)
+        (fun () ->
+            let caller = Caller.make pid 1
+
+            UnixWait.finish caller (ParkedCall.ofThread caller system) system
+            |> ignore<FinishedCall<int, string>>
+        )
         |> shouldFail<UnmodelledException>
 
     [<Test>]

@@ -486,7 +486,7 @@ module TestSignalDue =
         let finished =
             match UnixWait.wake written with
             | [ woken, _ ], woken' when woken = reader ->
-                match UnixWait.finish reader woken' with
+                match UnixWait.finish reader (ParkedCall.ofThread reader woken') woken' with
                 | FinishedCall.PipeRead (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                     bytes.Length |> shouldEqual 1
                     system
@@ -550,7 +550,7 @@ module TestSignalDue =
         let interrupted =
             match UnixWait.wake signalled with
             | [ woken, _ ], woken' when woken = suspender ->
-                match UnixWait.finish suspender woken' with
+                match UnixWait.finish suspender (ParkedCall.ofThread suspender woken') woken' with
                 | FinishedCall.SigSuspend (SigsuspendOutcome.Interrupted, system) -> system
                 | other -> failwith $"the finish: %A{other}"
             | wakes, _ -> failwith $"expected the suspender to wake: %A{wakes}"
@@ -894,7 +894,7 @@ module TestSignalDue =
                 let thread = Caller.thread caller
 
                 if not ended && Caller.processId caller = pid then
-                    match UnixWait.tryFinish caller system with
+                    match UnixWait.tryFinish caller (ParkedCall.ofThread caller system) system with
                     | Error _ -> ()
                     | Ok (FinishedCall.PipeRead (_, after))
                     | Ok (FinishedCall.SigSuspend (_, after)) -> commit "finish" thread after

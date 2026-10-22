@@ -5504,7 +5504,7 @@ module UnixReadWrite =
 
     /// `tryWriteWithBytes` before `Entry.resume` hands back the system it
     /// answers in.
-    let private tryWriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryWriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
         : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>> * Delivery option, WriteRefusal>

@@ -541,7 +541,13 @@ module TestCallerChecks =
                     "UnixWait.finish"
                     sleeper
                     everyFlavour
-                    (fun caller system -> UnixWait.finish caller system |> ignore<FinishedCall<int, string>>)
+                    (fun caller system ->
+                        // The sleeper's own call where it is parked, and a
+                        // placeholder for the callers that are refused first.
+                        let call = ParkedCall.tryOfThread caller system |> Option.defaultValue Syscall.Pause
+
+                        UnixWait.finish caller call system |> ignore<FinishedCall<int, string>>
+                    )
             // The thread has no handler frame, which `sigreturn` refuses only once
             // the caller is checked.
             running

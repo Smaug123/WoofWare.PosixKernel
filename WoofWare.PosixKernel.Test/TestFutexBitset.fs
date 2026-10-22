@@ -137,7 +137,9 @@ module TestFutexBitset =
         (system : UnixSystem<int, string>)
         : SyscallOutcome * UnixSystem<int, string>
         =
-        match UnixWait.finish (Caller.make pid thread) system with
+        let caller = Caller.make pid thread
+
+        match UnixWait.finish caller (ParkedCall.ofThread caller system) system with
         | FinishedCall.Futex (outcome, system) -> outcome, system
         | other -> failwith $"finish answered %s{UnionCaseName.ofValue other}"
 

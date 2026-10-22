@@ -8,25 +8,51 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal FinishOracle =
 
-    /// The bytes a write stopped at the copy is given here: each byte its
-    /// offset into the caller's buffer, so that the same range gets the same
-    /// bytes from every resumption.
+    /// The bytes of `ParkedCall.buffer` that `range` names: what `finish`
+    /// copies of the buffer of the `Syscall` `ParkedCall.ofPark` makes.
     let private bytesOf (range : CopyRange) : ImmutableArray<byte> =
         ImmutableArray.Create<byte> (Array.init range.ByteCount (fun i -> byte (range.FirstByte + i)))
 
-    /// What a woken call's finish came to, as a label: its outcome's case, or,
-    /// for a write, the case of what its progress holds.
+    /// What a woken write's finish came to, as a label: "NeedsCopyIn" first
+    /// where the family's finishing function stopped at its copy, then the
+    /// case of its outcome, or "ProcessEnded".
     let private writeLabel<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>)
+        (stopped : bool)
+        (fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
         : string
         =
-        match progress with
-        | CallProgress.NeedsCopyIn _ -> "NeedsCopyIn"
-        | CallProgress.Answered (ProcessFate.ProcessEnded _) -> "ProcessEnded"
-        | CallProgress.Answered (ProcessFate.Continues (outcome, _)) -> UnionCaseName.ofValue outcome
+        let outcome =
+            match fate with
+            | ProcessFate.ProcessEnded _ -> "ProcessEnded"
+            | ProcessFate.Continues (outcome, _) -> UnionCaseName.ofValue outcome
+
+        if stopped then $"NeedsCopyIn %s{outcome}" else outcome
+
+    /// What the family's functions answer for the woken write `caller` is
+    /// parked in: `finishWrite`, and where that stops at its copy,
+    /// `writeWithBytes` of the bytes `bytesOf` gives, which must deliver
+    /// nothing out of the machine; and whether it stopped.
+    let private familyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool * Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
+        =
+        match UnixReadWrite.tryFinishWrite caller system with
+        | Error refusal -> false, Error refusal
+        | Ok (CallProgress.Answered fate) -> false, Ok fate
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let resumed =
+                UnixReadWrite.tryWriteWithBytes (bytesOf (PausedWrite.copyRange paused)) paused
+                |> Result.map (fun (fate, delivery) ->
+                    match delivery with
+                    | None -> fate
+                    | Some delivery -> failwith $"the woken write of %O{caller} delivered %A{delivery}"
+                )
+
+            true, resumed
 
     /// The system a finish left the caller's process in, if the process
-    /// carries on and the call did not stop at a copy.
+    /// carries on.
     let private systemOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (finished : FinishedCall<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler> option
@@ -43,8 +69,8 @@ module internal FinishOracle =
         | FinishedCall.SigSuspend (_, system)
         | FinishedCall.InotifyRead (_, system)
         | FinishedCall.Futex (_, system) -> Some system
-        | FinishedCall.PipeWrite (CallProgress.Answered (ProcessFate.Continues (_, system)))
-        | FinishedCall.ConnectionWrite (CallProgress.Answered (ProcessFate.Continues (_, system))) -> Some system
+        | FinishedCall.PipeWrite (ProcessFate.Continues (_, system))
+        | FinishedCall.ConnectionWrite (ProcessFate.Continues (_, system)) -> Some system
         | FinishedCall.PipeWrite _
         | FinishedCall.ConnectionWrite _ -> None
         | FinishedCall.Sleep _
@@ -109,48 +135,26 @@ module internal FinishOracle =
         else
             None
 
-    /// Where a write's progress differs from the family's: an answer, or a call
-    /// stopped at the same copy whose resumption with the same bytes answers
-    /// the same.
-    let private sameProgress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>)
-        (family : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>)
+    /// Where a write's fate differs from the family's.
+    let private sameFate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
+        (family : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
         : string option
         =
-        match progress, family with
-        | CallProgress.Answered fate, CallProgress.Answered familyFate ->
-            if fate = familyFate then
-                None
-            else
-                Some $"answered %A{fate}, where the family's function answered %A{familyFate}"
-        | CallProgress.NeedsCopyIn paused, CallProgress.NeedsCopyIn familyPaused ->
-            let range = PausedWrite.copyRange paused
-            let familyRange = PausedWrite.copyRange familyPaused
+        if fate = family then
+            None
+        else
+            Some $"answered %A{fate}, where the family's functions answered %A{family}"
 
-            if range <> familyRange then
-                Some $"stopped to copy %A{range}, where the family's function stopped to copy %A{familyRange}"
-            else
-
-            let resumed = UnixReadWrite.tryWriteWithBytes (bytesOf range) paused
-            let familyResumed = UnixReadWrite.tryWriteWithBytes (bytesOf range) familyPaused
-
-            if resumed = familyResumed then
-                None
-            else
-                Some
-                    $"stopped to copy %A{range} as the family's function did, but its resumption answered %A{resumed}, where the family's answered %A{familyResumed}"
-        | progress, family ->
-            Some
-                $"answered %s{UnionCaseName.ofValue progress}, where the family's function answered %s{UnionCaseName.ofValue family}"
-
-    /// `UnixWait.tryFinish caller system`, held to the finishing function of
+    /// `UnixWait.tryFinish` of `caller` in `system`, given the `Syscall`
+    /// `ParkedCall.ofPark` makes of its park, held to the finishing function of
     /// the family of the call `caller` is woken in, made of the same `system`:
     /// `finish` must answer the case named as the park's `ParkedSyscall` case
     /// is, holding exactly what that function answers, the system included,
     /// and so whether the thread owes a return to user mode; or refuse with
-    /// that function's own refusal. A write stopped at the copy agrees where it
-    /// stopped at the same range and its resumption with the same bytes answers
-    /// the same. Fails the test otherwise.
+    /// that function's own refusal. For a write that stops at its copy, that
+    /// function is its resumption (`writeWithBytes`) after it, given the bytes
+    /// of the `Syscall`'s buffer it names. Fails the test otherwise.
     ///
     /// Answers a label of what the finish came to: the park's kind, then the
     /// case of its outcome or "refused", then, for a thread whose process
@@ -169,7 +173,7 @@ module internal FinishOracle =
             | other -> failwith $"FinishOracle.agree: %O{caller} is not woken in a call: %A{other}"
 
         let kind = UnionCaseName.ofValue parked
-        let finished = UnixWait.tryFinish caller system
+        let finished = UnixWait.tryFinish caller (ParkedCall.ofPark parked) system
 
         let outcome =
             match parked with
@@ -354,13 +358,15 @@ module internal FinishOracle =
                     sameOutcome
                     (fst >> UnionCaseName.ofValue)
             | ParkedSyscall.PipeWrite _ ->
+                let stopped, family = familyWrite caller system
+
                 held
                     caller
                     kind
                     finished
                     (fun finished ->
                         match finished with
-                        | FinishedCall.PipeWrite progress -> Some progress
+                        | FinishedCall.PipeWrite fate -> Some fate
                         | _ -> None
                     )
                     (fun refusal ->
@@ -368,17 +374,19 @@ module internal FinishOracle =
                         | FinishRefusal.Write refusal -> Some refusal
                         | _ -> None
                     )
-                    (UnixReadWrite.tryFinishWrite caller system)
-                    sameProgress
-                    writeLabel
+                    family
+                    sameFate
+                    (writeLabel stopped)
             | ParkedSyscall.ConnectionWrite _ ->
+                let stopped, family = familyWrite caller system
+
                 held
                     caller
                     kind
                     finished
                     (fun finished ->
                         match finished with
-                        | FinishedCall.ConnectionWrite progress -> Some progress
+                        | FinishedCall.ConnectionWrite fate -> Some fate
                         | _ -> None
                     )
                     (fun refusal ->
@@ -386,9 +394,9 @@ module internal FinishOracle =
                         | FinishRefusal.Write refusal -> Some refusal
                         | _ -> None
                     )
-                    (UnixReadWrite.tryFinishWrite caller system)
-                    sameProgress
-                    writeLabel
+                    family
+                    sameFate
+                    (writeLabel stopped)
             | ParkedSyscall.SigSuspend ->
                 held
                     caller
@@ -437,3 +445,210 @@ module internal FinishOracle =
         match owes with
         | None -> $"%s{kind} %s{outcome}"
         | Some owed -> $"%s{kind} %s{outcome}, owing %s{UnionCaseName.ofValue owed}"
+
+    /// A `Syscall` of every case that parks a thread somewhere, and of one
+    /// that parks none, each with placeholder arguments.
+    let private probes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Syscall<'Thread, 'Handler> list =
+        [
+            Syscall.EpollWait (0, UserBuffer.Mapped, 1, -1)
+            Syscall.Kevent (0, [], 0, UserBuffer.Mapped, 1, TimespecArgument.Null)
+            Syscall.FLock (0, 0)
+            Syscall.Poll ([], -1)
+            Syscall.Accept (0, UserBuffer.Mapped, Some 16u, 0)
+            Syscall.Read (0, UserBuffer.Mapped, 0UL)
+            Syscall.Recv (0, UserBuffer.Mapped, 0UL, 0)
+            Syscall.Write (0, CopiedArgument.Readable (ParkedCall.buffer 0), 0UL)
+            Syscall.Send (0, CopiedArgument.Readable (ParkedCall.buffer 0), 0UL, 0)
+            Syscall.SendTo (0, CopiedArgument.Readable (ParkedCall.buffer 0), 0UL, 0, CopiedArgument.Unmapped 0UL, 0u)
+            Syscall.SendTo (
+                0,
+                CopiedArgument.Readable (ParkedCall.buffer 0),
+                0UL,
+                0,
+                CopiedArgument.Readable (ParkedCall.buffer 16),
+                16u
+            )
+            Syscall.RecvFrom (0, UserBuffer.Mapped, 0UL, 0, UserBuffer.Unmapped 0UL, CopiedArgument.Unmapped 0UL)
+            Syscall.SigSuspend SignalMask.Empty
+            Syscall.RtSigSuspend (SignalMask.Empty, 8UL)
+            Syscall.Pause
+            Syscall.Futex (0UL, 0, 0, CopiedArgument.Readable 0u, TimespecArgument.Null, 0u)
+            Syscall.GetProcessId
+        ]
+
+    /// The `Syscall` cases whose call parks a thread in `parked`, by name.
+    let private parkingCases (parked : ParkedSyscall) : string list =
+        match parked with
+        | ParkedSyscall.EpollWait _ -> [ "EpollWait" ]
+        | ParkedSyscall.Kevent _ -> [ "Kevent" ]
+        | ParkedSyscall.Flock _ -> [ "FLock" ]
+        | ParkedSyscall.Poll _
+        | ParkedSyscall.KqueuePoll _ -> [ "Poll" ]
+        | ParkedSyscall.Accept _ -> [ "Accept" ]
+        | ParkedSyscall.PipeRead _
+        | ParkedSyscall.InotifyRead _ -> [ "Read" ]
+        | ParkedSyscall.ConnectionRead read ->
+            match read.Call with
+            | TcpReceiveCall.Read -> [ "Read" ]
+            | TcpReceiveCall.Receive
+            | TcpReceiveCall.Peek -> [ "Recv" ]
+        | ParkedSyscall.PipeWrite _ -> [ "Write" ]
+        | ParkedSyscall.ConnectionWrite write ->
+            match write.Call with
+            | TcpSendCall.Write -> [ "Write" ]
+            | TcpSendCall.Send _ -> [ "Send" ; "SendTo" ]
+        | ParkedSyscall.SigSuspend -> [ "SigSuspend" ; "RtSigSuspend" ; "Pause" ]
+        | ParkedSyscall.Futex _ -> [ "Futex" ]
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.DatagramReceive _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> []
+
+    /// `ParkedCall.ofPark parked`, a write, with `buffer` as its buffer.
+    let private writeWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (buffer : CopiedArgument<ImmutableArray<byte>>)
+        : Syscall<'Thread, 'Handler>
+        =
+        match (ParkedCall.ofPark parked : Syscall<'Thread, 'Handler>) with
+        | Syscall.Write (fd, _, count) -> Syscall.Write (fd, buffer, count)
+        | Syscall.Send (fd, _, count, flags) -> Syscall.Send (fd, buffer, count, flags)
+        | other -> failwith $"FinishOracle.writeWith: %A{parked} is not a write, but %A{other}"
+
+    /// What `UnixWait.finish` of the woken thread `caller` does with a `Syscall`
+    /// that does not describe its call, failing the test unless: it refuses
+    /// every `Syscall` of a case that parks no thread where `caller` is parked,
+    /// `ArgumentException` naming `call`; and, for a write, it refuses a buffer
+    /// given as anything but readable where it copies, `UnmodelledException`,
+    /// and fails with `InvalidOperationException` for contents that end before
+    /// what it copies, and answers as `agree` checks, whatever the buffer, where
+    /// it does not copy. Answers a label of each of those it reached.
+    let refusesMisuse<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : string list
+        =
+        let parked =
+            match Proc.parkOf caller system with
+            | Some {
+                       Syscall = parked
+                       State = ParkState.Woken _
+                   } -> parked
+            | other -> failwith $"FinishOracle.refusesMisuse: %O{caller} is not woken in a call: %A{other}"
+
+        let fail (what : string) : 'a =
+            failwith $"UnixWait.finish of %O{caller}, parked in %s{UnionCaseName.ofValue parked}: %s{what}"
+
+        let cases = parkingCases parked
+
+        // A `sendto` with no destination is a `send`, and parks as one; with a
+        // destination it is a datagram's, which parks in no connection.
+        let fits (call : Syscall<'Thread, 'Handler>) : bool =
+            List.contains (UnionCaseName.ofValue call) cases
+            && (
+                match call with
+                | Syscall.SendTo (_, _, _, _, destination, _) -> destination = CopiedArgument.Unmapped 0UL
+                | _ -> true
+            )
+
+        if List.isEmpty cases then
+            []
+        else
+
+        let mismatches = probes |> List.filter (fits >> not)
+
+        for call in mismatches do
+            match UnixWait.tryFinish caller call system with
+            | Error (FinishRefusal.NotTheParkedCall refused) when refused = parked -> ()
+            | other -> fail $"given %A{call}, answered %A{other}, not NotTheParkedCall"
+
+        match mismatches with
+        | [] -> ()
+        | call :: _ ->
+            try
+                UnixWait.finish caller call system |> ignore<FinishedCall<'Thread, 'Handler>>
+                fail $"given %A{call}, did not throw"
+            with :? System.ArgumentException as e when e.ParamName = "call" ->
+                ()
+
+        let mismatched = $"misuse: %s{UnionCaseName.ofValue parked} given another call"
+
+        // A `send` finishes as the `sendto` with no destination that is the
+        // same call would, given what `whole` answered for the `send`.
+        let sendAsSendTo (whole : Result<FinishedCall<'Thread, 'Handler>, FinishRefusal>) : string list =
+            match (ParkedCall.ofPark parked : Syscall<'Thread, 'Handler>) with
+            | Syscall.Send (fd, buffer, count, flags) ->
+                let sendto : Syscall<'Thread, 'Handler> =
+                    Syscall.SendTo (fd, buffer, count, flags, CopiedArgument.Unmapped 0UL, 0u)
+
+                let answered = UnixWait.tryFinish caller sendto system
+
+                match whole, answered with
+                | Ok (FinishedCall.ConnectionWrite fate), Ok (FinishedCall.ConnectionWrite fate') when fate = fate' ->
+                    ()
+                | Error refusal, Error refusal' when refusal = refusal' -> ()
+                | _ -> fail $"answered %A{answered} given %A{sendto}, and %A{whole} given the send it is"
+
+                [ "a send finished as a sendto with no destination" ]
+            | _ -> []
+
+        match parked with
+        | ParkedSyscall.PipeWrite _
+        | ParkedSyscall.ConnectionWrite _ ->
+            let whole = UnixWait.tryFinish caller (ParkedCall.ofPark parked) system
+
+            match UnixReadWrite.tryFinishWrite caller system with
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                for buffer in
+                    [
+                        CopiedArgument.Unmapped 0x1000UL
+                        CopiedArgument.Opaque
+                        CopiedArgument.Addressless
+                    ] do
+                    match UnixWait.tryFinish caller (writeWith parked buffer) system with
+                    | Error (FinishRefusal.UnreadableBuffer (refused, given)) when
+                        refused = parked && given = CopiedArgument.userBuffer buffer
+                        ->
+                        ()
+                    | other -> fail $"given the buffer %A{buffer}, answered %A{other}, not UnreadableBuffer"
+
+                let range = PausedWrite.copyRange paused
+                let short = ParkedCall.buffer (range.FirstByte + range.ByteCount - 1)
+
+                try
+                    UnixWait.finish caller (writeWith parked (CopiedArgument.Readable short)) system
+                    |> ignore<FinishedCall<'Thread, 'Handler>>
+
+                    fail $"given %d{short.Length} bytes, short of %A{range}, did not throw"
+                with :? System.InvalidOperationException as e when e.Message.Contains "hold only" ->
+                    ()
+
+                [
+                    mismatched
+                    "misuse: a write that copies given a buffer it cannot copy from"
+                    yield! sendAsSendTo whole
+                ]
+            | Ok (CallProgress.Answered _)
+            | Error _ ->
+                let unread =
+                    UnixWait.tryFinish caller (writeWith parked (CopiedArgument.Unmapped 0x1000UL)) system
+
+                match whole, unread with
+                | Ok (FinishedCall.PipeWrite fate), Ok (FinishedCall.PipeWrite fate')
+                | Ok (FinishedCall.ConnectionWrite fate), Ok (FinishedCall.ConnectionWrite fate') when fate = fate' ->
+                    ()
+                | Error refusal, Error refusal' when refusal = refusal' -> ()
+                | _ ->
+                    fail
+                        $"answered %A{unread} given an unmapped buffer it does not copy, and %A{whole} given one it can"
+
+                [
+                    mismatched
+                    "misuse: a write that copies nothing given a buffer it cannot copy from"
+                    yield! sendAsSendTo whole
+                ]
+        | _ -> [ mismatched ]
