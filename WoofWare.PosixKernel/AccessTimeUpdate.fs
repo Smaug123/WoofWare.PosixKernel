@@ -15,6 +15,9 @@ type internal AccessTimeUpdate =
     /// modification time, or not after the change time, or when its whole
     /// seconds are at least 86400 behind now's.
     | Relative
+    /// Every read moves it to now: Linux's and Darwin's `strictatime`, and
+    /// Darwin's devfs, which has no mount option for it.
+    | Always
 
 [<RequireQualifiedAccess>]
 module internal AccessTimeUpdate =
@@ -44,6 +47,11 @@ module internal AccessTimeUpdate =
     let afterRead (rule : AccessTimeUpdate) (now : UnixTimestamp) (times : InodeTimes) : InodeTimes option =
         match rule with
         | AccessTimeUpdate.Never -> None
+        | AccessTimeUpdate.Always ->
+            Some
+                { times with
+                    Access = now
+                }
         | AccessTimeUpdate.WhenBeforeModification ->
             if times.Access < times.Modification then
                 Some

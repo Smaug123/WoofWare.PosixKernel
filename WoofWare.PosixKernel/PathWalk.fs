@@ -110,9 +110,17 @@ type internal FinalNavigation =
 /// Why this kernel will not say what a path resolves to.
 [<RequireQualifiedAccess>]
 type internal PathRefusal =
-    /// The walk reached `mountRoot`, the root of a filesystem this kernel does
-    /// not model: Darwin's devfs.
-    | UnmodelledFileSystem of mountRoot : InodeNumber * fileSystem : MountedFileSystem
+    /// The walk would look `name`, longer than the flavour's `NAME_MAX`, up in
+    /// `directory`, on Darwin's devfs. devfs leaves the length to its lookup,
+    /// which finds nothing, so a real kernel answers ENOENT where every other
+    /// filesystem answers ENAMETOOLONG, and EPERM where it would create the
+    /// name; this kernel checks the length for every filesystem at once.
+    | DevfsNameTooLong of directory : InodeNumber * name : DirectoryEntryName
+    /// A privileged caller would change a name on Darwin's devfs, or link
+    /// from it, or change the mode or owner of `inode` there. devfs refuses an
+    /// unprivileged caller EPERM (measured); what it answers root has not been
+    /// measured.
+    | DevfsPrivilegedCaller of inode : InodeNumber
     /// The call would bind `name` in `directory`, on the device filesystem,
     /// as a process allowed to write there may on a real devtmpfs. This
     /// kernel's device filesystem holds what its configuration says, and
@@ -144,8 +152,10 @@ module internal PathRefusal =
     /// composing a diagnostic.
     let describe (refusal : PathRefusal) : string =
         match refusal with
-        | PathRefusal.UnmodelledFileSystem (mountRoot, fileSystem) ->
-            $"the path reaches the root of the %O{fileSystem} mounted at inode %O{mountRoot}, which this kernel does not model."
+        | PathRefusal.DevfsNameTooLong (directory, name) ->
+            $"the path looks up \"%s{DirectoryEntryName.toEscaped name}\", longer than NAME_MAX, in inode %O{directory}, on Darwin's devfs. devfs leaves the length to its lookup, so a real kernel answers ENOENT, or EPERM where the call would create the name, where every other filesystem answers ENAMETOOLONG; this kernel checks the length for every filesystem at once."
+        | PathRefusal.DevfsPrivilegedCaller inode ->
+            $"a privileged caller would change a name on Darwin's devfs, link from it, or change the mode or owner of inode %O{inode} there. devfs refuses an unprivileged caller EPERM (measured on Darwin 27.0); what it answers root has not been measured."
         | PathRefusal.DeviceFileSystemNewName (directory, name) ->
             $"the call would bind \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, on the device filesystem, as a process allowed to write there may on a real devtmpfs. This kernel's device filesystem holds what its configuration says, and nothing a process adds to it."
         | PathRefusal.UnmodelledStartingObject fd ->
@@ -158,7 +168,8 @@ module internal PathRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PathRefusal) : RefusalKind =
         match refusal with
-        | PathRefusal.UnmodelledFileSystem _ -> RefusalKind.Unmodelled
+        | PathRefusal.DevfsNameTooLong _ -> RefusalKind.Unmodelled
+        | PathRefusal.DevfsPrivilegedCaller _ -> RefusalKind.Unmodelled
         | PathRefusal.DeviceFileSystemNewName _ -> RefusalKind.Unmodelled
         | PathRefusal.UnmodelledStartingObject _ -> RefusalKind.Unmodelled
         | PathRefusal.ProtectedSymlinkCacheDependent _ -> RefusalKind.Unmodelled
@@ -293,17 +304,20 @@ type internal PausedResolution =
 [<RequireQualifiedAccess>]
 module PathWalk =
 
-    /// The refusal owed for reaching `inode`, if it is the root of a mounted
-    /// filesystem this kernel does not model.
-    let private unmodelledMountRefusal (vfs : VirtualFileSystem) (inode : InodeNumber) : PathRefusal option =
-        match VirtualFileSystem.mountOf inode vfs with
-        | Some {
-                   FileSystem = MountedFileSystem.Devfs
-               } -> Some (PathRefusal.UnmodelledFileSystem (inode, MountedFileSystem.Devfs))
-        | Some {
-                   FileSystem = MountedFileSystem.Devtmpfs
-               }
-        | None -> None
+    /// What a walk owes for looking `name`, past the flavour's `NAME_MAX`, up
+    /// in `directory`: ENAMETOOLONG, which every filesystem but Darwin's devfs
+    /// answers before its lookup, or a refusal on devfs, whose lookup takes
+    /// any length (see `PathRefusal.DevfsNameTooLong`).
+    let private overLongName
+        (vfs : VirtualFileSystem)
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        : PathFailure
+        =
+        match VirtualFileSystem.mountedFileSystemOf directory vfs with
+        | Some MountedFileSystem.Devfs -> PathFailure.Refused (PathRefusal.DevfsNameTooLong (directory, name))
+        | Some MountedFileSystem.Devtmpfs
+        | None -> PathFailure.Errno UnixError.ENAMETOOLONG
 
     /// Expand a symbolic link into the walk's pathname buffer: the directory the
     /// expansion resumes from, and the buffer that replaces the one being
@@ -512,7 +526,7 @@ module PathWalk =
 
             not (PathLimits.nameWithinLimit limits name)
         then
-            Error (PathFailure.Errno UnixError.ENAMETOOLONG)
+            Error (overLongName vfs directory name)
         else
 
         match VirtualFileSystem.lookUpEntry directory name vfs with
@@ -520,10 +534,6 @@ module PathWalk =
             Error (PathFailure.Refused (PathRefusal.UndecidedNameEquivalence (directory, name, bound)))
         | EntryLookup.Free -> Error (PathFailure.Errno UnixError.ENOENT)
         | EntryLookup.Bound target ->
-
-        match unmodelledMountRefusal vfs target with
-        | Some refusal -> Error (PathFailure.Refused refusal)
-        | None ->
 
         let content =
             (VirtualFileSystem.get "PathWalk: the target of an entry" target vfs).Content
@@ -757,7 +767,7 @@ module PathWalk =
         // This is also the only place that sees components spliced in from a
         // symlink target, which a check at the syscall boundary could not.
         if not (PathLimits.nameWithinLimit limits name) then
-            Error (PathFailure.Errno UnixError.ENAMETOOLONG)
+            Error (overLongName vfs directory name)
         else
 
         match VirtualFileSystem.lookUpEntry directory name vfs with
@@ -773,10 +783,6 @@ module PathWalk =
             // creates on both platforms.
             finish (ResolvedTarget.Entry (directory, name, None))
         | EntryLookup.Bound target ->
-
-        match unmodelledMountRefusal vfs target with
-        | Some refusal -> Error (PathFailure.Refused refusal)
-        | None ->
 
         let content =
             (VirtualFileSystem.get "PathWalk: the target of an entry" target vfs).Content

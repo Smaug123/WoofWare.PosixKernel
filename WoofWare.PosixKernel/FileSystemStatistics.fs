@@ -40,8 +40,9 @@ type internal CapacityRefusal =
     | Apfs
     /// The filesystem is an NFS mount, whose counts are the server's.
     | Nfs
-    /// The filesystem is the device filesystem, whose block and file limits
-    /// are shares of the machine's memory.
+    /// The filesystem is the device filesystem, whose counts follow what the
+    /// machine is: on Linux, shares of its memory; on Darwin, every node its
+    /// drivers registered, which its configuration need not describe.
     | DeviceFileSystem
 
 [<RequireQualifiedAccess>]
@@ -54,7 +55,7 @@ module internal CapacityRefusal =
         | CapacityRefusal.Nfs ->
             "the filesystem is an NFS mount, whose block and file counts are the server's, which nothing in this machine determines."
         | CapacityRefusal.DeviceFileSystem ->
-            "the filesystem is the device filesystem, whose block and file limits are shares of the machine's memory, which this machine does not describe."
+            "the filesystem is the device filesystem, whose block and file counts follow what the machine is: on Linux, shares of its memory; on Darwin, every node its drivers registered, which its configuration need not describe."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : CapacityRefusal) : RefusalKind =
@@ -374,9 +375,10 @@ module FileSystemStatistics =
                         | AccessTimeUpdate.WhenBeforeModification ->
                             failwith
                                 "FileSystemStatistics.ofMount: a Linux tmpfs whose reads move an access time as APFS's do, which no Linux mount option makes (this is a bug in this library)."
-                        | AccessTimeUpdate.Relative ->
+                        | AccessTimeUpdate.Relative
+                        | AccessTimeUpdate.Always ->
                             failwith
-                                "FileSystemStatistics.ofMount: the root tmpfs is mounted relatime, which EmulatedMount does not describe (this is a bug in this library)."
+                                "FileSystemStatistics.ofMount: the root tmpfs is mounted relatime or strictatime, which EmulatedMount does not describe (this is a bug in this library)."
                 }
         | FileSystemTypeFields.Darwin (fType, name), EmulatedMount.Apfs apfs ->
             // Measured 2026-09-26 on Darwin 27.0.0, nine APFS volumes in three
@@ -420,9 +422,10 @@ module FileSystemStatistics =
                                         match AccessTimeUpdate.ofMount mount with
                                         | AccessTimeUpdate.Never -> darwinNoAccessTime
                                         | AccessTimeUpdate.WhenBeforeModification -> 0u
-                                        | AccessTimeUpdate.Relative ->
+                                        | AccessTimeUpdate.Relative
+                                        | AccessTimeUpdate.Always ->
                                             failwith
-                                                "FileSystemStatistics.ofMount: an APFS volume mounted relatime, which Darwin has no option for (this is a bug in this library)."
+                                                "FileSystemStatistics.ofMount: an APFS volume mounted relatime or strictatime, which EmulatedMount does not describe (this is a bug in this library)."
                                     )
                                 // 0 on every volume measured but the root data
                                 // volume, which this filesystem is not.
@@ -461,8 +464,7 @@ module FileSystemStatistics =
     /// What `statfs(2)` reports for anything on the device filesystem `mount`,
     /// under a kernel of this platform.
     ///
-    /// Refuses a device filesystem this platform cannot mount, and Darwin's
-    /// devfs, which this kernel does not model and no path reaches.
+    /// Throws for a device filesystem this platform cannot mount.
     let internal ofDeviceMount
         (platform : SimulatedUnixPlatform)
         (mount : DeviceFileSystemMount)
@@ -470,15 +472,47 @@ module FileSystemStatistics =
         =
         let flavour = SimulatedUnixPlatform.flavour platform
 
-        match mount with
-        | DeviceFileSystemMount.Devfs ->
-            failwith
-                "FileSystemStatistics.ofDeviceMount: asked what Darwin's devfs reports, which this kernel does not model and which no path or descriptor reaches (this is a bug in the caller)."
-        | DeviceFileSystemMount.Devtmpfs devtmpfs ->
-
         if not (DeviceFileSystemMount.isMountableUnder flavour mount) then
             failwith
-                $"FileSystemStatistics.ofDeviceMount: a %O{flavour} kernel cannot mount a devtmpfs (this is a bug in the caller)."
+                $"FileSystemStatistics.ofDeviceMount: a %O{flavour} kernel cannot mount %O{mount} (this is a bug in the caller)."
+
+        match mount with
+        | DeviceFileSystemMount.Devfs devfs ->
+            // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, STATFS
+            // rows, through `/dev`, a node and a subdirectory, on two boots):
+            // devfs's type number and name, 512-byte blocks and I/O size, and
+            // an `f_fsid` of its `st_dev` and type number, as APFS's is. Its
+            // block and inode counts follow the nodes the machine holds, which
+            // this configuration does not describe.
+            FileSystemStatistics.Darwin
+                {
+                    TypeValue = 19u
+                    TypeNameValue = unixString "ofDeviceMount" "devfs"
+                    GeometryResult =
+                        Ok
+                            {
+                                BlockSize = 512u
+                                IoSize = 512
+                            }
+                    CapacityResult = Error CapacityRefusal.DeviceFileSystem
+                    FileSystemIdResult =
+                        Ok
+                            {
+                                First = int32 devfs.DeviceId
+                                Second = 19
+                            }
+                    MountResult =
+                        Ok
+                            {
+                                Owner = 0u
+                                Flags = devfs.Flags
+                                ExtendedFlags = 0u
+                                SubType = 0u
+                                MountedOn = unixString "ofDeviceMount" "/dev"
+                                MountedFrom = unixString "ofDeviceMount" "devfs"
+                            }
+                }
+        | DeviceFileSystemMount.Devtmpfs devtmpfs ->
 
         let pageSize =
             int64 (SimulatedPageSize.bytes (SimulatedUnixPlatform.pageSize platform))

@@ -162,6 +162,7 @@ Path resolution keeps its flavour's limits whichever type is chosen.
 Whether a read moves an access time is a mount option, and each type is mounted with one, which `statfs(2)` reports.
 The Linux tmpfs is mounted `noatime`, so only `utimensat(2)` moves an access time there.
 Linux's devtmpfs at `/dev` is mounted `relatime`: a directory read, whether it yields an entry or is at the end, moves a directory's access time to now when it is not after the modification time or the change time, or is at least 86400 whole seconds old; nothing moves a device node's.
+Darwin's devfs at `/dev` has no access-time option: every directory read, whether it yields an entry or is at the end, moves a directory's access time to now, to the microsecond.
 The Darwin APFS volume has APFS's default options: a `read(2)` or `pread(2)` of at least one byte from a file, even one that answers 0 at end-of-file or `EFAULT`, and a directory read that yields an entry, move the access time to now when it is before the modification time, and nothing else moves it (`readlink(2)` and a path through a symbolic link included).
 On NFS no read moves it, which is unmeasured: an NFS file's times are the server's.
 
@@ -1370,16 +1371,25 @@ Only the combinations that have been measured can be built: Linux on x86-64 and 
 Where the flavours disagree, the platform says which answer applies, down to whose numbering an errno or a signal is reported in.
 The filesystem type is chosen separately (see "Giving the machine files"), from those its flavour has been seen to report.
 
-The kernel mounts a device filesystem over `/dev` at boot, as a real one does.
-On Linux it is a devtmpfs, which holds what the machine's configuration says: `UnixBootImage.withDeviceFileSystem` takes a seed of device nodes (`SeedEntry.CharacterDevice`) and the directories holding them, and without it the devtmpfs holds `UnixSystem.defaultDevtmpfsContents`, the five nodes Linux's memory-device driver makes on every kernel: `null`, `zero`, `full`, `random` and `urandom`.
-A real machine's devtmpfs holds many more, according to its kernel's configuration and its hardware, and a client describing one configures them.
-Listing `/dev` and `stat(2)` of anything in it answer from that configuration, and a name it does not hold is ENOENT. A call that would create, remove or rename a name in it is refused once every check that could fail it has passed: an unprivileged process is EACCES there, as on a real machine, and root is refused.
+The kernel mounts a device filesystem over `/dev` at boot, as a real one does: a devtmpfs on Linux and a devfs on Darwin.
+Either holds what the machine's configuration says: `UnixBootImage.withDeviceFileSystem` takes a seed of device nodes (`SeedEntry.CharacterDevice`) and the directories holding them.
+Without it a devtmpfs holds `UnixSystem.defaultDevtmpfsContents`, the five nodes Linux's memory-device driver makes on every kernel: `null`, `zero`, `full`, `random` and `urandom`.
+A devfs holds `UnixSystem.defaultDevfsContents`, Darwin's nearest equivalent: `null` and `zero` from its memory driver, and `random` and `urandom`.
+A real machine's device filesystem holds many more, according to its kernel's configuration and its hardware, and a client describing one configures them.
+A real devfs also always holds `fd` and the `stdin`, `stdout` and `stderr` links into it, which give each process a view of its own descriptors; this kernel does not model them, and no configuration can hold them.
+Listing `/dev` and `stat(2)` of anything in it answer from that configuration, by each filesystem's measured rules for a directory's size and link count, and a name it does not hold is ENOENT.
+A devfs name longer than `NAME_MAX` is refused, because devfs looks any length up where every other filesystem answers ENAMETOOLONG.
+A call that would create, remove or rename a name in it answers every check that could fail it first.
+On Linux an unprivileged process is then EACCES, as on a real machine, and root is refused.
+On Darwin an unprivileged process is EPERM, at the point in each call's checks where Darwin was measured to answer it, and root, whose answers have not been measured, is refused once its walks have answered.
+A devfs node's mode can be changed by no unprivileged process, its owner included (EPERM); an owner change that names an ID, and setting a devfs inode's times, are refused, because devfs moves the change time by a lazy rule of its own.
 A node holds nothing but its device's number (`DeviceNumber`, the `(major, minor)` pair `stat` reports in the flavour's encoding as `st_rdev`), and opening it reaches the driver this kernel has registered under that number, as a real kernel's does.
-Opening a node gives a descriptor whose syscalls are the driver's: `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
-Opening a node whose number this kernel has no driver for is refused, once every check that could fail the open has passed.
-Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. A node a real kernel registers later in boot has a later time, which this kernel does not distinguish. No read or write of a node moves its times, and mounting `/dev` moves none of the root directory's times.
+Opening a node gives a descriptor whose syscalls are the driver's: on Linux, `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
+Opening a node whose number this kernel has no driver for is refused, once every check that could fail the open has passed; this kernel has no Darwin driver yet, since Darwin's keep a position and stamp times where Linux's do not.
+Every time on a devtmpfs and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. A node a real kernel registers later in boot has a later time, which this kernel does not distinguish. No read or write of a node moves its times.
+Every time on a devfs and its nodes is the whole second of the instant `withBootTime` set, as measured, and every birth time the epoch.
+Mounting `/dev` moves none of the root directory's times.
 `CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so a node holding one of their numbers, `/dev/zero` and `/dev/random` among them, is listed and reported but cannot be opened.
-On Darwin it is devfs, which is not modelled, so any path that reaches `/dev` is refused.
 
 Some interfaces are one flavour's alone, and the other flavour refuses every call of them rather than answering: no kernel of that flavour has the call, so there is no answer to measure.
 Linux has epoll and inotify, and Darwin kqueue.

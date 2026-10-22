@@ -747,6 +747,7 @@ module TestUTimensAt =
         | UTimensAtRefusal.Socket _ -> "Socket"
         | UTimensAtRefusal.LaunchedPipe _ -> "LaunchedPipe"
         | UTimensAtRefusal.UnmeasuredFileSystem _ -> "UnmeasuredFileSystem"
+        | UTimensAtRefusal.DevfsTimes _ -> "DevfsTimes"
 
     /// One row, made ready to replay.
     type private Row =

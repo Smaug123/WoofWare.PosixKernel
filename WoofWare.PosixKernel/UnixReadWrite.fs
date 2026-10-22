@@ -57,6 +57,10 @@ type internal ReadRefusal =
     /// if position + count passes `INT64_MAX`; on Darwin, 0 if the position is
     /// `INT64_MAX`; EISDIR otherwise.
     | ScannedDirectoryPosition of inode : InodeNumber * fileSystem : EmulatedFileSystemType
+    /// The descriptor is a directory on Darwin's devfs, where `read(2)`
+    /// returns bytes rather than EISDIR (measured), which this kernel does not
+    /// model.
+    | DevfsDirectory of inode : InodeNumber
     /// A read asleep on a pipe or a connected socket has an answer, and the
     /// library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
@@ -81,6 +85,8 @@ module internal ReadRefusal =
             $"the descriptor is socket %O{socket}, a UDP socket holding a datagram, and the buffer is not mapped. Measured, Darwin answers EFAULT and leaves the datagram's bytes queued with its source address and control record removed, which this kernel does not model."
         | ReadRefusal.ScannedDirectoryPosition (inode, fileSystem) ->
             $"the descriptor is directory %O{inode} on %O{fileSystem}, which this description has read part of the way through. Ahead of a directory's EISDIR, Linux answers EINVAL when position + count passes INT64_MAX and Darwin answers 0 when the position is INT64_MAX, and the position after a partial scan is %O{fileSystem}'s own cookie (on an NFS mount, whatever the server chose, up to INT64_MAX), which is not a number this kernel's position corresponds to. So whether this read is EISDIR or the position's answer is unknown here."
+        | ReadRefusal.DevfsDirectory inode ->
+            $"the descriptor is directory %O{inode} on Darwin's devfs, where read(2) returns bytes rather than EISDIR (measured on Darwin 27.0), which this kernel does not model."
         | ReadRefusal.Interruption refusal ->
             $"the read was asleep on a pipe or a connected socket: %s{SyscallInterruptionRefusal.describe refusal}"
 
@@ -94,6 +100,7 @@ module internal ReadRefusal =
         | ReadRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
         | ReadRefusal.DatagramFault _ -> RefusalKind.Unmodelled
         | ReadRefusal.ScannedDirectoryPosition _ -> RefusalKind.Unmodelled
+        | ReadRefusal.DevfsDirectory _ -> RefusalKind.Unmodelled
         | ReadRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
 
 /// Why this kernel will not answer a `pread`.
@@ -106,6 +113,10 @@ module internal ReadRefusal =
 type internal PReadRefusal =
     /// The buffer has no answer at the step the read reached.
     | Buffer of BufferRefusal
+    /// The descriptor is a directory on Darwin's devfs, where `read(2)`
+    /// returns bytes rather than EISDIR (measured), and `pread(2)` has not
+    /// been measured.
+    | DevfsDirectory of inode : InodeNumber
 
 [<RequireQualifiedAccess>]
 module internal PReadRefusal =
@@ -114,11 +125,14 @@ module internal PReadRefusal =
     let describe (refusal : PReadRefusal) : string =
         match refusal with
         | PReadRefusal.Buffer refusal -> BufferRefusal.describe refusal
+        | PReadRefusal.DevfsDirectory inode ->
+            $"the descriptor is directory %O{inode} on Darwin's devfs, where read(2) returns bytes rather than EISDIR (measured on Darwin 27.0), and pread(2) has not been measured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PReadRefusal) : RefusalKind =
         match refusal with
         | PReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
+        | PReadRefusal.DevfsDirectory _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
 /// "the calling thread sleeps".
@@ -2471,10 +2485,12 @@ module UnixReadWrite =
                 | ConnectionCopyRefusal.Buffer refusal -> ReadRefusal.Buffer refusal
             )
         | ReadTarget.Directory (inode, position) ->
+            match UnixMachineState.fileSystemOf inode system.Machine with
+            | InodeFileSystem.Devfs -> Error (ReadRefusal.DevfsDirectory inode)
+            | InodeFileSystem.Typed fileSystem ->
+
             // A directory has a position too, and each flavour's position rule
             // answers ahead of EISDIR, exactly as for a file.
-            let fileSystem = UnixMachineState.fileSystemTypeOf inode system.Machine
-
             match directoryPositionCheck platform fileSystem position count with
             | Error () -> Error (ReadRefusal.ScannedDirectoryPosition (inode, fileSystem))
             | Ok check ->
@@ -3399,6 +3415,9 @@ module UnixReadWrite =
 
         match target with
         | Error error -> Ok (ReadAnswer.Failed error, system)
+        // devfs holds no regular file, so this is one of its directories.
+        | Ok (PReadTarget.File inode) when VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem ->
+            Error (PReadRefusal.DevfsDirectory inode)
         | Ok target ->
 
         // Everything below is the object's own read operation, which under a
@@ -3819,7 +3838,11 @@ module UnixReadWrite =
             count
             (SimulatedUnixPlatform.setGroupIdOnWrite platform)
             (SimulatedUnixPlatform.faultedWriteRule platform)
-            (EmulatedFileSystemType.faultedWriteAllocation (UnixMachineState.fileSystemTypeOf inode system.Machine))
+            (match UnixMachineState.fileSystemOf inode system.Machine with
+             | InodeFileSystem.Typed fileSystem -> EmulatedFileSystemType.faultedWriteAllocation fileSystem
+             | InodeFileSystem.Devfs ->
+                 failwith
+                     $"UnixReadWrite: a faulted write to inode %O{inode}, on devfs, which holds no regular file (this is a bug in this library).")
             system.Process.Credentials
             (UnixMachineState.realtime system.Scheduling system.Machine)
             system.Machine.FileSystem
