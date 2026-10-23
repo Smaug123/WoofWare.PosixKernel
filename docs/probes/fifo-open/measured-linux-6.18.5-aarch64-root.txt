@@ -1,0 +1,133 @@
+6.18.5 aarch64
+ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+uid=0 euid=0
+A1 opener 100 ms in: asleep
+A1 main's blocking partner open: OK(4)
+A1 opener 100 ms later: returned OK(3)
+A2 opener 100 ms in: asleep
+A2 main's partner open: OK(4)
+A2 opener 100 ms after the partner's close: returned OK(3)
+A3 opener 100 ms in: asleep
+A3 main's partner open: OK(4); opener had returned before the close: 0, by the close's return: 0
+A3 opener 100 ms after the partner's close: returned OK(3)
+A4 child stopped: 1
+A4 main's partner open while the child is stopped: ENXIO
+A4 child 200 ms after SIGCONT: asleep
+A4 main's second partner open: OK(4)
+A4 child 100 ms later: returned OK(3)
+A5 openers 100 ms in: asleep, asleep
+A5 main's partner open: OK(5)
+A5 openers 100 ms later: returned OK(3), returned OK(4)
+A6 opener 100 ms in: asleep
+A6 main's open: OK(4)
+A6 opener 100 ms later: returned OK(3)
+A7 opener 100 ms in: asleep
+A7 main's open: OK(4)
+A7 opener 100 ms later: asleep
+A8 child stopped: 1
+A8 main opens nothing while the child is stopped
+A8 child 200 ms after SIGCONT: asleep
+A8 main's second partner open: OK(4)
+A8 child 100 ms later: returned OK(3)
+A9 30 trials: opener asleep before the partner 30; returned after the partner's open and close 30; still asleep 0
+B1 opener 100 ms in: asleep
+B1 main's blocking partner open: OK(4)
+B1 opener 100 ms later: returned OK(3)
+B2 opener 100 ms in: asleep
+B2 main's partner open: OK(4)
+B2 opener 100 ms after the partner's close: returned OK(3)
+B2 opener's descriptor: write EPIPE
+B3 opener 100 ms in: asleep
+B3 main's partner open: OK(4); opener had returned before the close: 0, by the close's return: 0
+B3 opener 100 ms after the partner's close: returned OK(3)
+B3 opener's descriptor: write EPIPE
+B4 child stopped: 1
+B4 main's partner open while the child is stopped: OK(4)
+B4 child 200 ms after SIGCONT: asleep
+B4 main's second partner open: OK(4)
+B4 child 100 ms later: returned OK(3)
+B5 openers 100 ms in: asleep, asleep
+B5 main's partner open: OK(5)
+B5 openers 100 ms later: returned OK(3), returned OK(4)
+B6 opener 100 ms in: asleep
+B6 main's open: OK(4)
+B6 opener 100 ms later: returned OK(3)
+B7 child stopped: 1
+B7 main opens nothing while the child is stopped
+B7 child 200 ms after SIGCONT: asleep
+B7 main's second partner open: OK(4)
+B7 child 100 ms later: returned OK(3)
+B8 30 trials: opener asleep before the partner 30; returned after the partner's open and close 30; still asleep 0
+C1 open(O_RDONLY|O_NONBLOCK), no writer: OK(3)
+C1 no writer yet: read 0; poll rv=0 revents=(0x0)
+C1 a writer opens O_WRONLY|O_NONBLOCK: OK(4); reader's poll rv=0 revents=(0x0)
+C1 writer open: reader's read EAGAIN
+C1 writer closed: reader's poll rv=1 revents=HUP|(0x10); read 0
+C2 open(O_WRONLY|O_NONBLOCK), no reader: ENXIO
+C3 open(O_WRONLY|O_NONBLOCK) with a reader: OK(4); write end's poll rv=1 revents=OUT|(0x4)
+C3 reader closed: write end's poll rv=1 revents=OUT|ERR|(0xc); write EPIPE
+C4 open(O_RDWR), nobody else, 100 ms in: returned OK(3)
+C4 through it: write 3, read 3; poll rv=1 revents=OUT|(0x4)
+C5 open(O_RDWR|O_NONBLOCK): OK(3)
+C6 open(O_ACCMODE|O_NONBLOCK): EINVAL
+D1 reader 100 ms in: asleep
+D1 100 ms after SIGUSR1 (handler ran 1 times): reader returned EINTR
+D1 then main's open(O_WRONLY|O_NONBLOCK): ENXIO
+D1 reader 100 ms later: returned EINTR
+D2 reader 100 ms in: asleep
+D2 100 ms after SIGUSR1 (handler ran 1 times): reader asleep
+D2 then main's open(O_WRONLY|O_NONBLOCK): OK(4)
+D2 reader 100 ms later: returned OK(3)
+D3 writer 100 ms in: asleep
+D3 100 ms after SIGUSR1 (handler ran 1 times): writer returned EINTR
+D3 then another thread's open(O_RDONLY), 100 ms in: asleep
+D4 writer 100 ms in: asleep
+D4 100 ms after SIGUSR1 (handler ran 1 times): writer asleep
+D4 then main's open(O_RDONLY|O_NONBLOCK): OK(4)
+D4 writer 100 ms later: returned OK(3)
+D5 (control) blocking pipe read, SA_RESTART, 100 ms after SIGUSR1 (handler ran 1 times): asleep
+E1 stat(path): type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0; dev is the directory's: 1
+E2 fstat(O_RDWR): type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0; ino is the path's: 1; dev is the path's: 1
+E2 write 3
+E2 after the write: type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0; FIONREAD=3; mtime moved: 1; ctime moved: 1; atime moved: 0
+E2 stat(path) after the write: size=0; mtime moved: 1
+E2 read 1
+E2 after the read: size=0; atime moved: 1; mtime moved: 0
+E4 lseek(SEEK_CUR): ESPIPE; pread: ESPIPE
+E5 fchmod(0640) through the descriptor: OK; stat(path) perm=0640
+E3 write 3
+E3 read end:  type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0; ino is the path's: 1
+E3 write end: type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0; ino is the path's: 1
+E3 stat(path): size=0
+E3 FIONREAD on the write end: OK 3
+E3 FIONREAD on the read end: OK 3
+F1 write 3; close
+F1 reopened O_RDWR|O_NONBLOCK: read EAGAIN
+F2 write 3; close the writer
+F2 a second writer opens: OK(4); the reader's read 3
+G1 mkfifo(0666): OK; type=S_IFIFO perm=0644 size=0 nlink=1 rdev=0 blksize=4096 blocks=0
+G2 mkfifo(07777): OK; type=S_IFIFO perm=7755 size=0 nlink=1 rdev=0 blksize=4096 blocks=0
+G3 mknod(S_IFIFO|...)(0666): OK; type=S_IFIFO perm=0644 size=0 nlink=1 rdev=0 blksize=4096 blocks=0
+G4 mknod(S_IFIFO|...)(07777): OK; type=S_IFIFO perm=7755 size=0 nlink=1 rdev=0 blksize=4096 blocks=0
+G5 mkfifo(0600): EEXIST
+G6 open(O_CREAT|O_EXCL|O_RDONLY|O_NONBLOCK) of the FIFO: EEXIST
+G7 open(O_CREAT|O_RDONLY|O_NONBLOCK) of the FIFO: OK(3); type=S_IFIFO perm=0600 size=0 nlink=1 rdev=0 blksize=4096 blocks=0
+G8 open(O_CREAT|O_WRONLY|O_NONBLOCK), no reader: ENXIO
+G9 open(O_WRONLY|O_NONBLOCK|O_TRUNC), a reader open: OK(4)
+G10 open(O_RDONLY|O_NONBLOCK|O_DIRECTORY): ENOTDIR
+G11 mkfifoat(dirfd, "g11", 0600): OK
+G12 openat(dirfd, "g11", O_RDONLY|O_NONBLOCK): OK(5)
+H1 FIFO, writes of 1 until EAGAIN: 65536 bytes; write end POLLOUT 0
+H1 pipe, writes of 1 until EAGAIN: 65536 bytes; write end POLLOUT 0
+H2 FIFO, writes of 4096 until EAGAIN: 65536 bytes; write end POLLOUT 0
+H2 pipe, writes of 4096 until EAGAIN: 65536 bytes; write end POLLOUT 0
+H3 FIFO, writes of 1000 until EAGAIN: 64000 bytes; write end POLLOUT 0
+H3 pipe, writes of 1000 until EAGAIN: 64000 bytes; write end POLLOUT 0
+I1 reader 100 ms in: asleep
+I1 main opens /dev/null: OK(4) (the lowest free descriptor before the reader was 3)
+I2 fcntl(3, F_GETFD): EBADF
+I3 close(3): EBADF
+I4 dup2(4, 3): EBUSY
+I5 a writer opens (OK(5)); reader 100 ms later: returned OK(3)
+I5 the dup2: EBUSY
+I6 fstat(3): S_IFIFO
