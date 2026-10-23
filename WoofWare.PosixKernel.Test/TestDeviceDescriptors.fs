@@ -43,6 +43,7 @@ module TestDeviceDescriptors =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -89,8 +90,8 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofText path) 0o644 system with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        match OpenFlagWords.openPath (PathArg.ofText path) flags 0o644 system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"open(%s{path}, %A{flags}): expected a descriptor, got %A{other}"
 
     let private openDevice
@@ -134,7 +135,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : ReadAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd buffer count system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd buffer count system with
         | Ok (ReadOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"read(%d{fd}, %A{buffer}, %d{count}): expected an answer, got %A{other}"
 
@@ -143,7 +144,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : ImmutableArray<byte> * UnixSystem<int, string>
         =
-        match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped count 0u system with
+        match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped count 0u system with
         | Ok (GetRandomAnswer.Completed draw, system) -> EntropyDraw.bytes draw, system
         | other -> failwith $"getrandom(%d{count}): expected bytes, got %A{other}"
 
@@ -154,7 +155,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : WriteAdmission * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
+        match Lone.UnixReadWrite.tryAdmitWrite thread fd buffer count system with
         | Ok (WriteStep.Returns (admission, system)) -> admission, system
         | other -> failwith $"admitWrite(%d{fd}, %A{buffer}, %d{count}): expected an admission, got %A{other}"
 
@@ -178,7 +179,11 @@ module TestDeviceDescriptors =
                 }
 
             let before =
-                UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText (pathOf device)) system
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText (pathOf device))
+                    system
 
             let fd, opened = openWith flags (pathOf device) system
             assertSound opened
@@ -193,10 +198,14 @@ module TestDeviceDescriptors =
             | None -> failwith $"fd %d{fd} is not live"
 
             // Nothing about the node moved: not its times, not its size.
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText (pathOf device)) opened
+            UnixPathResolution.tryStat
+                (Callers.leader opened)
+                SymlinkPolicy.Follow
+                (PathArg.ofText (pathOf device))
+                opened
             |> shouldEqual before
 
-            UnixPathResolution.tryFstat fd opened
+            UnixPathResolution.tryFstat (Callers.leader opened) fd opened
             |> Result.mapError (sprintf "%A")
             |> shouldEqual (before |> Result.mapError (sprintf "%A"))
 
@@ -220,8 +229,8 @@ module TestDeviceDescriptors =
                     Exclusive = true
                 }
 
-            match OpenFlagWords.openPath flags (PathArg.ofText (pathOf device)) 0o644 booted with
-            | Ok (SyscallAnswer.Failed UnixError.EEXIST, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0o644 booted with
+            | Ok (DescriptorAnswer.Failed UnixError.EEXIST, _) -> ()
             | other -> failwith $"%O{device}: expected EEXIST, got %A{other}"
 
             let flags =
@@ -229,8 +238,8 @@ module TestDeviceDescriptors =
                     Directory = true
                 }
 
-            match OpenFlagWords.openPath flags (PathArg.ofText (pathOf device)) 0 booted with
-            | Ok (SyscallAnswer.Failed UnixError.ENOTDIR, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText (pathOf device)) flags 0 booted with
+            | Ok (DescriptorAnswer.Failed UnixError.ENOTDIR, _) -> ()
             | other -> failwith $"%O{device}: expected ENOTDIR, got %A{other}"
 
     [<Test>]
@@ -238,7 +247,9 @@ module TestDeviceDescriptors =
         // Root narrows `/dev/null` to 0o600; then the unprivileged user may not
         // open it for any access, and root still may.
         let narrowed =
-            match UnixPathResolution.tryChmod (PathArg.ofText "/dev/null") 0o600 (bootedAs true) with
+            let root = bootedAs true
+
+            match UnixPathResolution.tryChmod (Callers.leader root) (PathArg.ofText "/dev/null") 0o600 root with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"chmod as root: %A{other}"
 
@@ -251,8 +262,8 @@ module TestDeviceDescriptors =
                 FileAccessMode.WriteOnly
                 FileAccessMode.ReadWrite
             ] do
-            match OpenFlagWords.openPath (opening access) (PathArg.ofText "/dev/null") 0 unprivileged with
-            | Ok (SyscallAnswer.Failed UnixError.EACCES, _) -> ()
+            match OpenFlagWords.openPath (PathArg.ofText "/dev/null") (opening access) 0 unprivileged with
+            | Ok (DescriptorAnswer.Failed UnixError.EACCES, _) -> ()
             | other -> failwith $"%A{access} as uid 1000: expected EACCES, got %A{other}"
 
             openDevice CharacterDevice.Null access narrowed
@@ -261,7 +272,9 @@ module TestDeviceDescriptors =
     [<Test>]
     let ``a description that names a node as something it is not breaks the invariants`` () : unit =
         let inodeOf (path : string) =
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText path) booted with
+            match
+                UnixPathResolution.tryStat (Callers.leader booted) SymlinkPolicy.Follow (PathArg.ofText path) booted
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
             | other -> failwith $"stat %s{path}: %A{other}"
 
@@ -274,18 +287,27 @@ module TestDeviceDescriptors =
         for registry in
             [
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -296,6 +318,9 @@ module TestDeviceDescriptors =
             | other -> failwith $"expected one kind mismatch, got %A{other}"
 
         FileDescriptorRegistry.openCharacterDevice
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            false
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -307,17 +332,26 @@ module TestDeviceDescriptors =
 
     [<Test>]
     let ``a description of a device this kernel has no driver for breaks the invariants`` () : unit =
-        // No node names such a device (`VirtualFileSystem.checkInvariants`
-        // reports one as `ReservedContent`), so a description naming one names
-        // a node of some other device.
+        // `open` refuses a node whose number has no driver, so no description
+        // names such a device: not through another device's node, nor through
+        // a node holding the device's own number.
         let urandom =
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/dev/urandom") booted with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader booted)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText "/dev/urandom")
+                    booted
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
             | other -> failwith $"stat /dev/urandom: %A{other}"
 
         for device in [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ] do
             let fd, registry =
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device
@@ -334,16 +368,34 @@ module TestDeviceDescriptors =
             UnixSystem.checkInvariants system
             |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)
             |> shouldEqual []
+
+            let ownNumber =
+                VirtualFileSystem.Unchecked.setContent
+                    urandom
+                    (InodeContent.CharacterDevice (
+                        CharacterDevice.number SimulatedUnixFlavour.Linux device,
+                        PermissionBits.parseOrFail "TestDeviceDescriptors" 0o666
+                    ))
+                    (UnixSystem.fileSystem system)
+
+            system
+            |> Kernel.mapMachine (fun machine ->
+                { machine with
+                    CommittedFileSystem = CommittedFileSystem.initial ownNumber
+                }
+            )
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.DescriptionKindMismatch (description, urandom) ]
 
     [<Test>]
     let ``fstatfs through a device's descriptor is statfs of its path`` () : unit =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixPathResolution.fstatfs fd system
-            |> shouldEqual (Answered.statfs (PathArg.ofText (pathOf device)) system)
+            UnixPathResolution.fstatfs (Callers.leader system) fd system
+            |> shouldEqual (Answered.statfs (Callers.leader system) (PathArg.ofText (pathOf device)) system)
 
     // ------------------------------------------------------------------ read
 
@@ -470,7 +522,7 @@ module TestDeviceDescriptors =
     let ``a urandom read into memory the caller cannot produce is refused, and an empty one is not`` () : unit =
         let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
 
-        match UnixReadWrite.tryRead thread fd UserBuffer.Opaque 16UL system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Opaque 16UL system with
         | Error (ReadRefusal.Buffer BufferRefusal.OpaqueAtTransfer) -> ()
         | other -> failwith $"expected a refusal, got %A{other}"
 
@@ -479,43 +531,37 @@ module TestDeviceDescriptors =
         |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
 
     [<Test>]
-    let ``a urandom read longer than a page is refused while the reader has a signal pending`` () : unit =
+    let ``a urandom read by a reader a signal is deliverable to is made only once the reader has taken it`` () : unit =
         // Linux's read copies a 64-byte block at a time and, at each page
         // boundary with bytes still to copy, stops if a signal is pending: so a
         // read of more than a page with one already pending answers a page,
-        // short (`get_random_bytes_user`, drivers/char/random.c in 6.18). The
-        // check counts bytes copied, so where the buffer starts does not
-        // matter, and a read of exactly a page never reaches a check.
+        // short (`get_random_bytes_user`, drivers/char/random.c in 6.18). A
+        // thread takes a signal deliverable to it before it makes another
+        // call, so none is pending as the read is made, and every byte moves.
         let property (count : uint64) (pending : PendingSignal) (pread : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-            let system = PendingSignal.make thread pending system
+            let made = PendingSignal.make thread pending system
 
-            let outcome =
+            let read (system : UnixSystem<int, string>) =
                 if pread then
-                    match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count 0L system with
-                    | Ok answer -> Ok answer
-                    | Error (PReadRefusal.SignalAtPageBoundary count) -> Error count
-                    | Error (PReadRefusal.Buffer refusal) -> failwith $"pread: %A{refusal}"
+                    match
+                        UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped count 0L system
+                    with
+                    | Ok (answer, _) -> answer
+                    | Error refusal -> failwith $"pread: %A{refusal}"
                 else
-                    match UnixReadWrite.tryRead thread fd UserBuffer.Mapped count system with
-                    | Ok (ReadOutcome.Answered answer, system) -> Ok (answer, system)
-                    | Error (ReadRefusal.SignalAtPageBoundary count) -> Error count
+                    match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Mapped count system with
+                    | Ok (ReadOutcome.Answered answer, _) -> answer
                     | other -> failwith $"read: %A{other}"
 
-            match outcome with
-            | Error refused ->
-                refused |> shouldEqual (int count)
+            if PendingSignal.transferrerHasSignal pending then
+                Assert.Throws<System.InvalidOperationException> (fun () -> read made |> ignore)
+                |> ignore<System.InvalidOperationException>
 
-                (count > 4096UL && PendingSignal.transferrerHasSignal pending)
-                |> shouldEqual true
-            | Ok (answer, _) ->
-                (count > 4096UL && PendingSignal.transferrerHasSignal pending)
-                |> shouldEqual false
-
-                match answer with
-                | ReadAnswer.Drawn draw -> EntropyDraw.count draw |> shouldEqual (int count)
-                | ReadAnswer.Completed bytes -> bytes.Length |> shouldEqual (int count)
-                | ReadAnswer.Failed error -> failwith $"%O{error}"
+            match read (PendingSignal.returned thread pending made) with
+            | ReadAnswer.Drawn draw -> EntropyDraw.count draw |> shouldEqual (int count)
+            | ReadAnswer.Completed bytes -> bytes.Length |> shouldEqual (int count)
+            | ReadAnswer.Failed error -> failwith $"%O{error}"
 
         let countGen =
             Gen.oneof
@@ -532,54 +578,48 @@ module TestDeviceDescriptors =
         )
 
     [<Test>]
-    let ``a urandom write longer than a page is refused while the writer has a signal pending`` () : unit =
-        // `write_pool_user` stops at a page boundary as the read does.
+    let ``a urandom write by a writer a signal is deliverable to is made only once the writer has taken it`` () : unit =
+        // `write_pool_user` stops at a page boundary once a signal is pending,
+        // as the read does. A thread takes a signal deliverable to it before it
+        // makes another call, so none is pending as the write is made, and
+        // every byte moves.
         let property (count : int) (pending : PendingSignal) (positioned : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.WriteOnly booted
-            let system = PendingSignal.make thread pending system
-            let refused = count > 4096 && PendingSignal.transferrerHasSignal pending
+            let made = PendingSignal.make thread pending system
             let bytes = ImmutableArray.CreateRange (Seq.init count byte)
 
+            let whole (system : UnixSystem<int, string>) : WriteAnswer =
+                if positioned then
+                    match WriteOutcomes.admitThenPwrite thread fd bytes 0L system with
+                    | Ok (answer, _) -> answer
+                    | Error other -> failwith $"pwrite: %A{other}"
+                else
+                    match WriteOutcomes.writeBytes thread fd bytes system with
+                    | Ok (WriteStep.Returns (answer, _)) -> answer
+                    | other -> failwith $"write: %A{other}"
+
+            if PendingSignal.transferrerHasSignal pending then
+                Assert.Throws<System.InvalidOperationException> (fun () -> whole made |> ignore)
+                |> ignore<System.InvalidOperationException>
+
+            let returned = PendingSignal.returned thread pending made
+
             if positioned then
-                match UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L system with
-                | Error (PWriteRefusal.SignalAtPageBoundary refusedCount) ->
-                    refused |> shouldEqual true
-                    refusedCount |> shouldEqual count
-                | Ok admission ->
-                    refused |> shouldEqual false
-
-                    match admission with
-                    | PWriteAdmission.Transfer transfer -> transfer |> shouldEqual count
-                    | PWriteAdmission.Answered answer -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 count) 0L returned with
+                | Ok (PWriteAdmission.Transfer (transfer, _)) -> transfer |> shouldEqual count
+                | Ok (PWriteAdmission.Answered answer) -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                | Ok (PWriteAdmission.DeviceAnswered _ as answered) ->
+                    failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
+                | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                 | Error other -> failwith $"admitPWrite: %A{other}"
-
-                // The commit asks too, for a caller that skipped the admission.
-                match UnixReadWrite.tryPwriteBytes thread fd bytes 0L system with
-                | Error (PWriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
-                | Ok (answer, _) ->
-                    refused |> shouldEqual false
-                    answer |> shouldEqual (WriteAnswer.Completed (int64 count))
-                | Error other -> failwith $"pwrite: %A{other}"
             else
-                match UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) system with
-                | Error (WriteRefusal.SignalAtPageBoundary refusedCount) ->
-                    refused |> shouldEqual true
-                    refusedCount |> shouldEqual count
-                | Ok (WriteStep.Returns (admission, _)) ->
-                    refused |> shouldEqual false
-
-                    match admission with
-                    | WriteAdmission.Transfer transfer -> transfer |> shouldEqual count
-                    | WriteAdmission.Answered answer -> answer |> shouldEqual (WriteAnswer.Completed 0L)
-                    | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
+                match Lone.UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) returned with
+                | Ok (WriteStep.Returns (WriteAdmission.Transfer (transfer, _), _)) -> transfer |> shouldEqual count
+                | Ok (WriteStep.Returns (WriteAdmission.Answered answer, _)) ->
+                    answer |> shouldEqual (WriteAnswer.Completed 0L)
                 | other -> failwith $"admitWrite: %A{other}"
 
-                match UnixReadWrite.tryWriteBytes thread fd bytes system with
-                | Error (WriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
-                | Ok (WriteStep.Returns (answer, _)) ->
-                    refused |> shouldEqual false
-                    answer |> shouldEqual (WriteAnswer.Completed (int64 count))
-                | other -> failwith $"write: %A{other}"
+            whole returned |> shouldEqual (WriteAnswer.Completed (int64 count))
 
         let countGen =
             Gen.oneof [ Gen.choose (0, 9000) ; Gen.elements [ 4095 ; 4096 ; 4097 ; 8192 ; 8193 ] ]
@@ -591,6 +631,83 @@ module TestDeviceDescriptors =
                 (fun (c, p, pw) -> property c p pw)
         )
 
+    /// Linux stops a transfer of more than a page from or to the entropy pool
+    /// short at a page boundary once a signal is pending. That needs a signal
+    /// pending as the transfer is made, and a thread a signal is deliverable to
+    /// makes no call: it owes its return to user mode, and every such transfer
+    /// throws, naming why. Once it has returned, the transfer moves every
+    /// byte.
+    [<Test>]
+    let ``a transfer of more than a page by a thread a signal is deliverable to throws until the thread returns``
+        ()
+        : unit
+        =
+        let count = 8193
+        let pending = PendingSignal.CaughtForTransferrer
+        let bytes = ImmutableArray.CreateRange (Seq.init count byte)
+
+        let transfers : (string * FileAccessMode * (int -> UnixSystem<int, string> -> int64)) list =
+            [
+                "read",
+                FileAccessMode.ReadOnly,
+                fun fd system ->
+                    match readOf fd UserBuffer.Mapped (uint64 count) system |> fst with
+                    | ReadAnswer.Drawn draw -> int64 (EntropyDraw.count draw)
+                    | other -> failwith $"read: %A{other}"
+                "pread",
+                FileAccessMode.ReadOnly,
+                fun fd system ->
+                    match
+                        UnixReadWrite.tryPread
+                            (Callers.thread thread system)
+                            fd
+                            UserBuffer.Mapped
+                            (uint64 count)
+                            0L
+                            system
+                    with
+                    | Ok (ReadAnswer.Drawn draw, _) -> int64 (EntropyDraw.count draw)
+                    | other -> failwith $"pread: %A{other}"
+                "write",
+                FileAccessMode.WriteOnly,
+                fun fd system ->
+                    match WriteOutcomes.writeBytes thread fd bytes system with
+                    | Ok (WriteStep.Returns (WriteAnswer.Completed written, _)) -> written
+                    | other -> failwith $"write: %A{other}"
+                "pwrite",
+                FileAccessMode.WriteOnly,
+                fun fd system ->
+                    match WriteOutcomes.admitThenPwrite thread fd bytes 0L system with
+                    | Ok (WriteAnswer.Completed written, _) -> written
+                    | other -> failwith $"pwrite: %A{other}"
+                "getrandom",
+                FileAccessMode.ReadOnly,
+                fun _ system ->
+                    match
+                        UnixEntropy.tryGetRandom
+                            (Callers.thread thread system)
+                            UserBuffer.Mapped
+                            (uint64 count)
+                            GetRandomFlags.Insecure
+                            system
+                    with
+                    | Ok (GetRandomAnswer.Completed draw, _) -> int64 (EntropyDraw.count draw)
+                    | other -> failwith $"getrandom: %A{other}"
+            ]
+
+        for name, access, transfer in transfers do
+            let fd, system = openDevice CharacterDevice.URandom access booted
+            let made = PendingSignal.make thread pending system
+
+            let thrown =
+                Assert.Throws<System.InvalidOperationException> (fun () -> transfer fd made |> ignore<int64>)
+
+            (name, thrown.Message.Contains "a signal is deliverable to it")
+            |> shouldEqual (name, true)
+
+            (name, transfer fd (PendingSignal.returned thread pending made))
+            |> shouldEqual (name, int64 count)
+
     [<Test>]
     let ``a pending signal changes nothing a write to null answers`` () : unit =
         let fd, system = openDevice CharacterDevice.Null FileAccessMode.WriteOnly booted
@@ -601,19 +718,22 @@ module TestDeviceDescriptors =
         |> shouldEqual (WriteAdmission.Answered (WriteAnswer.Completed 65536L))
 
     [<Test>]
-    let ``a pending signal changes nothing a read of null or a faulting read answers`` () : unit =
-        let fd, system = openDevice CharacterDevice.Null FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
+    let ``a reader a signal is deliverable to reads null, or faults, only once it has taken the signal`` () : unit =
+        let pending = PendingSignal.CaughtForTransferrer
 
-        readOf fd UserBuffer.Mapped 65536UL system
-        |> fst
+        let readOnce (device : CharacterDevice) (buffer : UserBuffer) : ReadAnswer =
+            let fd, system = openDevice device FileAccessMode.ReadOnly booted
+            let made = PendingSignal.make thread pending system
+
+            Assert.Throws<System.InvalidOperationException> (fun () -> readOf fd buffer 65536UL made |> ignore)
+            |> ignore<System.InvalidOperationException>
+
+            readOf fd buffer 65536UL (PendingSignal.returned thread pending made) |> fst
+
+        readOnce CharacterDevice.Null UserBuffer.Mapped
         |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
 
-        let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
-
-        readOf fd (UserBuffer.Unmapped 0UL) 65536UL system
-        |> fst
+        readOnce CharacterDevice.URandom (UserBuffer.Unmapped 0UL)
         |> shouldEqual (ReadAnswer.Failed UnixError.EFAULT)
 
     [<Test>]
@@ -629,10 +749,7 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            let nonBlocking =
-                match UnixDescriptor.setNonBlocking fd true system with
-                | SetNonBlockingAnswer.Set, system -> system
-                | other -> failwith $"F_SETFL O_NONBLOCK: %A{other}"
+            let nonBlocking = NonBlocking.set fd system
 
             fst (readOf fd UserBuffer.Mapped 64UL nonBlocking)
             |> readBytes
@@ -647,7 +764,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (count : uint64) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count offset system with
+            match UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped count offset system with
             | Error refusal -> failwith $"pread refused: %A{refusal}"
             | Ok (answer, after) ->
 
@@ -692,10 +809,10 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
+            UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EINVAL, system))
 
-            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
+            UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EFAULT, system))
 
     // ------------------------------------------------------------------ write
@@ -741,7 +858,7 @@ module TestDeviceDescriptors =
         let property (count : uint64) (buffer : UserBuffer) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadWrite booted
 
-            match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite thread fd buffer count system with
             | Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer) ->
                 buffer |> shouldEqual UserBuffer.Opaque
                 count |> shouldNotEqual 0UL
@@ -756,13 +873,13 @@ module TestDeviceDescriptors =
                     | UserBuffer.Unmapped _, _ -> answer |> shouldEqual (WriteAnswer.Failed UnixError.EFAULT)
                     | _ -> failwith $"%A{buffer} of %d{count}: expected a transfer, got %A{answer}"
                 | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
-                | WriteAdmission.Transfer transfer ->
+                | WriteAdmission.Transfer (transfer, into) ->
                     buffer |> shouldEqual UserBuffer.Mapped
                     transfer |> shouldEqual (int count)
 
                     let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                    match UnixReadWrite.tryWriteBytes thread fd bytes after with
+                    match WriteOutcomes.applyWrite fd into bytes after with
                     | Ok (WriteStep.Returns (answer, written)) ->
                         answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                         // Bytes written to the device are not what it reads back:
@@ -800,7 +917,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (count : uint64) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.WriteOnly booted
 
-            match UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped count offset system with
+            match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped count offset system with
             | Error refusal -> failwith $"admitPWrite refused: %A{refusal}"
             | Ok admission ->
 
@@ -813,21 +930,28 @@ module TestDeviceDescriptors =
             | CharacterDevice.Zero, _
             | CharacterDevice.Random, _
             | CharacterDevice.Tty, _ -> failwith $"%O{device} has no node, so it cannot have been opened"
-            | CharacterDevice.Null, _ ->
-                admission
-                |> shouldEqual (PWriteAdmission.Answered (WriteAnswer.Completed (int64 count)))
+            | CharacterDevice.Null, PWriteAdmission.Answered answer ->
+                count |> shouldEqual 0UL
+                answer |> shouldEqual (WriteAnswer.Completed 0L)
+            | CharacterDevice.Null, PWriteAdmission.DeviceAnswered (answer, _, _) ->
+                answer |> shouldEqual (WriteAnswer.Completed (int64 count))
+            | CharacterDevice.Null, other -> failwith $"/dev/null's pwrite reached %A{other}"
             | CharacterDevice.URandom, PWriteAdmission.Answered answer ->
                 count |> shouldEqual 0UL
                 answer |> shouldEqual (WriteAnswer.Completed 0L)
-            | CharacterDevice.URandom, PWriteAdmission.Transfer transfer ->
+            | CharacterDevice.URandom, PWriteAdmission.Transfer (transfer, into) ->
                 transfer |> shouldEqual (int count)
                 let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                match UnixReadWrite.tryPwriteBytes 0 fd bytes offset system with
+                match Lone.UnixReadWrite.tryApplyPWrite fd offset into bytes system with
                 | Ok (answer, after) ->
                     answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                     after |> shouldEqual system
                 | Error refusal -> failwith $"pwrite refused: %A{refusal}"
+            | CharacterDevice.URandom, (PWriteAdmission.Faults _ as faults) ->
+                failwith $"a mapped buffer faulted: %A{faults}"
+            | CharacterDevice.URandom, (PWriteAdmission.DeviceAnswered _ as answered) ->
+                failwith $"/dev/urandom answered a mapped buffer without reading it: %A{answered}"
 
         let offsetGen =
             Gen.oneof
@@ -856,7 +980,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (whence : int) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixDescriptor.tryLseek fd offset whence system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
             | Ok (answer, after) ->
                 if whence >= 0 && whence <= 4 then
                     answer |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -885,7 +1009,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (access : FileAccessMode) (length : int64) =
             let fd, system = openDevice device access booted
 
-            match UnixDescriptor.tryFtruncate fd length system with
+            match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
@@ -909,7 +1033,7 @@ module TestDeviceDescriptors =
                 else
                     FileAdviceAnswer.Completed
 
-            UnixDescriptor.tryPosixFadvise fd offset length advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system
             |> shouldEqual (Ok expected)
 
         let int64Gen =
@@ -935,10 +1059,11 @@ module TestDeviceDescriptors =
                 let fd, system = openDevice device access booted
 
                 for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Opaque ] do
-                    UnixDescriptor.tryBytesAvailable fd destination system
+                    UnixDescriptor.tryBytesAvailable (Callers.leader system) fd destination system
+                    |> Result.map fst
                     |> shouldEqual (Ok (BytesAvailableAnswer.Failed expected))
 
-                UnixDescriptor.terminalAttributes fd system
+                UnixDescriptor.terminalAttributes (Callers.leader system) fd system
                 |> shouldEqual (TerminalAttributesAnswer.NotATerminal expected)
 
     [<Test>]
@@ -949,17 +1074,17 @@ module TestDeviceDescriptors =
         let urandomFd, system =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
-        UnixDescriptor.tryFileClone nullFd fileFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        UnixDescriptor.tryFileClone (Callers.leader system) nullFd fileFd system
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
-        UnixDescriptor.tryFileClone fileFd nullFd system
-        |> shouldEqual (Ok UnixError.EXDEV)
+        UnixDescriptor.tryFileClone (Callers.leader system) fileFd nullFd system
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EXDEV, system))
 
-        UnixDescriptor.tryFileClone urandomFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        UnixDescriptor.tryFileClone (Callers.leader system) urandomFd nullFd system
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
-        UnixDescriptor.tryFileClone nullFd nullFd system
-        |> shouldEqual (Ok UnixError.EINVAL)
+        UnixDescriptor.tryFileClone (Callers.leader system) nullFd nullFd system
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
     [<Test>]
     let ``copy_file_range to, from or between devices is EINVAL`` () : unit =
@@ -970,7 +1095,7 @@ module TestDeviceDescriptors =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
         for inFd, outFd in [ fileFd, nullFd ; nullFd, fileFd ; urandomFd, nullFd ; urandomFd, fileFd ] do
-            match UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 system with
+            match UnixReadWrite.tryCopyFileRange (Callers.leader system) inFd outFd 5UL 0 system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
@@ -981,7 +1106,7 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Ok (ReadDirectoryAnswer.Failed UnixError.ENOTDIR, after) -> after |> shouldEqual system
             | other -> failwith $"%O{device}: expected ENOTDIR, got %A{other}"
 
@@ -992,7 +1117,7 @@ module TestDeviceDescriptors =
         let lockExclusiveNonBlocking = 2 ||| 4
 
         let flock (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryFlock thread fd lockExclusiveNonBlocking system with
+            match UnixDescriptor.tryFlock (Callers.thread thread system) fd lockExclusiveNonBlocking system with
             | Ok (SyscallOutcome.Answered answer, system) -> answer, system
             | other -> failwith $"flock(%d{fd}): %A{other}"
 
@@ -1023,7 +1148,7 @@ module TestDeviceDescriptors =
 
             match
                 UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread system)
                     [
                         {
                             Fd = fd
@@ -1053,12 +1178,22 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
             let queueFd, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
 
             for op in [ 1 ; 2 ; 3 ] do
-                match UnixPoll.tryEpollCtl queueFd op fd (EpollEventArgument.Readable (1u, 42UL)) system with
+                match
+                    UnixPoll.tryEpollCtl
+                        (Callers.leader system)
+                        queueFd
+                        op
+                        fd
+                        (EpollEventArgument.Readable (1u, 42UL))
+                        system
+                with
                 | Ok (EpollCtlAnswer.Failed EpollCtlError.TargetNotPollable, after) -> after |> shouldEqual system
                 | other -> failwith $"%O{device}, op %d{op}: expected EPERM, got %A{other}"
 
@@ -1070,12 +1205,12 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadWrite booted
 
             let copy, system =
-                match Answered.dup fd system with
-                | SyscallAnswer.Completed copy, system -> int copy, system
+                match Answered.dup (Callers.leader system) fd system with
+                | DescriptorAnswer.Returned copy, system -> copy, system
                 | other -> failwith $"dup: %A{other}"
 
             let closed =
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"close: %A{other}"
 
@@ -1086,4 +1221,4 @@ module TestDeviceDescriptors =
             |> Result.map (fun bytes -> bytes.Length)
             |> shouldEqual (Ok (if device = CharacterDevice.Null then 0 else 8))
 
-            closed.Machine.FileSystem |> shouldEqual booted.Machine.FileSystem
+            UnixSystem.fileSystem closed |> shouldEqual (UnixSystem.fileSystem booted)

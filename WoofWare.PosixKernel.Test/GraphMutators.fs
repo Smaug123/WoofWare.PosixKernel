@@ -31,7 +31,7 @@ module internal GraphMutators =
         (vfs : VirtualFileSystem)
         : Result<InodeNumber * VirtualFileSystem, UnixError>
         =
-        VirtualFileSystem.createFile directory name permissions owner now contents vfs
+        VirtualFileSystem.createFile directory name permissions owner now (FileContents.ofImmutableArray contents) vfs
         |> Result.map (fun (inode, mutation) -> inode, VfsMutation.after mutation)
 
     let cloneFile

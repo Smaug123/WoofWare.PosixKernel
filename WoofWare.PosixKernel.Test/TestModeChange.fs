@@ -86,47 +86,65 @@ module TestModeChange =
             0xFFFFF000
         ]
 
-    let private rules : PrivilegedModeChange list =
-        [ PrivilegedModeChange.SetsRequestedBits ; PrivilegedModeChange.Unmeasured ]
-
     // ------------------------------------------------------------- the rule
 
     /// The rule `chmod-rules.c` compared every kernel answer against: an
     /// unprivileged owner sets the twelve bits it asks for less `S_ISGID` when it
     /// is outside the inode's group, anyone else unprivileged is EPERM, and
-    /// Linux's root sets all twelve. Bits above the twelve are ignored.
-    let private reference
-        (rule : PrivilegedModeChange)
-        (standing : Standing)
-        (raw : int)
-        : Result<ModeChange, ModeChangeRefusal>
-        =
+    /// root sets all twelve (Linux there, and Darwin in `root-files.c`). Bits
+    /// above the twelve are ignored.
+    let private reference (standing : Standing) (raw : int) : ModeChange =
         let asked = raw &&& 0o7777
 
-        match standing.Privilege, rule with
-        | CallerPrivilege.Privileged, PrivilegedModeChange.SetsRequestedBits -> Ok (ModeChange.Permitted (mode asked))
-        | CallerPrivilege.Privileged, PrivilegedModeChange.Unmeasured ->
-            Error (ModeChangeRefusal.UnmeasuredPrivilegedCaller (standing, mode asked))
-        | CallerPrivilege.Unprivileged, _ ->
-            if not standing.Owns then
-                Ok ModeChange.Forbidden
-            elif standing.InGroup then
-                Ok (ModeChange.Permitted (mode asked))
-            else
-                Ok (ModeChange.Permitted (mode (asked &&& ~~~0o2000)))
+        match standing.Privilege with
+        | CallerPrivilege.Privileged -> ModeChange.Permitted (mode asked)
+        | CallerPrivilege.Unprivileged ->
+            if not standing.Owns then ModeChange.Forbidden
+            elif standing.InGroup then ModeChange.Permitted (mode asked)
+            else ModeChange.Permitted (mode (asked &&& ~~~0o2000))
 
     [<Test>]
     let ``afterModeChange answers the rule the probe measured, for every standing, mode and high half`` () : unit =
-        for rule in rules do
-            for standing in allStandings do
-                for high in highs do
-                    for low in allModes do
-                        let raw = high ||| low
-                        let actual = PermissionBits.afterModeChange rule standing raw
+        for standing in allStandings do
+            for high in highs do
+                for low in allModes do
+                    let raw = high ||| low
+                    let actual = PermissionBits.afterModeChange standing raw
 
-                        if actual <> reference rule standing raw then
-                            failwith
-                                $"%O{rule}, %O{standing}, mode 0x%08x{raw}: afterModeChange said %A{actual}, the probe's rule %A{reference rule standing raw}"
+                    if actual <> reference standing raw then
+                        failwith
+                            $"%O{standing}, mode 0x%08x{raw}: afterModeChange said %A{actual}, the probe's rule %A{reference standing raw}"
+
+    [<Test>]
+    let ``Darwin's root-files CHMOD rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // every inode starts at 0000 and is asked for each mode N. A cell is
+        // `.` when the inode then has N, the digit of the special bits it
+        // dropped otherwise, and `P` for EPERM.
+        let rows = DarwinRootFiles.section "CHMOD"
+        rows |> List.length |> shouldEqual 18
+
+        let mismatches =
+            [
+                for row in rows do
+                    let standing = Standing.toward (DarwinRootFiles.credentialsOf row.Caller) row.Owner
+
+                    for requested in allModes do
+                        let modelled =
+                            match PermissionBits.afterModeChange standing requested with
+                            | ModeChange.Forbidden -> 'P'
+                            | ModeChange.Permitted bits when PermissionBits.toInt bits = requested -> '.'
+                            | ModeChange.Permitted bits ->
+                                char (int '0' + ((requested &&& ~~~(PermissionBits.toInt bits)) >>> 9))
+
+                        if modelled <> row.Cells.[requested] then
+                            yield
+                                $"%s{row.Caller} %A{row.Kind} %O{row.Owner} %s{row.Call} 0o%04o{requested}: measured %c{row.Cells.[requested]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
 
     [<Test>]
     let ``the measured rows, as literals`` () : unit =
@@ -144,57 +162,39 @@ module TestModeChange =
                 InGroup = false
             }
 
-        let permitted (bits : int) = Ok (ModeChange.Permitted (mode bits))
+        let permitted (bits : int) = ModeChange.Permitted (mode bits)
 
         // From `chmod-rules.c` and the ownership design's `ownership-probe.c`,
-        // which agree; each row was measured on both flavours unless it is
-        // root's, which is Linux's alone.
-        let rows : (PrivilegedModeChange * Standing * int * Result<ModeChange, ModeChangeRefusal>) list =
+        // which agree, and root's from `root-files.c` on Darwin too; each row
+        // was measured on both flavours.
+        let rows : (Standing * int * ModeChange) list =
             [
                 // The owner outside the file's group loses S_ISGID and keeps
                 // everything else, the sticky bit on a regular file included.
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true false, 0o2755, permitted 0o0755
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true false, 0o2745, permitted 0o0745
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true false, 0o6755, permitted 0o4755
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true false, 0o4755, permitted 0o4755
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true false, 0o1644, permitted 0o1644
-                PrivilegedModeChange.Unmeasured, unprivileged true false, 0o2755, permitted 0o0755
-                PrivilegedModeChange.Unmeasured, unprivileged true false, 0o6755, permitted 0o4755
-                PrivilegedModeChange.Unmeasured, unprivileged true false, 0o1644, permitted 0o1644
+                unprivileged true false, 0o2755, permitted 0o0755
+                unprivileged true false, 0o2745, permitted 0o0745
+                unprivileged true false, 0o6755, permitted 0o4755
+                unprivileged true false, 0o4755, permitted 0o4755
+                unprivileged true false, 0o1644, permitted 0o1644
                 // The owner in the file's group keeps all of it.
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true true, 0o2755, permitted 0o2755
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true true, 0o6755, permitted 0o6755
-                PrivilegedModeChange.Unmeasured, unprivileged true true, 0o2745, permitted 0o2745
-                PrivilegedModeChange.Unmeasured, unprivileged true true, 0o1755, permitted 0o1755
+                unprivileged true true, 0o2755, permitted 0o2755
+                unprivileged true true, 0o6755, permitted 0o6755
+                unprivileged true true, 0o2745, permitted 0o2745
+                unprivileged true true, 0o1755, permitted 0o1755
                 // `(mode_t)-1` is every bit.
-                PrivilegedModeChange.SetsRequestedBits, unprivileged true true, -1, permitted 0o7777
-                PrivilegedModeChange.Unmeasured, unprivileged true true, -1, permitted 0o7777
+                unprivileged true true, -1, permitted 0o7777
                 // Anyone else is EPERM, even asking for the mode it already has.
-                PrivilegedModeChange.SetsRequestedBits, unprivileged false true, 0o0600, Ok ModeChange.Forbidden
-                PrivilegedModeChange.SetsRequestedBits, unprivileged false false, 0o2755, Ok ModeChange.Forbidden
-                PrivilegedModeChange.Unmeasured, unprivileged false true, 0o0644, Ok ModeChange.Forbidden
-                PrivilegedModeChange.Unmeasured, unprivileged false false, 0o1777, Ok ModeChange.Forbidden
-                // Linux's root keeps S_ISGID in a group it is not in.
-                PrivilegedModeChange.SetsRequestedBits, root, 0o2755, permitted 0o2755
-                PrivilegedModeChange.Unmeasured,
-                root,
-                0o2755,
-                Error (ModeChangeRefusal.UnmeasuredPrivilegedCaller (root, mode 0o2755))
+                unprivileged false true, 0o0600, ModeChange.Forbidden
+                unprivileged false false, 0o2755, ModeChange.Forbidden
+                unprivileged false true, 0o0644, ModeChange.Forbidden
+                unprivileged false false, 0o1777, ModeChange.Forbidden
+                // Root keeps S_ISGID in a group it is not in.
+                root, 0o2755, permitted 0o2755
             ]
 
-        for rule, standing, requested, expected in rows do
-            (rule, standing, requested, PermissionBits.afterModeChange rule standing requested)
-            |> shouldEqual (rule, standing, requested, expected)
-
-    [<Test>]
-    let ``each platform names its flavour's privileged rule`` () : unit =
-        for platform, expected in
-            [
-                SimulatedUnixPlatform.linuxX64, PrivilegedModeChange.SetsRequestedBits
-                SimulatedUnixPlatform.linuxArm64, PrivilegedModeChange.SetsRequestedBits
-                SimulatedUnixPlatform.macOsArm64, PrivilegedModeChange.Unmeasured
-            ] do
-            SimulatedUnixPlatform.privilegedModeChange platform |> shouldEqual expected
+        for standing, requested, expected in rows do
+            (standing, requested, PermissionBits.afterModeChange standing requested)
+            |> shouldEqual (standing, requested, expected)
 
     // ------------------------------------------------------------- hand-built filesystems
 
@@ -269,13 +269,13 @@ module TestModeChange =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -284,7 +284,7 @@ module TestModeChange =
         |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{p} is absent"
 
@@ -303,7 +303,7 @@ module TestModeChange =
     /// What `chmod` did, stated as the probe printed it: the errno or success,
     /// and the mode the inode then has.
     let private chmodAnswer (p : string) (requested : int) (system : UnixSystem<int, string>) =
-        match UnixPathResolution.tryChmod (PathArg.ofPath (path p)) requested system with
+        match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofPath (path p)) requested system with
         | Ok (answer, after) -> answer, after
         | Error refusal -> failwith $"chmod(%s{p}, 0o%o{requested}) was refused: %s{ChModRefusal.describe refusal}"
 
@@ -312,7 +312,7 @@ module TestModeChange =
     /// the inode then has, which of its timestamps moved, and that a refusal
     /// changed nothing at all.
     let private sweep (standing : Standing) (system : UnixSystem<int, string>) : unit =
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         for p in [ "/t/f" ; "/t/d" ] do
             let before = inodeOf p system
@@ -320,8 +320,7 @@ module TestModeChange =
             for requested in allModes do
                 let answer, after = chmodAnswer p requested system
 
-                let expected =
-                    reference PrivilegedModeChange.SetsRequestedBits standing requested |> ok
+                let expected = reference standing requested
 
                 match expected, answer with
                 | ModeChange.Forbidden, SyscallAnswer.Failed UnixError.EPERM ->
@@ -395,20 +394,11 @@ module TestModeChange =
             sweep (Standing.toward u501 by) (systemOn SimulatedUnixPlatform.macOsArm64 u501 (tree by))
 
     [<Test>]
-    let ``Darwin chmod refuses a privileged caller, whoever owns the inode`` () : unit =
-        for by in [ owner 0u 0u ; owner 0u 3000u ; owner 501u 20u ] do
-            let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
-            let standing = Standing.toward Owners.root by
-
-            UnixPathResolution.tryChmod (PathArg.ofPath (path "/t/f")) 0o644 system
-            |> shouldEqual (
-                Error (
-                    ChModRefusal.UnmeasuredModeChange (
-                        inodeAt system.Machine.FileSystem "/t/f",
-                        ModeChangeRefusal.UnmeasuredPrivilegedCaller (standing, mode 0o644)
-                    )
-                )
-            )
+    let ``Darwin chmod answers root every mode, whoever owns the inode`` () : unit =
+        // `root-files.c`'s CHMOD rows: root's own inodes and uid 502's, in
+        // root's group and in one it is not in.
+        for by in [ owner 0u 0u ; owner 0u 7777u ; owner 502u 0u ; owner 502u 7777u ] do
+            sweep (Standing.toward Owners.root by) (systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by))
 
     [<Test>]
     let ``chmod to the mode the inode already has still moves its ctime`` () : unit =
@@ -417,7 +407,7 @@ module TestModeChange =
                 UnixSystem.defaultCredentials (SimulatedUnixPlatform.flavour platform)
 
             let system = systemOn platform credentials (tree (InodeOwner.ofProcess credentials))
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for p, bits in [ "/t/f", 0o600 ; "/t/d", 0o700 ] do
                 let before = inodeOf p system
@@ -509,8 +499,11 @@ module TestModeChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 access
                 (Lone.fileDescriptors system)
 
@@ -519,14 +512,17 @@ module TestModeChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
     let private fchmodAnswer (fd : int) (requested : int) (system : UnixSystem<int, string>) =
-        match UnixPathResolution.tryFchmod fd requested system with
+        match UnixPathResolution.tryFchmod (Callers.leader system) fd requested system with
         | Ok answer -> answer
         | Error refusal -> failwith $"fchmod(%d{fd}, 0o%o{requested}) was refused: %s{FChModRefusal.describe refusal}"
 
@@ -539,7 +535,7 @@ module TestModeChange =
             let system =
                 systemOn platform credentials (pathTree (InodeOwner.ofProcess credentials))
 
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for access, bits in
                 [
@@ -570,13 +566,13 @@ module TestModeChange =
             let system =
                 systemOn platform credentials (pathTree (InodeOwner.ofProcess credentials))
 
-            let inode = inodeAt system.Machine.FileSystem "/p/f"
+            let inode = inodeAt (UnixSystem.fileSystem system) "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchmodAnswer fd 0o400 unlinked with
             | SyscallAnswer.Completed 0L, after ->
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some orphan -> Inode.permissions orphan |> shouldEqual (mode 0o400)
                 | None -> failwith "the orphan was freed while a descriptor held it"
             | other -> failwith $"fchmod of an orphan: %A{other}"
@@ -622,9 +618,10 @@ module TestModeChange =
         // The flavour's own event queue: an epoll instance, or a kqueue.
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create (Lone.fileDescriptors system)
 
@@ -666,7 +663,7 @@ module TestModeChange =
                 | Some (OpenFileObject.Socket socket) -> socket
                 | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-            UnixPathResolution.tryFchmod fd 0o600 withSocket
+            UnixPathResolution.tryFchmod (Callers.leader withSocket) fd 0o600 withSocket
             |> shouldEqual (Error (FChModRefusal.Socket socket))
 
         for fd in [ 0 ; 1 ; 2 ] do
@@ -675,18 +672,18 @@ module TestModeChange =
 
             // `UnixSystem.initial` makes the launch table's pipes first, in
             // descriptor order.
-            UnixPathResolution.tryFchmod fd 0o600 linux
+            UnixPathResolution.tryFchmod (Callers.leader linux) fd 0o600 linux
             |> shouldEqual (Error (FChModRefusal.LaunchedPipe (PipeId (int64 fd))))
 
     // ------------------------------------------------------------- pipes
 
     let private pipeOrFail (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat(%d{fd}): %A{other}"
 
@@ -721,10 +718,7 @@ module TestModeChange =
 
         let fds, system = pipeOrFail system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            }
+        let system = UnixSystem.advanceClock later system
 
         let system =
             if changesIds then
@@ -754,7 +748,7 @@ module TestModeChange =
                 withPipe SimulatedUnixPlatform.linuxX64 creator caller
 
             let standing = Standing.toward caller (InodeOwner.ofProcess creator)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
             let before = fstatOrFail readFd system
 
             for requested in allModes do
@@ -763,7 +757,7 @@ module TestModeChange =
                 let readEnd = fstatOrFail readFd after
                 let writeEnd = fstatOrFail writeFd after
 
-                match reference PrivilegedModeChange.SetsRequestedBits standing requested |> ok, answer with
+                match reference standing requested, answer with
                 | ModeChange.Forbidden, SyscallAnswer.Failed UnixError.EPERM ->
                     if after <> system then
                         failwith $"%s{label}: fchmod(0o%04o{requested}) answered EPERM but changed the system"
@@ -792,20 +786,14 @@ module TestModeChange =
             (fstatOrFail fd system).Mode |> shouldEqual 0o010660
 
     [<Test>]
-    let ``Darwin fchmod refuses a privileged caller`` () : unit =
+    let ``Darwin fchmod gives root every bit it asks for`` () : unit =
         let by = owner 501u 20u
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly system
 
-        UnixPathResolution.tryFchmod fd 0o4755 withFd
-        |> shouldEqual (
-            Error (
-                FChModRefusal.UnmeasuredModeChange (
-                    inodeAt system.Machine.FileSystem "/t/f",
-                    ModeChangeRefusal.UnmeasuredPrivilegedCaller (Standing.toward Owners.root by, mode 0o4755)
-                )
-            )
-        )
+        match UnixPathResolution.tryFchmod (Callers.leader withFd) fd 0o4755 withFd with
+        | Ok (SyscallAnswer.Completed 0L, after) -> modeOf "/t/f" after |> shouldEqual 0o4755
+        | other -> failwith $"fchmod answered %A{other}"
 
     // ------------------------------------------------------------- step
 
@@ -818,43 +806,66 @@ module TestModeChange =
 
         let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
 
-        let answered (outcome : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) =
+        let answered
+            (outcome : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+            : SyscallAnswer * UnixSystem<int, string>
+            =
             match outcome with
-            | Ok (SyscallOutcome.Answered answer, after) -> answer, after
-            | other -> failwith $"step: %A{other}"
+            | Ok (SteppedCall.FChModAt (answer, after))
+            | Ok (SteppedCall.FChMod (answer, after)) -> answer, after
+            | other -> failwith $"step: %A{Result.map Stepped.view other}"
 
         // A success, so the comparison covers the state the call moves, and a
         // failure.
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/lf" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/dang" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o604)) withFd
+        UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChMod (fd, 0o604)) withFd
         |> answered
         |> shouldEqual (fchmodAnswer fd 0o604 withFd)
 
-        // And the refusals come back as the syscall's own.
+        // And the refusals come back as the syscall's own: Darwin's
+        // AT_SYMLINK_NOFOLLOW_ANY, which this library does not model, and an
+        // end of a pipe the process was launched with on Linux.
         let darwin =
             systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree (owner 501u 20u))
 
-        let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly darwin
-
-        match UnixSystem.tryStep 0 (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0)) darwin with
+        match
+            UnixSystem.tryStep
+                (Callers.thread 0 darwin)
+                (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0x800))
+                darwin
+        with
         | Error (SyscallRefusal.FChModAt refusal) ->
             Error refusal
             |> shouldEqual (
-                UnixPathResolution.tryChmod (PathArg.ofPath (path "/t/f")) 0o644 darwin
+                UnixPathResolution.tryFchmodat
+                    (Callers.leader darwin)
+                    -2
+                    (PathArg.ofPath (path "/t/f"))
+                    0o644
+                    0x800
+                    darwin
                 |> Result.map ignore
-                |> Result.mapError FChModAtRefusal.ChMod
             )
-        | other -> failwith $"step chmod as Darwin root: %A{other}"
+        | other -> failwith $"step fchmodat with AT_SYMLINK_NOFOLLOW_ANY on Darwin: %A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o644)) withFd with
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FChMod (0, 0o644)) system with
         | Error (SyscallRefusal.FChMod refusal) ->
             Error refusal
-            |> shouldEqual (UnixPathResolution.tryFchmod fd 0o644 withFd |> Result.map ignore)
-        | other -> failwith $"step fchmod as Darwin root: %A{other}"
+            |> shouldEqual (
+                UnixPathResolution.tryFchmod (Callers.leader system) 0 0o644 system
+                |> Result.map ignore
+            )
+        | other -> failwith $"step fchmod of a launched pipe on Linux: %A{other}"

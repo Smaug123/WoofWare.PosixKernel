@@ -15,9 +15,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSigcontGeneration =
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     /// The probe's main thread, the process's leader: "m" in its rows.
     let private main : int = 0
 
@@ -88,7 +85,8 @@ module TestSigcontGeneration =
 
     let private nothing : Step = Ok
 
-    let private numbering (r : Replay) : SignalNumbering = numberingOf r.Flavour
+    let private numbering (r : Replay) : SignalNumbering =
+        HostPlatform.signalNumberingOf r.Flavour
 
     let private signo (r : Replay) (signal : Signal) : int32 =
         Signal.toRawSignoUnder (numbering r) signal
@@ -114,17 +112,32 @@ module TestSigcontGeneration =
 
     /// `thread` returns to user mode: it runs every handler the kernel pushes,
     /// each logged as the probe's handler logs itself, and the return goes on
-    /// past a SIGCONT the kernel discards.
-    let rec private returns (thread : int) : Step =
+    /// past a SIGCONT the kernel discards. `ended` is told how the return ends
+    /// the call it returns from (`None` for one no signal interrupted).
+    let rec private returnsEnding (thread : int) (ended : InterruptedCall option -> Replay -> Replay) : Step =
         fun r ->
-            match UnixSignal.tryOnReturnToUser thread r.System with
-            | Error refusal -> Error (Stop.Receiver refusal)
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
+            match UnixSignal.tryOnReturnToUser (Callers.thread thread r.System) r.System with
+            | Error (ReturnToUserRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
+            | Error other -> Error (Stop.Other $"onReturnToUser: %A{other}")
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system)) ->
+                Ok (withSystem system r |> ended interrupted)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
-                returns thread (withSystem system r)
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
-                runFrames thread frames (withSystem system r)
+                returnsEnding thread ended (withSystem system r)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system)) ->
+                runFrames thread frames (withSystem system r |> ended interrupted)
             | Ok other -> failwith $"thread %d{thread}'s return to user mode: %A{other}"
+
+    /// `returnsEnding`, for `thread`'s return from a call no signal
+    /// interrupted.
+    and private returns (thread : int) : Step =
+        returnsEnding
+            thread
+            (fun interrupted r ->
+                match interrupted with
+                | None -> r
+                | Some call ->
+                    failwith $"thread %d{thread} returned from no interrupted call, and the return said %A{call}"
+            )
 
     /// Each of `frames`' handlers runs, innermost first; each `sigreturn` is a
     /// return to user mode of its own.
@@ -136,7 +149,7 @@ module TestSigcontGeneration =
                 let r =
                     { r with
                         Runs = (frame.Entry.Signal, thread, r.Phase) :: r.Runs
-                        System = UnixSignal.sigreturn thread frame.Id r.System
+                        System = UnixSignal.sigreturn (Callers.thread thread r.System) frame.Id r.System
                     }
 
                 (returns thread >=> runFrames thread outer) r
@@ -151,25 +164,28 @@ module TestSigcontGeneration =
     /// `pthread_sigmask(SIG_SETMASK)` by `thread`, to block exactly `blocked`.
     let private setMask (thread : int) (blocked : Signal list) : Step =
         fun r ->
-            let setmask =
-                match r.Flavour with
-                | SimulatedUnixFlavour.Linux -> 2
-                | SimulatedUnixFlavour.Darwin -> 3
-
-            match UnixSignal.pthreadSigmask thread setmask (Some (signals blocked r)) r.System with
-            | Ok (_, system) -> returns thread (withSystem system r)
-            | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
+            match
+                UnixSignal.pthreadSigmask
+                    (Callers.thread thread r.System)
+                    (MaskHow.setMask (numbering r))
+                    (Some (signals blocked r))
+                    r.System
+            with
+            | SignalMaskAnswer.Completed _, system -> returns thread (withSystem system r)
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
 
     /// `sigaction` by `thread`.
     let private install (thread : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
         fun r ->
-            match UnixSignal.sigaction (signo r signal) (Some disposition) r.System with
-            | Ok (_, system) -> returns thread (withSystem system r)
-            | Error errno -> failwith $"sigaction of %O{signal} failed with %O{errno}"
+            match
+                UnixSignal.sigaction (Callers.thread thread r.System) (signo r signal) (Some disposition) r.System
+            with
+            | SigactionAnswer.Completed _, system -> returns thread (withSystem system r)
+            | SigactionAnswer.Failed errno, _ -> failwith $"sigaction of %O{signal} failed with %O{errno}"
 
     let private spawnSecond : Step =
         fun r ->
-            match UnixThreadLifecycle.trySpawn main second (CpuId 0) r.System with
+            match UnixThreadLifecycle.trySpawn (Callers.thread main r.System) second (CpuId 0) r.System with
             | Ok (SpawnAnswer.Spawned _, system) -> (returns main >=> returns second) (withSystem system r)
             | other -> failwith $"spawn: %A{other}"
 
@@ -190,27 +206,32 @@ module TestSigcontGeneration =
             let outcome =
                 match route with
                 | Route.Process ->
-                    let pid = ProcessId.toInt32 (UnixSystem.processId r.System)
+                    let pid = ProcessId.toInt32 (Lone.pid r.System)
 
-                    match UnixSignal.tryKill pid (signo r signal) r.System with
+                    match UnixSignal.tryKill (Callers.thread sender r.System) pid (signo r signal) r.System with
                     | Error (KillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"kill: %A{other}")
                     | Ok outcome -> Ok outcome
                 | Route.Thread target ->
-                    match UnixSignal.tryPthreadKill target (signo r signal) r.System with
+                    match
+                        UnixSignal.tryPthreadKill (Callers.thread sender r.System) target (signo r signal) r.System
+                    with
                     | Error (ThreadKillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"pthread_kill: %A{other}")
                     | Ok outcome -> Ok outcome
 
             match outcome with
             | Error stop -> Error stop
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> returns sender (withSystem system r)
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
+                returns sender (withSystem system r)
             | Ok other -> failwith $"sending %O{signal}: %A{other}"
 
     /// `sigpending` by `thread`, printed as the probe prints it.
     let private pending (label : string) (thread : int) : Step =
         fun r ->
-            let word = SignalMask.toWord (UnixSignal.sigpending thread r.System)
+            let word =
+                SignalMask.toWord (UnixSignal.sigpending (Callers.thread thread r.System) r.System)
+
             (print $" %s{label}=%x{word}" >=> returns thread) r
 
     /// The probe's `out_runs`.
@@ -231,7 +252,7 @@ module TestSigcontGeneration =
     let private advance (actor : int) : Step =
         fun r ->
             let others =
-                (Lone.threads r.System)
+                (Lone.threadMap r.System)
                 |> Map.keys
                 |> Seq.filter (fun thread -> thread <> actor)
                 |> List.ofSeq
@@ -335,32 +356,47 @@ module TestSigcontGeneration =
                     Returned = Some (answer, r.Phase)
                 }
 
+    /// The sleeper's call was interrupted: it returns to user mode, which
+    /// fails the call with EINTR.
+    let private sleeperReturnsInterrupted (sleeper : int) : Step =
+        returnsEnding
+            sleeper
+            (fun interrupted r ->
+                match interrupted with
+                | Some InterruptedCall.FailsWithEintr ->
+                    { r with
+                        Returned = Some ("-1/EINTR", r.Phase)
+                    }
+                | other -> failwith $"the sleeper's interrupted call ended %A{other}"
+            )
+
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
-            match UnixThreadTable.parkedFor row.Sleeper (Lone.threads r.System) with
+            match Lone.parkedIn row.Sleeper r.System with
             | None -> Ok r
             | Some _ ->
 
-            match UnixWait.wakes (Set.singleton row.Sleeper) r.System with
-            | [] -> Ok r
-            | _ ->
+            match Lone.wake r.System with
+            | [], _ -> Ok r
+            | _, woken ->
+
+            let r = withSystem woken r
 
             if row.InSigsuspend then
-                match UnixSignal.tryFinishSigsuspend row.Sleeper r.System with
+                match UnixSignal.tryFinishSigsuspend (Callers.thread row.Sleeper r.System) r.System with
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishSigsuspend: %A{other}")
-                | Ok (SigsuspendOutcome.Failed UnixError.EINTR, system) ->
-                    sleeperReturns row.Sleeper "-1/EINTR" (withSystem system r)
+                | Ok (SigsuspendOutcome.Interrupted, system) ->
+                    sleeperReturnsInterrupted row.Sleeper (withSystem system r)
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Ok other -> failwith $"finishSigsuspend: %A{other}"
             else
-                match UnixPoll.tryFinishPoll row.Sleeper r.System with
+                match UnixPoll.tryFinishPoll (Callers.thread row.Sleeper r.System) r.System with
                 | Error (PollRefusal.Interruption (SyscallInterruptionRefusal.Receiver refusal)) ->
                     Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishPoll: %A{other}")
-                | Ok (PollOutcome.Failed UnixError.EINTR, system) ->
-                    sleeperReturns row.Sleeper "-1/EINTR" (withSystem system r)
+                | Ok (PollOutcome.Interrupted, system) -> sleeperReturnsInterrupted row.Sleeper (withSystem system r)
                 | Ok (PollOutcome.Answered ([], 0), system) -> sleeperReturns row.Sleeper "0/0" (withSystem system r)
                 | Ok (PollOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Ok other -> failwith $"finishPoll: %A{other}"
@@ -369,12 +405,12 @@ module TestSigcontGeneration =
     let private sleeps (row : SleepRow) : Step =
         fun r ->
             if row.InSigsuspend then
-                match UnixSignal.trySigsuspend row.Sleeper (signals [] r) r.System with
+                match UnixSignal.trySigsuspend (Callers.thread row.Sleeper r.System) (signals [] r) r.System with
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | other -> failwith $"sigsuspend did not sleep: %A{other}"
             else
-                match UnixPoll.tryPoll row.Sleeper [] 300 r.System with
+                match UnixPoll.tryPoll (Callers.thread row.Sleeper r.System) [] 300 r.System with
                 | Ok (PollOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | other -> failwith $"poll did not sleep: %A{other}"
 
@@ -683,16 +719,21 @@ module TestSigcontGeneration =
              >=> send main Route.Process Signal.SIGCONT)
                 start
             |> Result.map (fun r ->
-                UnixSignal.sigpending main r.System
-                |> shouldEqual (SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGCONT))
+                UnixSignal.sigpending (Callers.thread main r.System) r.System
+                |> shouldEqual (
+                    SignalMask.ofSignals (HostPlatform.signalNumberingOf flavour) (Set.singleton Signal.SIGCONT)
+                )
 
-                let pid = ProcessId.toInt32 (UnixSystem.processId r.System)
+                let pid = ProcessId.toInt32 (Lone.pid r.System)
 
-                match UnixSignal.tryKill pid (signo r Signal.SIGSTOP) r.System with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped Signal.SIGSTOP, system))) -> system
+                match UnixSignal.tryKill (Callers.leader r.System) pid (signo r Signal.SIGSTOP) r.System with
+                | Ok (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped Signal.SIGSTOP), system)) ->
+                    system
                 | other -> failwith $"SIGSTOP: %A{other}"
             )
 
         match stopped with
-        | Ok system -> SignalMask.toWord (UnixSignal.sigpending main system) |> shouldEqual 0UL
+        | Ok system ->
+            SignalMask.toWord (UnixSignal.sigpending (Callers.thread main system) system)
+            |> shouldEqual 0UL
         | Error stop -> failwith $"%A{stop}"

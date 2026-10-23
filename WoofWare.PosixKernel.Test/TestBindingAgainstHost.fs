@@ -14,36 +14,17 @@ open WoofWare.PosixKernel
 /// The P/Invokes take `byte[]` rather than `string`, because the names under
 /// test are not UTF-8 and a `string` could not carry them.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestBindingAgainstHost =
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private mkdir(byte[] path, uint32 mode)
-
-    /// Variadic in C; see `TestVirtualFileSystemAgainstHost`'s `open` for why
-    /// only the outcome, never the created mode, is asserted on.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private ``open``(byte[] path, int flags, int mode)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private close(int fd)
 
     [<DllImport("libc", SetLastError = true)>]
     extern int private access(byte[] path, int mode)
 
     [<DllImport("libc", SetLastError = true)>]
     extern nativeint private readlink(byte[] path, byte[] buf, nativeint bufsiz)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private unlink(byte[] path)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private rmdir(byte[] path)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private rename(byte[] oldPath, byte[] newPath)
-
-    [<DllImport("libc")>]
-    extern uint32 private geteuid()
 
     /// `O_CREAT`, which differs between the two kernels; `O_WRONLY` is 1 and
     /// `O_RDONLY` 0 on both.
@@ -72,7 +53,7 @@ module TestBindingAgainstHost =
         let path = cPath root
 
         match call with
-        | BindingProbeCall.Mkdir p -> outcome (int64 (mkdir (path p, 0o777u)))
+        | BindingProbeCall.Mkdir p -> outcome (int64 (HostCalls.mkdirBytes (path p, 0o777u)))
         | BindingProbeCall.OpenCreate p
         | BindingProbeCall.OpenRead p ->
             let flags =
@@ -80,18 +61,21 @@ module TestBindingAgainstHost =
                 | BindingProbeCall.OpenCreate _ -> oCreat flavour ||| 1
                 | _ -> 0
 
-            let fd = ``open`` (path p, flags, 0o666)
+            // Only the outcome is compared, never the created file's mode, which
+            // on Apple arm64 is not the one passed (see `HostCalls.openFile`).
+            let fd = HostCalls.openFileBytes (path p, flags, 0o666)
             let result = outcome (int64 fd)
 
             if fd >= 0 then
-                close fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
             result
         | BindingProbeCall.Exists p -> outcome (int64 (access (path p, 0)))
         | BindingProbeCall.ReadLink p -> outcome (int64 (readlink (path p, Array.zeroCreate 4096, 4096n)))
-        | BindingProbeCall.Unlink p -> outcome (int64 (unlink (path p)))
-        | BindingProbeCall.RmDir p -> outcome (int64 (rmdir (path p)))
-        | BindingProbeCall.Rename (source, destination) -> outcome (int64 (rename (path source, path destination)))
+        | BindingProbeCall.Unlink p -> outcome (int64 (HostCalls.unlinkBytes (path p)))
+        | BindingProbeCall.RmDir p -> outcome (int64 (HostCalls.rmdirBytes (path p)))
+        | BindingProbeCall.Rename (source, destination) ->
+            outcome (int64 (HostCalls.renameBytes (path source, path destination)))
 
     /// Every name in the probe tree is ASCII, so `System.IO` can build it.
     let rec private materialise (directory : string) (entries : Map<DirectoryEntryName, SeedEntry>) : unit =
@@ -108,6 +92,7 @@ module TestBindingAgainstHost =
                 materialise path children
                 File.SetUnixFileMode (path, enum<UnixFileMode> (PermissionBits.toInt permissions))
             | SeedEntry.Symlink (_, _) -> failwith "the probe tree holds no symlinks"
+            | SeedEntry.CharacterDevice _ -> failwith "the probe tree holds no device nodes"
 
     /// Remove a probe tree through the host's own tools rather than `System.IO`:
     /// a row may have bound a name that is not UTF-8, which a `string` cannot
@@ -145,7 +130,7 @@ module TestBindingAgainstHost =
     let private model (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         let credentials =
             Credentials.ofIds
-                (UserId.parseOrFail "TestBindingAgainstHost" (geteuid ()))
+                (UserId.parseOrFail "TestBindingAgainstHost" (HostCalls.getEUid ()))
                 (UnixSystem.defaultGroupId (SimulatedUnixPlatform.flavour platform))
                 []
 

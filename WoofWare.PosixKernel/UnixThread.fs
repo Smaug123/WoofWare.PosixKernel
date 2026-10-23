@@ -197,8 +197,8 @@ type PollQueueId =
 /// in which order -- not only on what its descriptors present then.
 ///
 /// Held on the machine rather than in the call's park, because a socket event
-/// in any process's call activates its filters, as one does a kqueue's, and no
-/// process's view holds another's threads. It lives exactly as long as the park
+/// in any process's call activates its filters, as one does a kqueue's. It
+/// lives exactly as long as the park
 /// naming it (`ParkedKqueuePoll.Queue`): the park's end destroys it.
 ///
 /// Its representation is internal, so a later version may change what a
@@ -289,9 +289,11 @@ type SleepTarget<'Object> =
     /// Under Darwin, a close has ended the call, which waited on `object`. It
     /// holds nothing, and its finishing call answers what the close left it.
     ///
-    /// A pipe or connection transfer is ended by a close of the descriptor it
-    /// was made through; an accept by a close of the descriptor any accept on
-    /// the same listener was made through (see `ListenState.Drained`).
+    /// A pipe transfer is ended by a close of the descriptor it was made
+    /// through. An accept, a connection transfer or a UDP receive is ended by
+    /// a close of the descriptor that any such call asleep on the same socket
+    /// was made through, which drains the socket (see
+    /// `SocketDescription.Drained`).
     | EndedByClose of object : 'Object
 
 [<RequireQualifiedAccess>]
@@ -325,8 +327,16 @@ type ParkedAccept =
         /// This is the length the call was entered with. Darwin reads the
         /// caller's cell then; Linux reads it only when it copies the address
         /// out, after the wait, so under Linux this is right for a caller whose
-        /// cell nothing writes while the call sleeps.
-        DeclaredLength : uint32
+        /// cell nothing writes while the call sleeps. `None` for a NULL
+        /// destination, whose cell neither flavour reads.
+        DeclaredLength : uint32 option
+        /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
+        /// the socket it makes is non-blocking. Never under Darwin, which has
+        /// no `accept4`.
+        NewSocketNonBlocking : bool
+        /// Whether the call's flags carried Linux's `SOCK_CLOEXEC`, so that the
+        /// descriptor it makes has `FD_CLOEXEC`. Never under Darwin.
+        NewSocketCloseOnExec : bool
     }
 
 /// One thread's in-flight blocking `read(2)` of a pipe that held nothing while a
@@ -571,22 +581,50 @@ type ParkedSignalWait =
         Destination : UserBuffer option
     }
 
-/// One thread's in-flight blocking receive on a datagram socket that had
-/// nothing queued: a `read(2)`, `recv(2)`, `recvfrom(2)` or `recvmsg(2)`.
+/// Which receiving call a `ParkedDatagramReceive` is, with what of its
+/// arguments it still needs once it is woken.
+[<RequireQualifiedAccess>]
+type internal ParkedDatagramReceiveCall =
+    /// `read(2)`.
+    | Read
+    /// `recv(2)`, peeking or not.
+    | Receive of peek : bool
+    /// `recvfrom(2)`, peeking or not, with Linux's `MSG_TRUNC` or not, and
+    /// where its source goes: the source buffer, and the length cell, with
+    /// what the cell held if the call read it before it slept. Darwin reads
+    /// a cell that is not NULL before anything else, Linux only once it uses
+    /// it.
+    | ReceiveFrom of
+        peek : bool *
+        truncate : bool *
+        source : UserBuffer *
+        sourceLength : UserBuffer *
+        lengthRead : uint32 option
+
+/// One thread's in-flight blocking receive on a UDP socket that had nothing
+/// to answer: a `read(2)`, `recv(2)` or `recvfrom(2)`.
 ///
 /// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `ParkedSyscall.DatagramReceive`.
+/// holds without breaking a client; a client builds none.
 type ParkedDatagramReceive =
     internal
         {
-            // What else it must hold is the datagram data path's design: which
-            // call it is, where `recvfrom`'s address and `recvmsg`'s message
-            // header go, and, under Darwin, that a close of the descriptor has
-            // ended it (`docs/probes/datagram-park`, row R3).
             /// The open file description of the socket the call was made
-            /// through, which it holds while it sleeps.
-            Socket : OpenFileDescriptionId
+            /// through, which it holds while it sleeps, and the descriptor it
+            /// was made through; or the socket, once a Darwin close has ended
+            /// the call.
+            Socket : SleepTarget<SocketId>
+            /// Where the datagram's bytes are to be copied out to, as the
+            /// caller classified it when the call was entered.
+            Buffer : UserBuffer
+            /// The most bytes the call takes: its count, as at most one call's
+            /// worth.
+            Count : int
+            Call : ParkedDatagramReceiveCall
+            /// Under Linux, whether a datagram or the ICMP error arriving at
+            /// the socket has chosen this call as the one sleeper it wakes
+            /// (`WakePrimitive.DatagramReceivable`). Never under Darwin.
+            Chosen : bool
         }
 
 /// One thread's in-flight blocking send of a datagram on a Unix-domain socket
@@ -625,6 +663,67 @@ type ParkedConnect =
             /// which the call was made, and which it holds while it sleeps.
             Socket : OpenFileDescriptionId
         }
+
+/// When a Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+/// `FUTEX_WAIT_BITSET_PRIVATE`) times out.
+[<RequireQualifiedAccess>]
+type FutexTimeout =
+    /// The wait was made with no timeout: only a wake or a signal ends it.
+    | Untimed
+    /// The wait was made with a relative timeout (`FUTEX_WAIT_PRIVATE`), and
+    /// answers `ETIMEDOUT` at this instant, in nanoseconds since boot. The call
+    /// made again would time out later, so a restart that keeps this instant
+    /// is not the call made again.
+    | Until of nanosecondsSinceBoot : int64
+    /// The wait was made with a timeout so long that Linux saturates it: at
+    /// least `KTIME_SEC_MAX` (9223372036) seconds, or a relative one that ends
+    /// past the last instant the clock can represent (`Int64.MaxValue`
+    /// nanoseconds since boot). It never times out, so `UnixWait.deadlines`
+    /// holds no deadline for it, but it is a wait with a timeout: a signal
+    /// whose handler was installed with `SA_RESTART` still ends it with
+    /// `EINTR`.
+    | Unbounded
+    /// The wait was made with an absolute timeout (`FUTEX_WAIT_BITSET_PRIVATE`),
+    /// and answers `ETIMEDOUT` at this instant, in nanoseconds since boot,
+    /// which may be before boot. A deadline on the realtime clock is converted
+    /// as the call is made, which is exact because this kernel's realtime clock
+    /// never steps (`UnixBootImage.withBootTime`). The call made again names
+    /// the same instant.
+    | At of nanosecondsSinceBoot : int64
+
+[<RequireQualifiedAccess>]
+module internal FutexTimeout =
+    /// The instant a wait with `timeout` times out, if it ever does.
+    let deadline (timeout : FutexTimeout) : int64 option =
+        match timeout with
+        | FutexTimeout.Until deadline
+        | FutexTimeout.At deadline -> Some deadline
+        | FutexTimeout.Untimed
+        | FutexTimeout.Unbounded -> None
+
+/// One thread's in-flight Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+/// `FUTEX_WAIT_BITSET_PRIVATE`): the address it waits on, when it times out,
+/// the bitset it waits with, and whether a wake has taken it off the queue of
+/// that address.
+///
+/// A process's waiters on one address form one queue, in the order they
+/// parked (`ThreadPark.Ordinal`). No other process's wake reaches it.
+type ParkedFutex =
+    {
+        /// The user address the thread waits on.
+        FutexAddress : uint64
+        /// When the wait times out.
+        FutexTimeout : FutexTimeout
+        /// The bitset the thread waits with: a wake takes it only if the
+        /// wake's own bitset shares a bit with this one. Never 0; a
+        /// `FUTEX_WAIT_PRIVATE` waits with `FUTEX_BITSET_MATCH_ANY`
+        /// (`0xFFFFFFFF`).
+        FutexBitset : uint32
+        /// Whether a `FUTEX_WAKE_PRIVATE` or `FUTEX_WAKE_BITSET_PRIVATE` has
+        /// taken the thread off its queue, so that the wait answers 0, whatever
+        /// else has woken it.
+        TakenByWake : bool
+    }
 
 /// <summary>
 /// The syscall a thread is blocked in, if it is blocked in one.
@@ -690,14 +789,14 @@ type ParkedSyscall =
     /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | SignalWait of ParkedSignalWait
-    /// A blocking receive on a datagram socket, UDP or Unix-domain, connected
-    /// or not, through `read(2)`, `recv(2)`, `recvfrom(2)` or `recvmsg(2)`:
-    /// it sleeps until a datagram arrives, on both flavours, or a signal with
-    /// a handler interrupts it. Holds the socket's open file description.
+    /// A blocking receive on a UDP socket, connected or not, through
+    /// `read(2)`, `recv(2)` or `recvfrom(2)`: it sleeps until a datagram or
+    /// the ICMP error arrives, on both flavours, or a signal with a handler
+    /// interrupts it, or, under Darwin, a close ends it. Holds the socket's
+    /// open file description until a close ends it.
     ///
-    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
-    /// defect.
+    /// A Unix-domain datagram socket's receive, and `recvmsg(2)`, park no
+    /// thread yet.
     | DatagramReceive of ParkedDatagramReceive
     /// A blocking send of a datagram on a Unix-domain socket, which under Linux
     /// sleeps while the receiver's queue or the sender's own buffer is full. A
@@ -718,6 +817,11 @@ type ParkedSyscall =
     /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Connect of ParkedConnect
+    /// A Linux `futex(2)` wait (`FUTEX_WAIT_PRIVATE` or
+    /// `FUTEX_WAIT_BITSET_PRIVATE`), waiting for a wake on its address to take
+    /// it, for its deadline if it has one, or for a signal with a handler.
+    /// Holds no open file description.
+    | Futex of ParkedFutex
 
 [<RequireQualifiedAccess>]
 module ParkedSyscall =
@@ -767,9 +871,10 @@ module ParkedSyscall =
         | ParkedSyscall.SignalWait _ -> []
         // Measured under Linux (`docs/probes/datagram-park`, row R3): a close
         // of the descriptor leaves a sleeping receive holding the socket.
-        | ParkedSyscall.DatagramReceive receive -> [ receive.Socket ]
+        | ParkedSyscall.DatagramReceive receive -> SleepTarget.description receive.Socket |> Option.toList
         | ParkedSyscall.DatagramSend send -> [ send.Socket ]
         | ParkedSyscall.Connect connect -> [ connect.Socket ]
+        | ParkedSyscall.Futex _ -> []
 
 /// Where one park stands in the order every park on this machine was made in.
 ///
@@ -784,8 +889,24 @@ type ParkOrdinal =
         match this with
         | ParkOrdinal.ParkOrdinal i -> $"<park #%i{i}>"
 
-/// One thread's park: the syscall it is blocked in, and where the park stands in
-/// the order parks were made in.
+/// Whether a thread parked in a syscall still sleeps, or has been woken and has
+/// yet to finish its call.
+[<RequireQualifiedAccess>]
+type ParkState =
+    /// The thread sleeps. `UnixWait.wake` asks its call's wake condition, and
+    /// wakes it once the condition holds.
+    | Asleep
+    /// `UnixWait.wake` has woken the thread, for `fired`, the primitives of its
+    /// call's wake condition that held then, and the call's finishing function
+    /// has not yet run. Never empty.
+    ///
+    /// On each queue its call waits on whose waiters a kernel wakes one at a
+    /// time, the thread stands for whatever woke it, so no other waiter there
+    /// wakes until the thread has finished its call or slept again.
+    | Woken of fired : Set<WakePrimitive>
+
+/// One thread's park: the syscall it is blocked in, where the park stands in the
+/// order parks were made in, and whether the thread has been woken.
 type ThreadPark =
     {
         /// The syscall the thread is blocked in, with the state it was entered with.
@@ -796,6 +917,13 @@ type ThreadPark =
         /// again) mints a fresh one, as a real kernel queues such a waiter
         /// afresh.
         Ordinal : ParkOrdinal
+        /// Whether the thread still sleeps, or has been woken and has yet to
+        /// finish its call.
+        ///
+        /// A park starts `ParkState.Asleep`, `UnixWait.wake` makes it
+        /// `ParkState.Woken`, and only a woken thread's call is finished. A
+        /// re-park is asleep again: the waiter waits for a new wake.
+        State : ParkState
     }
 
 /// What the emulated kernel knows about one thread — one scheduling entity, what
@@ -855,6 +983,13 @@ type UnixThreadState =
             /// number: a sleeping thread keeps the object rather than the number, and
             /// descriptor numbers are reused as soon as they are free.
             Parked : ThreadPark option
+            /// Why the thread must return to user mode before it makes another
+            /// call, if it must: a signal interrupted its last call, or a signal
+            /// is deliverable to it. `UnixSignal.onReturnToUser` clears it. Never
+            /// set on a parked thread: a thread parks only in a call, which it
+            /// cannot make while it owes a return, and takes a signal only once
+            /// it has left the park.
+            Owes : OwedReturn option
         }
 
 /// Reading one thread.
@@ -886,12 +1021,130 @@ module UnixThreadState =
     let parkedIn (thread : UnixThreadState) : ParkedSyscall option =
         thread.Parked |> Option.map (fun park -> park.Syscall)
 
+/// The threads one process owns, by whatever a client uses to name one, with
+/// the names of those parked in a syscall.
+///
+/// Its representation is private to this file, so that the functions of
+/// `UnixThreadTable`, which keep the names of the parked threads with every
+/// change to a thread, are the only way to change one; a sweep of the sleeping
+/// threads (`UnixWait.wake`) reads those names rather than every thread.
+type internal ThreadTable<'Thread when 'Thread : comparison> =
+    private
+        {
+            /// Every thread of the process, by its name.
+            ByName : Map<'Thread, UnixThreadState>
+            /// The names of the threads in `ByName` whose `Parked` is `Some`,
+            /// and of no others.
+            ParkedNames : Set<'Thread>
+        }
+
 /// The threads a simulated process owns, by whatever a client uses to name one.
 ///
 /// Generic in the thread name for the same reason `SignalState` is: the identity
 /// of a scheduling entity is the client's, not this library's.
 [<RequireQualifiedAccess>]
 module UnixThreadTable =
+
+    /// A process's threads before it has any.
+    let internal empty<'Thread when 'Thread : comparison> : ThreadTable<'Thread> =
+        {
+            ByName = Map.empty
+            ParkedNames = Set.empty
+        }
+
+    /// Every thread of `table`, by its name.
+    let internal byName<'Thread when 'Thread : comparison>
+        (table : ThreadTable<'Thread>)
+        : Map<'Thread, UnixThreadState>
+        =
+        table.ByName
+
+    /// The names of the threads of `table` that are parked in a syscall, asleep
+    /// or woken.
+    let internal parked<'Thread when 'Thread : comparison> (table : ThreadTable<'Thread>) : Set<'Thread> =
+        table.ParkedNames
+
+    /// The names of the threads of `threads` that are parked in a syscall,
+    /// found by asking every thread.
+    let private parkedOf<'Thread when 'Thread : comparison> (threads : Map<'Thread, UnixThreadState>) : Set<'Thread> =
+        (Set.empty, threads)
+        ||> Map.fold (fun parked name state ->
+            match state.Parked with
+            | Some _ -> Set.add name parked
+            | None -> parked
+        )
+
+    /// The table of exactly the threads `threads` holds.
+    let internal ofMap<'Thread when 'Thread : comparison>
+        (threads : Map<'Thread, UnixThreadState>)
+        : ThreadTable<'Thread>
+        =
+        {
+            ByName = threads
+            ParkedNames = parkedOf threads
+        }
+
+    /// Whether the names `table` keeps of its parked threads are those a scan
+    /// of every thread finds.
+    let internal parkedNamesFresh<'Thread when 'Thread : comparison> (table : ThreadTable<'Thread>) : bool =
+        parkedOf table.ByName = table.ParkedNames
+
+    /// `table` with `name`'s thread as `state`, and `name` among the parked
+    /// threads' names exactly if `state` is parked: the one way a thread is
+    /// written.
+    let private put<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (state : UnixThreadState)
+        (table : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let parkedNames =
+            match state.Parked with
+            | Some _ when not (Set.contains name table.ParkedNames) -> Set.add name table.ParkedNames
+            | None when Set.contains name table.ParkedNames -> Set.remove name table.ParkedNames
+            | Some _
+            | None -> table.ParkedNames
+
+        {
+            ByName = Map.add name state table.ByName
+            ParkedNames = parkedNames
+        }
+
+    /// `table` without `name`'s thread, which has exited; `table` itself if it
+    /// has no thread by that name.
+    ///
+    /// Fails loudly if the thread is parked: a thread leaves its park before it
+    /// leaves the table, since its park holds descriptions only the park's end
+    /// lets go of (`UnixParkState.unpark`).
+    let internal remove<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (table : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        match Map.tryFind name table.ByName with
+        | None -> table
+        | Some {
+                   Parked = Some park
+               } ->
+            failwith
+                $"UnixThreadTable.remove: thread %O{name} is leaving the table while parked in %A{park.Syscall}. A thread leaves its park, which lets go of what the park holds, before it exits (this is a bug in this library)."
+        | Some _ ->
+            {
+                ByName = Map.remove name table.ByName
+                ParkedNames = table.ParkedNames
+            }
+
+    /// The thread `name` is, or `None` if `table` has no thread by that name.
+    let internal tryFind<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (table : ThreadTable<'Thread>)
+        : UnixThreadState option
+        =
+        Map.tryFind name table.ByName
+
+    /// Whether `table` has a thread named `name`.
+    let internal contains<'Thread when 'Thread : comparison> (name : 'Thread) (table : ThreadTable<'Thread>) : bool =
+        Map.containsKey name table.ByName
 
     /// The thread `name` is.
     ///
@@ -900,14 +1153,14 @@ module UnixThreadTable =
     /// resolves to nothing is a client bug rather than anything a process did.
     let internal get<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
         let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if threads.TryGetValue (name, &thread) then
+        if threads.ByName.TryGetValue (name, &thread) then
             thread
         else
             failwith
@@ -921,19 +1174,20 @@ module UnixThreadTable =
         (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
-        if Map.containsKey name threads then
+        if Map.containsKey name threads.ByName then
             failwith
                 $"UnixThreadTable.add: %O{name} already names a thread. A thread is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
-        Map.add
+        put
             name
             {
                 Cpu = cpu
                 OsThreadId = osThreadId
                 Parked = None
+                Owes = None
             }
             threads
 
@@ -942,7 +1196,7 @@ module UnixThreadTable =
     /// of the state it looked up instead.
     let internal parkedFor<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : ParkedSyscall option
         =
         UnixThreadState.parkedIn (get name threads)
@@ -950,56 +1204,130 @@ module UnixThreadTable =
     /// The park `name` is in, with its place in park order, if it is parked.
     let internal parkOf<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : ThreadPark option
         =
         (get name threads).Parked
 
-    /// Fails loudly unless `name` is a thread asleep in no syscall, as the
-    /// thread making a call must be: `operation` names the function the client
-    /// called. A thread blocks in one syscall at a time, and a call it is asleep
-    /// in is finished, not made again.
-    let internal requireIssuer<'Thread when 'Thread : comparison>
+    /// The thread `name` is, failing with `InvalidOperationException` unless it
+    /// is one of `threads`: `operation` names the function the client called,
+    /// which only one of the process's threads may call.
+    let internal requireThread<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
-        : unit
+        (threads : ThreadTable<'Thread>)
+        : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, as in `get`: every read and
         // write asks this.
         let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if not (threads.TryGetValue (name, &thread)) then
-            failwith
-                $"%s{operation}: thread %O{name} is not one of the process's threads, so it cannot be making the call: the thread table names no thread %O{name}, which was never created or has already exited (this is a bug in the client)."
+        if not (threads.ByName.TryGetValue (name, &thread)) then
+            invalidOp
+                $"%s{operation}: thread %O{name} is not one of the process's threads: the thread table names no thread %O{name}, which was never created or has already exited (this is a bug in the client)."
 
-        match thread.Parked with
-        | Some park ->
-            failwith
+        thread
+
+    /// Fails with `InvalidOperationException` unless `name` is a thread asleep
+    /// in no syscall and owing no return to user mode, as the thread making a
+    /// call must be: `operation` names the function the client called. A thread
+    /// blocks in one syscall at a time, and a call it is asleep in is finished,
+    /// not made again; and a thread runs its own code, which is what makes a
+    /// call, only once it has returned to user mode.
+    let internal requireIssuer<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : unit
+        =
+        let thread = requireThread operation name threads
+
+        match thread.Parked, thread.Owes with
+        | Some park, _ ->
+            invalidOp
                 $"%s{operation}: thread %O{name} is parked in %A{park.Syscall}, and is making another call. A thread blocks in one syscall at a time: the call it is parked in is finished by that call's finishing function, not made again, and that call's completion must clear its record before the thread makes any other (this is a bug in the client)."
+        | None, Some (OwedReturn.Interrupted interruption) ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is making a call, but a signal (%O{interruption.Signal}) interrupted its last call, and it has not returned to user mode since. That return decides how the interrupted call ends, and a thread makes a call only from user mode: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
+        | None, Some OwedReturn.SignalDue ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is making a call, but a signal is deliverable to it, which it takes as it returns to user mode, and it has not returned since. A thread runs no more of its own code, so makes no call, before it takes a signal deliverable to it: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
+        | None, None -> ()
+
+    /// Fails with `InvalidOperationException` unless `name` is a thread asleep
+    /// in no syscall, as a thread returning to user mode must be: `operation`
+    /// names the function the client called. A thread asleep in a syscall
+    /// returns to user mode only once the syscall has answered.
+    let internal requireReturning<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : unit
+        =
+        match (requireThread operation name threads).Parked with
+        | Some park ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is asleep in %A{park.Syscall}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
         | None -> ()
 
-    /// What `choose` answers for the syscall `name` is parked in, failing loudly
-    /// if `name` is parked in none, or in one `choose` answers `None` for:
-    /// `operation` names the finishing function the client called, which only
-    /// a thread whose call answered `WouldBlock` may call.
+    /// The syscall `name` is parked in, failing with `InvalidOperationException`
+    /// unless it is a thread parked in one: `operation` names the finishing
+    /// function the client called, which only a thread whose call answered
+    /// `WouldBlock` may call.
+    let internal requireParked<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : ParkedSyscall
+        =
+        match (requireThread operation name threads).Parked with
+        | None ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock` finishes one here (this is a bug in the client)."
+        | Some park -> park.Syscall
+
+    /// Fails with `InvalidOperationException` unless `name` is a thread parked
+    /// in a syscall that `UnixWait.wake` has woken, as the thread whose call a
+    /// finishing function finishes must be: `operation` names the finishing
+    /// function the client called.
+    let internal requireWoken<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : unit
+        =
+        match (requireThread operation name threads).Parked with
+        | None ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock`, and which `UnixWait.wake` has since woken, finishes one here (this is a bug in the client)."
+        | Some {
+                   Syscall = parked
+                   State = ParkState.Asleep
+               } ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is asleep in %A{parked}, and nothing has woken it. `UnixWait.wake` wakes a thread once its call can get further, and only a woken thread's call is finished (this is a bug in the client)."
+        | Some {
+                   State = ParkState.Woken _
+               } -> ()
+
+    /// What `choose` answers for the syscall `name` is parked in, failing with
+    /// `InvalidOperationException` as `requireParked` does, or if `choose`
+    /// answers `None` for that syscall: `operation` names the finishing function
+    /// the client called.
     let internal expectParked<'Thread, 'Expected when 'Thread : comparison>
         (operation : string)
         (choose : ParkedSyscall -> 'Expected option)
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
+        (threads : ThreadTable<'Thread>)
         : 'Expected
         =
-        match parkedFor name threads with
+        let parked = requireParked operation name threads
+
+        match choose parked with
+        | Some expected -> expected
         | None ->
-            failwith
-                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock` finishes one here (this is a bug in the client)."
-        | Some parked ->
-            match choose parked with
-            | Some expected -> expected
-            | None ->
-                failwith
-                    $"%s{operation}: thread %O{name} is parked in %A{parked}, which is not a call this finishes (this is a bug in the client)."
+            invalidOp
+                $"%s{operation}: thread %O{name} is parked in %A{parked}, which is not a call this finishes (this is a bug in the client)."
 
     /// Record that `name` is in `park`.
     ///
@@ -1016,16 +1344,30 @@ module UnixThreadTable =
     /// with less of itself left to run is the obvious future instance — and that
     /// is the syscall's business rather than this table's.
     ///
+    /// Refuses too a write that moves a park's state other than as a wake and a
+    /// re-park move it. A park onto an absent record is asleep. A write that
+    /// keeps the park's ordinal rewrites the park in place, as a Darwin close
+    /// rewrites the call it ends, and keeps its state. A write with a fresh
+    /// ordinal is a re-park, which only a woken thread's finishing call makes,
+    /// and puts the thread asleep again. `markWoken` is the one way a park
+    /// becomes woken.
+    ///
     /// The table alone: it moves no hold on an open file description. Internal
-    /// so that `UnixWait.park`, which mints the ordinal, and `UnixParkState`,
+    /// so that `Parking.park`, which mints the ordinal, and `UnixParkState`,
     /// which moves the holds, are the ways a park is written.
     let internal withPark<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (park : ThreadPark)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
+
+        match existing.Owes with
+        | Some owed ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} owes a return to user mode (%A{owed}), and is being parked in %A{park}. A thread parks only in a call it makes, which it cannot make before that return (this is a bug in this library)."
+        | None -> ()
 
         // Which syscall a park is of, and nothing else about it.
         let kind (parked : ParkedSyscall) : int =
@@ -1049,6 +1391,7 @@ module UnixThreadTable =
             | ParkedSyscall.DatagramReceive _ -> 16
             | ParkedSyscall.DatagramSend _ -> 17
             | ParkedSyscall.Connect _ -> 18
+            | ParkedSyscall.Futex _ -> 19
 
         let sameSyscall =
             match existing.Parked with
@@ -1059,12 +1402,125 @@ module UnixThreadTable =
             failwith
                 $"UnixThreadTable.withPark: thread %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A thread blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
 
-        Map.add
+        match existing.Parked, park.State with
+        | None, ParkState.Asleep -> ()
+        | None, ParkState.Woken _ ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} is parking in %A{park}, woken already. A park starts asleep, and only `UnixWait.wake` wakes it (this is a bug in this library)."
+        | Some before, _ when before.Ordinal = park.Ordinal ->
+            if before.State <> park.State then
+                failwith
+                    $"UnixThreadTable.withPark: thread %O{name}'s park %A{before} is being rewritten in place as %A{park}, which changes its state. A rewrite keeps the park's state, and only `UnixWait.wake` wakes a park (this is a bug in this library)."
+        | Some {
+                   State = ParkState.Woken _
+               },
+          ParkState.Asleep -> ()
+        | Some before, _ ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} is parked in %A{before} and is being parked again as %A{park}. A re-park is a woken thread's going back to sleep, so it is made only of a woken park, and is asleep (this is a bug in this library)."
+
+        put
             name
             { existing with
                 Parked = Some park
             }
             threads
+
+    /// Record that `UnixWait.wake` has woken `name`, asleep in a syscall, for
+    /// `fired`, the primitives of its call's wake condition that hold: its park
+    /// keeps its syscall and its place in park order, and becomes
+    /// `ParkState.Woken`.
+    ///
+    /// Fails loudly unless `name` is parked and asleep, and if `fired` is
+    /// empty: a thread is woken for something.
+    let internal markWoken<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (fired : Set<WakePrimitive>)
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let existing = get name threads
+
+        if Set.isEmpty fired then
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is being woken for nothing. A thread wakes once a primitive of its wake condition holds (this is a bug in this library)."
+
+        match existing.Parked with
+        | Some ({
+                    State = ParkState.Asleep
+                } as park) ->
+            put
+                name
+                { existing with
+                    Parked =
+                        Some
+                            { park with
+                                State = ParkState.Woken fired
+                            }
+                }
+                threads
+        | Some park ->
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is in %A{park}, woken already, and is being woken again for %A{fired} (this is a bug in this library)."
+        | None ->
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is parked in no syscall, and is being woken for %A{fired} (this is a bug in this library)."
+
+    /// What `name` owes before it makes another call, if anything: see
+    /// `UnixThreadState.Owes`.
+    let internal owedBy<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : OwedReturn option
+        =
+        (get name threads).Owes
+
+    /// Record that `name` must return to user mode, for `owed`, before it makes
+    /// another call.
+    ///
+    /// Fails loudly if `name` is parked, or already owes a return: a thread
+    /// owes one only once its call has answered, and the return clears it
+    /// before the thread can make another.
+    let internal owe<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (owed : OwedReturn)
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let existing = get name threads
+
+        match existing.Parked, existing.Owes with
+        | Some park, _ ->
+            failwith
+                $"UnixThreadTable.owe: thread %O{name} is parked in %A{park.Syscall}, so it is not returning to user mode, and cannot owe that return %A{owed} (this is a bug in this library)."
+        | None, Some before ->
+            failwith
+                $"UnixThreadTable.owe: thread %O{name} already owes a return to user mode (%A{before}), and is being marked again (%A{owed}); a return clears the first before the thread can make the call that would set the second (this is a bug in this library)."
+        | None, None ->
+            put
+                name
+                { existing with
+                    Owes = Some owed
+                }
+                threads
+
+    /// Record that `name` has returned to user mode: it owes nothing.
+    let internal settle<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let existing = get name threads
+
+        match existing.Owes with
+        | None -> threads
+        | Some _ ->
+            put
+                name
+                { existing with
+                    Owes = None
+                }
+                threads
 
     /// Record that `name` is no longer parked: its syscall has finished.
     ///
@@ -1074,15 +1530,31 @@ module UnixThreadTable =
     /// its holds.
     let internal unpark<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (threads : Map<'Thread, UnixThreadState>)
-        : Map<'Thread, UnixThreadState>
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
         =
         let existing = get name threads
 
-        Map.add
+        put
             name
             { existing with
                 Parked = None
+            }
+            threads
+
+    /// Record that `name` last ran on `cpu`: see `UnixThreadState.Cpu`.
+    let internal withCpu<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (cpu : CpuId)
+        (threads : ThreadTable<'Thread>)
+        : ThreadTable<'Thread>
+        =
+        let existing = get name threads
+
+        put
+            name
+            { existing with
+                Cpu = cpu
             }
             threads
 

@@ -69,7 +69,7 @@ module TestSocketOptions =
         (system : UnixSystem<int, string>)
         : Result<SetSockOptAnswer * UnixSystem<int, string>, SocketOptionRefusal>
         =
-        let level, name = numbered system.Machine.UnixPlatform option
+        let level, name = numbered (UnixSystem.platform system) option
         let contents (count : int) = ImmutableArray.Create (value, 0, count)
         SockOptCalls.set fd level name buffer length contents system
 
@@ -88,7 +88,7 @@ module TestSocketOptions =
         (system : UnixSystem<int, string>)
         : GetSockOptAnswer
         =
-        let level, name = numbered system.Machine.UnixPlatform option
+        let level, name = numbered (UnixSystem.platform system) option
 
         match SockOptCalls.get fd level name value length declared system with
         | Ok (answer, _) -> answer
@@ -531,12 +531,12 @@ module TestSocketOptions =
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"bind answered %A{other}"
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | other -> failwith $"listen answered %A{other}"
 
     let private connectTo (port : uint16) (fd : int) (system : UnixSystem<int, string>) =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         match
             CopyIn.connect
@@ -558,8 +558,8 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
         read Option.NoDelay accepted system
@@ -599,22 +599,23 @@ module TestSocketOptions =
         let socketId = SocketId 0L
 
         let withState (binding : Ipv4Binding option) (phase : SocketPhase) =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
-                                { UnixMachineState.socket socketId system.Machine with
+                                { UnixMachineState.socket socketId machine with
                                     Addressing =
                                         SocketAddressing.replaceBinding
                                             (binding)
-                                            (UnixMachineState.socket socketId system.Machine).Addressing
+                                            (UnixMachineState.socket socketId machine).Addressing
                                     Phase = phase
                                 }
-                                system.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                system
 
         let bound =
             Some
@@ -635,7 +636,6 @@ module TestSocketOptions =
                         {
                             Backlog = 4
                             Queue = []
-                            Drained = false
                         })
             ]
 
@@ -659,18 +659,18 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> Ok system
             | Ok (SyscallAnswer.Failed error, _) -> failwith $"close answered %O{error}"
             | Error refusal -> Error refusal
 
         let read (fd : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"%O{platform} fd %d{fd}: expected a read to answer, got %A{other}"
 
@@ -691,8 +691,8 @@ module TestSocketOptions =
         | Ok reset ->
             UnixSystem.checkInvariants reset |> shouldEqual []
 
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u reset with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), reset) ->
+            match UnixConnection.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped (Some 16u) 0 reset with
+            | Ok (AcceptOutcome.Accepted (fd, _), reset) ->
                 read fd reset |> shouldEqual (ReadAnswer.Failed UnixError.ECONNRESET)
             | other -> failwith $"%O{platform}: accepting the reset connection answered %A{other}"
         | Error refusal -> failwith $"%O{platform}, queued: %s{CloseRefusal.describe refusal}"
@@ -722,10 +722,17 @@ module TestSocketOptions =
             let system = connectTo 5000us client system
             // A negative length: Linux takes the connection, then answers
             // EINVAL and drops it.
-            client, UnixConnection.tryAccept 0 listener UserBuffer.Mapped System.UInt32.MaxValue system
+            client,
+            UnixConnection.tryAccept
+                (Callers.thread 0 system)
+                listener
+                UserBuffer.Mapped
+                (Some System.UInt32.MaxValue)
+                0
+                system
 
         let clientRead (client : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 client UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) client UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"expected the client's read to answer, got %A{other}"
 
@@ -753,7 +760,14 @@ module TestSocketOptions =
 
         let short =
             Assert.Throws<exn> (fun () ->
-                UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 8u (Some (OptionValue.ofInt 1)) system
+                Lone.UnixSocket.trySetsockoptBytes
+                    fd
+                    level
+                    name
+                    UserBuffer.Mapped
+                    8u
+                    (Some (OptionValue.ofInt 1))
+                    system
                 |> ignore<_>
             )
 

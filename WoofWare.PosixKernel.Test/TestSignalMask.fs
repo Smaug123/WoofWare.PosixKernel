@@ -52,7 +52,11 @@ module TestSignalMask =
     let private referenceSignals (numbering : SignalNumbering) (word : uint64) : Set<Signal> =
         [ 1..64 ]
         |> List.filter (fun signo -> word &&& (1UL <<< (signo - 1)) <> 0UL)
-        |> List.choose (fun signo -> Signal.ofRawSignoUnder numbering signo |> ValueOption.toOption)
+        |> List.choose (fun signo ->
+            match Signal.ofRawSignoUnder numbering signo with
+            | ValueSome signal -> Some signal
+            | ValueNone -> None
+        )
         |> Set.ofList
 
     [<Test>]
@@ -94,7 +98,11 @@ module TestSignalMask =
             [ 1..64 ]
             |> List.collect (fun signo ->
                 everyNumbering
-                |> List.choose (fun n -> Signal.ofRawSignoUnder n signo |> ValueOption.toOption)
+                |> List.choose (fun n ->
+                    match Signal.ofRawSignoUnder n signo with
+                    | ValueSome signal -> Some signal
+                    | ValueNone -> None
+                )
             )
             |> List.distinct
 
@@ -148,17 +156,19 @@ module TestSignalMask =
 
     [<Test>]
     let ``ofSignals refuses a signal its numbering does not have`` () : unit =
-        Assert.Throws<exn> (fun () ->
+        (Assert.Throws<System.ArgumentException> (fun () ->
             SignalMask.ofSignals SignalNumbering.Darwin (Set.singleton Signal.SIGPWR)
             |> ignore<SignalMask>
-        )
-        |> ignore
+        ))
+            .ParamName
+        |> shouldEqual "signals"
 
-        Assert.Throws<exn> (fun () ->
+        (Assert.Throws<System.ArgumentException> (fun () ->
             SignalMask.ofSignals SignalNumbering.Linux (Set.singleton Signal.SIGINFO)
             |> ignore<SignalMask>
-        )
-        |> ignore
+        ))
+            .ParamName
+        |> shouldEqual "signals"
 
     [<Test>]
     let ``union, difference and without are the word's or, and-not and cleared bits`` () : unit =

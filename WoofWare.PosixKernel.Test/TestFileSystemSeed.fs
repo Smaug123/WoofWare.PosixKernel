@@ -83,7 +83,11 @@ module TestFileSystemSeed =
 
         match contentAt "/etc/hostname" SymlinkPolicy.Follow with
         | InodeContent.RegularFile (contents, permissions) ->
-            contents |> Seq.toArray |> shouldEqual (bytes "testhost" |> Seq.toArray)
+            contents
+            |> FileContents.toImmutableArray
+            |> Seq.toArray
+            |> shouldEqual (bytes "testhost" |> Seq.toArray)
+
             permissions |> shouldEqual SeedEntry.defaultPermsForRegularFile
         | other -> failwith $"expected a regular file, got %A{other}"
 
@@ -207,7 +211,8 @@ module TestFileSystemSeed =
             match entry with
             | SeedEntry.Directory (children, _, _) -> (here, entry) :: declared here children
             | SeedEntry.File _
-            | SeedEntry.Symlink (_, _) -> [ here, entry ]
+            | SeedEntry.Symlink (_, _)
+            | SeedEntry.CharacterDevice _ -> [ here, entry ]
         )
 
     /// What the declared paths of generated seeds resolve to.
@@ -407,12 +412,14 @@ module TestFileSystemSeed =
         let custom =
             SimulatedUnixPlatform.createOrFail
                 "test"
-                (SimulatedUnixKernel.Linux
+                (SimulatedUnixKernel.Linux (
                     {
                         Major = 5u
                         Minor = 4u
                         Patch = 0u
-                    })
+                    },
+                    LinuxKernelBuild.SmallBuffer960
+                ))
                 SimulatedUnixArchitecture.X64
                 SimulatedPageSize.FourKiB
                 "5.4.0-1234-custom"
@@ -431,12 +438,14 @@ module TestFileSystemSeed =
         // release, so a custom platform that restates one *is* it.
         SimulatedUnixPlatform.createOrFail
             "test"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 17u
                     Patch = 0u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer960
+            ))
             SimulatedUnixArchitecture.X64
             SimulatedPageSize.FourKiB
             "6.17.0-1022-azure"
@@ -444,7 +453,12 @@ module TestFileSystemSeed =
 
         SimulatedUnixPlatform.createOrFail
             "test"
-            SimulatedUnixKernel.Darwin
+            (SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                })
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.SixteenKiB
             "27.0.0"
@@ -493,7 +507,7 @@ module TestFileSystemSeed =
         // A forged value bypasses `create` entirely; `assertValid` is what
         // catches it before its null release reaches a process as `uname -r`.
         let forged =
-            Assert.Throws (fun () ->
+            Assert.Throws<ArgumentNullException> (fun () ->
                 SimulatedUnixPlatform.assertValid "test" Unchecked.defaultof<SimulatedUnixPlatform>
                 |> ignore<SimulatedUnixPlatform>
             )

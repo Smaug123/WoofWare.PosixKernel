@@ -37,8 +37,8 @@ module internal NewNameRules =
 
     /// The checks a free name in a directory with a name of its own owes, in
     /// order: the trailing separator's ENOENT where `trailingSeparator` says
-    /// so, `source`'s checks ahead of the write check, the write check's
-    /// EACCES, `source`'s checks after it, and EILSEQ.
+    /// so, Darwin's devfs's EPERM, `source`'s checks ahead of the write check,
+    /// the write check's EACCES, `source`'s checks after it, and EILSEQ.
     let private unbound
         (trailingSeparator : FreeNameTrailingSeparator)
         (source : NewNameSource)
@@ -50,13 +50,6 @@ module internal NewNameRules =
         (vfs : VirtualFileSystem)
         : NewNameVerdict
         =
-        let inodeOf (role : string) (inode : InodeNumber) : Inode =
-            match VirtualFileSystem.tryGet inode vfs with
-            | Some found -> found
-            | None ->
-                failwith
-                    $"NewNameRules: %s{role}, inode %O{inode}, binding \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, is not in the filesystem. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
-
         let beforeWrite () : UnixError option =
             match source with
             | NewNameSource.Fresh -> None
@@ -66,12 +59,26 @@ module internal NewNameRules =
                     <> VirtualFileSystem.mountedRootOf directory vfs
                 then
                     Some UnixError.EXDEV
-                elif ProtectedFiles.refusesToLink protection credentials (inodeOf "the source" source) then
+                elif
+                    ProtectedFiles.refusesToLink
+                        protection
+                        credentials
+                        (VirtualFileSystem.get "NewNameRules: the source" source vfs)
+                then
                     Some UnixError.EPERM
                 else
                     None
             | NewNameSource.Cloned source ->
-                let cloned = inodeOf "the source" source
+                let cloned = VirtualFileSystem.get "NewNameRules: the source" source vfs
+
+                // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, NS
+                // clonefile rows): a clone into devfs is EXDEV.
+                if
+                    VirtualFileSystem.mountedRootOf source vfs
+                    <> VirtualFileSystem.mountedRootOf directory vfs
+                then
+                    Some UnixError.EXDEV
+                else
 
                 match cloned.Content with
                 | InodeContent.RegularFile (_, bits) ->
@@ -92,7 +99,7 @@ module internal NewNameRules =
             | NewNameSource.Fresh
             | NewNameSource.Cloned _ -> None
             | NewNameSource.Linked (source, _) ->
-                match (inodeOf "the source" source).Content with
+                match (VirtualFileSystem.get "NewNameRules: the source" source vfs).Content with
                 | InodeContent.Directory _ -> Some UnixError.EPERM
                 | InodeContent.RegularFile _
                 | InodeContent.Symlink _
@@ -112,11 +119,32 @@ module internal NewNameRules =
         | FreeNameTrailingSeparator.NoSuchEntry
         | FreeNameTrailingSeparator.Binds ->
 
+        // Darwin's devfs refuses an unprivileged caller every new name, ahead
+        // of the write check, which would answer EACCES of its 0555
+        // directories (measured on Darwin 27.0, `docs/probes/devfs-darwin`,
+        // NS rows: `open(O_CREAT)`, `mkdir`, `mkfifo`, `symlink` and `link`,
+        // where a free name is EPERM after the walk's ENOENT and ENOTDIR and a
+        // trailing separator's ENOENT). Root's answer is unmeasured: the call
+        // refuses once it would bind the name. A link from devfs, and one into
+        // it, are `LinkRules.verdict`'s, and a clone into it is EXDEV.
+        let devfsRefuses =
+            match source with
+            | NewNameSource.Fresh ->
+                VirtualFileSystem.isOnDevfs directory vfs
+                && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            | NewNameSource.Linked _
+            | NewNameSource.Cloned _ -> false
+
+        if devfsRefuses then
+            NewNameVerdict.Refuse UnixError.EPERM
+        else
+
         match beforeWrite () with
         | Some error -> NewNameVerdict.Refuse error
         | None ->
 
-        let parent = inodeOf "the directory to bind in" directory
+        let parent =
+            VirtualFileSystem.get "NewNameRules: the directory to bind in" directory vfs
 
         // Write alone: the search half of the rule is the walk's, and a
         // resolution that reached here has already passed it.

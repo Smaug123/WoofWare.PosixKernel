@@ -198,3 +198,61 @@ What the columns say, and what each is load-bearing for:
   ".." and "dir/.." all answer the destination's ENOTDIR — so what is early is
   `FinalNavigation.Root`, the one case that consumed no component at all. This
   is `RenameRules.sourceScreen`.
+
+## `mountpoint-self-rename.c` — a mount point renamed onto itself
+
+```
+container run --rm -v "$PWD:/probe" gcc:14 sh -c \
+    'gcc -O0 -Wall -o /tmp/p /probe/mountpoint-self-rename.c && /tmp/p'
+```
+
+`measured-mountpoint-self-rename-linux.txt` is Linux 6.18.5 aarch64, run as root,
+which then becomes uid 1000 for its last three rows. Its first two lines show
+the fixture: `/dev` is on another `st_dev` than `/`, and `/proc/self/mountinfo`
+lists a devtmpfs there, so the rows below rename a real mount point.
+
+* `rename("/dev", "/dev")` and `rename("/dev", "//dev")` answer 0 and change
+  nothing, as root and as uid 1000: `vfs_rename` answers a rename of one inode
+  onto itself before its mount-point EBUSY and before any permission check.
+* The controls change the answer: `rename("/dev", "/devx")` is EBUSY as root and
+  EACCES as uid 1000, the rows `mountpoint.c` measured, and a plain directory
+  renamed to another name moves.
+
+## `ancestor-trap.py` — a destination that is the source's own ancestor
+
+```
+python3 ancestor-trap.py /tmp/scratch
+container run --rm -v "$PWD:/probe" --user 1000:1000 python:3-slim \
+    python3 /probe/ancestor-trap.py /tmp/scratch
+container run --rm -v "$PWD:/probe" python:3-slim \
+    python3 /probe/ancestor-trap.py /tmp/scratch
+```
+
+| file | envelope |
+| --- | --- |
+| `measured-ancestor-trap-darwin-uid501.txt` | macOS 27.0 / APFS, uid 501 |
+| `measured-ancestor-trap-linux-uid1000.txt` | Linux 6.18.5 arm64 / ext4, uid 1000 |
+| `measured-ancestor-trap-linux-uid0.txt` | the same kernel at uid 0 |
+| `measured-ancestor-trap-linux-6.17-uid1001.txt` | Linux 6.17.0-1022-azure x86_64 / ext4 (a GitHub Actions `ubuntu-24.04` runner), uid 1001 |
+| `measured-ancestor-trap-linux-6.17-uid0.txt` | the same kernel at uid 0 |
+| `measured-ancestor-trap-linux-7.0-uid1001.txt` | Linux 7.0.0-1017-azure x86_64 / ext4 (a GitHub Actions `ubuntu-24.04` runner), uid 1001 |
+| `measured-ancestor-trap-linux-7.0-uid0.txt` | the same kernel at uid 0 |
+
+`TestRenameAncestorTrap` replays every row of every file, each Linux one at its
+own kernel's version.
+
+* **Linux refuses a destination that is the source's parent or an ancestor of
+  it with ENOTEMPTY**, ahead of the type rule and every permission check:
+  `rename(a/f, a)` is ENOTEMPTY where Darwin, which has no such refusal, answers
+  EISDIR.
+* **Where that refusal sits against a trailing separator changed in Linux
+  6.19.** With a file source and a separator on either path, so that both
+  apply, 6.18 answers the separator's ENOTDIR and 7.0 the ENOTEMPTY: all six such
+  rows, at both uids, and 6.17 answers as 6.18 does. Commit 5c8752729970 ("VFS/nfsd/ovl: introduce
+  start_renaming() and end_renaming()") moved the check into the locking of the
+  two parents, ahead of `do_renameat2`'s trailing-separator checks. This is
+  `RenameAncestorCheck`.
+* The two controls answer alike on every kernel: a directory source takes no
+  ENOTDIR from a separator, so `rename(a/sub/, a/)` is ENOTEMPTY throughout, and
+  a separator with no ancestor in the way, `rename(a/f, z/)`, is ENOTDIR on
+  every Linux.

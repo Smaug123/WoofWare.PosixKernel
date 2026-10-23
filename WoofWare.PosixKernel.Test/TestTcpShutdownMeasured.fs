@@ -53,7 +53,7 @@ module TestTcpShutdownMeasured =
         let mutable transfer : TcpTransfer =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+            |> fun system -> TcpBufferSizing.newTransfer SocketDomain.Inet (Kernel.machine system)
 
         let mutable refused = false
 
@@ -117,7 +117,7 @@ module TestTcpShutdownMeasured =
                 if TcpTransfer.closeRefused e transfer then
                     refused <- true
                 else
-                    transfer <- snd (TcpTransfer.close e false transfer)
+                    transfer <- snd (TcpTransfer.close e false PortHold.Reserved UserId.root transfer)
 
                 "0"
 
@@ -129,7 +129,7 @@ module TestTcpShutdownMeasured =
                 if TcpTransfer.abortRefused e transfer then
                     refused <- true
                 else
-                    transfer <- snd (TcpTransfer.abort e false transfer)
+                    transfer <- snd (TcpTransfer.abort e false PortHold.Reserved UserId.root transfer)
 
                 "0"
 

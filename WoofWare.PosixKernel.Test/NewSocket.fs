@@ -36,9 +36,10 @@ module NewSocket =
 
         domain, kind, protocol
 
-    /// Create a blocking socket of this shape, failing the test if the kernel
-    /// does not.
-    let create<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// Create a blocking socket of this shape, made by `caller`, failing the
+    /// test if the kernel does not.
+    let createAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (domain : SocketDomain)
         (kind : SocketKind)
         (protocol : SocketProtocol)
@@ -46,15 +47,25 @@ module NewSocket =
         : int * UnixSystem<'Thread, 'Handler>
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
-        match UnixSocket.trySocket rawDomain rawKind rawProtocol system with
-        | Ok (Ok created) -> created
-        | Ok (Error error) ->
+        match UnixSocket.trySocket caller rawDomain rawKind rawProtocol system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) ->
             failwith $"NewSocket.create: socket(%d{rawDomain}, %d{rawKind}, %d{rawProtocol}) answered %O{error}"
         | Error refusal ->
             failwith
                 $"NewSocket.create: socket(%d{rawDomain}, %d{rawKind}, %d{rawProtocol}) was refused: %s{SocketRefusal.describe refusal}"
+
+    /// `createAs` the leader of the only process on the machine.
+    let create<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (domain : SocketDomain)
+        (kind : SocketKind)
+        (protocol : SocketProtocol)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int * UnixSystem<'Thread, 'Handler>
+        =
+        createAs (Callers.leader system) domain kind protocol system
 
     /// Every shape `create` can ask for: each domain, kind and protocol. A
     /// socket this kernel makes is described by exactly these three, so the
@@ -77,9 +88,9 @@ module NewSocket =
         : (int * UnixSystem<'Thread, 'Handler>) option
         =
         let rawDomain, rawKind, rawProtocol =
-            arguments system.Machine.UnixPlatform domain kind protocol
+            arguments (UnixSystem.platform system) domain kind protocol
 
-        match UnixSocket.trySocket rawDomain rawKind rawProtocol system with
-        | Ok (Ok created) -> Some created
-        | Ok (Error _)
+        match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> Some (fd, system)
+        | Ok (DescriptorAnswer.Failed _, _)
         | Error _ -> None

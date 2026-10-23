@@ -1,0 +1,26 @@
+SO_RCVBUF 212992
+size 0: unpaced 222, 222; paced 222; primed 222
+size 1: unpaced 222, 222; paced 222; primed 222
+size 16: unpaced 222, 222; paced 222; primed 222
+size 100: unpaced 222, 222; paced 222; primed 222
+size 200: unpaced 222, 222; paced 222; primed 222
+size 500: unpaced 167, 167; paced 167; primed 167
+size 1000: unpaced 93, 93; paced 93; primed 93
+size 2000: unpaced 49, 49; paced 49; primed 49
+size 4096: unpaced 26, 26; paced 26; primed 26
+size 9216: unpaced 13, 13; paced 13; primed 13
+size 65507: unpaced 4, 4; paced 4; primed 4
+size 325 holds 222; size 326 holds 167
+size 645 holds 167; size 646 holds 93
+size 1669 holds 93; size 1670 holds 49
+size 3717 holds 49; size 3718 holds 26
+size 7813 holds 26; size 7814 holds 13
+size 16789 holds 13; size 16790 holds 12
+size 18402 holds 12; size 18403 holds 11
+size 20339 holds 11; size 20340 holds 10
+size 22705 holds 10; size 22706 holds 9
+size 25664 holds 9; size 25665 holds 8
+size 29467 holds 8; size 29468 holds 7
+size 34538 holds 7; size 34539 holds 6
+size 41638 holds 6; size 41639 holds 5
+size 52288 holds 5; size 52289 holds 4

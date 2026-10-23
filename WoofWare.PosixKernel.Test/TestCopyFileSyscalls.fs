@@ -88,13 +88,13 @@ module TestCopyFileSyscalls =
             |> configure
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -112,7 +112,7 @@ module TestCopyFileSyscalls =
 
     let private inodeAt (system : UnixSystem<int, string>) (fileName : string) : InodeNumber =
         match
-            UnixPathResolution.resolvePath
+            Lone.UnixPathResolution.resolvePath
                 AtDirectory.CurrentDirectory
                 SymlinkPolicy.NoFollowFinal
                 (UnixPath.parseOrFail context ("/" + fileName))
@@ -122,13 +122,13 @@ module TestCopyFileSyscalls =
         | Error error -> failwith $"/%s{fileName}: %O{error}"
 
     let private entryOf (system : UnixSystem<int, string>) (fileName : string) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system fileName) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt system fileName) (UnixSystem.fileSystem system) with
         | Some entry -> entry
         | None -> failwith $"/%s{fileName} is absent"
 
     let private contentsOf (system : UnixSystem<int, string>) (fileName : string) : byte[] =
         match (entryOf system fileName).Content with
-        | InodeContent.RegularFile (contents, _) -> contents |> Seq.toArray
+        | InodeContent.RegularFile (contents, _) -> contents |> FileContents.toImmutableArray |> Seq.toArray
         | other -> failwith $"/%s{fileName} is %A{other}"
 
     let private modeOf (system : UnixSystem<int, string>) (fileName : string) : int =
@@ -149,6 +149,9 @@ module TestCopyFileSyscalls =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (inodeAt system fileName))
                 (inodeAt system fileName)
                 access
@@ -202,24 +205,27 @@ module TestCopyFileSyscalls =
         | "dir" ->
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
-                    (ForgedName.ofInode system (VirtualFileSystem.root system.Machine.FileSystem))
-                    (VirtualFileSystem.root system.Machine.FileSystem)
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
+                    (ForgedName.ofInode system (VirtualFileSystem.root (UnixSystem.fileSystem system)))
+                    (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     (Lone.fileDescriptors system)
 
             fd, withRegistry registry system
         | "pipe-r"
         | "pipe-w" ->
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, writeFd), system) ->
                 (if kind = "pipe-r" then readFd else writeFd), system
             | other -> failwith $"pipe2: %A{other}"
         | "socket" ->
-            match UnixSocket.trySocket 2 1 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            match UnixSocket.trySocket (Callers.leader system) 2 1 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket: %A{other}"
         | "port" ->
-            match UnixPoll.tryEpollCreate1 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
         | "closed" -> 700, system
         | "fd9999" -> 9999, system
@@ -282,7 +288,7 @@ module TestCopyFileSyscalls =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryCopyFileRange inFd outFd length flags system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) inFd outFd length flags system with
         | Ok result -> result
         | Error refusal ->
             failwith
@@ -332,10 +338,15 @@ module TestCopyFileSyscalls =
                 let source, system = make inKind "ksrc" (kindsSystem ())
                 let destination, system = make outKind "kdst" system
 
-                match UnixDescriptor.tryFileClone destination source system with
-                | Ok error ->
+                match UnixDescriptor.tryFileClone (Callers.leader system) destination source system with
+                | Ok (SyscallAnswer.Failed error, after) ->
                     if $"%O{error}" <> measured then
                         failwith $"in=%s{inKind} out=%s{outKind}: measured %s{measured}, the model answered %O{error}"
+
+                    after |> shouldEqual system
+                | Ok (SyscallAnswer.Completed result, _) ->
+                    failwith
+                        $"in=%s{inKind} out=%s{outKind}: measured %s{measured}, the model completed with %d{result}"
                 | Error refusal ->
                     failwith $"in=%s{inKind} out=%s{outKind}: refused, %s{FileCloneRefusal.describe refusal}"
 
@@ -350,11 +361,12 @@ module TestCopyFileSyscalls =
         let inFd, darwin = opened "f" FileAccessMode.ReadOnly darwin
         let outFd, darwin = opened "g" FileAccessMode.WriteOnly darwin
 
-        UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 darwin
+        UnixReadWrite.tryCopyFileRange (Callers.leader darwin) inFd outFd 5UL 0 darwin
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
-        UnixDescriptor.tryFileClone outFd inFd darwin
+        UnixDescriptor.tryFileClone (Callers.leader darwin) outFd inFd darwin
+        |> Result.map fst
         |> shouldEqual (Error (FileCloneRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         let nfs =
@@ -366,15 +378,16 @@ module TestCopyFileSyscalls =
         let inFd, nfs = opened "ksrc" FileAccessMode.ReadOnly nfs
         let outFd, nfs = opened "kdst" FileAccessMode.WriteOnly nfs
 
-        UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 nfs
+        UnixReadWrite.tryCopyFileRange (Callers.leader nfs) inFd outFd 5UL 0 nfs
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
-        UnixDescriptor.tryFileClone outFd inFd nfs
+        UnixDescriptor.tryFileClone (Callers.leader nfs) outFd inFd nfs
+        |> Result.map fst
         |> shouldEqual (Error (FileCloneRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // A refusal the descriptors earn first is still answered.
-        UnixReadWrite.tryCopyFileRange inFd 9999 5UL 0 nfs
+        UnixReadWrite.tryCopyFileRange (Callers.leader nfs) inFd 9999 5UL 0 nfs
         |> Result.map fst
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF))
 
@@ -394,7 +407,7 @@ module TestCopyFileSyscalls =
                         "abc", owner 0u 0u, 0o644, "abc"
                     ])
 
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         // The whole of a short file, from both offsets, then 0 at the end with
         // nothing moved.
@@ -414,10 +427,7 @@ module TestCopyFileSyscalls =
                 StatusChange = now
             }
 
-        let s2 =
-            { s with
-                Scheduling = UnixSchedulingState.advanceClock 1_000_000_000L s.Scheduling
-            }
+        let s2 = UnixSystem.advanceClock 1_000_000_000L s
 
         let answer, after = copyFileRangeAnswer inFd outFd 11UL 0 s2
         answer |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -451,7 +461,7 @@ module TestCopyFileSyscalls =
         offsetOf inFd s |> shouldEqual 10L
         offsetOf outFd s |> shouldEqual 12L
 
-        // SSIZE_MAX and SIZE_MAX copy what remains.
+        // From offset 0, SSIZE_MAX and SIZE_MAX copy what remains.
         for length in [ uint64 Int64.MaxValue ; UInt64.MaxValue ] do
             let inFd, s = opened "src" FileAccessMode.ReadOnly system
             let outFd, s = opened "dst" FileAccessMode.WriteOnly s
@@ -511,6 +521,256 @@ module TestCopyFileSyscalls =
         row a 2L b 0L 5UL |> shouldEqual "EINVAL"
         row a 0L b 12L 20UL |> shouldEqual "10"
         row a 0L a 0L 0UL |> shouldEqual "0"
+
+    // ------------------------------------------------------------- copy_file_range's offset wrap
+
+    /// The lines `docs/probes/copy-file-range-overflow/copy-file-range-overflow.c`
+    /// printed on Linux 6.18.5 (tmpfs, uid 1000), embedded.
+    let private overflowLines : Lazy<string list> =
+        lazy
+            let assembly = Assembly.GetExecutingAssembly ()
+            let resource = "WoofWare.PosixKernel.Test.copy-file-range-overflow.linux.txt"
+
+            use stream =
+                match assembly.GetManifestResourceStream resource with
+                | null -> failwith $"embedded resource %s{resource} not found"
+                | stream -> stream
+
+            use reader = new StreamReader (stream)
+
+            reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.toList
+            |> List.map _.Trim()
+
+    /// The value of the `key=value` token among `tokens`.
+    let private tokenValue (key : string) (tokens : string[]) : string =
+        match
+            tokens
+            |> Array.tryFind (fun token -> token.StartsWith (key + "=", StringComparison.Ordinal))
+        with
+        | Some token -> token.Substring (key.Length + 1)
+        | None -> failwith $"no %s{key}= among %A{tokens}"
+
+    /// The answer a probe row printed after its `->`.
+    let private measuredAnswer (tokens : string[]) : string =
+        match Array.tryFindIndex (fun token -> token = "->") tokens with
+        | Some index -> tokens.[index + 1]
+        | None -> failwith $"no answer among %A{tokens}"
+
+    /// The probe's files: a 5-byte "src" (or `source`) and an empty "dst", both
+    /// uid 1000's, copied by uid 1000.
+    let private overflowSystem (source : string) : UnixSystem<int, string> =
+        systemOn
+            SimulatedUnixPlatform.linuxX64
+            u1000
+            (filesystem
+                [
+                    "src", owner 1000u 1000u, 0o644, source
+                    "dst", owner 1000u 1000u, 0o644, ""
+                ])
+
+    [<Test>]
+    let ``copy_file_range answers the measured grid of offsets and lengths around the 64-bit wrap`` () : unit =
+        // The probe's `form=desc` rows: the descriptions at the offsets, NULL
+        // offset pointers, the only form this kernel expresses. Its `form=ptr`
+        // rows answered the same at every point.
+        let rows =
+            overflowLines.Force ()
+            |> List.filter (fun line -> line.StartsWith ("GRID form=desc ", StringComparison.Ordinal))
+
+        rows.Length |> shouldEqual 1300
+
+        let system = overflowSystem "hello"
+        let inFd, system = opened "src" FileAccessMode.ReadOnly system
+        let outFd, system = opened "dst" FileAccessMode.WriteOnly system
+
+        let check (row : string) : Result<string, string> =
+            let tokens = row.Split (' ', StringSplitOptions.RemoveEmptyEntries)
+
+            let inAt =
+                Int64.Parse (tokenValue "in" tokens, Globalization.CultureInfo.InvariantCulture)
+
+            let outAt =
+                Int64.Parse (tokenValue "out" tokens, Globalization.CultureInfo.InvariantCulture)
+
+            let length =
+                UInt64.Parse (tokenValue "len" tokens, Globalization.CultureInfo.InvariantCulture)
+
+            let inPos = tokenValue "inpos" tokens
+            let outPos = tokenValue "outpos" tokens
+            let expected = $"%s{measuredAnswer tokens} inpos=%s{inPos} outpos=%s{outPos}"
+
+            let before = system |> seekTo inFd inAt |> seekTo outFd outAt
+
+            match UnixReadWrite.tryCopyFileRange (Callers.leader before) inFd outFd length 0 before with
+            | Ok (answer, after) ->
+                let actual =
+                    $"%s{answerText answer} inpos=%d{offsetOf inFd after} outpos=%d{offsetOf outFd after}"
+
+                match answer with
+                | SyscallAnswer.Failed _ when after <> before -> Error $"%s{row}: failed, but the system changed"
+                | _ when actual <> expected -> Error $"%s{row}: the model answered %s{actual}"
+                | _ -> Ok (measuredAnswer tokens)
+            | Error (CopyFileRangeRefusal.ExceedsRepresentableLength _) when
+                outAt > int64 Int32.MaxValue && measuredAnswer tokens |> Seq.forall Char.IsDigit
+                ->
+                // Linux wrote a few bytes far into a sparse file, which this
+                // kernel cannot hold, and says so rather than answering.
+                Ok "refused"
+            | Error refusal -> Error $"%s{row}: refused, %s{CopyFileRangeRefusal.describe refusal}"
+
+        let results = rows |> List.map check
+
+        results
+        |> List.choose (fun result ->
+            match result with
+            | Error message -> Some message
+            | Ok _ -> None
+        )
+        |> shouldEqual []
+
+        // The wrap is reached, both ways round, and so is every later check.
+        let answered =
+            results
+            |> List.choose (fun result ->
+                match result with
+                | Ok answer -> Some answer
+                | Error _ -> None
+            )
+            |> List.countBy id
+            |> Map.ofList
+
+        for answer in [ "EOVERFLOW" ; "EFBIG" ; "0" ; "4" ; "5" ] do
+            answered |> Map.containsKey answer |> shouldEqual true
+
+    /// The descriptors the probe's ORDER row `label` made, and the flags it
+    /// passed, in a fresh system; `None` for the one row this kernel cannot
+    /// make, a copy between two filesystems (it has one mount).
+    let private orderRow (label : string) : (int * int * int * UnixSystem<int, string>) option =
+        let at
+            (fileName : string)
+            (access : FileAccessMode)
+            (offset : int64)
+            (system : UnixSystem<int, string>)
+            : int * UnixSystem<int, string>
+            =
+            let fd, system = opened fileName access system
+            fd, seekTo fd offset system
+
+        let system = overflowSystem "hello"
+
+        match label with
+        | "closed-in" ->
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 1L system
+            Some (700, outFd, 0, s)
+        | "closed-out" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            Some (inFd, 700, 0, s)
+        | "flags1" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 0L s
+            Some (inFd, outFd, 1, s)
+        | "dir-in" ->
+            let inFd, s = make "dir" "src" system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 1L s
+            Some (inFd, outFd, 0, s)
+        | "dir-out" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = make "dir" "dst" s
+            Some (inFd, outFd, 0, s)
+        | "pipe-in" ->
+            let inFd, s = make "pipe-r" "src" system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 1L s
+            Some (inFd, outFd, 0, s)
+        | "socket-out" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = make "socket" "dst" s
+            Some (inFd, outFd, 0, s)
+        | "write-only-in" ->
+            let inFd, s = at "src" FileAccessMode.WriteOnly 1L system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 0L s
+            Some (inFd, outFd, 0, s)
+        | "read-only-out" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = at "dst" FileAccessMode.ReadOnly 0L s
+            Some (inFd, outFd, 0, s)
+        | "cross-filesystem" -> None
+        | "same-description" ->
+            let fd, s = at "src" FileAccessMode.ReadWrite 1L system
+            Some (fd, fd, 0, s)
+        | "same-file" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = at "src" FileAccessMode.WriteOnly 2L s
+            Some (inFd, outFd, 0, s)
+        | "destination-at-max" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 0L system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly Int64.MaxValue s
+            Some (inFd, outFd, 0, s)
+        | "source-at-end" ->
+            let inFd, s = at "src" FileAccessMode.ReadOnly 5L system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 0L s
+            Some (inFd, outFd, 0, s)
+        | "empty-source" ->
+            let system = overflowSystem ""
+            let inFd, s = at "src" FileAccessMode.ReadOnly 1L system
+            let outFd, s = at "dst" FileAccessMode.WriteOnly 0L s
+            Some (inFd, outFd, 0, s)
+        | other -> failwith $"the probe printed an ORDER row this test does not know: %s{other}"
+
+    [<Test>]
+    let ``copy_file_range checks the offset wrap where the probe found it among its other checks`` () : unit =
+        // Each row once with a length that wraps an offset and once with one
+        // that does not: the wrap comes after every descriptor check and
+        // before EFBIG, the overlap and the count shortened to the source's
+        // end.
+        let rows =
+            overflowLines.Force ()
+            |> List.filter (fun line -> line.StartsWith ("ORDER ", StringComparison.Ordinal) && line.Contains "->")
+
+        rows
+        |> List.map (fun row -> row.Substring("ORDER ".Length).Split(':').[0])
+        |> shouldEqual
+            [
+                "closed-in"
+                "closed-out"
+                "flags1"
+                "dir-in"
+                "dir-out"
+                "pipe-in"
+                "socket-out"
+                "write-only-in"
+                "read-only-out"
+                "cross-filesystem"
+                "same-description"
+                "same-file"
+                "destination-at-max"
+                "source-at-end"
+                "empty-source"
+            ]
+
+        for row in rows do
+            let label = row.Substring("ORDER ".Length).Split(':').[0]
+
+            for case in row.Substring(row.IndexOf ':' + 1).Split '|' do
+                let tokens = case.Split (' ', StringSplitOptions.RemoveEmptyEntries)
+
+                let length =
+                    UInt64.Parse (tokenValue "len" tokens, Globalization.CultureInfo.InvariantCulture)
+
+                let measured = measuredAnswer tokens
+
+                match orderRow label with
+                | None -> ()
+                | Some (inFd, outFd, flags, before) ->
+                    let answer, after = copyFileRangeAnswer inFd outFd length flags before
+
+                    if answerText answer <> measured then
+                        failwith $"%s{row}: at length %d{length} the model answered %s{answerText answer}"
+
+                    match answer with
+                    | SyscallAnswer.Failed _ when after <> before ->
+                        failwith $"%s{row}: at length %d{length} the model failed, but changed the system"
+                    | _ -> ()
 
     [<Test>]
     let ``copy_file_range strips set-ID bits from its destination as a write does`` () : unit =
@@ -583,6 +843,8 @@ module TestCopyFileSyscalls =
                     [
                         Gen.choose (0, 20) |> Gen.map uint64
                         Gen.elements [ uint64 Int64.MaxValue ; UInt64.MaxValue ]
+                        // Either side of where an offset of up to 16 wraps.
+                        Gen.choose (0, 20) |> Gen.map (fun below -> UInt64.MaxValue - uint64 below)
                     ]
 
             let! destinationMode = Gen.choose (0, 0o7777)
@@ -604,9 +866,11 @@ module TestCopyFileSyscalls =
         }
 
     [<Test>]
-    let ``copy_file_range moves what a read then a pwrite would, or refuses an overlap`` () : unit =
-        // The reference is naive on purpose: the bytes from the source's offset
-        // to its end, cut to the length; an overlap within one file is EINVAL;
+    let ``copy_file_range moves what a read then a pwrite would, or refuses a wrap or an overlap`` () : unit =
+        // The reference is naive on purpose: an offset whose sum with the
+        // length passes 2^64 - 1 is EOVERFLOW; otherwise the bytes from the
+        // source's offset to its end, cut to the length; an overlap within one
+        // file is EINVAL;
         // and the destination ends exactly as `pwrite` of those bytes leaves it,
         // `pwrite` being the measured write this copy is said to be.
         let property (case : CopyCase) : unit =
@@ -647,9 +911,15 @@ module TestCopyFileSyscalls =
                 && case.DestinationOffset < case.SourceOffset + int64 moved.Length
                 && case.SourceOffset < case.DestinationOffset + int64 moved.Length
 
+            let wraps (offset : int64) : bool =
+                bigint offset + bigint case.Length > bigint UInt64.MaxValue
+
             let answer, after = copyFileRangeAnswer inFd outFd case.Length 0 system
 
-            if overlaps then
+            if wraps case.SourceOffset || wraps case.DestinationOffset then
+                answer |> shouldEqual (SyscallAnswer.Failed UnixError.EOVERFLOW)
+                after |> shouldEqual system
+            elif overlaps then
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
             elif moved.Length = 0 then
@@ -660,7 +930,7 @@ module TestCopyFileSyscalls =
 
                 let expected =
                     match
-                        UnixReadWrite.tryPwriteBytes
+                        WriteOutcomes.admitThenPwrite
                             0
                             outFd
                             (ImmutableArray.CreateRange moved)
@@ -685,15 +955,17 @@ module TestCopyFileSyscalls =
         let inFd, system = opened "ksrc" FileAccessMode.ReadOnly system
         let outFd, system = opened "kdst" FileAccessMode.WriteOnly system
 
-        match UnixSystem.tryStep 0 (Syscall.CopyFileRange (inFd, outFd, 5UL, 0)) system with
-        | Ok (SyscallOutcome.Answered answer, after) ->
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.CopyFileRange (inFd, outFd, 5UL, 0)) system with
+        | Ok (SteppedCall.CopyFileRange (answer, after)) ->
             (answer, after) |> shouldEqual (copyFileRangeAnswer inFd outFd 5UL 0 system)
         | other -> failwith $"%A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FileClone (outFd, inFd)) system with
-        | Ok (SyscallOutcome.Answered answer, after) ->
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FileClone (outFd, inFd)) system with
+        | Ok (SteppedCall.FileClone (answer, after)) ->
+            Ok (answer, after)
+            |> shouldEqual (UnixDescriptor.tryFileClone (Callers.leader system) outFd inFd system)
+
             answer |> shouldEqual (SyscallAnswer.Failed UnixError.EOPNOTSUPP)
-            after |> shouldEqual system
         | other -> failwith $"%A{other}"
 
     // ------------------------------------------------------------- futimens
@@ -719,6 +991,7 @@ module TestCopyFileSyscalls =
         (system : UnixSystem<int, string>)
         =
         UnixPathResolution.tryUtimensat
+            (Callers.leader system)
             fd
             NullablePathArgument.Null
             (TimesArgument.Fields (fieldsOf access, fieldsOf modification))
@@ -733,15 +1006,15 @@ module TestCopyFileSyscalls =
 
             let target =
                 if kind = "dir" then
-                    VirtualFileSystem.root system.Machine.FileSystem
+                    VirtualFileSystem.root (UnixSystem.fileSystem system)
                 else
                     inodeAt system "ksrc"
 
-            let before = (VirtualFileSystem.tryGet target system.Machine.FileSystem).Value
+            let before = (VirtualFileSystem.tryGet target (UnixSystem.fileSystem system)).Value
 
             match futimens fd atime mtime system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
-                let entry = (VirtualFileSystem.tryGet target after.Machine.FileSystem).Value
+                let entry = (VirtualFileSystem.tryGet target (UnixSystem.fileSystem after)).Value
 
                 entry
                 |> shouldEqual
@@ -750,18 +1023,19 @@ module TestCopyFileSyscalls =
                             {
                                 Access = atime
                                 Modification = mtime
-                                StatusChange = UnixMachineState.realtime system.Scheduling system.Machine
+                                StatusChange = UnixSystem.realtime system
                                 Birth = before.Times.Birth
                             }
                     }
 
                 // Nothing but that inode changed.
-                { after with
-                    Machine =
-                        { after.Machine with
-                            CommittedFileSystem = system.Machine.CommittedFileSystem
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            CommittedFileSystem = (Kernel.machine system).CommittedFileSystem
                         }
-                }
+                    )
+                    after)
                 |> shouldEqual system
             | other -> failwith $"%s{kind}: %A{other}"
 
@@ -774,13 +1048,15 @@ module TestCopyFileSyscalls =
             |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, system))
 
         // Both ends of a pipe report the times set through either.
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped (kindsSystem ()) with
+        let kinds = kindsSystem ()
+
+        match UnixPipe.tryPipe2 (Callers.leader kinds) 0 UserBuffer.Mapped kinds with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) ->
             for fd in [ readFd ; writeFd ] do
                 match futimens fd atime mtime system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     for pipeEnd in [ readFd ; writeFd ] do
-                        match UnixPathResolution.tryFstat pipeEnd after with
+                        match UnixPathResolution.tryFstat (Callers.leader after) pipeEnd after with
                         | Ok (FileStatusAnswer.Reported status) ->
                             (status.AccessTime, status.ModificationTime) |> shouldEqual (atime, mtime)
                         | other -> failwith $"fd %d{fd}: fstat(%d{pipeEnd}): %A{other}"
@@ -858,8 +1134,8 @@ module TestCopyFileSyscalls =
                         0
                     )
 
-                match UnixSystem.tryStep 0 call system with
-                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), stepped) -> stepped |> shouldEqual after
+                match UnixSystem.tryStep (Callers.thread 0 system) call system with
+                | Ok (SteppedCall.UTimensAt (SyscallAnswer.Completed 0L, stepped)) -> stepped |> shouldEqual after
                 | other -> failwith $"step: %A{other}"
             | other -> failwith $"%A{other}"
 
@@ -894,34 +1170,38 @@ module TestCopyFileRangeLarge =
             let inode, filesystem =
                 match
                     GraphMutators.createFile
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         (DirectoryEntryName.parseOrFail "TestCopyFileRangeLarge" "g")
                         (PermissionBits.parseOrFail "TestCopyFileRangeLarge" 0o644)
                         (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         TestTransferCounts.epoch
                         ImmutableArray.Empty
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok pair -> pair
                 | Error error -> failwith $"could not seed the destination: %O{error}"
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
                     (Lone.fileDescriptors system)
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
 
-        match UnixReadWrite.tryCopyFileRange source destination (uint64 length) 0 system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) source destination (uint64 length) 0 system with
         | Ok (SyscallAnswer.Completed moved, after) ->
             moved |> shouldEqual (int64 TestTransferCounts.LinuxMaxTransfer)
             TestTransferCounts.positionOf source after |> shouldEqual moved

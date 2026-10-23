@@ -100,11 +100,12 @@ module TestSignalPickOrder =
             | SignalDisposition.Default -> SignalState.initial numbering Set.empty
             | disposition ->
                 (SignalState.initial numbering Set.empty, everyGenerated)
-                ||> Set.fold (fun state signal -> SignalState.setDisposition signal disposition state)
+                ||> Set.fold (fun state signal -> SignalState.setDisposition numbering signal disposition state)
 
         (withDispositions, generated)
         ||> List.fold (fun state (signo, directed) ->
             SignalState.enqueue
+                numbering
                 {
                     Signal = signal numbering signo
                     Target = if directed then ValueSome leader else ValueNone
@@ -115,7 +116,7 @@ module TestSignalPickOrder =
     /// What `sigwait` on every signal takes, in order: the leader's pending
     /// signals in pick order, whatever their dispositions.
     let private sigwaitOrder (numbering : SignalNumbering) (state : SignalState<int, string>) : int list =
-        SignalState.pendingFor leader leader state
+        SignalState.pendingFor numbering leader leader state
         |> List.map (fun entry -> signo numbering entry.Signal)
 
     /// The handler bodies the leader runs, in the order they run, once it
@@ -127,7 +128,7 @@ module TestSignalPickOrder =
             (state : SignalState<int, string>)
             : HandlerFrame<int, string> list * SignalState<int, string>
             =
-            match SignalState.onReturnToUser CoreDumps.Suppressed leader threads leader state with
+            match SignalState.onReturnToUser numbering CoreDumps.Suppressed leader threads leader state with
             | Ok (None, state) -> [], state
             | Ok (Some (SignalDelivery.RunHandlers frames), state) -> frames, state
             | other -> failwith $"expected handlers to run, got %A{other}"

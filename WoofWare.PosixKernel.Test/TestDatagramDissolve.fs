@@ -40,10 +40,10 @@ module TestDatagramDissolve =
         | other -> failwith $"fd %d{fd} is %A{other}"
 
     let private bound (fd : int) (system : UnixSystem<int, string>) : Ipv4Binding option =
-        (UnixMachineState.socket (socketOf fd system) system.Machine).Ipv4Binding
+        (UnixMachineState.socket (socketOf fd system) (Kernel.machine system)).Ipv4Binding
 
     let private phase (fd : int) (system : UnixSystem<int, string>) : SocketPhase =
-        (UnixMachineState.socket (socketOf fd system) system.Machine).Phase
+        (UnixMachineState.socket (socketOf fd system) (Kernel.machine system)).Phase
 
     /// A datagram socket, bound as `bindTo` says (or left unbound), and
     /// connected to 127.0.0.1:9000 if `connected`.
@@ -85,7 +85,7 @@ module TestDatagramDissolve =
 
     let private dissolve (fd : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 (socketOf fd system)
                 false
                 16u
@@ -262,22 +262,23 @@ module TestDatagramDissolve =
 
             let socketId = socketOf fd system
 
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            system.Machine.Sockets
-                            |> Map.add
+                            machine.Sockets
+                            |> SocketTable.set
                                 socketId
-                                { UnixMachineState.socket socketId system.Machine with
+                                { UnixMachineState.socket socketId machine with
                                     Addressing =
                                         SocketAddressing.replaceBinding
                                             (Some halfBound)
-                                            (UnixMachineState.socket socketId system.Machine).Addressing
+                                            (UnixMachineState.socket socketId machine).Addressing
                                     Phase = phase
                                 }
                     }
-            }
+                )
+                system
 
         UnixSystem.checkInvariants (forge SimulatedUnixPlatform.linuxX64 SocketPhase.Idle)
         |> shouldEqual []

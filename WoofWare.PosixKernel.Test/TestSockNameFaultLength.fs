@@ -50,9 +50,14 @@ module TestSockNameFaultLength =
     let private platformOf (resource : string) (header : string) : SimulatedUnixPlatform =
         match header.Split ' ' |> List.ofArray with
         | [ "uname:" ; "Darwin" ; release ; "arm64" ] ->
+            let version =
+                match DarwinRelease.version release with
+                | Some version -> version
+                | None -> failwith $"%s{resource}: release %s{release} names no version"
+
             SimulatedUnixPlatform.createOrFail
                 resource
-                SimulatedUnixKernel.Darwin
+                (SimulatedUnixKernel.Darwin version)
                 SimulatedUnixArchitecture.Arm64
                 SimulatedPageSize.SixteenKiB
                 release
@@ -70,7 +75,8 @@ module TestSockNameFaultLength =
 
             SimulatedUnixPlatform.createOrFail
                 resource
-                (SimulatedUnixKernel.Linux version)
+                // The build reaches no rule getsockname follows.
+                (SimulatedUnixKernel.Linux (version, LinuxKernelBuild.SmallBuffer832))
                 architecture
                 SimulatedPageSize.FourKiB
                 release
@@ -150,7 +156,7 @@ module TestSockNameFaultLength =
                     | "null" -> UserBuffer.Unmapped 0UL
                     | _ -> UserBuffer.Unmapped 0x1000UL
 
-                match UnixSocket.tryGetsockname fd destination row.Declared system with
+                match UnixSocket.tryGetsockname (Callers.leader system) fd destination row.Declared system with
                 | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
                     let errno =
                         UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering m.Platform) error
@@ -170,7 +176,7 @@ module TestSockNameFaultLength =
         let listener, system = boundSocket platform
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -197,7 +203,7 @@ module TestSockNameFaultLength =
                     | "null" -> UserBuffer.Unmapped 0UL
                     | _ -> UserBuffer.Unmapped 0x1000UL
 
-                match UnixSocket.tryGetpeername fd destination row.Declared system with
+                match UnixSocket.tryGetpeername (Callers.leader system) fd destination row.Declared system with
                 | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
                     let errno =
                         UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering m.Platform) error
@@ -250,12 +256,14 @@ module TestSockNameFaultLength =
         let at (major : uint32) (minor : uint32) (patch : uint32) =
             SimulatedUnixPlatform.createOrFail
                 "test"
-                (SimulatedUnixKernel.Linux
+                (SimulatedUnixKernel.Linux (
                     {
                         Major = major
                         Minor = minor
                         Patch = patch
-                    })
+                    },
+                    LinuxKernelBuild.SmallBuffer832
+                ))
                 SimulatedUnixArchitecture.X64
                 SimulatedPageSize.FourKiB
                 "test"
@@ -280,29 +288,11 @@ module TestSockNameFaultLength =
 /// own version, read from `uname`. So it holds on whichever kernel it runs on,
 /// on either side of the 6.18 change.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSockNameFaultLengthAgainstHost =
-
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
 
     [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
     extern int private hostGetSockName(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
 
     [<Literal>]
     let private AF_INET = 2
@@ -326,7 +316,14 @@ module TestSockNameFaultLengthAgainstHost =
             | None -> failwith "TestSockNameFaultLengthAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
                 let page =
-                    hostMmap (0n, unativeint Environment.SystemPageSize, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
+                    HostCalls.mmap (
+                        0n,
+                        unativeint Environment.SystemPageSize,
+                        PROT_NONE,
+                        mapPrivateAnonymous flavour,
+                        -1,
+                        0L
+                    )
 
                 if page = -1n then
                     failwith
@@ -383,9 +380,9 @@ module TestSockNameFaultLengthAgainstHost =
         (system : UnixSystem<int, string>)
         : int * uint32
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
-        match UnixSocket.tryGetsockname fd destination declared system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd destination declared system with
         | Ok (GetSockNameAnswer.Reported (_, reported)) -> 0, uint32 reported
         | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
             UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error,
@@ -400,7 +397,7 @@ module TestSockNameFaultLengthAgainstHost =
             if not BitConverter.IsLittleEndian then
                 Assert.Ignore "the model's presets are little-endian machines"
 
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
             if fd < 0 then
                 failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -408,7 +405,7 @@ module TestSockNameFaultLengthAgainstHost =
             try
                 let address = loopbackAnyPort platform
 
-                if hostBind (fd, address, 16u) <> 0 then
+                if HostCalls.bind (fd, address, 16u) <> 0 then
                     failwith $"bind failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                 let system =
@@ -443,5 +440,5 @@ module TestSockNameFaultLengthAgainstHost =
                 if not disagreements.IsEmpty then
                     failwith $"on %O{platform}:\n%s{String.Join ('\n', disagreements)}"
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         )

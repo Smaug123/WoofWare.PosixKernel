@@ -44,8 +44,8 @@ module TestSocketBinding =
         (initialImage
          |> UnixBootImage.tryWithEphemeralPortRange range
          |> Configured.expectOk EphemeralPortRangeRefusal.describe
-         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-            .Machine
+         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+         |> Kernel.machine)
 
     let private endpoint (address : Ipv4Address) (port : uint16) : Ipv4Endpoint = Ipv4Endpoint.ofParts address port
 
@@ -134,18 +134,23 @@ module TestSocketBinding =
 
         Check.One (propertyConfig, property)
 
-    let private idle = SocketPhase.Idle
+    let private idle = PortHolderKind.Idle
 
-    let private listeningPhase =
-        SocketPhase.Listening
-            {
-                Backlog = 8
-                Queue = []
-                Drained = false
-            }
+    let private listeningPhase = PortHolderKind.Listener
 
-    let private establishedPhase =
-        SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client)
+    let private establishedPhase = PortHolderKind.ConnectionEnd
+
+    /// Something of `kind` holding `address` at `port` outright, carrying
+    /// `SO_REUSEADDR` if `reuse`.
+    let private holderAt (address : Ipv4Address) (port : uint16) (kind : PortHolderKind) (reuse : bool) : PortHolder =
+        {
+            Endpoint = endpoint address port
+            Kind = kind
+            Claim = PortClaim.Reserved
+            ReuseAddress = reuse
+            Peer = None
+            Owner = PortHolderOwner.Socket UserId.root
+        }
 
     /// The measured conflict matrix, row by row: `(first address, first phase,
     /// first reuse, second address, second reuse)` against what each flavour
@@ -188,27 +193,15 @@ module TestSocketBinding =
 
         for name, firstAddress, firstPhase, firstReuse, secondAddress, secondReuse, linuxConflicts, darwinConflicts in
             rows do
-            let existing = binding firstAddress 40000us
-            let candidate = binding secondAddress 40000us
+            let existing = holderAt firstAddress 40000us firstPhase firstReuse
+            let candidate = endpoint secondAddress 40000us
 
-            SimulatedUnixPlatform.bindConflict
-                SimulatedUnixPlatform.linuxX64
-                existing.Endpoint
-                firstReuse
-                (EndpointHolder.ofPhase firstPhase)
-                candidate.Endpoint
-                secondReuse
+            PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Linux existing candidate secondReuse
             |> fun actual ->
                 if actual <> linuxConflicts then
                     failwith $"linux, %s{name}: expected conflict=%b{linuxConflicts} but the model said %b{actual}"
 
-            SimulatedUnixPlatform.bindConflict
-                SimulatedUnixPlatform.macOsArm64
-                existing.Endpoint
-                firstReuse
-                (EndpointHolder.ofPhase firstPhase)
-                candidate.Endpoint
-                secondReuse
+            PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Darwin existing candidate secondReuse
             |> fun actual ->
                 if actual <> darwinConflicts then
                     failwith $"darwin, %s{name}: expected conflict=%b{darwinConflicts} but the model said %b{actual}"
@@ -223,23 +216,12 @@ module TestSocketBinding =
                 true
             else
 
-            let existing = binding loopback firstPort
-            let candidate = binding loopback secondPort
-
             let phase = if listening then listeningPhase else idle
+            let existing = holderAt loopback firstPort phase reuse
+            let candidate = endpoint loopback secondPort
 
-            platforms
-            |> List.forall (fun platform ->
-                not (
-                    SimulatedUnixPlatform.bindConflict
-                        platform
-                        existing.Endpoint
-                        reuse
-                        (EndpointHolder.ofPhase phase)
-                        candidate.Endpoint
-                        reuse
-                )
-            )
+            [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
+            |> List.forall (fun flavour -> not (PortHolderRules.bindMeetsAtOneUid flavour existing candidate reuse))
 
         Check.One (propertyConfig, property)
 
@@ -340,26 +322,27 @@ module TestSocketBinding =
     /// it again reverses the roles it was answered under.
     [<Test>]
     let ``only Linux re-screens an already-bound listen`` () : unit =
-        SimulatedUnixPlatform.listenRescreensBinding SimulatedUnixPlatform.linuxX64
+        // The pair the flavours answer oppositely, as the relation a listen
+        // re-check would consult: a wildcard admitted alongside a specific
+        // address, asked again with the roles swapped. Darwin's bind question
+        // says "conflict", which is precisely why its listen must not ask it.
+        let specific = holderAt loopback 40000us idle true
+        let wildcardEndpoint = endpoint wildcard 40000us
+
+        PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Darwin specific wildcardEndpoint false
         |> shouldEqual true
 
-        SimulatedUnixPlatform.listenRescreensBinding SimulatedUnixPlatform.macOsArm64
+        PortHolderRules.listenMeets SimulatedUnixFlavour.Darwin specific wildcardEndpoint false
         |> shouldEqual false
 
-        // The pair the flavours answer oppositely, as the relation the listen
-        // re-check would consult: a wildcard admitted alongside a specific
-        // address, asked again with the roles swapped. Darwin says "conflict",
-        // which is precisely why it must not be asked.
-        let wildcardBinding = binding wildcard 40000us
-        let specificBinding = binding loopback 40000us
+        // Linux asks its bind question again, whichever way it answers.
+        for reuse in [ false ; true ] do
+            PortHolderRules.listenMeets SimulatedUnixFlavour.Linux specific wildcardEndpoint reuse
+            |> shouldEqual (
+                PortHolderRules.bindMeetsAtOneUid SimulatedUnixFlavour.Linux specific wildcardEndpoint reuse
+            )
 
-        SimulatedUnixPlatform.bindConflict
-            SimulatedUnixPlatform.macOsArm64
-            specificBinding.Endpoint
-            true
-            (EndpointHolder.ofPhase idle)
-            wildcardBinding.Endpoint
-            false
+        PortHolderRules.listenMeets SimulatedUnixFlavour.Linux specific wildcardEndpoint false
         |> shouldEqual true
 
     /// An idle stream socket with no address yet, for the allocator to act
@@ -372,6 +355,8 @@ module TestSocketBinding =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = SocketPhase.Idle
+            Drained = false
+            Uid = UserId.root
         }
 
     let private requester : SocketId = SocketId 0L
@@ -388,19 +373,23 @@ module TestSocketBinding =
         (machine, Seq.indexed taken)
         ||> Seq.fold (fun machine (i, port) ->
             { machine with
-                Sockets = Map.add (SocketId (int64 i + 1L)) (occupant port) machine.Sockets
+                Sockets = SocketTable.set (SocketId (int64 i + 1L)) (occupant port) machine.Sockets
             }
         )
 
     /// A `bind(0.0.0.0:0)` on behalf of `unboundStream`, as `bind(2)` asks.
     let private reserve (machine : UnixMachineState) : (uint16 * UnixMachineState) option =
-        UnixMachineState.allocateEphemeralPort
-            EphemeralPortUse.Reserve
-            requester
-            unboundStream
-            (binding wildcard)
-            machine
-        |> Option.map (fun (bound, machine) -> bound.Endpoint.Port, machine)
+        match
+            UnixMachineState.allocateEphemeralPort
+                0L
+                EphemeralPortUse.Reserve
+                requester
+                unboundStream
+                (binding wildcard)
+                machine
+        with
+        | Ok found -> found |> Option.map (fun (bound, machine) -> bound.Endpoint.Port, machine)
+        | Error refusal -> failwith $"the search met %A{refusal}"
 
     [<Test>]
     let ``an ephemeral port is in range, free, and a function of the kernel alone`` () : unit =
@@ -476,12 +465,13 @@ module TestSocketBinding =
         let exn =
             Assert.Throws<System.Exception> (fun () ->
                 UnixMachineState.allocateEphemeralPort
+                    0L
                     EphemeralPortUse.Reserve
                     requester
                     unboundStream
                     (fun _ -> binding wildcard 1us)
-                    initialSystem.Machine
-                |> ignore<(Ipv4Binding * UnixMachineState) option>
+                    (Kernel.machine initialSystem)
+                |> ignore<Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>>
             )
 
         exn.Message |> shouldContainText "names port 1 instead"

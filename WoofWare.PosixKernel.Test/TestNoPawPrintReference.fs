@@ -16,6 +16,7 @@ open WoofWare.PosixKernel
 /// to be load-bearing shows up here even when a human reading the diff would
 /// not have noticed it.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestNoPawPrintReference =
 
     /// Assemblies of WoofWare.PawPrint, the library's first client, none of

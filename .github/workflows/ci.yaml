@@ -6,6 +6,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Publishing is manual until 1.0: "Run workflow" on main runs everything below,
+  # including nuget-publish and github-release, which a push to main skips.
+  workflow_dispatch:
 
 env:
   DOTNET_NOLOGO: true
@@ -17,6 +20,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The job takes about ten minutes; without this, a hang the test steps' own
+    # timeout misses (in restore, in the build, or in the test host before any
+    # test starts) holds the runner for GitHub's default of six hours.
+    timeout-minutes: 45
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -33,15 +40,24 @@ jobs:
       run: nix develop --command dotnet build --no-restore --configuration Release
     # The TRX files carry each test's duration, so that a slow test shows up on CI's own
     # hardware rather than only on a developer's.
+    # `--blame-hang-timeout` kills the test host once one test has run for ten minutes, about
+    # five times the longest test's time on CI, and names the tests it found running. No dump:
+    # the test host's heap may be gigabytes, and the name is what a rerun needs.
     - name: Test
-      run: nix develop --command dotnet test --no-build --configuration Release --logger "trx;LogFilePrefix=default" --results-directory TestResults
+      run: nix develop --command dotnet test --no-build --configuration Release --blame-hang-timeout 10m --blame-hang-dump-type none --logger "trx;LogFilePrefix=default" --results-directory TestResults
     # The `LargeMemory` fixtures are `[<Explicit>]`, so the step above skips them: they need
     # buffers longer than one Linux call moves and peak at about 6.5 GB resident. Beside
     # another test host they exhaust the runner, which then dies without a test failure
     # ("The operation was canceled"). So they get a step of their own, after the suite has
     # finished, in which no other test host is running.
     - name: Test (large-memory fixtures)
-      run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --logger "trx;LogFilePrefix=large" --results-directory TestResults
+      run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --blame-hang-timeout 10m --blame-hang-dump-type none --logger "trx;LogFilePrefix=large" --results-directory TestResults
+    # A skipped test leaves `dotnet test` exiting 0, so a host comparison whose guard stopped
+    # matching this runner, or a tool that left the devshell, would stop checking anything
+    # unseen. Every test that neither step above ran must be in the allowlist, with the
+    # message it skips with and why; an allowlisted test that runs fails this too.
+    - name: Check every skipped test is expected
+      run: nix develop --command python3 scripts/check-skipped-tests.py .github/expected-skips.json TestResults/*.trx
     - name: Upload test results
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -209,10 +225,12 @@ jobs:
         with:
           needs-context: ${{ toJSON(needs) }}
 
-  # Everything below runs on a push to main only, and publishes the package that push
-  # built. Nerdbank.GitVersioning gives a new version to each commit on main that touches
-  # a path in WoofWare.PosixKernel/version.json's pathFilters; any other commit packs the
-  # version already on nuget.org, which publish-nuget then skips.
+  # Everything below runs on main only. The attestation job attests the package that run
+  # built on every run; nuget-publish and github-release publish it only on a manual run
+  # (workflow_dispatch) while the surface is still changing before 1.0.
+  # Nerdbank.GitVersioning gives a new version to each commit on main that touches a path
+  # in WoofWare.PosixKernel/version.json's pathFilters; any other commit packs the version
+  # already on nuget.org, which publish-nuget then skips.
 
   attestation:
     runs-on: ubuntu-latest
@@ -239,10 +257,9 @@ jobs:
   # environment. NUGET_USER is the nuget.org profile name that owns that policy.
   nuget-publish:
     runs-on: ubuntu-latest
-    # Still doing a whole load of refactors pre-1.0;
-    # no need to publish all those intermediate states
-    if: false
-    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0, so only a manual run publishes;
+    # from 1.0, drop the event_name clause to publish every push to main.
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     needs: [attestation]
     environment: main-deploy
     permissions:
@@ -280,10 +297,9 @@ jobs:
 
   github-release:
     runs-on: ubuntu-latest
-    # Still doing a whole load of refactors pre-1.0;
-    # no need to publish all those intermediate states
-    if: false
-    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0, so only a manual run publishes;
+    # from 1.0, drop the event_name clause to publish every push to main.
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     needs: [all-required-checks-complete]
     environment: main-deploy
     permissions:

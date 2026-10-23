@@ -90,17 +90,8 @@ module TestEntropyAgainstHost =
     [<DllImport("libc", EntryPoint = "memfd_create", SetLastError = true)>]
     extern int private linuxMemfdCreate(string name, uint32 flags)
 
-    [<DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)>]
-    extern int private linuxFtruncate(int fd, int64 length)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private linuxMmap(nativeint address, unativeint length, int prot, int flags, int fd, int64 offset)
-
     [<DllImport("libc", EntryPoint = "munmap", SetLastError = true)>]
     extern int private linuxMunmap(nativeint address, unativeint length)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private linuxClose(int fd)
 
     /// How much memory `mapAliased` really uses, however long a region it maps.
     [<Literal>]
@@ -134,13 +125,13 @@ module TestEntropyAgainstHost =
             fail "memfd_create"
 
         try
-            if linuxFtruncate (fd, int64 chunk) <> 0 then
+            if HostCalls.ftruncate (fd, int64 chunk) <> 0 then
                 fail "ftruncate"
 
             // Reserve the whole range first, so that the chunks can then be
             // placed over it without landing on anything else's mapping.
             let reserved =
-                linuxMmap (0n, unativeint size, PROT_NONE, MAP_PRIVATE ||| MAP_ANONYMOUS ||| MAP_NORESERVE, -1, 0L)
+                HostCalls.mmap (0n, unativeint size, PROT_NONE, MAP_PRIVATE ||| MAP_ANONYMOUS ||| MAP_NORESERVE, -1, 0L)
 
             if reserved = -1n then
                 fail "reserving the range"
@@ -149,7 +140,7 @@ module TestEntropyAgainstHost =
                 let at = reserved + nativeint (i * chunk)
 
                 if
-                    linuxMmap (at, unativeint chunk, PROT_READ_WRITE, MAP_SHARED ||| MAP_FIXED, fd, 0L)
+                    HostCalls.mmap (at, unativeint chunk, PROT_READ_WRITE, MAP_SHARED ||| MAP_FIXED, fd, 0L)
                     <> at
                 then
                     linuxMunmap (reserved, unativeint size) |> ignore<int>
@@ -158,7 +149,7 @@ module TestEntropyAgainstHost =
             reserved
         finally
             // The mappings keep the file alive.
-            linuxClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``getrandom agrees with this kernel`` () : unit =
@@ -181,12 +172,19 @@ module TestEntropyAgainstHost =
                                 hostAnswer (int64 (getrandom (address storage where, unativeint count, flags)))
 
                             let modelled =
-                                match UnixEntropy.tryGetRandom 0 (classify where) count flags system with
+                                match
+                                    UnixEntropy.tryGetRandom
+                                        (Callers.thread 0 system)
+                                        (classify where)
+                                        count
+                                        flags
+                                        system
+                                with
                                 | Ok (GetRandomAnswer.Completed draw, _) -> Ok (int64 (EntropyDraw.count draw))
                                 | Ok (GetRandomAnswer.Failed error, _) ->
                                     Error (
                                         UnixError.toRawErrnoUnder
-                                            (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                                            (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                                             error
                                     )
                                 | Error refusal ->
@@ -281,12 +279,12 @@ module TestEntropyAgainstHost =
                         hostAnswer (int64 (getentropy (address storage where, unativeint length)))
 
                     let modelled =
-                        match UnixEntropy.tryGetEntropy (classify where) length system with
+                        match UnixEntropy.tryGetEntropy (Callers.leader system) (classify where) length system with
                         | Ok (GetEntropyAnswer.Completed _, _) -> Ok 0L
                         | Ok (GetEntropyAnswer.Failed error, _) ->
                             Error (
                                 UnixError.toRawErrnoUnder
-                                    (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                                    (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                                     error
                             )
                         | Error refusal -> failwith $"%A{where}, %d{length} bytes: refused, %O{refusal}"

@@ -1,0 +1,174 @@
+# port-range: Darwin 27.0.0 arm64 (macOS 27.0.1)	uid=0 euid=0
+READ	net.inet.ip.portrange.first = 49152
+READ	net.inet.ip.portrange.last = 65535
+READ	net.inet.ip.portrange.hifirst = 49152
+READ	net.inet.ip.portrange.hilast = 65535
+READ	net.inet.ip.portrange.lowfirst = 1023
+READ	net.inet.ip.portrange.lowlast = 600
+READ	net.inet.tcp.randomize_ports = 0
+READ	net.inet.udp.randomize_ports = 1
+READ	net.inet.ip.portrange.ipport_allow_udp_port_exhaustion = 0
+SET	net.inet.ip.portrange.first	-1	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	0	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	1	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	599	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	600	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	1023	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	1024	-> ok	readback=1024
+SET	net.inet.ip.portrange.first	1025	-> ok	readback=1025
+SET	net.inet.ip.portrange.first	2000	-> ok	readback=2000
+SET	net.inet.ip.portrange.first	49151	-> ok	readback=49151
+SET	net.inet.ip.portrange.first	49152	-> ok	readback=49152
+SET	net.inet.ip.portrange.first	65535	-> ok	readback=65535
+SET	net.inet.ip.portrange.first	65536	-> ok	readback=65535
+SET	net.inet.ip.portrange.first	70000	-> ok	readback=65535
+SET	net.inet.ip.portrange.last	-1	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	0	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	1	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	599	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	600	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	1023	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	1024	-> ok	readback=1024
+SET	net.inet.ip.portrange.last	1025	-> ok	readback=1025
+SET	net.inet.ip.portrange.last	2000	-> ok	readback=2000
+SET	net.inet.ip.portrange.last	49151	-> ok	readback=49151
+SET	net.inet.ip.portrange.last	49152	-> ok	readback=49152
+SET	net.inet.ip.portrange.last	65535	-> ok	readback=65535
+SET	net.inet.ip.portrange.last	65536	-> ok	readback=65535
+SET	net.inet.ip.portrange.last	70000	-> ok	readback=65535
+SET	net.inet.ip.portrange.hifirst	-1	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	0	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	1	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	599	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	600	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	1023	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	1024	-> ok	readback=1024
+SET	net.inet.ip.portrange.hifirst	1025	-> ok	readback=1025
+SET	net.inet.ip.portrange.hifirst	2000	-> ok	readback=2000
+SET	net.inet.ip.portrange.hifirst	49151	-> ok	readback=49151
+SET	net.inet.ip.portrange.hifirst	49152	-> ok	readback=49152
+SET	net.inet.ip.portrange.hifirst	65535	-> ok	readback=65535
+SET	net.inet.ip.portrange.hifirst	65536	-> ok	readback=65535
+SET	net.inet.ip.portrange.hifirst	70000	-> ok	readback=65535
+SET	net.inet.ip.portrange.hilast	-1	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	0	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	1	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	599	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	600	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	1023	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	1024	-> ok	readback=1024
+SET	net.inet.ip.portrange.hilast	1025	-> ok	readback=1025
+SET	net.inet.ip.portrange.hilast	2000	-> ok	readback=2000
+SET	net.inet.ip.portrange.hilast	49151	-> ok	readback=49151
+SET	net.inet.ip.portrange.hilast	49152	-> ok	readback=49152
+SET	net.inet.ip.portrange.hilast	65535	-> ok	readback=65535
+SET	net.inet.ip.portrange.hilast	65536	-> ok	readback=65535
+SET	net.inet.ip.portrange.hilast	70000	-> ok	readback=65535
+SET	net.inet.ip.portrange.lowfirst	-1	-> ok	readback=1
+SET	net.inet.ip.portrange.lowfirst	0	-> ok	readback=1
+SET	net.inet.ip.portrange.lowfirst	1	-> ok	readback=1
+SET	net.inet.ip.portrange.lowfirst	599	-> ok	readback=599
+SET	net.inet.ip.portrange.lowfirst	600	-> ok	readback=600
+SET	net.inet.ip.portrange.lowfirst	1023	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	1024	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	1025	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	2000	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	49151	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	49152	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	65535	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	65536	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowfirst	70000	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	-1	-> ok	readback=1
+SET	net.inet.ip.portrange.lowlast	0	-> ok	readback=1
+SET	net.inet.ip.portrange.lowlast	1	-> ok	readback=1
+SET	net.inet.ip.portrange.lowlast	599	-> ok	readback=599
+SET	net.inet.ip.portrange.lowlast	600	-> ok	readback=600
+SET	net.inet.ip.portrange.lowlast	1023	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	1024	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	1025	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	2000	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	49151	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	49152	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	65535	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	65536	-> ok	readback=1023
+SET	net.inet.ip.portrange.lowlast	70000	-> ok	readback=1023
+# block B=40000 (ports 40000-40003 free for tcp and udp at 0.0.0.0), listener at 127.0.0.1:64057
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp 0.0.0.0:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp 127.0.0.1:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	udp 0.0.0.0:0	-> 40001 40003 40000 40002 EADDRNOTAVAIL
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	connect	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp high 0.0.0.0:0	-> 49311 49312 49313 49314 49315
+ALLOC	root	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp low 0.0.0.0:0	-> 1023 1022
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp 0.0.0.0:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp 127.0.0.1:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	udp 0.0.0.0:0	-> 40002 40003 40001 40000 EADDRNOTAVAIL
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	connect	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp high 0.0.0.0:0	-> 49316 49317 49318 49319 49320
+ALLOC	u501	first=B last=B+3 (wrote first=40000 ok, last=40003 ok; read back 40000, 40003)	tcp low 0.0.0.0:0	-> EPERM EPERM
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp 0.0.0.0:0	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp 127.0.0.1:0	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	udp 0.0.0.0:0	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	connect	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp high 0.0.0.0:0	-> 49321 49322 49323 49324 49325
+ALLOC	root	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp low 0.0.0.0:0	-> 1021 1020
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp 0.0.0.0:0	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp 127.0.0.1:0	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	udp 0.0.0.0:0	-> 40000 40003 40002 40001 EADDRNOTAVAIL
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	connect	-> 40002 40001 40000 40003 EADDRNOTAVAIL
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp high 0.0.0.0:0	-> 49326 49327 49328 49329 49330
+ALLOC	u501	first=B+3 last=B (wrote first=40003 ok, last=40000 ok; read back 40003, 40000)	tcp low 0.0.0.0:0	-> EPERM EPERM
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp 0.0.0.0:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp 127.0.0.1:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	udp 0.0.0.0:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	connect	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp high 0.0.0.0:0	-> 49331 49332 49333 49334 49338
+ALLOC	root	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp low 0.0.0.0:0	-> 1019 1018
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp 0.0.0.0:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp 127.0.0.1:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	udp 0.0.0.0:0	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	connect	-> 40001 EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp high 0.0.0.0:0	-> 49339 49341 49342 49343 49344
+ALLOC	u501	first=B+1 last=B+1 (wrote first=40001 ok, last=40001 ok; read back 40001, 40001)	tcp low 0.0.0.0:0	-> EPERM EPERM
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp 0.0.0.0:0	-> 49152 49153 49154 49155 49156
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp 127.0.0.1:0	-> 49157 49158 49159 49160 49161
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	udp 0.0.0.0:0	-> 51646 61337 51794 58754 54503
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	connect	-> 49162 49163 49164 49165 49166
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp high 0.0.0.0:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	root	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp low 0.0.0.0:0	-> 1017 1016
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp 0.0.0.0:0	-> 49167 49168 49169 49170 49171
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp 127.0.0.1:0	-> 49172 49173 49174 49175 49176
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	udp 0.0.0.0:0	-> 63208 64691 58054 53511 56895
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	connect	-> 49177 49178 49179 49180 49181
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp high 0.0.0.0:0	-> 40000 40001 40002 40003 EADDRNOTAVAIL
+ALLOC	u501	hifirst=B hilast=B+3 (wrote hifirst=40000 ok, hilast=40003 ok; read back 40000, 40003)	tcp low 0.0.0.0:0	-> EPERM EPERM
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp 0.0.0.0:0	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp 127.0.0.1:0	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	udp 0.0.0.0:0	-> 1026 1027 1024 1025 EADDRNOTAVAIL
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	connect	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp high 0.0.0.0:0	-> 49152 49153 49154 49155 49156
+ALLOC	root	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp low 0.0.0.0:0	-> 1015 1014
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp 0.0.0.0:0	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp 127.0.0.1:0	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	udp 0.0.0.0:0	-> 1027 1024 1026 1025 EADDRNOTAVAIL
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	connect	-> 1024 1026 1027 EADDRNOTAVAIL EADDRNOTAVAIL
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp high 0.0.0.0:0	-> 49157 49158 49159 49160 49161
+ALLOC	u501	first=1 last=1027 (wrote first=1 ok, last=1027 ok; read back 1024, 1027)	tcp low 0.0.0.0:0	-> EPERM EPERM
+ALLOC	root	unchanged	tcp 0.0.0.0:0	-> 49152 49153 49154 49155 49156
+ALLOC	root	unchanged	tcp 127.0.0.1:0	-> 49157 49158 49159 49160 49161
+ALLOC	root	unchanged	udp 0.0.0.0:0	-> 60582 56546 65387 52856 56274
+ALLOC	root	unchanged	connect	-> 49162 49163 49164 49165 49166
+ALLOC	root	unchanged	tcp high 0.0.0.0:0	-> 49162 49163 49164 49165 49166
+ALLOC	root	unchanged	tcp low 0.0.0.0:0	-> 1013 1012
+ALLOC	u501	unchanged	tcp 0.0.0.0:0	-> 49167 49168 49169 49170 49171
+ALLOC	u501	unchanged	tcp 127.0.0.1:0	-> 49172 49173 49174 49175 49176
+ALLOC	u501	unchanged	udp 0.0.0.0:0	-> 55185 52489 56187 50706 59747
+ALLOC	u501	unchanged	connect	-> 49177 49178 49179 49180 49181
+ALLOC	u501	unchanged	tcp high 0.0.0.0:0	-> 49167 49168 49169 49170 49171
+ALLOC	u501	unchanged	tcp low 0.0.0.0:0	-> EPERM EPERM
+RESTORED	net.inet.ip.portrange.first = 49152
+RESTORED	net.inet.ip.portrange.last = 65535
+RESTORED	net.inet.ip.portrange.hifirst = 49152
+RESTORED	net.inet.ip.portrange.hilast = 65535
+RESTORED	net.inet.ip.portrange.lowfirst = 1023
+RESTORED	net.inet.ip.portrange.lowlast = 600
+DONE

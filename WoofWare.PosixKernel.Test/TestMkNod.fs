@@ -206,12 +206,13 @@ module TestMkNod =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private opened (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context p) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context p) readOnly 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private completed (what : string) (answer : SyscallAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -224,14 +225,14 @@ module TestMkNod =
         (path : PathArgumentBytes)
         (mode : int)
         (system : UnixSystem<int, string>)
-        : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>
+        : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>
         =
         let flags =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
             | SimulatedUnixFlavour.Linux -> 0x1 ||| 0x40 ||| 0x80
             | SimulatedUnixFlavour.Darwin -> 0x1 ||| 0x200 ||| 0x800
 
-        OpenOutcomes.openPath flags path mode system
+        OpenOutcomes.openPath path flags mode system
 
     // ------------------------------------------------------------ rendering
 
@@ -250,7 +251,7 @@ module TestMkNod =
     /// Every path under the cell `/c`, relative to it, with the inode each
     /// names, never following a link.
     let private cellPaths (system : UnixSystem<int, string>) : Map<string, InodeNumber> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : (string * InodeNumber) seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -269,7 +270,7 @@ module TestMkNod =
         let root =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -295,37 +296,51 @@ module TestMkNod =
             if parent = "/c" then
                 match
                     PathWalk.resolveExisting
-                        (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                         Owners.root
                         SymlinkProtection.Off
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         SymlinkPolicy.NoFollowFinal
                         (UnixPath.parseOrFail context "/c")
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok inode -> inode
                 | Error failure -> failwith $"%s{context}: /c does not resolve: %A{failure}"
             else
                 paths.[parent.Substring "/c/".Length]
 
-        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{context}: %s{parent} names no inode"
+
+    let private syscallFailure (answer : SyscallAnswer) : UnixError option =
+        match answer with
+        | SyscallAnswer.Failed error -> Some error
+        | SyscallAnswer.Completed _ -> None
+
+    let private descriptorFailure (answer : DescriptorAnswer) : UnixError option =
+        match answer with
+        | DescriptorAnswer.Failed error -> Some error
+        | DescriptorAnswer.Returned _ -> None
 
     /// What the probe prints for a call made in `before`: the errno, or "ok"
     /// with what was made, its permission bits, whose group it took and where
     /// under the cell it is; or, for a refusal, which node this library would
     /// not make.
-    let private rendered<'Refusal>
+    let private rendered<'Answer, 'Refusal>
+        (failure : 'Answer -> UnixError option)
         (refusal : 'Refusal -> string)
         (before : UnixSystem<int, string>)
-        (result : Result<SyscallAnswer * UnixSystem<int, string>, 'Refusal>)
+        (result : Result<'Answer * UnixSystem<int, string>, 'Refusal>)
         : string
         =
         match result with
         | Error r -> refusal r
-        | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
-        | Ok (SyscallAnswer.Completed _, after) ->
+        | Ok (answer, after) ->
+
+        match failure answer with
+        | Some error -> $"%A{error}"
+        | None ->
 
         let existed = cellPaths before
         let now = cellPaths after
@@ -336,7 +351,7 @@ module TestMkNod =
         match made with
         | [ path, inode ] ->
             let entry =
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some entry -> entry
                 | None -> failwith $"%s{context}: %s{path} names no inode"
 
@@ -370,7 +385,6 @@ module TestMkNod =
         | MkNodRefusal.Socket -> "refused:sock"
         | MkNodRefusal.CharacterDevice dev -> $"refused:chr:0x%x{dev}"
         | MkNodRefusal.BlockDevice dev -> $"refused:blk:0x%x{dev}"
-        | MkNodRefusal.UnmeasuredPrivilegedCaller
         | MkNodRefusal.Path _ -> $"refused: %s{MkNodRefusal.describe refusal}"
 
     let private openRefusal (refusal : OpenRefusal) : string =
@@ -425,7 +439,8 @@ module TestMkNod =
                 let fd, system = opened "d" (cell envelope "/c/w" umask)
 
                 let actual =
-                    UnixNamespace.tryMknodat fd path mode 0u system |> rendered mknodRefusal system
+                    UnixNamespace.tryMknodat (Callers.leader system) fd path mode 0u system
+                    |> rendered syscallFailure mknodRefusal system
 
                 if actual <> expected envelope mode 0u at then
                     yield $"%s{row}: the probe's mknodat answered %s{at}, this library %s{actual}"
@@ -433,13 +448,15 @@ module TestMkNod =
                 let system = cell envelope "/c/w/d" umask
 
                 let actual =
-                    UnixNamespace.tryMknod path mode 0u system |> rendered mknodRefusal system
+                    UnixNamespace.tryMknod (Callers.leader system) path mode 0u system
+                    |> rendered syscallFailure mknodRefusal system
 
                 if actual <> expected envelope mode 0u plain then
                     yield $"%s{row}: the probe's mknod answered %s{plain}, this library %s{actual}"
 
                 let actual =
-                    openExclusive path (mode &&& 0o7777) system |> rendered openRefusal system
+                    openExclusive path (mode &&& 0o7777) system
+                    |> rendered descriptorFailure openRefusal system
 
                 if actual <> openAnswer then
                     yield $"%s{row}: the probe's open answered %s{openAnswer}, this library %s{actual}"
@@ -542,8 +559,8 @@ module TestMkNod =
                         let system = cell envelope "/c/w/d" 0o022
 
                         let actual =
-                            UnixNamespace.tryMknod (pathOf label) mode dev system
-                            |> rendered mknodRefusal system
+                            UnixNamespace.tryMknod (Callers.leader system) (pathOf label) mode dev system
+                            |> rendered syscallFailure mknodRefusal system
 
                         let want = expected envelope mode dev probe
 
@@ -587,21 +604,28 @@ module TestMkNod =
                                 let system = cell envelope "/c/w/d" 0o022
 
                                 let system =
-                                    Answered.mkdir (PathArg.ofText "gone") 0o755 system |> completed "mkdir(gone)"
+                                    Answered.mkdir (Callers.leader system) (PathArg.ofText "gone") 0o755 system
+                                    |> completed "mkdir(gone)"
 
                                 let fd, system = opened "gone" system
 
                                 let system =
-                                    Answered.rmdir (UnixPath.parseOrFail context "gone") system
+                                    Answered.rmdir (Callers.leader system) (UnixPath.parseOrFail context "gone") system
                                     |> completed "rmdir(gone)"
 
-                                UnixNamespace.tryMknodat fd (PathArg.ofText "nx") mode dev system
-                                |> rendered mknodRefusal system
+                                UnixNamespace.tryMknodat
+                                    (Callers.leader system)
+                                    fd
+                                    (PathArg.ofText "nx")
+                                    mode
+                                    dev
+                                    system
+                                |> rendered syscallFailure mknodRefusal system
                             | target ->
                                 let system = cell envelope "/c/w/d" 0o022
 
-                                UnixNamespace.tryMknod (pathOf target) mode dev system
-                                |> rendered mknodRefusal system
+                                UnixNamespace.tryMknod (Callers.leader system) (pathOf target) mode dev system
+                                |> rendered syscallFailure mknodRefusal system
 
                         let want = expected envelope mode dev probe
 
@@ -634,8 +658,8 @@ module TestMkNod =
                         let system = cell envelope "/c/w/d" 0o022
 
                         let actual =
-                            UnixNamespace.tryMknod (PathArg.ofText "nx") mode 0u system
-                            |> rendered mknodRefusal system
+                            UnixNamespace.tryMknod (Callers.leader system) (PathArg.ofText "nx") mode 0u system
+                            |> rendered syscallFailure mknodRefusal system
 
                         let want = expected envelope mode 0u probe
 
@@ -685,8 +709,8 @@ module TestMkNod =
                             | text -> PathArg.ofText text
 
                         let actual =
-                            UnixNamespace.tryMknodat dirfd path mode dev system
-                            |> rendered mknodRefusal system
+                            UnixNamespace.tryMknodat (Callers.leader system) dirfd path mode dev system
+                            |> rendered syscallFailure mknodRefusal system
 
                         let want = expected envelope mode dev probe
 
@@ -720,28 +744,27 @@ module TestMkNod =
                         let before = cell envelope "/c/w/d" 0o022
 
                         // The probe slept before it called.
-                        let system =
-                            { before with
-                                Scheduling = UnixSchedulingState.advanceClock 50_000_000L before.Scheduling
-                            }
+                        let system = UnixSystem.advanceClock 50_000_000L before
 
                         let result =
                             match call with
                             | "mknod" ->
-                                UnixNamespace.tryMknod (PathArg.ofText "nx") 0o100644 0u system
+                                UnixNamespace.tryMknod (Callers.leader system) (PathArg.ofText "nx") 0o100644 0u system
+                                |> Result.map (fun (answer, after) -> syscallFailure answer, after)
                                 |> Result.mapError MkNodRefusal.describe
                             | "open" ->
                                 openExclusive (PathArg.ofText "nx") 0o644 system
+                                |> Result.map (fun (answer, after) -> descriptorFailure answer, after)
                                 |> Result.mapError OpenRefusal.describe
                             | other -> failwith $"%s{context}: the probe made no %s{other} call"
 
                         let actual =
                             match result with
                             | Error refusal -> $"refused: %s{refusal}"
-                            | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
-                            | Ok (SyscallAnswer.Completed _, after) ->
+                            | Ok (Some error, _) -> $"%A{error}"
+                            | Ok (None, after) ->
                                 let paths = cellPaths after
-                                let vfs = after.Machine.FileSystem
+                                let vfs = UnixSystem.fileSystem after
                                 let dirBefore = (holder "w/d/nx" before).Times
                                 let dirAfter = (holder "w/d/nx" after).Times
                                 let made = paths.["w/d/nx"]
@@ -758,7 +781,7 @@ module TestMkNod =
 
                                 let size =
                                     match madeInode.Content with
-                                    | InodeContent.RegularFile (contents, _) -> contents.Length
+                                    | InodeContent.RegularFile (contents, _) -> FileContents.length contents
                                     | other -> failwith $"%s{context}: made %A{other}"
 
                                 String.concat
@@ -849,8 +872,8 @@ module TestMkNod =
                             let system = cell envelope "/c/w/d" 0o022
 
                             let actual =
-                                UnixNamespace.tryMknod (PathArg.ofText path) mode dev system
-                                |> rendered mknodRefusal system
+                                UnixNamespace.tryMknod (Callers.leader system) (PathArg.ofText path) mode dev system
+                                |> rendered syscallFailure mknodRefusal system
                                 |> stripped
 
                             let want = expected envelope mode dev (canonical probe)
@@ -876,43 +899,112 @@ module TestMkNod =
     // ------------------------------------------------------------ Darwin's refusals
 
     [<Test>]
-    let ``Darwin refuses a FIFO for any caller, and a privileged caller's other types, before the path is read``
-        ()
-        : unit
-        =
-        // Nothing measured Darwin's root, and its FIFO is mkfifo(2), whose
-        // rules are not measured: each is refused ahead of every failure the
-        // path or the dirfd could give.
-        let darwinRoot =
-            { darwinUser with
-                Credentials = Owners.root
-                Label = "Darwin root"
+    let ``Darwin's root-files MKNOD rows, for root and for uid 501`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // every value of the type field, as root and as uid 501, at a free
+        // name in a 0777 directory root owns ("new"), an existing file, a
+        // missing parent, a trailing separator, the empty path and NULL.
+        // Root's path is walked first; then a FIFO, a character device and a
+        // block device are made (nodes this library does not model, so
+        // refused), and every other type is EINVAL. uid 501 is EPERM for every
+        // type but a FIFO before the path is read; its FIFO is mkfifo(2)'s,
+        // whose rules are not modelled, and is refused before the path.
+        let darwin = SimulatedUnixPlatform.macOsArm64
+
+        let rootOwner : InodeOwner =
+            {
+                User = UserId.root
+                Group = GroupId.parseOrFail context 0u
             }
 
-        [
-            for envelope in [ darwinUser ; darwinRoot ] do
-                for kind in 0..15 do
-                    let mode = (kind <<< 12) ||| 0o644
+        let vfs =
+            let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch rootOwner
 
-                    for dirfd, path in
-                        [
-                            -1, PathArgumentBytes.Unreadable
-                            -2, PathArg.ofText ""
-                            -2, PathArg.ofText "nx"
-                        ] do
-                        let system = cell envelope "/c/w/d" 0o022
+            let directory, vfs =
+                match
+                    GraphMutators.createDirectory
+                        (VirtualFileSystem.root vfs)
+                        (DirectoryEntryName.parseOrFail context "m")
+                        (PermissionBits.parseOrFail context 0o777)
+                        rootOwner
+                        epoch
+                        vfs
+                with
+                | Ok made -> made
+                | Error error -> failwith $"%O{error}"
 
-                        let actual =
-                            UnixNamespace.tryMknodat dirfd path mode 0u system
-                            |> Result.map (fun (answer, _) -> answer)
+            match
+                GraphMutators.createFile
+                    directory
+                    (DirectoryEntryName.parseOrFail context "existing")
+                    (PermissionBits.parseOrFail context 0o644)
+                    rootOwner
+                    epoch
+                    ImmutableArray<byte>.Empty
+                    vfs
+            with
+            | Ok (_, vfs) -> vfs
+            | Error error -> failwith $"%O{error}"
 
-                        let want =
-                            match NodeTypeField.ofMode mode, envelope = darwinUser with
-                            | NodeTypeField.Fifo, _ -> Error MkNodRefusal.Fifo
-                            | _, true -> Ok (SyscallAnswer.Failed UnixError.EPERM)
-                            | _, false -> Error MkNodRefusal.UnmeasuredPrivilegedCaller
+        let rows = DarwinRootFiles.spot "MKNOD"
+        rows |> List.length |> shouldEqual 252
 
-                        if actual <> want then
-                            yield $"%s{envelope.Label} 0o%o{mode} dirfd %d{dirfd}: wanted %A{want}, got %A{actual}"
-        ]
-        |> shouldEqual []
+        for row in rows do
+            // caller, "type=010000", "perm=0644", "dev=126,0", "path=new", "-> ok", "node=..."
+            let value (field : string) = field.Substring (field.IndexOf '=' + 1)
+            let typeField = Convert.ToInt32 (value row.[1], 8)
+            let mode = typeField ||| Convert.ToInt32 (value row.[2], 8)
+
+            let dev =
+                match (value row.[3]).Split ',' with
+                | [| major ; minor |] -> (uint32 major <<< 24) ||| uint32 minor
+                | _ -> failwith $"unexpected dev %s{row.[3]}"
+
+            let path =
+                match value row.[4] with
+                | "new" -> PathArg.ofText "/m/new"
+                | "existing" -> PathArg.ofText "/m/existing"
+                | "missing-parent" -> PathArg.ofText "/m/nx/new"
+                | "trailing-slash" -> PathArg.ofText "/m/new/"
+                | "empty" -> PathArg.ofText ""
+                | "null" -> PathArgumentBytes.Unreadable
+                | other -> failwith $"unexpected path %s{other}"
+
+            let system : UnixSystem<int, string> =
+                UnixSystem.initial darwin
+                |> Launched.bootWith
+                    (Launched.credentials (DarwinRootFiles.credentialsOf row.[0]))
+                    UnixSystem.pipedStandardStreams
+                    0
+                    (CpuId 0)
+
+            let system =
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            CommittedFileSystem = CommittedFileSystem.initial vfs
+                        }
+                    )
+                    system
+
+            let unmodelledNode : MkNodRefusal option =
+                match NodeTypeField.ofMode mode with
+                | NodeTypeField.Fifo -> Some MkNodRefusal.Fifo
+                | NodeTypeField.CharacterDevice -> Some (MkNodRefusal.CharacterDevice dev)
+                | NodeTypeField.BlockDevice -> Some (MkNodRefusal.BlockDevice dev)
+                | _ -> None
+
+            let expected =
+                match row.[5], unmodelledNode with
+                | "-> ok", Some refusal -> Error refusal
+                | _, Some MkNodRefusal.Fifo when row.[0] = "u501" -> Error MkNodRefusal.Fifo
+                | answer, _ -> Ok answer
+
+            let actual =
+                match UnixNamespace.tryMknod (Callers.leader system) path mode dev system with
+                | Ok (SyscallAnswer.Failed error, _) -> Ok $"-> %s{string<UnixError> error}"
+                | Ok (answer, _) -> Ok $"-> %A{answer}"
+                | Error refusal -> Error refusal
+
+            ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]} %s{row.[4]}", $"%A{actual}")
+            |> shouldEqual ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]} %s{row.[4]}", $"%A{expected}")

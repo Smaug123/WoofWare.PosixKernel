@@ -51,7 +51,7 @@ module TestPollTimeout =
 
         let system = Threads.spawn thread system
 
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let socket =
@@ -79,21 +79,27 @@ module TestPollTimeout =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }
+                Drained = false
+                Uid = UserId.root
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> withRegistry registry
 
     let private listener : int = fst world
@@ -106,13 +112,13 @@ module TestPollTimeout =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected the listener, got %O{other}"
 
-        let socket = UnixMachineState.socket socketId system.Machine
+        let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Sockets =
-                        Map.add
+                        SocketTable.set
                             socketId
                             { socket with
                                 Phase =
@@ -120,20 +126,18 @@ module TestPollTimeout =
                                         {
                                             Backlog = 8
                                             Queue = List.map ForgedConnection.queued queue
-                                            Drained = false
                                         }
                             }
-                            system.Machine.Sockets
+                            machine.Sockets
                 }
-        }
+            )
+            system
 
     let private ready : UnixSystem<int, string> -> UnixSystem<int, string> =
         withQueue [ ConnectionId 99L ]
 
     let private after (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     let private entry (fd : int) (events : int16) : PollEntry =
         {
@@ -147,22 +151,24 @@ module TestPollTimeout =
         (system : UnixSystem<int, string>)
         : WakeCondition * UnixSystem<int, string>
         =
-        match UnixPoll.tryPoll thread entries milliseconds system with
+        match UnixPoll.tryPoll (Callers.thread thread system) entries milliseconds system with
         | Ok (PollOutcome.WouldBlock condition, parked) -> condition, parked
         | other -> failwith $"expected a park, got %A{other}"
 
     let private finishes (system : UnixSystem<int, string>) : int16 list * int * UnixSystem<int, string> =
-        match UnixPoll.tryFinishPoll thread system with
+        let system = Woken.thread thread system
+
+        match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
         | Ok (PollOutcome.Answered (reported, count), finished) -> reported, count, finished
         | other -> failwith $"expected the poll to finish, got %A{other}"
 
     let private reparks (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixPoll.tryFinishPoll thread system with
+        match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
         | Ok (PollOutcome.WouldBlock _, parked) -> parked
         | other -> failwith $"expected the poll to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match UnixWait.wakes (Set.singleton thread) system with
+        match Lone.wakes system with
         | [] -> None
         | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
@@ -194,16 +200,19 @@ module TestPollTimeout =
                 let _, parked = parks [ entry listener events ] milliseconds started
                 let deadline = start + int64 milliseconds * nanosecondsPerMillisecond
 
-                UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
+                Lone.deadlines parked |> shouldEqual [ deadline ]
 
-                // One nanosecond short: nothing wakes it, and a finish attempted
-                // anyway sleeps again on the same deadline.
+                // One nanosecond short: nothing wakes it, so there is no call to
+                // finish, and it sleeps on to the same deadline.
                 let justBefore = after (deadline - start - 1L) parked
                 woken justBefore |> shouldEqual None
-                let parkedAgain = reparks justBefore
 
-                UnixWait.deadlines (Set.singleton thread) parkedAgain
-                |> shouldEqual [ deadline ]
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixPoll.tryFinishPoll (Callers.thread thread justBefore) justBefore |> ignore
+                )
+                |> ignore<System.InvalidOperationException>
+
+                Lone.deadlines justBefore |> shouldEqual [ deadline ]
 
                 let atDeadline = after (deadline - start) parked
 
@@ -213,7 +222,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes atDeadline
                 reported |> shouldEqual [ 0s ]
                 count |> shouldEqual 0
-                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+                Lone.parkedIn thread finished |> shouldEqual None
                 UnixSystem.checkInvariants finished |> shouldEqual []
 
         Check.One (config, property)
@@ -243,7 +252,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes becameReady
                 reported |> shouldEqual [ 0s ; events &&& (pollIn ||| pollRdNorm) ]
                 count |> shouldEqual 1
-                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+                Lone.parkedIn thread finished |> shouldEqual None
 
         Check.One (config, property)
 
@@ -271,20 +280,21 @@ module TestPollTimeout =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"expected the listener, got %O{other}"
 
-            let socket = UnixMachineState.socket socketId parked.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine parked)
 
-            { parked with
-                Machine =
-                    { parked.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Phase = SocketPhase.Refused RefusalError.Pending
                                 }
-                                parked.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                parked
 
         woken refused |> Option.isSome |> shouldEqual true
         let reported, count, _ = finishes refused
@@ -296,7 +306,7 @@ module TestPollTimeout =
         for milliseconds in [ -1 ; -2 ; -1000 ; System.Int32.MinValue ] do
             let condition, parked = parks [ entry listener pollIn ] milliseconds idle
             WakeCondition.deadlines condition |> shouldEqual []
-            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
+            Lone.deadlines parked |> shouldEqual []
 
             let muchLater = after 1_000_000_000_000_000L parked
             woken muchLater |> shouldEqual None
@@ -306,7 +316,7 @@ module TestPollTimeout =
 
     [<Test>]
     let ``a timeout of zero never parks`` () : unit =
-        match UnixPoll.tryPoll thread [ entry listener pollIn ] 0 idle with
+        match UnixPoll.tryPoll (Callers.thread thread idle) [ entry listener pollIn ] 0 idle with
         | Ok (PollOutcome.Answered (reported, count), after) ->
             reported |> shouldEqual [ 0s ]
             count |> shouldEqual 0
@@ -318,32 +328,30 @@ module TestPollTimeout =
         // `poll(NULL, 0, -1)` sleeps until a signal interrupts it.
         for entries in [ [] ; [ entry -1 pollIn ] ; [ entry -5 pollIn ; entry -1 0s ] ] do
             for milliseconds in [ -1 ; System.Int32.MinValue ] do
-                match UnixPoll.tryPoll thread entries milliseconds idle with
+                match UnixPoll.tryPoll (Callers.thread thread idle) entries milliseconds idle with
                 | Ok (PollOutcome.WouldBlock condition, parked) ->
                     condition
                     |> shouldEqual (WakeCondition.Primitive WakePrimitive.SignalDeliverable)
 
-                    UnixWait.wakes (Set.singleton thread) parked |> shouldEqual []
-                    UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
+                    Lone.wakes parked |> shouldEqual []
+                    Lone.deadlines parked |> shouldEqual []
                 | other -> failwith $"expected the poll to sleep, got %A{other}"
 
     [<Test>]
     let ``a deadline past the clock's range is refused, and one just inside it parks`` () : unit =
         let timeout = 1_000_000L
 
-        let nearTheEnd (uptime : int64) : UnixSystem<int, string> =
-            { idle with
-                Scheduling = UnixSchedulingState.advanceClock uptime idle.Scheduling
-            }
+        let nearTheEnd (uptime : int64) : UnixSystem<int, string> = UnixSystem.advanceClock uptime idle
 
-        UnixPoll.tryPoll thread [ entry listener pollIn ] 1 (nearTheEnd (System.Int64.MaxValue - timeout + 1L))
+        let late = nearTheEnd (System.Int64.MaxValue - timeout + 1L)
+
+        UnixPoll.tryPoll (Callers.thread thread late) [ entry listener pollIn ] 1 late
         |> shouldEqual (Error (PollRefusal.DeadlineBeyondClock (System.Int64.MaxValue - timeout + 1L, 1)))
 
         let _, parked =
             parks [ entry listener pollIn ] 1 (nearTheEnd (System.Int64.MaxValue - timeout))
 
-        UnixWait.deadlines (Set.singleton thread) parked
-        |> shouldEqual [ System.Int64.MaxValue ]
+        Lone.deadlines parked |> shouldEqual [ System.Int64.MaxValue ]
 
     [<Test>]
     let ``a wait with nothing to watch and a deadline sleeps until it`` () : unit =
@@ -363,14 +371,13 @@ module TestPollTimeout =
         woken becameReady |> Option.isSome |> shouldEqual true
 
         // Taken by someone else before the woken poll ran.
-        let gone = becameReady |> withQueue []
+        let gone = becameReady |> Woken.thread thread |> withQueue []
         let parkedAgain = reparks gone
 
-        UnixWait.deadlines (Set.singleton thread) parkedAgain
-        |> shouldEqual [ 10_000_000L ]
+        Lone.deadlines parkedAgain |> shouldEqual [ 10_000_000L ]
 
-        (UnixThreadTable.parkOf thread (Lone.threads parkedAgain) |> Option.get).Ordinal
-        |> shouldBeGreaterThan (UnixThreadTable.parkOf thread (Lone.threads parked) |> Option.get).Ordinal
+        (Lone.parkOf thread parkedAgain |> Option.get).Ordinal
+        |> shouldBeGreaterThan (Lone.parkOf thread parked |> Option.get).Ordinal
 
         let reported, count, _ = parkedAgain |> after 9_000_000L |> finishes
         reported |> shouldEqual [ 0s ]
@@ -380,7 +387,7 @@ module TestPollTimeout =
     let ``the park records each entry with the description it named`` () : unit =
         let _, parked = parks [ entry listener pollIn ; entry -3 pollOut ] 7 idle
 
-        UnixThreadTable.parkedFor thread (Lone.threads parked)
+        Lone.parkedIn thread parked
         |> shouldEqual (
             Some (
                 ParkedSyscall.Poll
@@ -400,20 +407,25 @@ module TestPollTimeout =
     [<Test>]
     let ``closing a descriptor a parked poll watches is refused, and closing a dup of it is not`` () : unit =
         let dupFd, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform idle))
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok (fd, registry) -> fd, registry
             | Error error -> failwith $"dup failed: %O{error}"
 
         let withDup = withRegistry registry idle
         let _, parked = parks [ entry listener pollIn ] 10 withDup
 
-        match UnixDescriptor.tryClose listener parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) listener parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual listener
             waiter |> shouldEqual thread
         | other -> failwith $"expected the close to be refused, got %A{other}"
 
-        match UnixDescriptor.tryClose dupFd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) dupFd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             UnixSystem.checkInvariants closed |> shouldEqual []
             let reported, count, _ = closed |> ready |> finishes
@@ -427,6 +439,9 @@ module TestPollTimeout =
         // them, such as PRI alone, leaves it waiting.
         let directory, registry =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform idle)))
+                false
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -434,7 +449,7 @@ module TestPollTimeout =
         let _, parked = parks [ entry directory 0x0002s ] 10 (withRegistry registry idle)
         UnixSystem.checkInvariants parked |> shouldEqual []
 
-        match UnixDescriptor.tryClose directory parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) directory parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual directory
             waiter |> shouldEqual thread
@@ -469,6 +484,9 @@ module TestPollTimeout =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -495,7 +513,12 @@ module TestPollTimeout =
 
         // With a dup keeping the description alive, the number is rebound.
         let _, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform idle))
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok dup -> dup
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -505,11 +528,19 @@ module TestPollTimeout =
         pollDefects rebound
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedPollDescriptorRebound (thread, listener, watched, Some (idOf listener rebound))
+                UnixSystemDefect.ParkedPollDescriptorRebound (
+                    Callers.ofDefault thread,
+                    listener,
+                    watched,
+                    Some (idOf listener rebound)
+                )
             ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread rebound |> ignore)
+            Assert.Throws<exn> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread rebound) (ForgedPark.woken thread rebound)
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "now names"
 
@@ -518,10 +549,16 @@ module TestPollTimeout =
         let destroyed = forgeRebind listener parked
 
         pollDefects destroyed
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, watched) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault thread, watched)
+            ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread destroyed |> ignore)
+            Assert.Throws<exn> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread destroyed) (ForgedPark.woken thread destroyed)
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "a park holds its descriptions"
 
@@ -530,12 +567,17 @@ module TestPollTimeout =
         let _, parked = parks [ entry listener pollIn ] 10 idle
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryPoll thread [ entry listener pollIn ] 0 parked |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryPoll (Callers.thread thread parked) [ entry listener pollIn ] 0 parked
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "is parked in"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread idle |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread idle) idle |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 
@@ -558,6 +600,7 @@ module TestPollTimeout =
                         Deadline = None
                     }
             ] do
-            let exn = Assert.Throws<exn> (fun () -> UnixWait.park thread other parked |> ignore)
+            let exn =
+                Assert.Throws<exn> (fun () -> Lone.Parking.park thread other parked |> ignore)
 
             exn.Message |> shouldContainText "without clearing the first"

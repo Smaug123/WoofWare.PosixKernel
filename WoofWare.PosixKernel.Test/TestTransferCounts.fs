@@ -102,13 +102,16 @@ module TestTransferCounts =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     content
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -117,12 +120,13 @@ module TestTransferCounts =
         fd,
         (Lone.withFileDescriptors
             (FileDescriptorRegistry.setOffset fd position registry)
-            { system with
-                Machine =
-                    { system.Machine with
+            (Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
-            })
+                )
+                system))
 
     let internal positionOf (fd : int) (system : UnixSystem<int, string>) : int64 =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
@@ -235,6 +239,13 @@ module TestTransferCounts =
             let bytes = ImmutableArray.Create (content, int position, int transfer)
             Rule.Moved (moved < count), Ok (ReadAnswer.Completed bytes, position + int64 transfer)
 
+    /// What a write's or a `pwrite`'s admission says, short of where the bytes
+    /// go, which each property checks of its own call.
+    [<RequireQualifiedAccess>]
+    type private Admitted =
+        | Answered of answer : WriteAnswer
+        | Transfer of count : int
+
     /// The admission of a write of `count` bytes at `position` (the description's
     /// for `write`, the argument for `pwrite`) into a regular file open for
     /// writing.
@@ -244,10 +255,10 @@ module TestTransferCounts =
         (position : int64)
         (buffer : UserBuffer)
         (count : uint64)
-        : Rule * Result<WriteAdmission, BufferRefusal>
+        : Rule * Result<Admitted, BufferRefusal>
         =
         let failed (error : UnixError) =
-            Ok (WriteAdmission.Answered (WriteAnswer.Failed error))
+            Ok (Admitted.Answered (WriteAnswer.Failed error))
 
         match sharedSteps platform limit buffer (Some position) count with
         | Error (rule, Ok error) -> rule, failed error
@@ -255,14 +266,14 @@ module TestTransferCounts =
         | Ok moved ->
 
         if moved = 0UL then
-            Rule.NothingToMove, Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L))
+            Rule.NothingToMove, Ok (Admitted.Answered (WriteAnswer.Completed 0L))
         else
 
         match buffer with
         | UserBuffer.Unmapped _ -> Rule.FaultAtCopy, failed UnixError.EFAULT
         | UserBuffer.Opaque -> Rule.RefusedAtCopy, Error BufferRefusal.OpaqueAtTransfer
         | UserBuffer.Addressless -> Rule.RefusedAtCopy, Error BufferRefusal.AddresslessAtTransfer
-        | UserBuffer.Mapped -> Rule.Moved (moved < count), Ok (WriteAdmission.Transfer (int moved))
+        | UserBuffer.Mapped -> Rule.Moved (moved < count), Ok (Admitted.Transfer (int moved))
 
     // ------------------------------------------------------- the generators
 
@@ -358,7 +369,7 @@ module TestTransferCounts =
 
     type private Case =
         {
-            Machine : SimulatedUnixPlatform * uint64 option
+            Platform : SimulatedUnixPlatform * uint64 option
             Content : byte[]
             Position : int64
             Buffer : UserBuffer
@@ -375,7 +386,7 @@ module TestTransferCounts =
 
             return
                 {
-                    Machine = machine
+                    Platform = machine
                     Content = contentOf length
                     Position = position
                     Buffer = buffer
@@ -387,7 +398,7 @@ module TestTransferCounts =
 
     let private actualRead (case : Case) : Result<ReadAnswer * int64, BufferRefusal> =
         let fd, system =
-            withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Machine)
+            withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Platform)
 
         match ReadOutcomes.read fd case.Buffer case.Count system with
         | Ok (answer, after) -> Ok (answer, positionOf fd after)
@@ -413,7 +424,7 @@ module TestTransferCounts =
     [<Test>]
     let ``read answers every count as the measured rule does`` () : unit =
         let property (case : Case) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let _, expected =
                 expectedRead platform limit case.Content case.Position case.Buffer case.Count
@@ -436,11 +447,11 @@ module TestTransferCounts =
                 ]
 
         let property (case : Case, offset : int64) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
             // The description's own position plays no part in a `pread`, so it
             // is left at 0 and the case's position is ignored.
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Platform)
 
             let expected =
                 if offset < 0L then
@@ -467,18 +478,49 @@ module TestTransferCounts =
     [<Test>]
     let ``write admits every count as the measured rule does`` () : unit =
         let property (case : Case) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) case.Position (systemOn case.Platform)
 
             let _, expected =
                 expectedAdmission platform limit case.Position case.Buffer case.Count
 
+            let unmapped =
+                match case.Buffer with
+                | UserBuffer.Unmapped _ -> true
+                | UserBuffer.Mapped
+                | UserBuffer.Opaque
+                | UserBuffer.Addressless -> false
+
             let actual =
-                match WriteAdmissions.unchanged fd case.Buffer case.Count system with
-                | Ok admission -> Ok admission
+                match WriteOutcomes.admitWrite fd case.Buffer case.Count system with
+                // The one admission that changes the system: an unmapped buffer
+                // reaches the file's write, which changes the file before the
+                // copy faults (`TestFaultingFileWrite`).
+                | Ok (admission, after) when
+                    after <> system
+                    && not (
+                        unmapped
+                        && admission = WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT)
+                    )
+                    ->
+                    failwith $"%A{case}: the admission %A{admission} changed the system"
+                | Ok (WriteAdmission.Answered answer, _) -> Ok (Admitted.Answered answer)
+                // Into the file, at the description's offset.
+                | Ok (WriteAdmission.Transfer (count, WriteInto.File (into, _, offset, _)), _) when
+                    into = fd && offset = case.Position
+                    ->
+                    Ok (Admitted.Transfer count)
+                | Ok (other, _) -> failwith $"%A{case}: a regular file's write came to %A{other}"
                 | Error (WriteRefusal.Buffer refusal) -> Error refusal
+                // A faulting write grows the file to its offset, which past this
+                // model's longest file it refuses to do; a real kernel answers
+                // EFAULT there.
+                | Error (WriteRefusal.ExceedsRepresentableLength _) when
+                    unmapped && case.Position > VirtualFileSystem.maxFileLength
+                    ->
+                    Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EFAULT))
                 | Error other ->
                     failwith $"a regular file's write was refused for something other than its buffer: %O{other}"
 
@@ -498,25 +540,30 @@ module TestTransferCounts =
                 ]
 
         let property (case : Case, offset : int64) : unit =
-            let platform, limit = case.Machine
+            let platform, limit = case.Platform
 
             let fd, system =
-                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Machine)
+                withFile (ImmutableArray.CreateRange case.Content) 0L (systemOn case.Platform)
 
             let expected =
                 if offset < 0L then
                     // Ahead of the descriptor on both flavours, and Darwin's count
                     // refusal is the same errno.
-                    Ok (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EINVAL))
+                    Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EINVAL))
                 else
                     snd (expectedAdmission platform limit offset case.Buffer case.Count)
 
             let actual =
                 // A pwrite's admission says what a write's does, but for the
                 // sleeping write, which a file never makes.
-                match UnixReadWrite.tryAdmitPWrite 0 fd case.Buffer case.Count offset system with
-                | Ok (PWriteAdmission.Answered answer) -> Ok (WriteAdmission.Answered answer)
-                | Ok (PWriteAdmission.Transfer count) -> Ok (WriteAdmission.Transfer count)
+                match Lone.UnixReadWrite.tryAdmitPWrite fd case.Buffer case.Count offset system with
+                | Ok (PWriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
+                // The call answers EFAULT once the file's write has run.
+                | Ok (PWriteAdmission.Faults _) -> Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EFAULT))
+                | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
+                | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device _))
+                | Ok (PWriteAdmission.DeviceAnswered _) ->
+                    failwith $"%A{case}: a regular file's pwrite came to a device's"
                 | Error (PWriteRefusal.Buffer refusal) -> Error refusal
                 | Error other ->
                     failwith $"a regular file's pwrite was refused for something other than its buffer: %O{other}"
@@ -561,7 +608,7 @@ module TestTransferCounts =
         let readRules =
             sample
             |> List.map (fun case ->
-                let platform, limit = case.Machine
+                let platform, limit = case.Platform
                 fst (expectedRead platform limit case.Content case.Position case.Buffer case.Count)
             )
             |> reached
@@ -569,7 +616,7 @@ module TestTransferCounts =
         let writeRules =
             sample
             |> List.map (fun case ->
-                let platform, limit = case.Machine
+                let platform, limit = case.Platform
                 fst (expectedAdmission platform limit case.Position case.Buffer case.Count)
             )
             |> reached
@@ -580,8 +627,8 @@ module TestTransferCounts =
         Set.difference (Set.add "Moved true" everyRule) writeRules
         |> shouldEqual Set.empty
 
-    /// `write` and `pwrite` answer the position check themselves, so a caller
-    /// that skipped the admission still gets a kernel's answer: EINVAL on Linux
+    /// A whole `write` and `pwrite` answer the position check before their
+    /// copy: EINVAL on Linux
     /// once position + count passes INT64_MAX, and one byte fewer reaches the
     /// file, whose length this kernel cannot represent. Darwin has no such
     /// check, and every one of these reaches the file. At `INT64_MAX` itself
@@ -609,7 +656,7 @@ module TestTransferCounts =
                 (machine, length, "write", outcome (WriteOutcomes.write fd bytes system))
                 |> shouldEqual (machine, length, "write", expected)
 
-                (machine, length, "pwrite", outcome (UnixReadWrite.tryPwriteBytes 0 fd bytes nearTop system))
+                (machine, length, "pwrite", outcome (WriteOutcomes.admitThenPwrite 0 fd bytes nearTop system))
                 |> shouldEqual (machine, length, "pwrite", expected)
 
         for machine, length, expected in
@@ -625,7 +672,7 @@ module TestTransferCounts =
             (machine, length, "write", outcome (WriteOutcomes.write fd bytes system))
             |> shouldEqual (machine, length, "write", expected)
 
-            (machine, length, "pwrite", outcome (UnixReadWrite.tryPwriteBytes 0 fd bytes Int64.MaxValue system))
+            (machine, length, "pwrite", outcome (WriteOutcomes.admitThenPwrite 0 fd bytes Int64.MaxValue system))
             |> shouldEqual (machine, length, "pwrite", expected)
 
     // --------------------------------------- the descriptors, as measured
@@ -646,7 +693,14 @@ module TestTransferCounts =
 
         let reopen (inode : InodeNumber) (mode : FileAccessMode) =
             let fd, registry =
-                FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode mode registry
+                FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
+                    (ForgedName.ofInode system inode)
+                    inode
+                    mode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
 
@@ -656,28 +710,39 @@ module TestTransferCounts =
         | "stdout" -> 1, system
         | "dir" ->
             let fd, registry =
-                FileDescriptorRegistry.openDirectory (ForgedName.ofInode system rootInode) rootInode registry
+                FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
+                    (ForgedName.ofInode system rootInode)
+                    rootInode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
         | "event queue" ->
             // The flavour's own: an epoll instance, or a kqueue.
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create registry
 
             fd, Lone.withFileDescriptors registry system
         | "socket" ->
-            let fd, registry = FileDescriptorRegistry.createSocket socketId registry
+            let fd, registry =
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    socketId
+                    registry
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     {
@@ -685,12 +750,15 @@ module TestTransferCounts =
                                         Kind = SocketKind.Stream
                                         Protocol = SocketProtocol.Tcp
                                         Phase = SocketPhase.Idle
+                                        Drained = false
+                                        Uid = UserId.root
                                         ReuseAddress = false
                                         Options = SocketOptions.initial
                                     }
                                 ]
                     }
-            }
+                )
+                system
             |> Lone.withFileDescriptors registry
         | "readonly" ->
             let fd, system = withFile (ImmutableArray.CreateRange (contentOf 5)) 0L system
@@ -702,6 +770,9 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -718,6 +789,9 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -755,11 +829,16 @@ module TestTransferCounts =
                 system
                 |> Lone.mapProc (fun proc ->
                     { proc with
-                        Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                        Signals =
+                            SignalState.setDisposition
+                                (Kernel.signalNumbering system)
+                                Signal.SIGPIPE
+                                SignalDisposition.Ignore
+                                proc.Signals
                     }
                 )
 
-            match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system with
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered (WriteAnswer.Failed error), signal, _)) when
                 signal.Signal = Signal.SIGPIPE
                 ->
@@ -771,16 +850,19 @@ module TestTransferCounts =
                 match admission with
                 | WriteAdmission.Answered (WriteAnswer.Failed error) -> Seen.Errno error
                 | WriteAdmission.Answered (WriteAnswer.Completed written) -> Seen.Moved (int written)
-                | WriteAdmission.Transfer count -> Seen.Moved count
+                | WriteAdmission.Transfer (count, _) -> Seen.Moved count
                 | WriteAdmission.TransferThenSleep _ ->
                     failwith $"a write of a descriptor here would sleep: %A{admission}"
             | Ok other -> failwith $"unexpected write outcome %A{other}"
             | Error _ -> Seen.Refused
         | "pwrite" ->
-            match UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite fd buffer count 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
-            | Ok (PWriteAdmission.Transfer count) -> Seen.Moved count
+            | Ok (PWriteAdmission.DeviceAnswered (WriteAnswer.Failed error, _, _)) -> Seen.Errno error
+            | Ok (PWriteAdmission.DeviceAnswered (WriteAnswer.Completed written, _, _)) -> Seen.Moved (int written)
+            | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count
+            | Ok (PWriteAdmission.Faults _) -> Seen.Errno UnixError.EFAULT
             | Error _ -> Seen.Refused
         | other -> failwith $"no op %s{other}"
 
@@ -899,6 +981,9 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -973,6 +1058,9 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -1032,7 +1120,8 @@ module TestTransferCounts =
                 | Ok (GetCwdAnswer.Failed error) -> Ok (Error error)
                 | Error refusal -> Error refusal
 
-            let actual = UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity system
+            let actual =
+                UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped capacity system
 
             if normalise expected <> normalise actual then
                 failwith $"%A{machine} at capacity %d{capacity}: expected %A{expected}, got %A{actual}"
@@ -1095,9 +1184,9 @@ module TestTransferCountsLarge =
 
         GC.Collect ()
 
-    /// `write` and `pwrite` take the bytes their admission said to extract. A
-    /// caller that skipped the admission and hands over more than one call
-    /// moves is refused loudly rather than answered.
+    /// A `write` or `pwrite` of more than one call moves stops at its copy for
+    /// one call's worth, and given more bytes than that, refuses them loudly
+    /// rather than answering.
     ///
     /// Two gigabytes of bytes.
     [<Test>]
@@ -1114,15 +1203,23 @@ module TestTransferCountsLarge =
                 0L
                 (TestTransferCounts.systemOn (SimulatedUnixPlatform.linuxX64, None))
 
-        let exn =
-            Assert.Throws<Exception> (fun () -> WriteOutcomes.write fd bytes system |> ignore)
+        match UnixReadWrite.write (Callers.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
+        | CallProgress.NeedsCopyIn paused ->
+            (PausedWrite.copyRange paused).ByteCount
+            |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
 
-        exn.Message |> shouldContainText "one call moves"
+            Assert.Throws<InvalidOperationException> (fun () -> UnixReadWrite.writeWithBytes bytes paused |> ignore)
+            |> ignore
+        | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
-        let exn =
-            Assert.Throws<Exception> (fun () -> UnixReadWrite.tryPwriteBytes 0 fd bytes 0L system |> ignore)
+        match UnixReadWrite.pwrite (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
+        | CallProgress.NeedsCopyIn paused ->
+            (PausedPWrite.copyRange paused).ByteCount
+            |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
 
-        exn.Message |> shouldContainText "one call moves"
+            Assert.Throws<InvalidOperationException> (fun () -> UnixReadWrite.pwriteWithBytes bytes paused |> ignore)
+            |> ignore
+        | other -> failwith $"expected the pwrite to stop at its copy, got %A{other}"
 
         // The same bytes are one call's worth on Darwin, whose limit is INT_MAX,
         // and move.

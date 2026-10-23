@@ -16,10 +16,11 @@ module internal PReadUnchanged =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer, BufferRefusal>
         =
-        match UnixReadWrite.tryPread (Lone.leader system) fd buffer count offset system with
+        match UnixReadWrite.tryPread (Callers.leader system) fd buffer count offset system with
         | Error (PReadRefusal.Buffer refusal) -> Error refusal
-        | Error (PReadRefusal.SignalAtPageBoundary _ as refusal) ->
-            failwith $"pread(%d{fd}, %d{count}@%d{offset}) was refused, which only a device's can be: %A{refusal}"
+        | Error (PReadRefusal.DevfsDirectory inode) ->
+            failwith
+                $"pread(%d{fd}) reached directory %O{inode} on Darwin's devfs, which no caller of this helper asks about"
         | Ok (answer, after) ->
             if after <> system then
                 failwith $"pread(%d{fd}, %d{count}@%d{offset}) answered %A{answer} and changed the system"

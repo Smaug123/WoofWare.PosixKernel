@@ -154,12 +154,6 @@ module HostFileSystemType =
         | FileSystemStatisticsAnswer.Reported statistics -> Ok (FileSystemStatistics.typeFields statistics)
         | FileSystemStatisticsAnswer.Failed error -> Error error
 
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     /// A directory on this host whose filesystem is the one the library
     /// defaults to for `flavour`, or `None` if this host has none: `/dev/shm`
     /// for tmpfs on Linux, and the temporary directory for APFS on macOS.
@@ -178,7 +172,7 @@ module HostFileSystemType =
             None
         else
 
-        let fd = hostOpen (candidate, 0, 0)
+        let fd = HostCalls.openFile (candidate, 0, 0)
 
         if fd < 0 then
             None
@@ -190,4 +184,4 @@ module HostFileSystemType =
             else
                 None
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>

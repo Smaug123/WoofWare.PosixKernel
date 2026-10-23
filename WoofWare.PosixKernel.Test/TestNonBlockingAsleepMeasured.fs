@@ -141,20 +141,24 @@ module TestNonBlockingAsleepMeasured =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.spawn sleeper
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        system.Process.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                        |> SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch
-                                { SignalCatch.ofHandler "h" with
-                                    Restart = restart
-                                })
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    proc.Signals
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch
+                            { SignalCatch.ofHandler "h" with
+                                Restart = restart
+                            })
+            }
+        )
 
     let private isWrite (transfer : Transfer) : bool =
         match transfer with
@@ -177,7 +181,9 @@ module TestNonBlockingAsleepMeasured =
     type private Step =
         | Answered of Answer
         | Sleeps
-        | Restarts
+        /// A signal interrupted the call: the thread's return to user mode
+        /// says how it ends.
+        | Interrupted
 
     let private ofWrite
         (where : string)
@@ -188,14 +194,16 @@ module TestNonBlockingAsleepMeasured =
             match progress with
             | CallProgress.Answered fate -> fate
             | CallProgress.NeedsCopyIn paused ->
-                UnixReadWrite.writeWithBytes (bytesOf (PausedWrite.copyRange paused).ByteCount) paused
+                match UnixReadWrite.writeWithBytes (bytesOf (PausedWrite.copyRange paused).ByteCount) paused with
+                | fate, None -> fate
+                | _, Some delivery -> failwith $"%s{where}: a write into a pipe the process made delivered %A{delivery}"
 
         match fate with
         | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed n), system) -> Step.Answered (Ok n), system
         | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system) ->
             Step.Answered (Error error), system
         | ProcessFate.Continues (WriteOutcome.WouldBlock _, system) -> Step.Sleeps, system
-        | ProcessFate.Continues (WriteOutcome.Restarts, system) -> Step.Restarts, system
+        | ProcessFate.Continues (WriteOutcome.Interrupted, system) -> Step.Interrupted, system
         | other -> failwith $"%s{where}: the write came to %A{other}"
 
     let private ofRead (where : string) (outcome : ReadOutcome, system : UnixSystem<int, string>) =
@@ -203,7 +211,7 @@ module TestNonBlockingAsleepMeasured =
         | ReadOutcome.Answered (ReadAnswer.Completed bytes) -> Step.Answered (Ok (int64 bytes.Length)), system
         | ReadOutcome.Answered (ReadAnswer.Failed error) -> Step.Answered (Error error), system
         | ReadOutcome.WouldBlock _ -> Step.Sleeps, system
-        | ReadOutcome.Restarts -> Step.Restarts, system
+        | ReadOutcome.Interrupted -> Step.Interrupted, system
         | other -> failwith $"%s{where}: the read came to %A{other}"
 
     /// `thread` writes `count` bytes through `fd`.
@@ -215,7 +223,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.write thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.write (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofWrite where
 
     /// `thread` reads up to `count` bytes through `fd`.
@@ -227,7 +235,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.read thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.read (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofRead where
 
     /// `thread` makes the transfer's call of `count` bytes through `fd`.
@@ -248,44 +256,63 @@ module TestNonBlockingAsleepMeasured =
     /// The woken sleeper's call, finished.
     let private finish (where : string) (transfer : Transfer) (system : UnixSystem<int, string>) =
         if isWrite transfer then
-            UnixReadWrite.finishWrite sleeper system |> ofWrite where
+            UnixReadWrite.finishWrite (Callers.thread sleeper system) system
+            |> ofWrite where
         else
-            UnixReadWrite.finishRead sleeper system |> ofRead where
+            UnixReadWrite.finishRead (Callers.thread sleeper system) system |> ofRead where
 
     /// The sleeper returns to user mode: every handler it takes runs and
     /// returns. How many ran.
     let rec private returnToUser (where : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixSignal.onReturnToUser sleeper system with
-        | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> 0, system
-        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system) ->
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
+        | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> 0, system
+        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system) ->
             let system =
                 (system, frames)
-                ||> List.fold (fun system frame -> UnixSignal.sigreturn sleeper frame.Id system)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
 
             let more, system = returnToUser where system
             List.length frames + more, system
         | other -> failwith $"%s{where}: returning to user mode came to %A{other}"
 
+    /// The sleeper, whose call a signal interrupted, returns to user mode: how
+    /// the call ends, and how many handlers ran, every one returning.
+    let private returnFromInterrupted
+        (where : string)
+        (system : UnixSystem<int, string>)
+        : InterruptedCall * int * UnixSystem<int, string>
+        =
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
+        | ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some call), system) -> call, 0, system
+        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, Some call), system) ->
+            let system =
+                (system, frames)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
+
+            let more, system = returnToUser where system
+            call, List.length frames + more, system
+        | other -> failwith $"%s{where}: returning from the interrupted call came to %A{other}"
+
     /// Non-blocking writes of `chunk` bytes through `fd` by the leader until
     /// EAGAIN.
     let private filled (where : string) (fd : int) (chunk : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec fill (system : UnixSystem<int, string>) =
-            match writeCall where system.Leader fd chunk system with
+            match writeCall where (Lone.leader system) fd chunk system with
             | Step.Answered (Ok _), system -> fill system
             | Step.Answered (Error UnixError.EAGAIN), system -> system
             | other, _ -> failwith $"%s{where}: filling fd %d{fd} came to %A{other}"
 
         let system = fill system
-        UnixDescriptor.setNonBlocking fd false system |> snd
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd false system |> snd
 
     /// Non-blocking reads through `fd` by the leader until EAGAIN.
     let private drained (where : string) (fd : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec drain (system : UnixSystem<int, string>) =
-            match readCall where system.Leader fd 65536 system with
+            match readCall where (Lone.leader system) fd 65536 system with
             | Step.Answered (Ok n), system when n > 0L -> drain system
             | Step.Answered (Error UnixError.EAGAIN), system -> system
             | other, _ -> failwith $"%s{where}: draining fd %d{fd} came to %A{other}"
@@ -300,7 +327,7 @@ module TestNonBlockingAsleepMeasured =
         | Transfer.PipeWritePartlyIn
         | Transfer.PipeRead ->
             let readFd, writeFd, system =
-                match UnixPipe.pipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.pipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Pipe2Answer.Created (r, w), system -> r, w, system
                 | other -> failwith $"%s{where}: pipe2 came to %A{other}"
 
@@ -324,7 +351,9 @@ module TestNonBlockingAsleepMeasured =
 
             let server, system = KeventWorld.accept listener system
             let system = KeventWorld.close listener system
-            let _, system = UnixDescriptor.setNonBlocking server false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server false system
 
             match transfer with
             | Transfer.ConnectionWriteNothingTaken -> client, server, filled where client 65536 system
@@ -338,9 +367,9 @@ module TestNonBlockingAsleepMeasured =
         | Transfer.PipeWriteNothingIn
         | Transfer.PipeWritePartlyIn
         | Transfer.PipeRead ->
-            match FileDescriptorRegistry.tryFindTarget callFd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget callFd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Pipe (pipeId, _)) ->
-                Some (PipeBuffer.held (UnixMachineState.pipe pipeId system.Machine).Buffer)
+                Some (PipeBuffer.held (UnixMachineState.pipe pipeId (Kernel.machine system)).Buffer)
             | other -> failwith $"fd %d{callFd} names %A{other}"
         | Transfer.ConnectionWriteNothingTaken
         | Transfer.ConnectionRead -> None
@@ -351,7 +380,7 @@ module TestNonBlockingAsleepMeasured =
         if isWrite transfer then
             drained where otherFd system
         else
-            match writeCall where system.Leader otherFd 1 system with
+            match writeCall where (Lone.leader system) otherFd 1 system with
             | Step.Answered (Ok 1L), system -> system
             | other, _ -> failwith $"%s{where}: writing a byte through fd %d{otherFd} came to %A{other}"
 
@@ -377,25 +406,23 @@ module TestNonBlockingAsleepMeasured =
 
         let system =
             if row.NonBlock then
-                UnixDescriptor.setNonBlocking callFd true system |> snd
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system |> snd
             else
                 system
 
         // Setting the flag wakes nothing: the call was still asleep at the
         // signal.
-        UnixWait.wakes (Set.singleton sleeper) system |> shouldEqual []
+        Lone.wakes system |> shouldEqual []
 
         let signo =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
 
         let system =
-            match UnixSignal.pthreadKill sleeper signo system with
-            | Ok (ProcessFate.Continues (_, system)) -> system
+            match UnixSignal.pthreadKill (Callers.leader system) sleeper signo system with
+            | ProcessFate.Continues (KillAnswer.Completed _, system) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 
-        UnixWait.wakes (Set.singleton sleeper) system
-        |> List.map fst
-        |> shouldEqual [ sleeper ]
+        let system = Lone.waking [ sleeper ] system
 
         // As a client does: answered, the thread returns to user mode and runs
         // its handler; restarted, it runs its handler and makes the call again.
@@ -404,8 +431,13 @@ module TestNonBlockingAsleepMeasured =
             | Step.Answered answer, system ->
                 let handled, system = returnToUser where system
                 Ending.Returned answer, handled, system
-            | Step.Restarts, system ->
-                let handled, system = returnToUser where system
+            | Step.Sleeps, _ -> failwith $"%s{where}: the signalled call slept on without a restart"
+            | Step.Interrupted, system ->
+
+            match returnFromInterrupted where system with
+            | InterruptedCall.FailsWithEintr, handled, system ->
+                Ending.Returned (Error UnixError.EINTR), handled, system
+            | InterruptedCall.Restarts, handled, system ->
 
                 match issue where row.Transfer sleeper callFd count system with
                 | Step.Answered answer, system ->
@@ -414,17 +446,14 @@ module TestNonBlockingAsleepMeasured =
                 | Step.Sleeps, system ->
                     let system = unstuck where row.Transfer otherFd system
 
-                    UnixWait.wakes (Set.singleton sleeper) system
-                    |> List.map fst
-                    |> shouldEqual [ sleeper ]
+                    let system = Lone.waking [ sleeper ] system
 
                     match finish where row.Transfer system with
                     | Step.Answered answer, system ->
                         let more, system = returnToUser where system
                         Ending.SleptOn answer, handled + more, system
                     | other, _ -> failwith $"%s{where}: the unstuck call came to %A{other}"
-                | Step.Restarts, _ -> failwith $"%s{where}: the restarted call restarted again"
-            | Step.Sleeps, _ -> failwith $"%s{where}: the signalled call slept on without a restart"
+                | Step.Interrupted, _ -> failwith $"%s{where}: the restarted call was interrupted again"
 
         if ending <> row.Ending || handled <> row.Handled then
             failwith $"%s{where}: came to %A{ending} with %d{handled} handlers run"
@@ -432,7 +461,8 @@ module TestNonBlockingAsleepMeasured =
         match row.Then with
         | None -> ()
         | Some measured ->
-            let _, system = UnixDescriptor.setNonBlocking callFd true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system
 
             match issue where row.Transfer sleeper callFd 1 system with
             | Step.Answered answer, _ when answer = measured -> ()

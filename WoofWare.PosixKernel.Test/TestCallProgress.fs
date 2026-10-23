@@ -16,6 +16,7 @@ open WoofWare.PosixKernel
 /// helpers every other test writes through (`WriteOutcomes`, `CopyIn`,
 /// `SockOptCalls`); this fixture is about the protocol's own promises.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestCallProgress =
 
     /// What a write under the property below came to.
@@ -43,7 +44,7 @@ module TestCallProgress =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte (i % 251)))
 
     let private nonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        snd (UnixDescriptor.setNonBlocking fd value system)
+        snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd value system)
 
     /// A pipe on `platform`, `prefill` bytes into it as far as it takes them
     /// without blocking, and its write end blocking or not as `writeNonBlocking`
@@ -55,7 +56,9 @@ module TestCallProgress =
         : int * UnixSystem<int, string>
         =
         let writeFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped (systemOn platform) with
+            let system = systemOn platform
+
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (_, writeFd), system) -> writeFd, system
             | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
@@ -96,7 +99,7 @@ module TestCallProgress =
             =
             let writeFd, system = pipeWith platform prefill writeNonBlocking
 
-            match UnixReadWrite.write 0 writeFd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.write (Callers.thread 0 system) writeFd UserBuffer.Mapped (uint64 count) system with
             | CallProgress.Answered _ -> cover Reached.Answered
             | CallProgress.NeedsCopyIn paused ->
                 let range = PausedWrite.copyRange paused
@@ -121,8 +124,10 @@ module TestCallProgress =
                 let second = UnixReadWrite.writeWithBytes bytes paused
 
                 match first, second with
-                | ProcessFate.Continues (outcome, after), ProcessFate.Continues (outcome', after') ->
+                | (ProcessFate.Continues (outcome, after), delivery),
+                  (ProcessFate.Continues (outcome', after'), delivery') ->
                     outcome' |> shouldEqual outcome
+                    delivery' |> shouldEqual delivery
                     (after' = after) |> shouldEqual true
                 | first, second -> failwith $"a write into a pipe ended the process: %A{first}, %A{second}"
 
@@ -137,16 +142,18 @@ module TestCallProgress =
             (coverage.Count reached >= 20) |> shouldEqual true
 
     let private socketOn (platform : SimulatedUnixPlatform) : int * UnixSystem<int, string> =
+        let system = systemOn platform
+
         // AF_INET and SOCK_STREAM are 2 and 1 under both flavours.
-        match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 (systemOn platform) with
-        | Ok (fd, system) -> fd, system
-        | Error error -> failwith $"socket failed with %O{error}"
+        match UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
     [<Test>]
     let ``a bind that copies no bytes of its sockaddr answers without stopping`` () : unit =
         let fd, system = socketOn SimulatedUnixPlatform.linuxX64
 
-        match UnixSocket.bind fd UserBuffer.Mapped 0u system with
+        match UnixSocket.bind (Callers.leader system) fd UserBuffer.Mapped 0u system with
         | CallProgress.Answered (BindAnswer.Failed _, after) -> (after = system) |> shouldEqual true
         | other -> failwith $"a bind of a zero-length sockaddr answered %A{other}"
 
@@ -154,7 +161,7 @@ module TestCallProgress =
     let ``a bind resumed with other than the bytes it asked for fails loudly`` () : unit =
         let fd, system = socketOn SimulatedUnixPlatform.linuxX64
 
-        match UnixSocket.bind fd UserBuffer.Mapped 16u system with
+        match UnixSocket.bind (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | CallProgress.NeedsCopyIn paused ->
             let range = PausedBind.copyRange paused
 
@@ -207,14 +214,53 @@ module TestCallProgress =
             fun () ->
                 UnixNamespace.linkWithDestination path Unchecked.defaultof<PausedLink<int, string>>
                 |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixFutex.futexWithWord",
+            fun () ->
+                UnixFutex.futexWithWord 0u Unchecked.defaultof<PausedFutexWait<int, string>>
+                |> ignore<SyscallOutcome * UnixSystem<int, string>>
             "UnixReadWrite.writeWithBytes",
             fun () ->
                 UnixReadWrite.writeWithBytes bytes Unchecked.defaultof<PausedWrite<int, string>>
-                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string> * Delivery option>
             "UnixReadWrite.sendWithBytes",
             fun () ->
                 UnixReadWrite.sendWithBytes bytes Unchecked.defaultof<PausedSend<int, string>>
                 |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+            "UnixReadWrite.sendtoWithAddress",
+            fun () ->
+                UnixReadWrite.sendtoWithAddress bytes Unchecked.defaultof<PausedSendToAddress<int, string>>
+                |> ignore<CallProgress<PausedSend<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithHeader",
+            fun () ->
+                UnixReadWrite.sendmsgWithHeader
+                    {
+                        MessageName = UserBuffer.Unmapped 0UL
+                        MessageNameLength = 0u
+                        MessageVectors = UserBuffer.Unmapped 0UL
+                        MessageVectorCount = 0UL
+                        MessageControl = UserBuffer.Unmapped 0UL
+                        MessageControlLength = 0UL
+                    }
+                    Unchecked.defaultof<PausedSendMsgHeader<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithName",
+            fun () ->
+                UnixReadWrite.sendmsgWithName bytes Unchecked.defaultof<PausedSendMsgName<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithVectors",
+            fun () ->
+                UnixReadWrite.sendmsgWithVectors
+                    ImmutableArray.Empty
+                    Unchecked.defaultof<PausedSendMsgVectors<int, string>>
+                |> ignore<CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>>
+            "UnixReadWrite.sendmsgWithBytes",
+            fun () ->
+                UnixReadWrite.sendmsgWithBytes ImmutableArray.Empty Unchecked.defaultof<PausedSendMsgBytes<int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+            "UnixReadWrite.recvfromWithLength",
+            fun () ->
+                UnixReadWrite.recvfromWithLength 16u Unchecked.defaultof<PausedRecvFrom<int, string>>
+                |> ignore<RecvFromOutcome * UnixSystem<int, string>>
             "UnixReadWrite.pwriteWithBytes",
             fun () ->
                 UnixReadWrite.pwriteWithBytes bytes Unchecked.defaultof<PausedPWrite<int, string>>
@@ -251,7 +297,8 @@ module TestCallProgress =
             |> List.find (fun (candidate : string, _) -> candidate = name)
             |> snd
 
-        let exn = Assert.Throws<exn> (fun () -> resume ())
+        let exn = Assert.Throws<ArgumentNullException> (fun () -> resume ())
+        exn.ParamName |> shouldEqual "paused"
         exn.Message |> shouldContainText name
         exn.Message |> shouldContainText "Unchecked.defaultof"
 
@@ -274,7 +321,14 @@ module TestCallProgress =
                 )
                 |> Seq.map (fun (m : Reflection.MethodInfo) -> $"%s{t.Name}.%s{m.Name}")
             )
-            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange"))
+            // What a paused call says of itself resumes nothing, and nor does
+            // a case of the union of the copies a `sendmsg` stops at next.
+            |> Seq.filter (fun (name : string) ->
+                not (name.Contains ".copyRange")
+                && name <> "PausedRecvFrom.received"
+                && name <> "PausedSendMsgVectors.count"
+                && not (name.StartsWith ("SendMsgCopy", StringComparison.Ordinal))
+            )
             |> Set.ofSeq
 
         resumes |> shouldEqual (resumesOfNull |> List.map fst |> Set.ofList)
@@ -286,6 +340,7 @@ module TestCallProgress =
 
         match
             UnixSocket.getsockopt
+                (Callers.leader system)
                 fd
                 (SimulatedUnixPlatform.socketOptionLevel platform)
                 (SimulatedUnixPlatform.reuseAddressOption platform)

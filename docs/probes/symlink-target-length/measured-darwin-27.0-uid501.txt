@@ -1,0 +1,44 @@
+# Darwin 27.0.0, uid 501; the second directory is an HFS+ disk image (hdiutil create -fs HFS+, attached by uid 501)
+PATH_MAX=1024 euid=501
+dir=/private/tmp/symlen-probe-darwin f_fstypename=apfs
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ENAMETOOLONG
+symlink   len=1025: ENAMETOOLONG
+symlink   len=4094: ENAMETOOLONG
+symlink   len=4095: ENAMETOOLONG
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ENAMETOOLONG
+symlinkat len=1025: ENAMETOOLONG
+symlinkat len=4094: ENAMETOOLONG
+symlinkat len=4095: ENAMETOOLONG
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG
+dir=/private/tmp/symlen-probe-darwin/hfs f_fstypename=hfs
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ENAMETOOLONG
+symlink   len=1025: ENAMETOOLONG
+symlink   len=4094: ENAMETOOLONG
+symlink   len=4095: ENAMETOOLONG
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ENAMETOOLONG
+symlinkat len=1025: ENAMETOOLONG
+symlinkat len=4094: ENAMETOOLONG
+symlinkat len=4095: ENAMETOOLONG
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG

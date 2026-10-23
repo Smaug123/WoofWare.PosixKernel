@@ -13,9 +13,11 @@ open System.Collections.Immutable
 ///
 /// Resuming a `'Paused` with what it asks for answers `'Answer`, the same type
 /// `Answered` carries, or, where the call copies again after that, another
-/// `CallProgress` with the same `'Answer`. Each paused type says what to copy:
-/// one that copies bytes has a `copyRange`, and its module the function that
-/// resumes it.
+/// `CallProgress` with the same `'Answer`. The one exception is a write's:
+/// `UnixReadWrite.writeWithBytes` answers beside the `'Answer` the bytes the
+/// write delivered out of the machine, which a write answered before its copy
+/// has none of. Each paused type says what to copy: one that copies bytes has
+/// a `copyRange`, and its module the function that resumes it.
 [<RequireQualifiedAccess>]
 type CallProgress<'Paused, 'Answer> =
     /// The call is over, without reading (any more of) the caller's memory.
@@ -40,14 +42,30 @@ module internal CallProgress =
         | Ok (CallProgress.Answered answer) -> Ok answer
         | Ok (CallProgress.NeedsCopyIn paused) -> resume paused
 
-    /// Fails loudly if `paused` is null, as only `Unchecked.defaultof` or C#
-    /// `default` can make a paused call: `resume` names the function the
-    /// client called with it, and `origin` the functions that answer one.
+    /// `progress` with its answer made `f` of what it was, if the call is over;
+    /// a paused call is left as it is.
+    let mapAnswered<'Paused, 'Answer, 'Mapped>
+        (f : 'Answer -> 'Mapped)
+        (progress : CallProgress<'Paused, 'Answer>)
+        : CallProgress<'Paused, 'Mapped>
+        =
+        match progress with
+        | CallProgress.Answered answer -> CallProgress.Answered (f answer)
+        | CallProgress.NeedsCopyIn paused -> CallProgress.NeedsCopyIn paused
+
+    /// Throws `ArgumentNullException`, naming the parameter `paused`, if
+    /// `paused` is null, as only `Unchecked.defaultof` or C# `default` can make
+    /// a paused call: `resume` names the function the client called with it,
+    /// and `origin` the functions that answer one.
     let requirePaused<'Paused when 'Paused : not struct> (resume : string) (origin : string) (paused : 'Paused) : unit =
         match box paused with
         | null ->
-            failwith
-                $"%s{resume}: this paused call is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from %s{origin} instead."
+            raise (
+                Refusal.exceptionOf
+                    resume
+                    (RefusalKind.Null "paused")
+                    $"this paused call is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from %s{origin} instead."
+            )
         | _ -> ()
 
 /// The bytes of a buffer the caller passed that a paused call copies next:

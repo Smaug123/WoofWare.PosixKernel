@@ -1,0 +1,119 @@
+Darwin 27.0.0 arm64
+i/s holder OK at 127.0.0.1:57304 (T=57304)
+i/s connect to Y -> OK from port T-1
+i/s connect to Y -> OK from port T+1
+i/s connect to Y -> OK from port T+2
+i/s connect to Y -> OK from port T+3
+i/sr holder OK at 127.0.0.1:57310 (T=57310)
+i/sr connect to Y -> OK from port T-1
+i/sr connect to Y -> OK from port T+1
+i/sr connect to Y -> OK from port T+2
+i/sr connect to Y -> OK from port T+3
+ir/s holder OK at 127.0.0.1:57316 (T=57316)
+ir/s connect to Y -> OK from port T-1
+ir/s connect to Y -> OK from port T+1
+ir/s connect to Y -> OK from port T+2
+ir/s connect to Y -> OK from port T+3
+ir/sr holder OK at 127.0.0.1:57322 (T=57322)
+ir/sr connect to Y -> OK from port T-1
+ir/sr connect to Y -> OK from port T+1
+ir/sr connect to Y -> OK from port T+2
+ir/sr connect to Y -> OK from port T+3
+o/s holder OK at 172.20.10.8:57328 (T=57328)
+o/s connect to Y -> OK from port T-1
+o/s connect to Y -> OK from port T+1
+o/s connect to Y -> OK from port T+2
+o/s connect to Y -> OK from port T+3
+o/sr holder OK at 172.20.10.8:57334 (T=57334)
+o/sr connect to Y -> OK from port T-1
+o/sr connect to Y -> OK from port T+1
+o/sr connect to Y -> OK from port T+2
+o/sr connect to Y -> OK from port T+3
+L/s holder OK at 127.0.0.1:57340 (T=57340)
+L/s connect to Y -> OK from port T-1
+L/s connect to Y -> OK from port T+1
+L/s connect to Y -> OK from port T+2
+L/s connect to Y -> OK from port T+3
+L/sr holder OK at 127.0.0.1:57346 (T=57346)
+L/sr connect to Y -> OK from port T-1
+L/sr connect to Y -> OK from port T+1
+L/sr connect to Y -> OK from port T+2
+L/sr connect to Y -> OK from port T+3
+e/s holder OK at 127.0.0.1:57352 (T=57352)
+e/s connect to Y -> OK from port T-1
+e/s connect to Y -> OK from port T+1
+e/s connect to Y -> OK from port T+2
+e/s connect to Y -> OK from port T+3
+e/sr holder OK at 127.0.0.1:57358 (T=57358)
+e/sr connect to Y -> OK from port T-1
+e/sr connect to Y -> OK from port T+1
+e/sr connect to Y -> OK from port T+2
+e/sr connect to Y -> OK from port T+3
+er/s holder OK at 127.0.0.1:57364 (T=57364)
+er/s connect to Y -> OK from port T-1
+er/s connect to Y -> OK from port T+1
+er/s connect to Y -> OK from port T+2
+er/s connect to Y -> OK from port T+3
+er/sr holder OK at 127.0.0.1:57370 (T=57370)
+er/sr connect to Y -> OK from port T-1
+er/sr connect to Y -> OK from port T+1
+er/sr connect to Y -> OK from port T+2
+er/sr connect to Y -> OK from port T+3
+c/s holder OK at 127.0.0.1:57376 (T=57376)
+c/s walked the sequence round in 16195 refused connects, 0 of which took T
+c/s connect to Y -> OK from port T-1
+c/s connect to Y -> OK from port T+1
+c/s connect to Y -> OK from port T+2
+c/s connect to Y -> OK from port T+3
+c/sr holder OK at 127.0.0.1:57382 (T=57382)
+c/sr walked the sequence round in 16172 refused connects, 0 of which took T
+c/sr connect to Y -> OK from port T-1
+c/sr connect to Y -> OK from port T+1
+c/sr connect to Y -> OK from port T+2
+c/sr connect to Y -> OK from port T+3
+cr/s holder OK at 127.0.0.1:57388 (T=57388)
+cr/s walked the sequence round in 16168 refused connects, 0 of which took T
+cr/s connect to Y -> OK from port T-1
+cr/s connect to Y -> OK from port T+1
+cr/s connect to Y -> OK from port T+2
+cr/s connect to Y -> OK from port T+3
+cr/sr holder OK at 127.0.0.1:57394 (T=57394)
+cr/sr walked the sequence round in 16173 refused connects, 0 of which took T
+cr/sr connect to Y -> OK from port T-1
+cr/sr connect to Y -> OK from port T+1
+cr/sr connect to Y -> OK from port T+2
+cr/sr connect to Y -> OK from port T+3
+f/s holder OK at 127.0.0.1:57400, closed (T=57400)
+f/s walked the sequence round in 16168 refused connects, 0 of which took T
+f/s connect to Y -> OK from port T-1
+f/s connect to Y -> OK from port T+1
+f/s connect to Y -> OK from port T+2
+f/s connect to Y -> OK from port T+3
+f/sr holder OK at 127.0.0.1:57406, closed (T=57406)
+f/sr walked the sequence round in 16155 refused connects, 0 of which took T
+f/sr connect to Y -> OK from port T-1
+f/sr connect to Y -> OK from port T+1
+f/sr connect to Y -> OK from port T+2
+f/sr connect to Y -> OK from port T+3
+fr/s holder OK at 127.0.0.1:57412, closed (T=57412)
+fr/s walked the sequence round in 16148 refused connects, 0 of which took T
+fr/s connect to Y -> OK from port T-1
+fr/s connect to Y -> OK from port T+1
+fr/s connect to Y -> OK from port T+2
+fr/s connect to Y -> OK from port T+3
+fr/sr holder OK at 127.0.0.1:57418, closed (T=57418)
+fr/sr walked the sequence round in 16145 refused connects, 0 of which took T
+fr/sr connect to Y -> OK from port T-1
+fr/sr connect to Y -> OK from port T+1
+fr/sr connect to Y -> OK from port T+2
+fr/sr connect to Y -> OK from port T+3
+fe/s holder OK at 127.0.0.1:57424, closed (T=57424)
+fe/s connect to Y -> OK from port T-1
+fe/s connect to Y -> OK from port T+1
+fe/s connect to Y -> OK from port T+2
+fe/s connect to Y -> OK from port T+3
+fe/sr holder OK at 127.0.0.1:57430, closed (T=57430)
+fe/sr connect to Y -> OK from port T-1
+fe/sr connect to Y -> OK from port T+1
+fe/sr connect to Y -> OK from port T+2
+fe/sr connect to Y -> OK from port T+3

@@ -41,17 +41,17 @@ module TestSuppliedPipe =
         | Error refusal -> failwith $"read(0, %d{count}) was refused: %s{ReadRefusal.describe refusal}"
 
     let private fionread (system : UnixSystem<int, string>) : int =
-        match UnixDescriptor.tryBytesAvailable 0 UserBuffer.Mapped system with
-        | Ok (BytesAvailableAnswer.Reported count) -> count
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) 0 UserBuffer.Mapped system with
+        | Ok (BytesAvailableAnswer.Reported count, _) -> count
         | other -> failwith $"FIONREAD on descriptor 0 answered %A{other}"
 
     /// What `poll` reports for descriptor 0 on Linux.
     let private linuxLevel (system : UnixSystem<int, string>) : uint32 =
         match FileDescriptorRegistry.tryFindId 0 (Lone.fileDescriptors system) with
-        | Some id -> LinuxReadiness.ofDescription id system
+        | Some id -> Lone.LinuxReadiness.ofDescription id system
         | None -> failwith "descriptor 0 is not open"
 
-    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = system.Machine.Pipes.[PipeId 0L]
+    let private stdinPipe (system : UnixSystem<int, string>) : PipeState = (UnixSystem.pipes system).[PipeId 0L]
 
     let private writerOpen (system : UnixSystem<int, string>) : bool =
         PipeState.heldByClient PipeEnd.Write (stdinPipe system)
@@ -441,13 +441,14 @@ module TestSuppliedPipe =
             let system = launch SimulatedUnixPlatform.linuxArm64 (patterned length)
 
             let epoll, system =
-                match UnixPoll.tryEpollCreate1 0 system with
-                | Ok (Ok (epoll, system)) -> epoll, system
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+                | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
                 | other -> failwith $"%s{name}: epoll_create1 answered %A{other}"
 
             let system =
                 match
                     UnixPoll.tryEpollCtl
+                        (Callers.leader system)
                         epoll
                         1
                         0
@@ -458,7 +459,7 @@ module TestSuppliedPipe =
                 | other -> failwith $"%s{name}: the registration answered %A{other}"
 
             let wait (where : string) (system : UnixSystem<int, string>) : uint32 option * UnixSystem<int, string> =
-                match UnixPoll.tryEpollWait 0 epoll 8 UserBuffer.Mapped 0 system with
+                match UnixPoll.tryEpollWait (Callers.thread 0 system) epoll 8 UserBuffer.Mapped 0 system with
                 | Ok (EpollWaitOutcome.Answered [], system) -> None, system
                 | Ok (EpollWaitOutcome.Answered [ 7UL, events ], system) -> Some events, system
                 | other -> failwith $"%s{where}: epoll_wait answered %A{other}"
@@ -490,12 +491,12 @@ module TestSuppliedPipe =
             writerOpen system |> shouldEqual true
 
             let duplicate, system =
-                match Answered.dup 0 system with
-                | SyscallAnswer.Completed fd, system -> int fd, system
+                match Answered.dup (Callers.leader system) 0 system with
+                | DescriptorAnswer.Returned fd, system -> fd, system
                 | other -> failwith $"dup(0) answered %A{other}"
 
             let closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close(%d{fd}) answered %A{other}"
 
@@ -508,7 +509,7 @@ module TestSuppliedPipe =
             // nothing holds the pipe.
             let system = closeOrFail duplicate system
             assertInvariants "after closing the duplicate" system
-            Map.containsKey (PipeId 0L) system.Machine.Pipes |> shouldEqual false
+            Map.containsKey (PipeId 0L) (UnixSystem.pipes system) |> shouldEqual false
 
     [<Test>]
     let ``a Linux writer resuming fills a free slot rather than merging into the newest`` () : unit =
@@ -557,18 +558,19 @@ module TestSuppliedPipe =
             // Emptied behind the client's back: it would have written into the
             // room, so a state where it has not is not one the kernel reaches.
             let emptied =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Pipes =
                                 Map.add
                                     (PipeId 0L)
                                     { stdinPipe system with
                                         Buffer = snd (PipeBuffer.read 65536 (stdinPipe system).Buffer)
                                     }
-                                    system.Machine.Pipes
+                                    machine.Pipes
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants emptied
             |> shouldEqual [ UnixSystemDefect.SuppliedPipeHasRoom (PipeId 0L) ]

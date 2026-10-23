@@ -1,5 +1,58 @@
 namespace WoofWare.PosixKernel
 
+/// Why the directory a host named cannot be the one a simulated process starts
+/// in (`ProcessLaunch.withCurrentDirectory`). Launching the process returns one
+/// instead of deciding what to say about it: the remedy is always "fix the
+/// knob you set this from", and only the caller knows what that knob is called.
+///
+/// Every case is a host mistake rather than a process's, which is why none of
+/// them is a `UnixError`: there is no errno for "you launched a process in a
+/// directory the filesystem does not contain", and answering ENOENT would blame
+/// a process's path when there is no process yet.
+///
+/// Four cases, and deliberately not six. The walk could also answer an inode
+/// the filesystem does not contain, or a directory no path from the root
+/// reaches — but not for a filesystem whose invariants hold, walked from its
+/// root, so those are bugs in this library and crash rather than being handed
+/// to a caller who could do nothing about them.
+[<RequireQualifiedAccess>]
+type internal CurrentDirectoryFault =
+    /// The path does not resolve in the seeded filesystem at all. Carries what
+    /// the walk answered.
+    | DoesNotResolve of UnixError
+    /// The walk refused the path as too long. Distinguished from
+    /// `DoesNotResolve` because the directory may well be present: it is a
+    /// *length* that is unusable, and the remedy is to shorten something rather
+    /// than to go looking for a missing directory.
+    ///
+    /// Which length is deliberately not said, because the walk does not say:
+    /// `ENAMETOOLONG` is one errno covering a component past this flavour's
+    /// `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a
+    /// symbolic link whose expansion would carry the whole path past
+    /// `PATH_MAX`. A real kernel conflates them too. Splitting the case would
+    /// need the path walk to report which limit it hit, which every other
+    /// caller of the walk would pay for.
+    ///
+    /// Carries the flavour so that a fault which outlives the call still says
+    /// whose limits were in force -- 255 CJK characters name a directory a
+    /// Darwin process can start in and a Linux one cannot, and only Darwin
+    /// re-checks a splice at all.
+    | TooLong of SimulatedUnixFlavour
+    /// The path resolves, to something that is not a directory.
+    | NotADirectory
+    /// This kernel will not resolve the path.
+    | Path of PathRefusal
+
+[<RequireQualifiedAccess>]
+module internal CurrentDirectoryFault =
+    /// Which exception a public entry point raises this fault as.
+    let kind (fault : CurrentDirectoryFault) : RefusalKind =
+        match fault with
+        | CurrentDirectoryFault.DoesNotResolve _ -> RefusalKind.Contradictory "launch"
+        | CurrentDirectoryFault.TooLong _ -> RefusalKind.Contradictory "launch"
+        | CurrentDirectoryFault.NotADirectory -> RefusalKind.Contradictory "launch"
+        | CurrentDirectoryFault.Path inner -> PathRefusal.kind inner
+
 /// Why `ProcessLaunch.create` refuses a launch table.
 [<RequireQualifiedAccess>]
 type internal LaunchTableRefusal =
@@ -32,8 +85,9 @@ module internal LaunchTableRefusal =
 [<RequireQualifiedAccess>]
 type internal CredentialsRefusal =
     /// More supplementary groups than the `limit` a process can hold on
-    /// `flavour` (`SimulatedUnixPlatform.supplementaryGroupLimit`): `setgroups(2)`
-    /// answers EINVAL above `NGROUPS_MAX`. Contradictory.
+    /// `flavour` (`SimulatedUnixPlatform.supplementaryGroupsHeld`):
+    /// `setgroups(2)` answers EINVAL above `NGROUPS_MAX`, and Darwin's list of
+    /// that many holds the effective group too. Contradictory.
     | TooManySupplementaryGroups of count : int * limit : int * flavour : SimulatedUnixFlavour
     /// On Darwin, real, effective and saved IDs that are not all the same.
     /// Which of them a Darwin kernel consults has not been measured, since that
@@ -48,7 +102,7 @@ module internal CredentialsRefusal =
     let describe (refusal : CredentialsRefusal) : string =
         match refusal with
         | CredentialsRefusal.TooManySupplementaryGroups (count, limit, flavour) ->
-            $"%d{count} supplementary groups is more than the %d{limit} a process can hold on %O{flavour} (setgroups(2) answers EINVAL above NGROUPS_MAX)."
+            $"%d{count} supplementary groups is more than the %d{limit} a process can hold on %O{flavour} (setgroups(2) answers EINVAL above NGROUPS_MAX, and on Darwin its list holds the effective group too)."
         | CredentialsRefusal.IdsDifferOnDarwin credentials ->
             $"the credentials %O{credentials} have real, effective and saved IDs that differ, which this library does not model on Darwin: which of them a Darwin kernel consults has not been measured. Give all three the same user ID and the same group ID."
 
@@ -125,10 +179,75 @@ module internal LaunchRefusal =
         | LaunchRefusal.CurrentDirectory (_, inner) -> CurrentDirectoryFault.kind inner
         | LaunchRefusal.LeaderCpuBeyondMachine _ -> RefusalKind.Contradictory "launch"
 
+/// Why `ProcessLaunch.withPendingSignalLimit` refuses a limit.
+[<RequireQualifiedAccess>]
+type internal PendingSignalLimitRefusal =
+    /// The launch is for `flavour`, which has no `RLIMIT_SIGPENDING`: Darwin
+    /// defines no such resource limit and queues no real-time signal.
+    | NoSuchLimit of flavour : SimulatedUnixFlavour
+
+[<RequireQualifiedAccess>]
+module internal PendingSignalLimitRefusal =
+    /// What this library knows about why it refused the limit, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : PendingSignalLimitRefusal) : string =
+        match refusal with
+        | PendingSignalLimitRefusal.NoSuchLimit flavour ->
+            $"%O{flavour} has no RLIMIT_SIGPENDING: it defines no such resource limit and queues no real-time signal."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : PendingSignalLimitRefusal) : RefusalKind =
+        match refusal with
+        | PendingSignalLimitRefusal.NoSuchLimit _ -> RefusalKind.NotOnPlatform
+
+/// What a process starts with unless its launch says otherwise: the values of
+/// `UnixSystem`'s defaults of the same names, whose docstrings say why each is
+/// what it is.
+[<RequireQualifiedAccess>]
+module internal LaunchDefaults =
+    /// `UnixSystem.defaultCurrentDirectory`.
+    let currentDirectory : AbsoluteUnixPath = AbsoluteUnixPath.root
+
+    /// `UnixSystem.defaultProcessPath`.
+    let processPath : AbsoluteUnixPath option = None
+
+    /// `UnixSystem.defaultUserId`.
+    let userId (flavour : SimulatedUnixFlavour) : UserId =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> UserId.parseOrFail "UnixSystem.defaultUserId" 1000u
+        | SimulatedUnixFlavour.Darwin -> UserId.parseOrFail "UnixSystem.defaultUserId" 501u
+
+    /// `UnixSystem.defaultGroupId`.
+    let groupId (flavour : SimulatedUnixFlavour) : GroupId =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 1000u
+        | SimulatedUnixFlavour.Darwin -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 20u
+
+    /// `UnixSystem.defaultCredentials`.
+    let credentials (flavour : SimulatedUnixFlavour) : Credentials =
+        Credentials.ofIds (userId flavour) (groupId flavour) []
+
+    /// `UnixSystem.defaultUmask`.
+    let umask : PermissionBits =
+        PermissionBits.parseOrFail "UnixSystem.defaultUmask" 0o022
+
+    /// `UnixSystem.defaultCoreDumps`.
+    let coreDumps : CoreDumps = CoreDumps.Suppressed
+
+    /// `UnixSystem.defaultPendingSignalLimit`.
+    let pendingSignalLimit : uint64 = 4505UL
+
+    /// The `RLIMIT_SIGPENDING` a process of `flavour` starts with: Linux's
+    /// default, and none under Darwin, which has no such limit.
+    let pendingSignalLimitOf (flavour : SimulatedUnixFlavour) : uint64 voption =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> ValueSome pendingSignalLimit
+        | SimulatedUnixFlavour.Darwin -> ValueNone
+
 /// How a process starts: everything about a process that is fixed before its
 /// first instruction, as its launcher sets it up before `exec`. Both the first
 /// process on a machine (`UnixBootImage.boot`) and every later one
-/// (`SimulatedMachine.launch`) are launched from one.
+/// (`UnixSystem.launch`) are launched from one.
 ///
 /// The process's ID is not here: the kernel chooses it, from the machine's
 /// counters, when the process is launched.
@@ -152,6 +271,9 @@ type ProcessLaunch<'Thread when 'Thread : comparison> =
             Environment : UnixByteString list
             ProcessPath : AbsoluteUnixPath option
             CoreDumps : CoreDumps
+            /// Under Linux the process's `RLIMIT_SIGPENDING`; `ValueNone` under
+            /// Darwin, which has no such limit.
+            PendingSignalLimit : uint64 voption
             /// The directory the process starts in, resolved against the
             /// machine's filesystem when the process is launched.
             CurrentDirectory : AbsoluteUnixPath
@@ -193,12 +315,13 @@ module ProcessLaunch =
                     Streams = streams
                     Leader = leader
                     LeaderCpu = leaderCpu
-                    Credentials = UnixSystem.defaultCredentials flavour
-                    Umask = UnixSystem.defaultUmask
+                    Credentials = LaunchDefaults.credentials flavour
+                    Umask = LaunchDefaults.umask
                     Environment = []
-                    ProcessPath = UnixSystem.defaultProcessPath
-                    CoreDumps = UnixSystem.defaultCoreDumps
-                    CurrentDirectory = UnixSystem.defaultCurrentDirectory
+                    ProcessPath = LaunchDefaults.processPath
+                    CoreDumps = LaunchDefaults.coreDumps
+                    PendingSignalLimit = LaunchDefaults.pendingSignalLimitOf flavour
+                    CurrentDirectory = LaunchDefaults.currentDirectory
                 }
 
     /// <summary>
@@ -225,6 +348,7 @@ module ProcessLaunch =
     /// bound (`SimulatedUnixPlatform.descriptorBound`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The table names a negative descriptor, which no process has. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentNullException">`platform` is null, which only `Unchecked.defaultof` or C# `default` makes it.</exception>
     let create<'Thread when 'Thread : comparison>
         (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
@@ -252,7 +376,7 @@ module ProcessLaunch =
         let platform = launch.Platform
         let flavour = SimulatedUnixPlatform.flavour platform
         let count = List.length credentials.SupplementaryGroups
-        let limit = SimulatedUnixPlatform.supplementaryGroupLimit platform
+        let limit = SimulatedUnixPlatform.supplementaryGroupsHeld platform
 
         let idsAgree =
             credentials.RealUser = credentials.EffectiveUser
@@ -277,13 +401,13 @@ module ProcessLaunch =
     /// Set who the process is.
     ///
     /// Refuses more supplementary groups than the platform's
-    /// `SimulatedUnixPlatform.supplementaryGroupLimit`, which no process on it
+    /// `SimulatedUnixPlatform.supplementaryGroupsHeld`, which no process on it
     /// could hold. On Darwin it also refuses credentials whose real, effective
     /// and saved IDs are not all the same: which of them a Darwin kernel
     /// consults has not been measured, so this library does not model such a
     /// process there.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupLimit`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupsHeld`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`, and Darwin's list of that many holds the effective group too. Contradictory.</exception>
     let withCredentials<'Thread when 'Thread : comparison>
         (credentials : Credentials)
         (launch : ProcessLaunch<'Thread>)
@@ -298,7 +422,7 @@ module ProcessLaunch =
         (launch : ProcessLaunch<'Thread>)
         : Result<ProcessLaunch<'Thread>, UmaskRefusal>
         =
-        let umask = PermissionBits.assertValid "ProcessLaunch.withUmask" umask
+        let umask = PermissionBits.assertValidFor "ProcessLaunch.withUmask" "umask" umask
         let stored = SimulatedUnixPlatform.umaskStoredBits launch.Platform
 
         if PermissionBits.toInt umask &&& ~~~(PermissionBits.toInt stored) <> 0 then
@@ -332,8 +456,8 @@ module ProcessLaunch =
     /// and none is parsed: an entry need not be `NAME=VALUE`. See
     /// `UnixSystem.environment`.
     ///
-    /// `context` prefixes the rejection a forged entry earns, and is the
-    /// client's to choose: the host that has to fix one knows it by whatever
+    /// `context` prefixes the `ArgumentException` a forged entry, such as
+    /// `Unchecked.defaultof`, earns, and is the client's to choose: the host that has to fix one knows it by whatever
     /// name the client's own configuration gives it.
     let withEnvironment<'Thread when 'Thread : comparison>
         (context : string)
@@ -342,14 +466,14 @@ module ProcessLaunch =
         : ProcessLaunch<'Thread>
         =
         { launch with
-            Environment = environment |> List.map (UnixByteString.assertValid context)
+            Environment = environment |> List.map (UnixByteString.assertValidFor context "environment")
         }
 
     /// Set the path to the executable that started the process, or `None` to
     /// report that it has none. `None` is preserved rather than defaulted; see
     /// `UnixSystem.processPath`.
     ///
-    /// `context` prefixes the rejection a forged path earns; see
+    /// `context` prefixes the `ArgumentException` a forged path earns; see
     /// `withEnvironment`.
     let withProcessPath<'Thread when 'Thread : comparison>
         (context : string)
@@ -373,6 +497,45 @@ module ProcessLaunch =
             CoreDumps = coreDumps
         }
 
+    /// `withPendingSignalLimit`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithPendingSignalLimit<'Thread when 'Thread : comparison>
+        (limit : uint64)
+        (launch : ProcessLaunch<'Thread>)
+        : Result<ProcessLaunch<'Thread>, PendingSignalLimitRefusal>
+        =
+        match SimulatedUnixPlatform.flavour launch.Platform with
+        | SimulatedUnixFlavour.Darwin -> Error (PendingSignalLimitRefusal.NoSuchLimit SimulatedUnixFlavour.Darwin)
+        | SimulatedUnixFlavour.Linux ->
+            Ok
+                { launch with
+                    PendingSignalLimit = ValueSome limit
+                }
+
+    /// Set the process's `RLIMIT_SIGPENDING`: how many signals may be queued for
+    /// its real user, in all that user's processes on the machine, before a
+    /// signal sent to it gets no queue entry. Linux only, and fixed for the life
+    /// of the process: this library models no `setrlimit(2)`. The default is
+    /// `UnixSystem.defaultPendingSignalLimit`.
+    ///
+    /// Past the limit, a real-time signal sent by `kill` is lost, or, if no
+    /// instance of it is pending in its set, pending without the information
+    /// it was sent with; one sent by `pthread_kill` fails with `EAGAIN`; and a
+    /// standard signal is pending as before. Every limit is admitted, the
+    /// largest (`RLIM_INFINITY`) included.
+    ///
+    /// Throws `PlatformNotSupportedException` for a Darwin launch: Darwin has
+    /// no `RLIMIT_SIGPENDING`.
+    let withPendingSignalLimit<'Thread when 'Thread : comparison>
+        (limit : uint64)
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
+        =
+        tryWithPendingSignalLimit limit launch
+        |> Refusal.orRaise
+            "ProcessLaunch.withPendingSignalLimit"
+            PendingSignalLimitRefusal.kind
+            PendingSignalLimitRefusal.describe
+
     /// Set the directory the process starts in.
     ///
     /// Resolved when the process is launched, against the filesystem of the
@@ -384,13 +547,17 @@ module ProcessLaunch =
     /// resolved, because after it the process holds the *directory* rather than
     /// the name, so the path `getcwd` reports is the physical one with every
     /// symlink resolved away.
+    ///
+    /// A forged `directory`, such as `Unchecked.defaultof`, throws
+    /// `ArgumentException`.
     let withCurrentDirectory<'Thread when 'Thread : comparison>
         (directory : AbsoluteUnixPath)
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
         { launch with
-            CurrentDirectory = AbsoluteUnixPath.assertValid "ProcessLaunch.withCurrentDirectory" directory
+            CurrentDirectory =
+                AbsoluteUnixPath.assertValidFor "ProcessLaunch.withCurrentDirectory" "directory" directory
         }
 
     /// The directory `directory` names in `machine`'s filesystem, walked as
@@ -457,7 +624,7 @@ module ProcessLaunch =
         (pid : ProcessId)
         (leaderThreadId : OsThreadId)
         (machine : UnixMachineState)
-        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>, LaunchRefusal>
+        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * ThreadTable<'Thread>, LaunchRefusal>
         =
         let platform = machine.UnixPlatform
 
@@ -488,15 +655,9 @@ module ProcessLaunch =
                 fd, pipeId, pipeEnd, pipe
             )
 
-        let census =
-            if Set.isEmpty (ProcessIdTable.live machine.ProcessIds) then
-                DescriptorCensus.Complete
-            else
-                DescriptorCensus.OneProcessOf pid
-
         let registry =
             FileDescriptorRegistry.ofLaunchedPipes
-                census
+                (SimulatedUnixPlatform.flavour platform)
                 (launched
                  |> List.map (fun (fd, pipeId, pipeEnd, _) -> fd, (pipeId, pipeEnd))
                  |> Map.ofList)
@@ -524,6 +685,7 @@ module ProcessLaunch =
                 ProcessId = pid
                 Signals = SignalState.initial (SimulatedUnixPlatform.signalNumbering platform) Set.empty
                 CoreDumps = launch.CoreDumps
+                PendingSignalLimit = launch.PendingSignalLimit
             }
 
-        Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId Map.empty)
+        Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId UnixThreadTable.empty)

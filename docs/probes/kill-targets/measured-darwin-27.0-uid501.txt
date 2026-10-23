@@ -1,0 +1,22 @@
+# Darwin 27.0.0 arm64, uid 501 euid 501
+section=target target=self sig=0 answer=0
+section=target target=self sig=999 answer=EINVAL
+section=target target=reaped sig=0 answer=ESRCH
+section=target target=reaped sig=999 answer=EINVAL
+section=target target=INT_MAX sig=0 answer=ESRCH
+section=target target=INT_MAX sig=999 answer=EINVAL
+section=target target=zero sig=0 answer=0
+section=target target=zero sig=999 answer=EINVAL
+section=target target=minus-one sig=0 answer=0
+section=target target=minus-one sig=999 answer=EINVAL
+section=target target=minus-own-pgid sig=0 answer=0
+section=target target=minus-own-pgid sig=999 answer=EINVAL
+section=target target=minus-reaped sig=0 answer=ESRCH
+section=target target=minus-reaped sig=999 answer=EINVAL
+section=target target=INT_MIN sig=0 answer=ESRCH
+section=target target=INT_MIN sig=999 answer=EINVAL
+section=target target=pid-one sig=0 answer=EPERM
+section=target target=pid-one sig=999 answer=EINVAL
+section=group target=zero sig=USR1 answer=0 self-handled=1 sibling-handled=1
+section=group target=minus-pgid sig=USR1 answer=0 self-handled=1 sibling-handled=1
+# Darwin has no setresuid: sections cred, cont and all skipped

@@ -92,8 +92,25 @@ module internal CopyIn =
     let mapped (platform : SimulatedUnixPlatform) (declaredLength : uint32) (blob : byte[]) : ImmutableArray<byte> =
         prefix blob (UnixSocket.mappedCopyLength platform declaredLength)
 
-    /// The bytes `syscall`'s copy-in takes from `blob`: as many as
-    /// `tryAdmitSockaddrCopy` answers `Transfer` with, and none otherwise.
+    /// The bytes `syscall`'s copy-in by the process `pid` takes from `blob`: as
+    /// many as `tryAdmitSockaddrCopy` answers `Transfer` with, and none
+    /// otherwise.
+    let private admittedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (syscall : SockaddrCopySyscall)
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (blob : byte[])
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ImmutableArray<byte>
+        =
+        match UnixSocket.tryAdmitSockaddrCopy syscall fd destination declaredLength (Proc.view pid system) with
+        | Ok (SockaddrCopyAdmission.Transfer length) -> prefix blob length
+        | Ok (SockaddrCopyAdmission.Answered _)
+        | Error _ -> ImmutableArray.Empty
+
+    /// `admittedIn` the only process.
     let admitted<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : SockaddrCopySyscall)
         (fd : int)
@@ -103,10 +120,7 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : ImmutableArray<byte>
         =
-        match UnixSocket.tryAdmitSockaddrCopy syscall fd destination declaredLength system with
-        | Ok (SockaddrCopyAdmission.Transfer length) -> prefix blob length
-        | Ok (SockaddrCopyAdmission.Answered _)
-        | Error _ -> ImmutableArray.Empty
+        admittedIn (Lone.pid system) syscall fd destination declaredLength blob system
 
     /// `actual`, having failed unless it is what the oracle `expected` says.
     let private agreeing<'Answer, 'Refusal when 'Answer : equality and 'Refusal : equality>
@@ -128,10 +142,39 @@ module internal CopyIn =
 
         prefix blob range.ByteCount
 
-    /// `bind(2)` as a client makes it, through the library's public protocol:
+    /// `bind(2)` as `caller` makes it, through the library's public protocol:
     /// `UnixSocket.bind`, and if it stops at the copy, `bindWithAddress` of the
     /// bytes of `blob` its `copyRange` names. Held to the internal steps it is
     /// made of: admitting the copy, then `tryBindBytes` of what it takes.
+    let bindAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (blob : byte[])
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        =
+        let pid = Caller.processId caller
+
+        let expected =
+            UnixSocket.tryBindBytes
+                fd
+                destination
+                declaredLength
+                (admittedIn pid SockaddrCopySyscall.Bind fd destination declaredLength blob system)
+                (Proc.view pid system)
+            |> Result.map (fun (answer, after) -> answer, Proc.unview after)
+
+        let actual =
+            UnixSocket.tryBind caller fd destination declaredLength system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixSocket.tryBindWithAddress (copied "bind" (PausedBind.copyRange paused) blob) paused
+            )
+
+        agreeing "bind" expected actual
+
+    /// `bind(2)` as the process's leader makes it: `bindAs`.
     let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
@@ -140,27 +183,13 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
-        let expected =
-            UnixSocket.tryBindBytes
-                fd
-                destination
-                declaredLength
-                (admitted SockaddrCopySyscall.Bind fd destination declaredLength blob system)
-                system
+        bindAs (Callers.leader system) fd destination declaredLength blob system
 
-        let actual =
-            UnixSocket.tryBind fd destination declaredLength system
-            |> CallProgress.resumeWith (fun paused ->
-                UnixSocket.tryBindWithAddress (copied "bind" (PausedBind.copyRange paused) blob) paused
-            )
-
-        agreeing "bind" expected actual
-
-    /// `connect(2)` as `thread` makes it, through the library's public
-    /// protocol, held to the internal steps it is made of, as `bind` is, and
+    /// `connect(2)` as `caller` makes it, through the library's public
+    /// protocol, held to the internal steps it is made of, as `bindAs` is, and
     /// failing the test if the call sleeps.
     let connectAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
@@ -168,16 +197,19 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
+        let pid = Caller.processId caller
+
         let expected =
             UnixConnection.tryConnectBytes
                 fd
                 destination
                 declaredLength
-                (admitted SockaddrCopySyscall.Connect fd destination declaredLength blob system)
-                system
+                (admittedIn pid SockaddrCopySyscall.Connect fd destination declaredLength blob system)
+                (Proc.view pid system)
+            |> Result.map (fun (answer, after) -> answer, Proc.unview after)
 
         let actual =
-            UnixConnection.tryConnect thread fd destination declaredLength system
+            UnixConnection.tryConnect caller fd destination declaredLength system
             |> CallProgress.resumeWith (fun paused ->
                 UnixConnection.tryConnectWithAddress (copied "connect" (PausedConnect.copyRange paused) blob) paused
             )
@@ -194,7 +226,7 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
-        connectAs (Lone.leader system) fd destination declaredLength blob system
+        connectAs (Callers.leader system) fd destination declaredLength blob system
 
 /// What `getsockname(2)` and `accept(2)` copy out, read back and predicted
 /// without the library's own encoder.

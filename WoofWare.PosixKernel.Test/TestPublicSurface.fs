@@ -12,6 +12,7 @@ open WoofWare.PosixKernel
 /// one back from the library. And a client holds only what the library hands
 /// it, so no public function takes a type that nothing public hands out.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestPublicSurface =
 
     /// The kernel's tables. Each has a representation hidden from clients, so
@@ -319,15 +320,16 @@ module TestPublicSurface =
         |> List.sort
         |> shouldBeEmpty
 
-    /// A process that has ended has no threads to make a call, so nothing public
-    /// hands back a system to make one in from what its end answered: not the
-    /// view it ended in, which for a call the process died part-way through is a
-    /// state no client ever held.
+    /// A process that has ended is gone from the system the call that ended
+    /// it answered, beside the `EndedProcess`, which says only how it ended and
+    /// which process it was: no public function takes one and hands back a
+    /// system, so no client can reach a state the process died part-way
+    /// through.
     [<Test>]
     let ``no public function hands back a system from an ended process`` () : unit =
         let library = typeof<VirtualFileSystem>.Assembly
         let signatures = signatures library
-        let ended = keyOf typedefof<EndedProcess<int, string>>
+        let ended = keyOf typeof<EndedProcess>
         let system = keyOf typedefof<UnixSystem<int, string>>
 
         let takesEnded =
@@ -335,12 +337,12 @@ module TestPublicSurface =
             |> List.filter (fun (s : Signature) -> s.Needs |> List.exists (fun (t : Type) -> keyOf t = ended))
 
         // A control, so that this cannot pass by finding no function that takes
-        // an ended process: `SimulatedMachine.endProcess` takes one.
+        // an ended process.
         takesEnded
         |> List.map (fun (s : Signature) -> s.Name)
-        |> shouldContain "WoofWare.PosixKernel.SimulatedMachine.endProcess"
+        |> shouldContain "WoofWare.PosixKernel.EndedProcessModule.termination"
 
         takesEnded
         |> List.filter (fun (s : Signature) -> s.Gives |> List.exists (fun (t : Type) -> keyOf t = system))
         |> List.map (fun (s : Signature) -> s.Name)
-        |> shouldBeEmpty
+        |> shouldEqual []

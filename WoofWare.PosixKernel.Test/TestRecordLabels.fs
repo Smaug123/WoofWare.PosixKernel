@@ -11,6 +11,7 @@ open WoofWare.PosixKernel
 /// field label: its reading of an ApiSurface listing, against F#'s own reflection over the library,
 /// and its comparison, against changes that reuse no label and against each way of reusing one.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestRecordLabels =
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 1000

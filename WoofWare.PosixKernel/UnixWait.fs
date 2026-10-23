@@ -1,223 +1,380 @@
 namespace WoofWare.PosixKernel
 
-/// A wait queue whose waiters a real kernel wakes one at a time.
-[<RequireQualifiedAccess>]
-type internal ExclusiveWaitQueue =
-    /// The waiters in `epoll_wait` on the epoll instance this description names.
-    | Epoll of OpenFileDescriptionId
-    /// The waiters in `accept` on the listening socket this description names.
-    | Listener of OpenFileDescriptionId
-    /// The waiters in `read` for bytes from this pipe.
-    | PipeReaders of PipeId
-    /// The waiters in `write` for room in this pipe.
-    | PipeWriters of PipeId
+/// What finishing a woken `nanosleep(2)` or `clock_nanosleep(2)` answers:
+/// what `FinishedCall.Sleep` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Sleep`.
+[<NoEquality ; NoComparison>]
+type FinishedSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the sleep's finishing function
+    // (`docs/design/nanosleep-options.md`).
+    internal | FinishedSleep
 
-/// Parking a thread in a syscall, and deciding which parked threads a system wakes.
+/// What finishing a woken blocking `open(2)` of one end of a FIFO answers:
+/// what `FinishedCall.FifoOpen` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.FifoOpen`.
+[<NoEquality ; NoComparison>]
+type FinishedFifoOpen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the FIFO open's finishing function
+    // (`docs/design/fifo-open-options.md`).
+    internal | FinishedFifoOpen
+
+/// What finishing a woken `select(2)` or `pselect(2)` answers: what
+/// `FinishedCall.Select` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Select`.
+[<NoEquality ; NoComparison>]
+type FinishedSelect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the select's finishing function
+    // (`docs/design/select-park-options.md`).
+    internal | FinishedSelect
+
+/// What finishing a woken `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`
+/// answers: what `FinishedCall.SignalWait` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.SignalWait`.
+[<NoEquality ; NoComparison>]
+type FinishedSignalWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the signal wait's finishing function
+    // (`docs/design/sigwait-options.md`).
+    internal | FinishedSignalWait
+
+/// What finishing a woken blocking receive on a UDP socket answers, by which
+/// call it is: what `FinishedCall.DatagramReceive` holds.
+[<RequireQualifiedAccess>]
+[<NoEquality ; NoComparison>]
+type FinishedDatagramReceive<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// A `read(2)` or `recv(2)`, as `UnixReadWrite.finishRead` answers it.
+    | Read of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `recvfrom(2)`, as `UnixReadWrite.finishRecvFrom` answers it, or,
+    /// where that stops for the length cell (Linux), as
+    /// `UnixReadWrite.recvfromWithLength` then answers it, given what the cell
+    /// of the `Syscall.RecvFrom` that `UnixWait.finish` was given holds.
+    | RecvFrom of outcome : RecvFromOutcome * system : UnixSystem<'Thread, 'Handler>
+
+/// What finishing a woken blocking send of a datagram answers: what
+/// `FinishedCall.DatagramSend` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.DatagramSend`.
+[<NoEquality ; NoComparison>]
+type FinishedDatagramSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the datagram data path
+    // (`docs/design/datagram-park-options.md`).
+    internal | FinishedDatagramSend
+
+/// What finishing a woken blocking `connect(2)` answers: what
+/// `FinishedCall.Connect` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Connect`.
+[<NoEquality ; NoComparison>]
+type FinishedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the connect that sleeps
+    // (`docs/design/connect-park-options.md`).
+    internal | FinishedConnect
+
+/// What a woken thread's call answered once `UnixWait.finish` finished it: one
+/// case for each kind of call a thread parks in, named as that kind's
+/// `ParkedSyscall` case is, holding exactly what that kind's own finishing
+/// function answers. For a write, which stops partway to copy from the
+/// caller's buffer, that is what its resumption answers once given what the
+/// buffer of the `Syscall` that `finish` was given holds, since `finish` never
+/// stops partway.
+///
+/// As those answers do, it may hold the call's answer, the thread asleep in
+/// the call again, waiting for a new wake, or the call interrupted by a signal
+/// (`Interrupted`), whose end the thread's return to user mode says.
+///
+/// The cases of the reserved parks, `Sleep`, `FifoOpen`, `Select`,
+/// `SignalWait`, `DatagramSend` and `Connect`, hold types whose
+/// representations are internal. Nothing parks a thread in any of them yet,
+/// so `UnixWait.finish` answers none of them.
+[<RequireQualifiedAccess>]
+[<NoEquality ; NoComparison>]
+type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// An `epoll_wait(2)`, as `UnixPoll.finishEpollWait` answers it.
+    | EpollWait of outcome : EpollWaitOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `kevent(2)`, as `UnixKqueue.finishKevent` answers it.
+    | Kevent of outcome : KeventOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// An `flock(2)`, as `UnixDescriptor.flockAcquire` answers it.
+    | Flock of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A Linux `poll(2)`, as `UnixPoll.finishPoll` answers it.
+    | Poll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A Darwin `poll(2)`, as `UnixPoll.finishPoll` answers it.
+    | KqueuePoll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it.
+    | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `read(2)` of a pipe, as `UnixReadWrite.finishRead` answers it.
+    | PipeRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `write(2)` to a pipe, as `UnixReadWrite.finishWrite` answers it, or
+    /// `UnixReadWrite.writeWithBytes` after it.
+    | PipeWrite of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+    /// A `read(2)` or `recv(2)` of a connected socket, as
+    /// `UnixReadWrite.finishRead` answers it.
+    | ConnectionRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `write(2)` or `send(2)` to a connected socket, as
+    /// `UnixReadWrite.finishWrite` answers it, or
+    /// `UnixReadWrite.writeWithBytes` after it.
+    | ConnectionWrite of fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+    /// A `sigsuspend(2)`, `rt_sigsuspend(2)` or `pause(2)`, as
+    /// `UnixSignal.finishSigsuspend` answers it.
+    | SigSuspend of outcome : SigsuspendOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `nanosleep(2)` or `clock_nanosleep(2)`. Reserved: see
+    /// `FinishedSleep`.
+    | Sleep of finished : FinishedSleep<'Thread, 'Handler>
+    /// A blocking `open(2)` of one end of a FIFO. Reserved: see
+    /// `FinishedFifoOpen`.
+    | FifoOpen of finished : FinishedFifoOpen<'Thread, 'Handler>
+    /// A `read(2)` of an inotify instance, as `UnixReadWrite.finishRead`
+    /// answers it.
+    | InotifyRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `select(2)` or `pselect(2)`. Reserved: see `FinishedSelect`.
+    | Select of finished : FinishedSelect<'Thread, 'Handler>
+    /// A `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`. Reserved: see
+    /// `FinishedSignalWait`.
+    | SignalWait of finished : FinishedSignalWait<'Thread, 'Handler>
+    /// A blocking receive on a UDP socket, as the finishing function of the
+    /// call it is answers it.
+    | DatagramReceive of finished : FinishedDatagramReceive<'Thread, 'Handler>
+    /// A blocking send of a datagram. Reserved: see `FinishedDatagramSend`.
+    | DatagramSend of finished : FinishedDatagramSend<'Thread, 'Handler>
+    /// A blocking `connect(2)`. Reserved: see `FinishedConnect`.
+    | Connect of finished : FinishedConnect<'Thread, 'Handler>
+    /// A Linux `futex(2)` wait, as `UnixFutex.finishFutexWait` answers it.
+    | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+
+/// What a woken call's finishing body answered, before `Entry` makes a kernel
+/// of its views: a `FinishedCall` of a modelled park whose systems are
+/// `'View`s.
+[<RequireQualifiedAccess>]
+[<NoEquality ; NoComparison>]
+type internal ViewFinishedCall<'View, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    | EpollWait of outcome : EpollWaitOutcome * view : 'View
+    | Kevent of outcome : KeventOutcome * view : 'View
+    | Flock of outcome : SyscallOutcome * view : 'View
+    | Poll of outcome : PollOutcome * view : 'View
+    | KqueuePoll of outcome : PollOutcome * view : 'View
+    | Accept of outcome : AcceptOutcome * view : 'View
+    | PipeRead of outcome : ReadOutcome * view : 'View
+    | PipeWrite of fate : ViewFate<WriteOutcome<'Thread>, 'View>
+    | ConnectionRead of outcome : ReadOutcome * view : 'View
+    | ConnectionWrite of fate : ViewFate<WriteOutcome<'Thread>, 'View>
+    | SigSuspend of outcome : SigsuspendOutcome * view : 'View
+    | InotifyRead of outcome : ReadOutcome * view : 'View
+    | DatagramRead of outcome : ReadOutcome * view : 'View
+    | DatagramRecvFrom of outcome : RecvFromOutcome * view : 'View
+    | Futex of outcome : SyscallOutcome * view : 'View
+
+/// Why this library will not finish a woken call (`UnixWait.finish`): the
+/// refusal of the finishing function of the call's family, a reserved park,
+/// which has none, or a `Syscall` that does not describe the call.
+[<RequireQualifiedAccess>]
+type internal FinishRefusal =
+    | Flock of FLockRefusal
+    | Accept of AcceptRefusal
+    | Poll of PollRefusal
+    | EpollWait of EpollWaitRefusal
+    | Kevent of KeventRefusal
+    | Read of ReadRefusal
+    | Receive of ReceiveRefusal
+    | Write of WriteRefusal
+    | Sigsuspend of SigsuspendRefusal
+    | Futex of FutexRefusal
+    /// The thread is parked in `parked`, a reserved park: nothing parks a
+    /// thread in one yet, and no finishing function finishes one.
+    | Reserved of parked : ParkedSyscall
+    /// The thread is parked in `parked`, which no call of the `Syscall` case
+    /// given parks a thread in.
+    | NotTheParkedCall of parked : ParkedSyscall
+    /// The thread is parked in `parked`, a write or a `recvfrom` that stopped
+    /// to copy from a buffer or a length cell it was made with as readable,
+    /// which the `Syscall` now gives as `buffer`.
+    | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
+
+[<RequireQualifiedAccess>]
+module internal FinishRefusal =
+    /// What this kernel knows about why it cannot answer: the family's own
+    /// description of its refusal.
+    let describe (refusal : FinishRefusal) : string =
+        match refusal with
+        | FinishRefusal.Flock refusal -> FLockRefusal.describe refusal
+        | FinishRefusal.Accept refusal -> AcceptRefusal.describe refusal
+        | FinishRefusal.Poll refusal -> PollRefusal.describe refusal
+        | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.describe refusal
+        | FinishRefusal.Kevent refusal -> KeventRefusal.describe refusal
+        | FinishRefusal.Read refusal -> ReadRefusal.describe refusal
+        | FinishRefusal.Receive refusal -> ReceiveRefusal.describe refusal
+        | FinishRefusal.Write refusal -> WriteRefusal.describe refusal
+        | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.describe refusal
+        | FinishRefusal.Futex refusal -> FutexRefusal.describe refusal
+        | FinishRefusal.Reserved parked ->
+            $"the thread is parked in %A{parked}, a call this library parks no thread in yet, and has no finishing function for."
+        | FinishRefusal.NotTheParkedCall parked ->
+            $"the thread is parked in %A{parked}, which no call of the Syscall case given parks a thread in; pass the Syscall the thread made."
+        | FinishRefusal.UnreadableBuffer (parked, buffer) ->
+            $"the thread is parked in %A{parked}, a call made with a readable buffer or length cell, which stopped to copy from it; the Syscall gives it as %A{buffer}, and this library does not model a call's buffer or cell ceasing to be readable while the call sleeps."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : FinishRefusal) : RefusalKind =
+        match refusal with
+        | FinishRefusal.Flock refusal -> FLockRefusal.kind refusal
+        | FinishRefusal.Accept refusal -> AcceptRefusal.kind refusal
+        | FinishRefusal.Poll refusal -> PollRefusal.kind refusal
+        | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.kind refusal
+        | FinishRefusal.Kevent refusal -> KeventRefusal.kind refusal
+        | FinishRefusal.Read refusal -> ReadRefusal.kind refusal
+        | FinishRefusal.Receive refusal -> ReceiveRefusal.kind refusal
+        | FinishRefusal.Write refusal -> WriteRefusal.kind refusal
+        | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.kind refusal
+        | FinishRefusal.Futex refusal -> FutexRefusal.kind refusal
+        | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
+        | FinishRefusal.NotTheParkedCall _ -> RefusalKind.Contradictory "call"
+        | FinishRefusal.UnreadableBuffer _ -> RefusalKind.Unmodelled
+
+/// Deciding which parked threads a system wakes, and finishing a woken
+/// thread's call.
 ///
 /// Wakes are pulled rather than pushed: nothing that makes a condition true
-/// wakes anyone. A client asks `wakes` of each state it reaches instead, so no
+/// wakes anyone. A client asks `wake` of each state it reaches instead, so no
 /// producer can forget to wake a waiter.
 [<RequireQualifiedAccess>]
 module UnixWait =
 
-    /// The pipe the open file description `description` names an end of, if
-    /// `machine`'s table holds it and it names one.
-    let private pipeOf (machine : UnixMachineState) (description : OpenFileDescriptionId) : PipeId option =
-        match OpenFileTable.tryFind description machine.OpenFiles with
-        | Some {
-                   Target = OpenFileTarget.Pipe (pipeId, _)
-               } -> Some pipeId
-        | Some _
-        | None -> None
-
-    /// The queue a call waiting for `primitive` sleeps on, under `machine`'s
-    /// flavour, if a real kernel wakes that queue's waiters one at a time.
-    let internal exclusiveQueueOf (machine : UnixMachineState) (primitive : WakePrimitive) : ExclusiveWaitQueue option =
-        let linux =
-            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
-            | SimulatedUnixFlavour.Linux -> true
-            | SimulatedUnixFlavour.Darwin -> false
-
-        // A pipe's description is looked up leniently: `WakeCondition.satisfied`
-        // has already failed loudly for one that is gone or names something
-        // else, for every thread it was asked about, but a thread woken and not
-        // yet finished is not asked.
-        match primitive with
-        | WakePrimitive.EpollEventDeliverable epoll -> Some (ExclusiveWaitQueue.Epoll epoll)
-        | WakePrimitive.AcceptQueueNonEmpty listener -> Some (ExclusiveWaitQueue.Listener listener)
-        | WakePrimitive.PipeHasBytes reader when linux ->
-            pipeOf machine reader |> Option.map ExclusiveWaitQueue.PipeReaders
-        | WakePrimitive.PipeHasRoom (writer, _, _) when linux ->
-            pipeOf machine writer |> Option.map ExclusiveWaitQueue.PipeWriters
-        | WakePrimitive.PipeHasBytes _
-        | WakePrimitive.PipeHasRoom _
-        | WakePrimitive.PipeWriteEndClosed _
-        | WakePrimitive.PipeReadEndClosed _
-        | WakePrimitive.PipeReadWhileNonBlocking _
-        | WakePrimitive.ConnectionReadable _
-        | WakePrimitive.ConnectionWritable _
-        | WakePrimitive.FlockGrantable _
-        | WakePrimitive.KqueueDrained _
-        | WakePrimitive.KqueueEventDeliverable _
-        | WakePrimitive.KqueuePollReportable
-        | WakePrimitive.DescriptorReady _
-        | WakePrimitive.DeadlinePassed _
-        | WakePrimitive.SignalDeliverable
-        | WakePrimitive.EndedByClose
-        // A partner's open wakes every opener asleep on the FIFO, on both
-        // flavours (measured, two sleepers of two).
-        | WakePrimitive.FifoPartnerOpened _
-        // `inotify_read` waits on the instance's queue non-exclusively, so
-        // a record wakes every reader asleep on it, and the first to run
-        // takes it (from Linux's source; which reader runs first is not
-        // observable). Measured (`inotify-descriptor-probe.c` row S
-        // two-sleepers-one-record): of two readers, one took the record.
-        | WakePrimitive.InotifyRecordQueued _
-        // A signal is pending to the thread it was sent to, or, sent to the
-        // process, to whichever thread the receiver rule picks. No wait queue
-        // is shared.
-        | WakePrimitive.AwaitedSignalPending _ -> None
-        // Reserved, and in no condition yet. Linux's `unix_wait_for_peer`
-        // waits exclusively on the listener's `peer_wait`, which the
-        // connect that sleeps will model.
-        | WakePrimitive.AcceptQueueHasRoom _ -> None
-
-    /// The queues the call `parked` sleeps on, under `machine`'s flavour, whose
-    /// waiters a real kernel wakes one at a time: those of the primitives of its
-    /// wake condition (`exclusiveQueueOf`).
-    let internal exclusiveQueuesOfPark (machine : UnixMachineState) (parked : ParkedSyscall) : ExclusiveWaitQueue list =
-        WakeCondition.ofPark parked
-        |> WakeCondition.primitives
-        |> List.choose (exclusiveQueueOf machine)
-        |> List.distinct
-
-    /// Record that `thread` has parked in `parked`, placing it after every park
-    /// made before it, and taking the holds the call keeps on the open file
-    /// descriptions it names (`ParkedSyscall.descriptions`). A thread that sleeps
-    /// is no longer running, so it leaves its processor idle
-    /// (`UnixSchedulingState.Occupants`).
-    ///
-    /// Refuses to replace a park of one syscall with a park of another, and
-    /// otherwise accepts a re-park of the same syscall, which moves the thread to
-    /// the back of park order and lets go of the holds the earlier park took.
-    let internal park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `satisfied` once `Entry` has admitted the process.
+    let private satisfiedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (parked : ParkedSyscall)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Set<WakePrimitive> option
         =
-        let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
-        let state = UnixThreadTable.get thread system.Threads
+        UnixThreadTable.tryFind thread system.Threads
+        |> Option.bind UnixThreadState.parkedIn
+        |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
 
-        let threadPark =
-            {
-                Syscall = parked
-                Ordinal = system.Machine.NextParkOrdinal
-            }
-
-        { system with
-            Machine =
-                { system.Machine with
-                    NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
-                }
-            Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
-        }
-        |> UnixParkState.setPark thread threadPark
-
-    /// The primitives of the wake condition of the call `thread` is parked in
-    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `thread` is
-    /// not parked in a call, including when the process has no thread by that
-    /// name.
+    /// The primitives of the wake condition of the call `caller` is parked in
+    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `caller` is
+    /// not parked in a call, including when its process has no thread by that
+    /// name. Asked of a thread asleep or woken alike, and changes nothing.
     ///
     /// An empty set means the call would get no further now. A non-empty one
-    /// is what lets `wakes` name the thread, and is not enough on its own: a
+    /// is what lets `wake` wake the thread, and is not enough on its own: a
     /// queue whose waiters a kernel wakes one at a time wakes only one of
-    /// them, so a client that holds several threads asleep asks `wakes`. This
-    /// asks about one thread alone, which is cheaper.
+    /// them, which only `wake` chooses. This asks about one thread alone,
+    /// which is cheaper.
     ///
     /// The condition is read from the park, which holds every open file
     /// description it names until the call returns, so it is never asked
     /// about a description that has gone.
     let satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
-        Map.tryFind thread system.Threads
-        |> Option.bind UnixThreadState.parkedIn
-        |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
+        Entry.query "UnixWait.satisfied" (Caller.processId caller) (satisfiedIn (Caller.thread caller)) system
 
-    /// The threads of `asleep` that `system` wakes now, in the order they parked,
-    /// each with the primitives of its wake condition which hold.
+    /// The park of `thread`, which the threads of the process whose slot is
+    /// `slot` name among their parked ones (`UnixThreadTable.parked`); fails
+    /// loudly if it has none.
+    let private namedPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (slot : ProcessSlot<'Thread, 'Handler>)
+        (thread : 'Thread)
+        : ThreadPark
+        =
+        match UnixThreadTable.parkOf thread slot.Threads with
+        | Some park -> park
+        | None ->
+            failwith
+                $"%s{operation}: the process's threads name %O{thread} among their parked ones, and it is parked in no syscall (this is a bug in this library)."
+
+    /// Every park on the machine, each with its thread's caller, in process ID
+    /// order and, within a process, in the order of its threads' names.
     ///
-    /// `asleep` is the client's: the threads it is holding asleep in a syscall.
-    /// Every one must be parked. A thread the client has woken keeps its park
-    /// until its call finishes, so the parks alone cannot say who is asleep.
-    ///
-    /// A waiter whose `flock` has become grantable, whose polled descriptor is
-    /// ready, whose deadline has passed, or to which a signal with a handler is
-    /// deliverable wakes, whoever else is waiting for the same thing. Waiters on an epoll instance, and waiters in `accept`
-    /// on a listener, queue exclusively: something to take wakes one of them,
-    /// the one that parked *last* on an epoll instance and the one that
-    /// parked *first* on a listener. Under Linux, so do the waiters in `read`
-    /// for a pipe's bytes and those in `write` for its room, the one that
-    /// parked first waking; under Darwin every one of them wakes. Waiters in
-    /// `read` or `write` on a connected socket all wake, under either
-    /// flavour. Exclusive
-    /// queues wake none while any thread parked on the same queue has been woken
-    /// and has not yet finished its call (that is, is parked but not in
-    /// `asleep`), since that thread will take it. The end of a pipe closing
-    /// wakes every waiter on the other end, under either flavour; and an event
-    /// to report, or a close that drains a kqueue, wakes every waiter in
-    /// `kevent` on it.
-    ///
-    /// A woken thread is owed no success: several waiters for one lock all wake,
-    /// and all but one find it taken again and re-park.
-    let rec wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<'Thread>)
+    /// Read from the processes the kernel names as having a parked thread
+    /// (`ProcessTable.withParks`), and from the threads each of those names
+    /// as parked, so it takes time in the number of parked threads, however
+    /// many processes and threads there are besides.
+    let private parks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
         (system : UnixSystem<'Thread, 'Handler>)
-        : ('Thread * Set<WakePrimitive>) list
+        : (Caller<'Thread> * ThreadPark) list
         =
-        wakesAmong [ (), asleep, system ] system.Machine
-        |> List.map (fun ((), thread, fired) -> thread, fired)
+        (ProcessTable.withParks system.Processes, [])
+        ||> Set.foldBack (fun key parks ->
+            let pid = ProcessId.parseOrFail operation key
+            let slot = ProcessTable.find operation key system.Processes
 
-    /// `wakes`, of every process on `machine` at once: each of `views` is one
-    /// process's view of `machine`, with the threads of it the client holds
-    /// asleep, and the process is named by its `'Process`. Every process with
-    /// a thread parked must be among them, since a parked thread not asleep stands
-    /// for a woken call on whatever queue it waits on.
-    ///
-    /// Each thread's condition is asked of its own process's view, and a queue
-    /// waiters wait on exclusively wakes one of them by park order across
-    /// every view, the ordinals being the machine's. The answer is in park
-    /// order across every view.
-    and internal wakesAmong<'Process, 'Thread, 'Handler
-        when 'Process : equality and 'Thread : comparison and 'Handler : equality>
-        (views : ('Process * Set<'Thread> * UnixSystem<'Thread, 'Handler>) list)
-        (machine : UnixMachineState)
-        : ('Process * 'Thread * Set<WakePrimitive>) list
+            (UnixThreadTable.parked slot.Threads, parks)
+            ||> Set.foldBack (fun thread parks -> (Caller.make pid thread, namedPark operation slot thread) :: parks)
+        )
+
+    /// The sleeping threads `system` wakes now, in the order they parked, each
+    /// with the primitives of its wake condition which hold: what `wake`
+    /// answers, before it records the wakes. And the earliest deadline any
+    /// sleeping thread's call waits for (`deadlines`), which a system whose
+    /// sweep woke nobody remembers.
+    let private sweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (Caller<'Thread> * Set<WakePrimitive>) list * int64 voption
         =
-        let satisfied =
-            views
-            |> List.collect (fun (owner, asleep, system) ->
-                asleep
-                |> Set.toList
-                |> List.choose (fun thread ->
-                    match UnixThreadTable.parkOf thread system.Threads with
-                    | None ->
-                        failwith
-                            $"UnixWait.wakes: thread %O{thread} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
-                    | Some park ->
-                        let fired =
-                            WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall) system
+        let machine = system.Machine
+
+        // One pass over the parks, in which each sleeping thread's condition is
+        // made once and asked of the view from its own process, which is made
+        // once for all the process's threads. Only the processes with a parked
+        // thread are visited, and in each only its parked threads, as `parks`
+        // visits them.
+        let struct (satisfied, earliest) =
+            (struct ([], ValueNone), ProcessTable.withParks system.Processes)
+            ||> Set.fold (fun acc key ->
+                let pid = ProcessId.parseOrFail "UnixWait.wake" key
+                let slot = ProcessTable.find "UnixWait.wake" key system.Processes
+                let view = lazy (ProcessView.ofSlot pid slot system)
+
+                (acc, UnixThreadTable.parked slot.Threads)
+                ||> Set.fold (fun (struct (satisfied, earliest) as acc) thread ->
+                    let park = namedPark "UnixWait.wake" slot thread
+
+                    match park.State with
+                    | ParkState.Woken _ -> acc
+                    | ParkState.Asleep ->
+                        let condition = WakeCondition.ofPark park.Syscall
+
+                        let earliest =
+                            (earliest, WakeCondition.deadlines condition)
+                            ||> List.fold (fun earliest deadline ->
+                                match earliest with
+                                | ValueSome sooner when sooner <= deadline -> earliest
+                                | ValueSome _
+                                | ValueNone -> ValueSome deadline
+                            )
+
+                        let fired = WakeCondition.satisfied thread condition view.Value
 
                         if Set.isEmpty fired then
-                            None
+                            struct (satisfied, earliest)
                         else
-                            Some (park.Ordinal, (owner, thread), fired)
+                            struct ((park.Ordinal, Caller.make pid thread, fired) :: satisfied, earliest)
                 )
             )
-            |> List.sortBy (fun (ordinal, _, _) -> ordinal)
+
+        match satisfied with
+        | [] -> [], earliest
+        | satisfied ->
+
+        let satisfied = satisfied |> List.sortBy (fun (ordinal, _, _) -> ordinal)
+        let parks = parks "UnixWait.wake" system
 
         // Measured on Linux 6.18.5 (`epoll-wait.c`, section F): `epoll_wait`
         // queues its waiters exclusively at the *front* of the epoll instance's wait
@@ -280,29 +437,30 @@ module UnixWait =
         // watches non-exclusively, so every poller of a description that
         // becomes ready wakes; and a deadline, like a signal, is each waiter's
         // own.
-        // A thread woken and not yet finished stands, on each queue its own
-        // call waits on exclusively, for whatever woke it.
+        // A thread woken and not yet finished stands for whatever woke it: on
+        // the queue of each primitive that held as it woke, and on no queue
+        // for a signal or a deadline alone. Measured on Linux 6.18.5 and
+        // Darwin 27.0.0 (`docs/probes/first-wake`, the two-sleeper rows): with
+        // the first accepter, pipe reader or epoll waiter signalled, and held
+        // off the CPU, the next connection, byte or event woke the other
+        // sleeper too, and on Darwin the other accepted the connection while
+        // the first failed with EINTR.
         let finishing : Set<ExclusiveWaitQueue> =
-            views
-            |> Seq.collect (fun (_, asleep, system) ->
-                system.Threads
-                |> Map.toSeq
-                |> Seq.filter (fun (thread, _) -> not (Set.contains thread asleep))
+            parks
+            |> List.collect (fun (_, park) ->
+                match park.State with
+                | ParkState.Woken fired -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine)
+                | ParkState.Asleep -> []
             )
-            |> Seq.collect (fun (_, state) ->
-                match state.Parked with
-                | Some park -> exclusiveQueuesOfPark machine park.Syscall
-                | None -> []
-            )
-            |> Set.ofSeq
+            |> Set.ofList
 
-        let chosen : Map<ExclusiveWaitQueue, 'Process * 'Thread> =
+        let chosen : Map<ExclusiveWaitQueue, Caller<'Thread>> =
             satisfied
             |> List.collect (fun (ordinal, thread, fired) ->
                 fired
                 |> Set.toList
                 |> List.choose (fun primitive ->
-                    exclusiveQueueOf machine primitive
+                    Parking.exclusiveQueueOf machine primitive
                     |> Option.map (fun queue -> queue, (ordinal, thread))
                 )
             )
@@ -328,30 +486,450 @@ module UnixWait =
         |> List.filter (fun (_, thread, fired) ->
             fired
             |> Set.exists (fun primitive ->
-                match exclusiveQueueOf machine primitive with
+                match Parking.exclusiveQueueOf machine primitive with
                 | Some queue -> Map.tryFind queue chosen = Some thread
                 | None -> true
             )
         )
-        |> List.map (fun (_, (owner, thread), fired) -> owner, thread, fired)
+        |> List.map (fun (_, caller, fired) -> caller, fired),
+        earliest
 
-    /// Every deadline the parks of `asleep` are waiting for, in nanoseconds since
-    /// boot, with a repeat for each park that waits for it.
+    /// Every deadline the sleeping threads' calls are waiting for, in
+    /// nanoseconds since boot, with a repeat for each park that waits for it. A
+    /// woken thread's call is not counted: the thread is already the client's
+    /// to run.
     ///
     /// What a client with nothing runnable reads to learn how far it may advance
-    /// the clock before one of these calls times out. `asleep` means what it
-    /// means to `wakes`.
+    /// the clock before one of these calls times out.
     let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : int64 list
         =
-        asleep
-        |> Set.toList
-        |> List.collect (fun thread ->
-            match UnixThreadTable.parkOf thread system.Threads with
-            | None ->
-                failwith
-                    $"UnixWait.deadlines: thread %O{thread} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
-            | Some park -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
+        parks "UnixWait.deadlines" system
+        |> List.collect (fun (_, park) ->
+            match park.State with
+            | ParkState.Asleep -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
+            | ParkState.Woken _ -> []
         )
+
+    /// `system`, whose sweep woke no thread, remembering that sweep: what it
+    /// read, and `earliest`, the earliest deadline a sleeping thread waits
+    /// for.
+    let private remembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (earliest : int64 voption)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let remembered : RememberedSweep<'Thread, 'Handler> =
+            {
+                Machine = system.Machine
+                Processes = system.Processes
+                EarliestDeadline = earliest
+#if DEBUG
+                HitsSinceSweep = 0
+#endif
+            }
+
+        { system with
+            Sweep =
+                {
+                    Remembered = ValueSome remembered
+                }
+        }
+
+    /// The sleeping threads `system` wakes now, in the order they parked, each
+    /// with the primitives of its wake condition which hold; and the system
+    /// with each of them woken (`ParkState.Woken`). If none wakes, the system
+    /// answered is equal to `system`.
+    ///
+    /// A woken thread stays parked until the finishing function of the call it
+    /// is parked in finishes it, and only a woken thread's call may be
+    /// finished. Until then it is not asked again: it is the client's to run,
+    /// when it chooses.
+    ///
+    /// A waiter whose `flock` has become grantable, whose polled descriptor is
+    /// ready, whose deadline has passed, or to which a signal with a handler is
+    /// deliverable wakes, whoever else is waiting for the same thing. Waiters on an epoll instance, and waiters in `accept`
+    /// on a listener, queue exclusively: something to take wakes one of them,
+    /// the one that parked *last* on an epoll instance and the one that
+    /// parked *first* on a listener. Under Linux, so do the waiters in `read`
+    /// for a pipe's bytes and those in `write` for its room, the one that
+    /// parked first waking; under Darwin every one of them wakes. Waiters in
+    /// `read` or `write` on a connected socket all wake, under either
+    /// flavour. Exclusive
+    /// queues wake none while any thread parked on the same queue has been woken
+    /// by something to take from it and has not yet finished its call, since
+    /// that thread will take it; one a signal or its deadline alone woke holds
+    /// no queue. The
+    /// end of a pipe closing
+    /// wakes every waiter on the other end, under either flavour; and an event
+    /// to report, or a close that drains a kqueue, wakes every waiter in
+    /// `kevent` on it.
+    ///
+    /// Under Linux, a datagram or the ICMP error arriving at a UDP socket
+    /// chooses, as it arrives, the one receive asleep on it that it wakes:
+    /// the one that parked first, of those no arrival has chosen yet
+    /// (`WakePrimitive.DatagramReceivable`). Under Darwin every receive asleep
+    /// on a UDP socket with a datagram or an error wakes.
+    ///
+    /// Each thread's condition is asked of its own process, so a condition
+    /// another process's call has made true (a connection queued on a
+    /// listener, a peer's FIN, a lock let go of) wakes it here; and where a
+    /// kernel wakes one waiter of a queue at a time, the one is chosen across
+    /// every process, by the order of the machine's parks.
+    ///
+    /// A woken thread is owed no success: several waiters for one lock all wake,
+    /// and all but one find it taken again and re-park, asleep.
+    ///
+    /// A client asks this of every state it reaches, so it is cheap for a state
+    /// in which nothing it reads has changed. A system remembers the last
+    /// sweep of it that woke no thread, and `wake` answers from that, asking no
+    /// wake condition and answering `system` itself, while nothing that sweep
+    /// read has changed but the clock, and the clock has not reached the
+    /// earliest deadline any sleeping thread waits for. Nothing a syscall can
+    /// change counts as unchanged unless it is the same value, so a call that
+    /// changes the system makes the next `wake` sweep; moving the clock
+    /// (`UnixSystem.advanceClock`), a call that changes nothing, and reporting
+    /// a thread running on the processor it is already on
+    /// (`UnixScheduling.dispatch`) do not. A sweep that wakes no thread answers
+    /// a new system, which remembers it; so a client keeps the system this
+    /// answers, rather than the one it asked of. What a system remembers is no
+    /// part of its value: two systems that differ only in it are equal.
+    ///
+    /// A Debug build checks some of the answers it gives from what a system
+    /// remembers against a sweep, failing loudly if they differ.
+    let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (Caller<'Thread> * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
+        =
+        match system.Sweep.Remembered with
+        | ValueSome remembered when WakeMemo.covers remembered system.Machine system.Scheduling system.Processes ->
+#if DEBUG
+            let hits = System.Threading.Interlocked.Increment &remembered.HitsSinceSweep - 1
+
+            if WakeMemo.crossChecks hits then
+                match sweep system with
+                | [], _ -> ()
+                | woken, _ ->
+                    failwith
+                        $"UnixWait.wake: the system's memo says it wakes no thread, but a sweep wakes %A{woken}, at answer %d{hits} since the memo's sweep (this is a bug in this library)."
+#endif
+            [], system
+        | ValueSome _
+        | ValueNone ->
+
+        match sweep system with
+        | [], earliest -> [], remembering earliest system
+        | woken, _ ->
+            let processes =
+                (system.Processes, woken)
+                ||> List.fold (fun processes (caller, fired) ->
+                    let key = ProcessId.toInt32 (Caller.processId caller)
+                    let slot = ProcessTable.find "UnixWait.wake" key processes
+
+                    ProcessTable.add
+                        key
+                        { slot with
+                            Threads = UnixThreadTable.markWoken (Caller.thread caller) fired slot.Threads
+                        }
+                        processes
+                )
+
+            woken,
+            { system with
+                Processes = processes
+                Sweep = WakeMemo.none
+            }
+
+    /// The `FinishedCall` of what `tryFinishIn` answered, each view in it put
+    /// back through `shapes` where the shape of that family's own finishing
+    /// function puts it: `finish`'s cases, for `Shape.union`.
+    let private finishedCases<'View, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (shapes : ShapeMap<'View, UnixSystem<'Thread, 'Handler>>)
+        (finished : ViewFinishedCall<'View, 'Thread, 'Handler>)
+        : FinishedCall<'Thread, 'Handler>
+        =
+        match finished with
+        | ViewFinishedCall.EpollWait (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.EpollWait
+        | ViewFinishedCall.Kevent (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Kevent
+        | ViewFinishedCall.Flock (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Flock
+        | ViewFinishedCall.Poll (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Poll
+        | ViewFinishedCall.KqueuePoll (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.KqueuePoll
+        | ViewFinishedCall.Accept (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Accept
+        | ViewFinishedCall.PipeRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.PipeRead
+        | ViewFinishedCall.PipeWrite fate -> shapes.Map Shape.fate fate |> FinishedCall.PipeWrite
+        | ViewFinishedCall.ConnectionRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.ConnectionRead
+        | ViewFinishedCall.ConnectionWrite fate -> shapes.Map Shape.fate fate |> FinishedCall.ConnectionWrite
+        | ViewFinishedCall.SigSuspend (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.SigSuspend
+        | ViewFinishedCall.InotifyRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.InotifyRead
+        | ViewFinishedCall.DatagramRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view)
+            |> FinishedDatagramReceive.Read
+            |> FinishedCall.DatagramReceive
+        | ViewFinishedCall.DatagramRecvFrom (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view)
+            |> FinishedDatagramReceive.RecvFrom
+            |> FinishedCall.DatagramReceive
+        | ViewFinishedCall.Futex (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Futex
+
+    /// Whether a thread parked in `parked` could have parked there in a call
+    /// of `call`'s case. A reserved park is made by no call.
+    let private parksIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        : bool
+        =
+        match parked, call with
+        | ParkedSyscall.EpollWait _, Syscall.EpollWait _
+        | ParkedSyscall.Kevent _, Syscall.Kevent _
+        | ParkedSyscall.Flock _, Syscall.FLock _
+        | ParkedSyscall.Poll _, Syscall.Poll _
+        | ParkedSyscall.KqueuePoll _, Syscall.Poll _
+        | ParkedSyscall.Accept _, Syscall.Accept _
+        | ParkedSyscall.PipeRead _, Syscall.Read _
+        | ParkedSyscall.PipeWrite _, Syscall.Write _
+        | ParkedSyscall.InotifyRead _, Syscall.Read _
+        | ParkedSyscall.SigSuspend, (Syscall.SigSuspend _ | Syscall.RtSigSuspend _ | Syscall.Pause)
+        | ParkedSyscall.Futex _, Syscall.Futex _ -> true
+        | ParkedSyscall.ConnectionRead read, (Syscall.Read _ | Syscall.Recv _) ->
+            match read.Call, call with
+            | TcpReceiveCall.Read, Syscall.Read _
+            | (TcpReceiveCall.Receive | TcpReceiveCall.Peek), Syscall.Recv _ -> true
+            | _, _ -> false
+        | ParkedSyscall.ConnectionWrite write, (Syscall.Write _ | Syscall.Send _ | Syscall.SendTo _) ->
+            match write.Call, call with
+            | TcpSendCall.Write, Syscall.Write _
+            | TcpSendCall.Send _, Syscall.Send _ -> true
+            // A `sendto` with no destination is a `send`; with one, it parks in
+            // no connection.
+            | TcpSendCall.Send _, Syscall.SendTo (_, _, _, _, destination, _) ->
+                destination = CopiedArgument.Unmapped 0UL
+            | _, _ -> false
+        | ParkedSyscall.DatagramReceive receive, (Syscall.Read _ | Syscall.Recv _ | Syscall.RecvFrom _) ->
+            match receive.Call, call with
+            | ParkedDatagramReceiveCall.Read, Syscall.Read _
+            | ParkedDatagramReceiveCall.Receive _, Syscall.Recv _
+            | ParkedDatagramReceiveCall.ReceiveFrom _, Syscall.RecvFrom _ -> true
+            | _, _ -> false
+        | _, _ -> false
+
+    /// The woken `write` or `send` `thread` is parked in, finished by
+    /// `UnixReadWrite`'s finishing body, and, where that stops at its copy,
+    /// resumed with the bytes it names of the buffer `call` holds.
+    let private tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, FinishRefusal>
+        =
+        match UnixReadWrite.tryFinishWriteIn thread system with
+        | Error refusal -> Error (FinishRefusal.Write refusal)
+        | Ok (CallProgress.Answered fate) -> Ok fate
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let buffer =
+                match call with
+                | Syscall.Write (_, buffer, _)
+                | Syscall.Send (_, buffer, _, _)
+                | Syscall.SendTo (_, buffer, _, _, _, _) -> buffer
+                | _ ->
+                    failwith
+                        $"UnixWait.finish: the thread is parked in %A{parked}, a write, but was admitted with a Syscall that is not a write, a send or a sendto (this is a bug in this library)."
+
+            match buffer with
+            | CopiedArgument.Readable contents ->
+                let bytes =
+                    CopiedArgument.slice "UnixWait.finish" (PausedWrite.copyRange paused) contents
+
+                match UnixReadWrite.tryWriteWithBytesIn bytes paused with
+                | Error refusal -> Error (FinishRefusal.Write refusal)
+                | Ok (fate, None) -> Ok fate
+                // A blocking write into a pipe a client drains never sleeps, so
+                // a woken write is never into one.
+                | Ok (_, Some delivery) ->
+                    failwith
+                        $"UnixWait.finish: the woken write the thread is parked in, %A{parked}, delivered %A{delivery} out of the machine, which only a write into a pipe a client drains does, and such a write never sleeps (this is a bug in this library)."
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer buffer))
+
+    /// The woken `recvfrom` `thread` is parked in, finished by
+    /// `UnixReadWrite`'s finishing body, and, where that stops for its length
+    /// cell (Linux, which reads it once a datagram has come), resumed with
+    /// what the cell `call` gives holds.
+    let private tryFinishRecvFromIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<RecvFromOutcome * ProcessView<'Thread, 'Handler>, FinishRefusal>
+        =
+        match UnixReadWrite.tryFinishRecvFromIn thread system with
+        | Error refusal -> Error (FinishRefusal.Receive refusal)
+        | Ok (CallProgress.Answered answer) -> Ok answer
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let cell =
+                match call with
+                | Syscall.RecvFrom (_, _, _, _, _, sourceLength) -> sourceLength
+                | _ ->
+                    failwith
+                        $"UnixWait.finish: the thread is parked in %A{parked}, a recvfrom, but was admitted with a Syscall that is not a recvfrom (this is a bug in this library)."
+
+            match cell with
+            | CopiedArgument.Readable length ->
+                UnixReadWrite.tryRecvFromWithLengthIn length paused
+                |> Result.mapError FinishRefusal.Receive
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
+
+    /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
+    /// parked in, which `call` describes, finished by the finishing body of
+    /// its family.
+    let private tryFinishIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ViewFinishedCall<ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, FinishRefusal>
+        =
+        let parked = UnixThreadTable.requireParked "UnixWait.finish" thread system.Threads
+
+        match parked with
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> Error (FinishRefusal.Reserved parked)
+        | _ when not (parksIn parked call) -> Error (FinishRefusal.NotTheParkedCall parked)
+        | ParkedSyscall.EpollWait _ ->
+            UnixPoll.tryFinishEpollWaitIn thread system
+            |> Result.map ViewFinishedCall.EpollWait
+            |> Result.mapError FinishRefusal.EpollWait
+        | ParkedSyscall.Kevent _ ->
+            UnixKqueue.tryFinishKeventIn thread system
+            |> Result.map ViewFinishedCall.Kevent
+            |> Result.mapError FinishRefusal.Kevent
+        | ParkedSyscall.Flock _ ->
+            UnixDescriptor.tryFlockAcquireIn thread system
+            |> Result.map ViewFinishedCall.Flock
+            |> Result.mapError FinishRefusal.Flock
+        | ParkedSyscall.Poll _ ->
+            UnixPoll.tryFinishPollIn thread system
+            |> Result.map ViewFinishedCall.Poll
+            |> Result.mapError FinishRefusal.Poll
+        | ParkedSyscall.KqueuePoll _ ->
+            UnixPoll.tryFinishPollIn thread system
+            |> Result.map ViewFinishedCall.KqueuePoll
+            |> Result.mapError FinishRefusal.Poll
+        | ParkedSyscall.Accept _ ->
+            UnixConnection.tryFinishAcceptIn thread system
+            |> Result.map ViewFinishedCall.Accept
+            |> Result.mapError FinishRefusal.Accept
+        | ParkedSyscall.PipeRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.PipeRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.PipeWrite _ ->
+            tryFinishWriteIn parked call thread system
+            |> Result.map ViewFinishedCall.PipeWrite
+        | ParkedSyscall.ConnectionRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.ConnectionRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.ConnectionWrite _ ->
+            tryFinishWriteIn parked call thread system
+            |> Result.map ViewFinishedCall.ConnectionWrite
+        | ParkedSyscall.SigSuspend ->
+            UnixSignal.tryFinishSigsuspendIn thread system
+            |> Result.map ViewFinishedCall.SigSuspend
+            |> Result.mapError FinishRefusal.Sigsuspend
+        | ParkedSyscall.InotifyRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.InotifyRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.DatagramReceive receive ->
+            match receive.Call with
+            | ParkedDatagramReceiveCall.Read
+            | ParkedDatagramReceiveCall.Receive _ ->
+                UnixReadWrite.tryFinishReadIn thread system
+                |> Result.map ViewFinishedCall.DatagramRead
+                |> Result.mapError FinishRefusal.Read
+            | ParkedDatagramReceiveCall.ReceiveFrom _ ->
+                tryFinishRecvFromIn parked call thread system
+                |> Result.map ViewFinishedCall.DatagramRecvFrom
+        | ParkedSyscall.Futex _ ->
+            UnixFutex.tryFinishFutexWaitIn thread system
+            |> Result.map ViewFinishedCall.Futex
+            |> Result.mapError FinishRefusal.Futex
+
+    /// `finish`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (call : Syscall<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<FinishedCall<'Thread, 'Handler>, FinishRefusal>
+        =
+        Entry.call
+            "UnixWait.finish"
+            CallerRequirement.Woken
+            caller
+            (Shape.result (Shape.union finishedCases))
+            (tryFinishIn call (Caller.thread caller))
+            system
+
+    /// Finish the call `caller` is parked in, once `wake` has woken it, through
+    /// the finishing function of that call's family, and answer the
+    /// `FinishedCall` case named as the call's `ParkedSyscall` case is, holding
+    /// exactly what that function answers.
+    ///
+    /// `call` is the `Syscall` the thread made, as `UnixSystem.step` takes it,
+    /// with what the caller's memory holds now: a woken write copies the next
+    /// of its bytes from its buffer as the buffer is when the call is
+    /// finished, and `finish` hands the write's resumption, which
+    /// `UnixReadWrite.writeWithBytes` is, the bytes of `call`'s buffer it
+    /// copies, so that it never stops partway. A woken Linux `recvfrom` reads
+    /// its length cell once its datagram has come, and `finish` hands its
+    /// resumption, which `UnixReadWrite.recvfromWithLength` is, what `call`'s
+    /// cell holds. Every other call is finished without reading `call`'s
+    /// arguments.
+    ///
+    /// So it answers as that function would: the call's answer, which clears the
+    /// park; the thread parked again, asleep, for a new wake, where what woke it
+    /// has gone; or `Interrupted`, after which the thread owes its return to
+    /// user mode (`UnixSignal.onReturnToUser`), which says how the call ends. A
+    /// client that wants that function's own answer type calls it instead.
+    ///
+    /// Throws `InvalidOperationException` unless `caller` is a thread of one of
+    /// the system's processes, parked in a call and woken, and
+    /// `UnmodelledException` for a thread parked in one of the reserved calls
+    /// (`ParkedSyscall.Sleep`, `FifoOpen`, `Select`, `SignalWait`,
+    /// `DatagramSend` and `Connect`), which nothing parks a thread in yet.
+    /// Throws `ArgumentException` if `call`'s case is not one that parks a
+    /// thread where `caller` is parked (`Syscall.Write` for a write to a pipe,
+    /// and `Syscall.Write` for a write to a connected socket and `Syscall.Send`
+    /// for a send to one, or `Syscall.SendTo` with a NULL destination, which is
+    /// that send; and `Syscall.Read`, `Syscall.Recv` or `Syscall.RecvFrom` for
+    /// a receive on a UDP socket made by that call). For a write that copies,
+    /// throws `InvalidOperationException` if `call`'s buffer holds contents
+    /// that end before the bytes it copies, as `step` does, and
+    /// `UnmodelledException` if `call` gives the buffer as anything but
+    /// readable, which it was when the call was made; and likewise for a
+    /// `recvfrom`'s length cell. Otherwise it throws what the family's finishing
+    /// function throws.
+    let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (call : Syscall<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : FinishedCall<'Thread, 'Handler>
+        =
+        tryFinish caller call system
+        |> Refusal.orRaise "UnixWait.finish" FinishRefusal.kind FinishRefusal.describe

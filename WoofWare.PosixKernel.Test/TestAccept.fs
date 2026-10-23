@@ -28,13 +28,14 @@ module TestAccept =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalIpv4Addresses = []
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
 
     let private platforms : SimulatedUnixPlatform list =
@@ -60,19 +61,24 @@ module TestAccept =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketId
+                (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A stream socket in the IPv4 domain, in `phase`.
@@ -93,6 +99,8 @@ module TestAccept =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
+            Uid = UserId.root
         }
 
     /// Enter `count` completed connections into the machine's connection table,
@@ -111,23 +119,25 @@ module TestAccept =
                     let connection =
                         {
                             ClientAddress = loopback (40000us + uint16 index)
+                            FinsExchangedAt = None
                             ServerAddress = serverAddress
-                            Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+                            Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet (Kernel.machine system)
                         }
 
                     ids @ [ id ], Map.add id connection connections, ConnectionId (next + 1L)
                 )
-                ([], system.Machine.Connections, system.Machine.NextConnectionId)
+                ([], (Kernel.machine system).Connections, (Kernel.machine system).NextConnectionId)
                 [ 0 .. count - 1 ]
 
         ids,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections = connections
                     NextConnectionId = next
                 }
-        }
+            )
+            system
 
     /// A listener holding `queued` completed connections, and the descriptor it
     /// is open on. `SocketId 0L` throughout, so tests can name it.
@@ -144,7 +154,6 @@ module TestAccept =
                     {
                         Backlog = 8
                         Queue = List.map ForgedConnection.queued connections
-                        Drained = false
                     }
             )
 
@@ -158,12 +167,12 @@ module TestAccept =
         (system : UnixSystem<int, string>)
         : AcceptOutcome * UnixSystem<int, string>
         =
-        match UnixConnection.tryAccept 0 fd destination declaredLength system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd destination (Some declaredLength) 0 system with
         | Ok result -> result
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{AcceptRefusal.describe refusal}"
 
     let private queueOf (socketId : SocketId) (system : UnixSystem<int, string>) : ConnectionId list =
-        match (UnixMachineState.socket socketId system.Machine).Phase with
+        match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
         | SocketPhase.Listening listenState -> ListenState.connections listenState
         | other -> failwith $"expected Listening, got %A{other}"
 
@@ -183,8 +192,10 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-        | AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), system ->
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+        | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), _ ->
+            failwith "expected an address copied out, but the call wrote none"
+        | AcceptOutcome.Accepted (acceptedFd, PeerAddressCopy.Written (copiedOut, reportedLength)), system ->
 
         CopyOut.endpoint copiedOut |> shouldEqual (loopback 40000us)
         reportedLength |> shouldEqual 16
@@ -197,7 +208,7 @@ module TestAccept =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
-        let accepted = UnixMachineState.socket acceptedId system.Machine
+        let accepted = UnixMachineState.socket acceptedId (Kernel.machine system)
 
         accepted.Phase
         |> shouldEqual (SocketPhase.Established (List.head connections, ConnectionEnd.Server))
@@ -238,7 +249,6 @@ module TestAccept =
                                     ReuseAddress = true
                                 }
                             )
-                        Drained = false
                     }
             )
 
@@ -251,15 +261,15 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-        | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+        | AcceptOutcome.Accepted (acceptedFd, _), system ->
 
         let acceptedId =
             match FileDescriptorRegistry.tryFindTarget acceptedFd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
-        (UnixMachineState.socket acceptedId system.Machine).ReuseAddress
+        (UnixMachineState.socket acceptedId (Kernel.machine system)).ReuseAddress
         |> shouldEqual true
 
     [<TestCaseSource(nameof platforms)>]
@@ -274,8 +284,10 @@ module TestAccept =
                     | AcceptOutcome.DroppedConnection error, _ ->
                         failwith $"expected an accept, but the connection was dropped with %O{error}"
                     | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-                    | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-                    | AcceptOutcome.Accepted (_, copiedOut, _), system ->
+                    | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+                    | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), _ ->
+                        failwith "expected an address copied out, but the call wrote none"
+                    | AcceptOutcome.Accepted (_, PeerAddressCopy.Written (copiedOut, _)), system ->
                         peers @ [ CopyOut.endpoint copiedOut ], system
                 )
                 ([], system)
@@ -299,21 +311,19 @@ module TestAccept =
             | AcceptOutcome.DroppedConnection error, _ ->
                 failwith $"expected an accept, but the connection was dropped with %O{error}"
             | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-            | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-            | AcceptOutcome.Accepted (_, _, reportedLength), _ -> reportedLength |> shouldEqual 16
+            | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+            | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), _ ->
+                failwith "expected an address copied out, but the call wrote none"
+            | AcceptOutcome.Accepted (_, PeerAddressCopy.Written (_, reportedLength)), _ ->
+                reportedLength |> shouldEqual 16
 
     /// A call that writes nothing never looks at the destination, so every
-    /// buffer succeeds at a declared length of zero — including the three that a
-    /// nonzero length refuses.
+    /// buffer succeeds at a declared length of zero — including the two that a
+    /// nonzero length refuses. An addressless one is refused at every length,
+    /// since it might be NULL (`TestSocketAddressLength`).
     [<TestCaseSource(nameof platforms)>]
     let ``a declared length of zero accepts through any buffer`` (platform : SimulatedUnixPlatform) : unit =
-        for destination in
-            [
-                UserBuffer.Mapped
-                UserBuffer.Unmapped 4096UL
-                UserBuffer.Opaque
-                UserBuffer.Addressless
-            ] do
+        for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 4096UL ; UserBuffer.Opaque ] do
             let fd, _, system = listenerWith platform 1
 
             match acceptOrFail fd destination 0u system with
@@ -321,8 +331,10 @@ module TestAccept =
             | AcceptOutcome.DroppedConnection error, _ ->
                 failwith $"expected an accept, but the connection was dropped with %O{error}"
             | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-            | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-            | AcceptOutcome.Accepted (_, _, reportedLength), system ->
+            | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+            | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), _ ->
+                failwith "expected an address copied out, but the call wrote none"
+            | AcceptOutcome.Accepted (_, PeerAddressCopy.Written (_, reportedLength)), system ->
 
             reportedLength |> shouldEqual 16
             queueOf (SocketId 0L) system |> shouldEqual []
@@ -347,12 +359,16 @@ module TestAccept =
         // things a descriptor can name that are not sockets.
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
                 (Lone.fileDescriptors system)
 
-        let queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry system
 
@@ -430,7 +446,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -468,7 +484,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system
             |> shouldEqual (Error (AcceptRefusal.UnmodelledDomain (SocketId 0L, domain)))
 
     [<TestCaseSource(nameof platforms)>]
@@ -481,7 +497,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system
             |> shouldEqual (Error (AcceptRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
     /// The park itself, and what finishes it, are `TestBlockingAccept`'s.
@@ -489,7 +505,7 @@ module TestAccept =
     let ``an empty queue on a blocking listener parks the caller`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.WouldBlock condition, _) ->
             condition
             |> shouldEqual (
@@ -511,7 +527,7 @@ module TestAccept =
     let ``a copy-out through an unmapped destination is refused`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 1
 
-        UnixConnection.tryAccept 0 fd (UserBuffer.Unmapped 4096UL) 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd (UserBuffer.Unmapped 4096UL) (Some 16u) 0 system
         |> shouldEqual (Error (AcceptRefusal.UnmeasuredCopyOutFault (SocketId 0L)))
 
     /// A destination whose bytes the client cannot produce is a different
@@ -526,13 +542,15 @@ module TestAccept =
         let rows =
             [
                 UserBuffer.Opaque, BufferRefusal.OpaqueAtTransfer
-                UserBuffer.Addressless, BufferRefusal.AddresslessAtTransfer
+                // Refused before the length is read, since an addressless
+                // destination might be NULL (`TestSocketAddressLength`).
+                UserBuffer.Addressless, BufferRefusal.AddresslessAtScreen
             ]
 
         for destination, expected in rows do
             let fd, _, system = listenerWith platform 1
 
-            UnixConnection.tryAccept 0 fd destination 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd destination (Some 16u) 0 system
             |> shouldEqual (Error (AcceptRefusal.Buffer expected))
 
     /// A refusal carries no system, so the connection it would have handed over
@@ -542,7 +560,7 @@ module TestAccept =
     let ``a refused copy-out leaves the connection queued`` (platform : SimulatedUnixPlatform) : unit =
         let fd, connections, system = listenerWith platform 1
 
-        UnixConnection.tryAccept 0 fd UserBuffer.Opaque 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque (Some 16u) 0 system
         |> shouldEqual (Error (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
         queueOf (SocketId 0L) system |> shouldEqual connections
@@ -554,7 +572,7 @@ module TestAccept =
     let ``an empty queue outranks an unwritable buffer`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept 0 fd UserBuffer.Opaque 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque (Some 16u) 0 system with
         | Ok (AcceptOutcome.WouldBlock _, _) -> ()
         | other -> failwith $"expected the accept to park, got %A{other}"
 
@@ -604,8 +622,8 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-        | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+        | AcceptOutcome.Accepted (acceptedFd, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual inherits
 
@@ -622,8 +640,8 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-        | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+        | AcceptOutcome.Accepted (acceptedFd, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual false
 
@@ -642,7 +660,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -653,8 +671,8 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
-        | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
+        | AcceptOutcome.Accepted (acceptedFd, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual inherits
 
@@ -671,7 +689,8 @@ module TestAccept =
                 (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
 
-        let acceptedFd, _, system = UnixConnection.acceptConnection (SocketId 0L) system
+        let acceptedFd, _, system =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) system
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual false
 
@@ -688,7 +707,10 @@ module TestAccept =
             withSocket (SocketId 0L) socket (systemOn SimulatedUnixPlatform.linuxX64)
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system |> ignore<_>)
+            Assert.Throws<exn> (fun () ->
+                UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system
+                |> ignore<_>
+            )
 
         e.Message |> shouldContainText "socket invariants forbid"
 
@@ -697,7 +719,7 @@ module TestAccept =
         let _, _, system = listenerWith SimulatedUnixPlatform.linuxX64 0
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
+            Assert.Throws<exn> (fun () -> Lone.UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
 
         e.Message |> shouldContainText "the accept queue is empty"
 
@@ -707,6 +729,6 @@ module TestAccept =
             withSocket (SocketId 0L) (streamSocket SocketPhase.Idle) (systemOn SimulatedUnixPlatform.linuxX64)
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
+            Assert.Throws<exn> (fun () -> Lone.UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
 
         e.Message |> shouldContainText "not listening"

@@ -45,6 +45,7 @@ module TestCredentialChange =
 
     let private linuxRows : string[] list = rows "linux"
     let private darwinRows : string[] list = rows "darwin"
+    let private darwinRootRows : string[] list = rows "darwin-root"
 
     let private section (name : string) (all : string[] list) : string[] list =
         all |> List.filter (fun row -> row.[0] = name)
@@ -122,10 +123,15 @@ module TestCredentialChange =
         section "RESGID" linuxRows |> List.length |> shouldEqual (3 * 27 * 125)
         section "SETGROUPS" linuxRows |> List.length |> shouldEqual (4 * 19)
         section "SETGROUPS" darwinRows |> List.length |> shouldEqual 19
+
+        (section "RUN" darwinRootRows |> List.exactlyOne).[1]
+        |> shouldEqual "uid=0 euid=0 gid=0 egid=0 NGROUPS_MAX=16"
+
+        section "SETGROUPS" darwinRootRows |> List.length |> shouldEqual 19
         section "GETRES" linuxRows |> List.length |> shouldEqual 8
         section "FSOWNER" linuxRows |> List.length |> shouldEqual 1
 
-        for all in [ linuxRows ; darwinRows ] do
+        for all in [ linuxRows ; darwinRows ; darwinRootRows ] do
             (List.last all).[0] |> shouldEqual "DONE"
             section "SETUP-FAILED" all |> shouldBeEmpty
             section "CHILD-FAILED" all |> shouldBeEmpty
@@ -151,7 +157,12 @@ module TestCredentialChange =
             let before = systemWith linux CoreDumps.Suppressed (startingUsers start)
 
             let answer, after =
-                UnixCredentials.trySetresuid (requestedUser tr) (requestedUser te) (requestedUser ts) before
+                UnixCredentials.trySetresuid
+                    (Callers.leader before)
+                    (requestedUser tr)
+                    (requestedUser te)
+                    (requestedUser ts)
+                    before
                 |> ok
 
             let label = String.Join ("\t", row)
@@ -161,7 +172,12 @@ module TestCredentialChange =
                 failwith $"%s{label}: answered %s{answerText answer}"
 
             match
-                UnixCredentials.tryGetresuid UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped after
+                UnixCredentials.tryGetresuid
+                    (Callers.leader after)
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    after
                 |> ok
             with
             | GetIdsAnswer.Copied (r, e, s) ->
@@ -203,8 +219,14 @@ module TestCredentialChange =
             let label = String.Join ("\t", row)
 
             let call (coreDumps : CoreDumps) =
-                systemWith linux coreDumps (startingUsers start)
-                |> UnixCredentials.trySetresuid (requestedUser tr) (requestedUser te) (requestedUser ts)
+                let system = systemWith linux coreDumps (startingUsers start)
+
+                UnixCredentials.trySetresuid
+                    (Callers.leader system)
+                    (requestedUser tr)
+                    (requestedUser te)
+                    (requestedUser ts)
+                    system
 
             match row.[6], call CoreDumps.Written with
             | "dumpable=1->0", Error SetIdsRefusal.DumpabilityUnmodelled -> ()
@@ -244,7 +266,12 @@ module TestCredentialChange =
             let before = systemWith linux CoreDumps.Suppressed (startingIds users start)
 
             let answer, after =
-                UnixCredentials.trySetresgid (requestedGroup tr) (requestedGroup te) (requestedGroup ts) before
+                UnixCredentials.trySetresgid
+                    (Callers.leader before)
+                    (requestedGroup tr)
+                    (requestedGroup te)
+                    (requestedGroup ts)
+                    before
                 |> ok
 
             let label = String.Join ("\t", row)
@@ -254,7 +281,12 @@ module TestCredentialChange =
                 failwith $"%s{label}: answered %s{answerText answer}"
 
             match
-                UnixCredentials.tryGetresgid UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped after
+                UnixCredentials.tryGetresgid
+                    (Callers.leader after)
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    after
                 |> ok
             with
             | GetIdsAnswer.Copied (r, e, s) ->
@@ -287,8 +319,14 @@ module TestCredentialChange =
             let label = String.Join ("\t", row)
 
             let call (coreDumps : CoreDumps) =
-                systemWith linux coreDumps (startingIds users start)
-                |> UnixCredentials.trySetresgid (requestedGroup tr) (requestedGroup te) (requestedGroup ts)
+                let system = systemWith linux coreDumps (startingIds users start)
+
+                UnixCredentials.trySetresgid
+                    (Callers.leader system)
+                    (requestedGroup tr)
+                    (requestedGroup te)
+                    (requestedGroup ts)
+                    system
 
             match row.[7], call CoreDumps.Written with
             | "dumpable=1->0", Error SetIdsRefusal.DumpabilityUnmodelled -> ()
@@ -360,14 +398,15 @@ module TestCredentialChange =
                 |> systemWith linux CoreDumps.Written
 
             let size, words = groupsArgument limit row.[2]
-            let answer, after = UnixCredentials.trySetgroups size words before |> ok
+
+            let answer, after =
+                UnixCredentials.trySetgroups (Callers.leader before) size words before |> ok
 
             if answerText answer <> row.[3] then
                 failwith $"%s{label}: answered %s{answerText answer}"
 
             let reported =
                 Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport linux) (Lone.proc after).Credentials
-                |> Option.get
 
             if $"after=%s{groupsText reported}" <> row.[5] then
                 failwith $"%s{label}: the model's list is %s{groupsText reported}"
@@ -398,7 +437,9 @@ module TestCredentialChange =
                 systemWith darwin CoreDumps.Suppressed (Credentials.ofIds (uid 501u) (gid 20u) [ gid 12u ])
 
             let size, words = groupsArgument limit row.[2]
-            let answer, after = UnixCredentials.trySetgroups size words before |> ok
+
+            let answer, after =
+                UnixCredentials.trySetgroups (Callers.leader before) size words before |> ok
 
             if answerText answer <> row.[3] then
                 failwith $"%s{label}: answered %s{answerText answer}"
@@ -407,28 +448,214 @@ module TestCredentialChange =
             row.[4] |> shouldEqual (row.[5].Replace ("after=", "before="))
             after |> shouldEqual before
 
+    /// The groups a Darwin process reports: its effective group, then its
+    /// supplementary groups.
+    let private darwinReported (credentials : Credentials) : GroupId list =
+        Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport darwin) credentials
+
+    /// Root as the probe's run found it: effective group 0, and the fifteen
+    /// groups after it that sudo's login list held.
+    let private darwinRoot : Credentials =
+        Credentials.ofIds
+            UserId.root
+            (gid 0u)
+            ([
+                1u
+                2u
+                3u
+                4u
+                5u
+                8u
+                9u
+                12u
+                20u
+                29u
+                61u
+                80u
+                33u
+                98u
+                100u
+             ]
+             |> List.map gid)
+
     [<Test>]
-    let ``Darwin setgroups is refused for a privileged process, whose answer needs root to measure`` () : unit =
-        let root =
-            systemWith darwin CoreDumps.Suppressed (Credentials.ofIds UserId.root (gid 0u) [])
+    let ``Darwin setgroups answers every row of root's run`` () : unit =
+        let limit = SimulatedUnixPlatform.supplementaryGroupLimit darwin
 
-        let property (size : int, words : uint32 list) : unit =
-            UnixCredentials.trySetgroups size (GroupListWords.Readable words) root
-            |> Result.map fst
-            |> shouldEqual (Error (SetGroupsRefusal.UnmeasuredPrivileged SimulatedUnixFlavour.Darwin))
+        for row in section "SETGROUPS" darwinRootRows do
+            let label = String.Join ("\t", row)
+            let before = systemWith darwin CoreDumps.Suppressed darwinRoot
 
-        // Any size at all, since the refusal comes before the size is read; the
-        // words agree with the size whenever a kernel would copy them.
+            $"before=%s{groupsText (darwinReported darwinRoot)}" |> shouldEqual row.[4]
+
+            let size, words = groupsArgument limit row.[2]
+
+            let wordsHold (candidate : uint32) : bool =
+                match words with
+                | GroupListWords.Readable words -> List.contains candidate words
+                | GroupListWords.FaultsAfter _ -> false
+
+            match UnixCredentials.trySetgroups (Callers.leader before) size words before with
+            | Error (SetGroupsRefusal.MinusOneGroup _) when wordsHold UInt32.MaxValue && row.[3] = "OK" ->
+                // Darwin takes (gid_t)-1 as a group, which no `GroupId` is.
+                ()
+            | Error refusal -> failwith $"%s{label}: refused %s{SetGroupsRefusal.describe refusal}"
+            | Ok (answer, after) ->
+                if answerText answer <> row.[3] then
+                    failwith $"%s{label}: answered %s{answerText answer}"
+
+                let credentials = (Lone.proc after).Credentials
+
+                if $"after=%s{groupsText (darwinReported credentials)}" <> row.[5] then
+                    failwith $"%s{label}: the model's list is %s{groupsText (darwinReported credentials)}"
+
+                $"egid=%d{GroupId.toUInt32 credentials.EffectiveGroup}" |> shouldEqual row.[6]
+
+                if answer <> SyscallAnswer.Completed 0L then
+                    after |> shouldEqual before
+
+    /// `docs/probes/darwin-root/credentials.c`, run as root on Darwin 27.0.
+    let private credentialsRows : string[] list =
+        let assembly = Assembly.GetExecutingAssembly ()
+        let resourceName = "WoofWare.PosixKernel.Test.darwin-root.credentials.txt"
+
+        use stream =
+            match assembly.GetManifestResourceStream resourceName with
+            | null -> failwith $"embedded resource %s{resourceName} not found"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+        |> List.map (fun line -> line.Split '\t')
+
+    /// A list as `credentials.c` names it: `size=0 NULL`, `[a,b]`, or 16 or
+    /// 17 distinct groups from 3000.
+    let private credentialsList (label : string) : int * GroupListWords =
+        match label with
+        | "size=0 NULL" -> 0, GroupListWords.FaultsAfter []
+        | "16 distinct [3000..3015]" -> 16, GroupListWords.Readable [ 3000u .. 3015u ]
+        | "17 distinct [3000..3016]" -> 17, GroupListWords.Readable [ 3000u .. 3016u ]
+        | bracketed ->
+            let words =
+                bracketed.Trim('[', ']').Split ',' |> Array.map UInt32.Parse |> List.ofArray
+
+            List.length words, GroupListWords.Readable words
+
+    /// `[a,b,c]` as `credentials.c` prints a list.
+    let private listText (groups : GroupId list) : string =
+        groups
+        |> List.map (GroupId.toUInt32 >> string<uint32>)
+        |> String.concat ","
+        |> sprintf "[%s]"
+
+    [<Test>]
+    let ``Darwin root's setgroups makes the list's first group the effective group, and every group a member``
+        ()
+        : unit
+        =
+        // INITIAL is root as sudo left it: the same list `darwinRoot` holds.
+        let initial = credentialsRows |> List.find (fun row -> row.[0] = "INITIAL")
+
+        initial.[1]
+        |> shouldEqual $"uid=0 euid=0 groups=%s{listText (darwinReported darwinRoot)} egid=0 rgid=0"
+
+        let setgroupsRows =
+            credentialsRows |> List.filter (fun row -> row.[0] = "SETGROUPS")
+
+        let memberRows = credentialsRows |> List.filter (fun row -> row.[0] = "MEMBER")
+        setgroupsRows.Length |> shouldEqual 13
+
+        for row in setgroupsRows do
+            let label = row.[1]
+            let size, words = credentialsList label
+            let before = systemWith darwin CoreDumps.Suppressed darwinRoot
+
+            let answer, after =
+                UnixCredentials.trySetgroups (Callers.leader before) size words before |> ok
+
+            let credentials = (Lone.proc after).Credentials
+
+            let measured =
+                match answer with
+                | SyscallAnswer.Completed 0L -> "-> ok"
+                | SyscallAnswer.Failed error -> $"-> %A{error}"
+                | other -> failwith $"%s{label}: answered %A{other}"
+
+            (label, measured) |> shouldEqual (label, row.[2])
+
+            (label, row.[3])
+            |> shouldEqual (
+                label,
+                $"groups=%s{listText (darwinReported credentials)} egid=%d{GroupId.toUInt32 credentials.EffectiveGroup} rgid=%d{GroupId.toUInt32 credentials.RealGroup}"
+            )
+
+            // Membership as the kernel judged it: open(O_RDONLY) of a file uid
+            // 504 owns, mode 0040, in each group, after setuid(502).
+            match memberRows |> List.tryFind (fun memberRow -> memberRow.[1] = label) with
+            | Some memberRow when not (memberRow.[2].StartsWith "SKIP") ->
+                memberRow.[3] |> shouldEqual "control=ok"
+
+                for cell in memberRow.[4].Substring("->".Length).Trim().Split ' ' do
+                    match cell.Substring("member=".Length).Split ':' with
+                    | [| group ; opened |] ->
+                        (label, group, Credentials.isInGroup credentials (gid (UInt32.Parse group)))
+                        |> shouldEqual (label, group, (opened = "ok"))
+                    | _ -> failwith $"unparsed cell %s{cell}"
+            | Some _ -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+            | None -> failwith $"%s{label}: no MEMBER row"
+
+    [<Test>]
+    let ``Darwin root's setgroups of any list makes its first group the effective group and reports it as given``
+        ()
+        : unit
+        =
+        let property (egid : GroupId, list : GroupId list, coreDumps : CoreDumps) : unit =
+            let before = systemWith darwin coreDumps (Credentials.ofIds UserId.root egid [])
+
+            let words = list |> List.map GroupId.toUInt32
+
+            match
+                UnixCredentials.trySetgroups
+                    (Callers.leader before)
+                    (List.length words)
+                    (GroupListWords.Readable words)
+                    before
+            with
+            | Ok (SyscallAnswer.Completed 0L, after) ->
+                // Whether Darwin still dumps core after changing the groups
+                // is unmeasured, so a process that writes core dumps is
+                // refused; one that writes none goes on writing none.
+                coreDumps |> shouldEqual CoreDumps.Suppressed
+                (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Suppressed
+                let credentials = (Lone.proc after).Credentials
+
+                match list with
+                | [] ->
+                    // Measured only from effective group 0, which it keeps.
+                    egid |> shouldEqual (gid 0u)
+                    darwinReported credentials |> shouldEqual [ gid 0u ]
+                | first :: _ ->
+                    credentials.EffectiveGroup |> shouldEqual first
+                    darwinReported credentials |> shouldEqual list
+                    credentials.RealGroup |> shouldEqual egid
+            | Error (SetGroupsRefusal.EmptyFromNonZeroEffectiveGroup refused) ->
+                list |> shouldEqual []
+                refused |> shouldEqual egid
+                egid <> gid 0u |> shouldEqual true
+            | Error SetGroupsRefusal.DumpabilityUnmodelled ->
+                coreDumps |> shouldEqual CoreDumps.Written
+                (list <> [] || egid = gid 0u) |> shouldEqual true
+            | other -> failwith $"setgroups(%A{words}) from effective group %O{egid} answered %A{other}"
+
         let gen =
             gen {
-                let! words = Gen.listOf CredentialsGen.rawId
-                let! size = Gen.oneof [ Gen.constant (List.length words) ; ArbMap.defaults |> ArbMap.generate<int> ]
-
-                return
-                    if size >= 0 && size <= 16 then
-                        List.length words, words
-                    else
-                        size, words
+                let! egid = Gen.oneof [ Gen.constant (gid 0u) ; CredentialsGen.groupId ]
+                let! count = Gen.choose (0, 16)
+                let! list = Gen.listOfLength count CredentialsGen.groupId
+                let! coreDumps = Gen.elements [ CoreDumps.Written ; CoreDumps.Suppressed ]
+                return egid, list, coreDumps
             }
 
         Check.One (Config.QuickThrowOnFailure, Prop.forAll (Arb.fromGen gen) property)
@@ -446,11 +673,12 @@ module TestCredentialChange =
                     GroupListWords.Readable [ 1u ; 2u ; 3u ]
                     GroupListWords.FaultsAfter [ 1u ; 2u ]
                 ] do
-                Assert.Throws<Exception> (fun () ->
-                    UnixCredentials.trySetgroups 2 words system
-                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, SetGroupsRefusal>>
-                )
-                |> ignore<Exception>
+                (Assert.Throws<ArgumentException> (fun () ->
+                    UnixCredentials.setgroups (Callers.leader system) 2 words system
+                    |> ignore<SyscallAnswer * UnixSystem<int, string>>
+                ))
+                    .ParamName
+                |> shouldEqual "words"
 
     // ------------------------------------------------------------- getresuid, getresgid
 
@@ -507,12 +735,18 @@ module TestCredentialChange =
                 let answer =
                     match row.[1] with
                     | "uid" ->
-                        match UnixCredentials.tryGetresuid real effective saved system |> ok with
+                        match
+                            UnixCredentials.tryGetresuid (Callers.leader system) real effective saved system
+                            |> ok
+                        with
                         | GetIdsAnswer.Copied (r, e, s) ->
                             GetIdsAnswer.Copied (UserId.toUInt32 r, UserId.toUInt32 e, UserId.toUInt32 s)
                         | GetIdsAnswer.Faulted written -> GetIdsAnswer.Faulted (written |> List.map UserId.toUInt32)
                     | "gid" ->
-                        match UnixCredentials.tryGetresgid real effective saved system |> ok with
+                        match
+                            UnixCredentials.tryGetresgid (Callers.leader system) real effective saved system
+                            |> ok
+                        with
                         | GetIdsAnswer.Copied (r, e, s) ->
                             GetIdsAnswer.Copied (GroupId.toUInt32 r, GroupId.toUInt32 e, GroupId.toUInt32 s)
                         | GetIdsAnswer.Faulted written -> GetIdsAnswer.Faulted (written |> List.map GroupId.toUInt32)
@@ -530,14 +764,29 @@ module TestCredentialChange =
         let system =
             systemWith linux CoreDumps.Suppressed (Credentials.ofIds (uid 7u) (gid 8u) [])
 
-        UnixCredentials.tryGetresuid UserBuffer.Mapped UserBuffer.Opaque (UserBuffer.Unmapped 0UL) system
+        UnixCredentials.tryGetresuid
+            (Callers.leader system)
+            UserBuffer.Mapped
+            UserBuffer.Opaque
+            (UserBuffer.Unmapped 0UL)
+            system
         |> shouldEqual (Error (GetIdsRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        UnixCredentials.tryGetresgid UserBuffer.Mapped UserBuffer.Addressless UserBuffer.Mapped system
+        UnixCredentials.tryGetresgid
+            (Callers.leader system)
+            UserBuffer.Mapped
+            UserBuffer.Addressless
+            UserBuffer.Mapped
+            system
         |> shouldEqual (Error (GetIdsRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
         // An earlier fault ends the call before it reaches the buffer it cannot answer for.
-        UnixCredentials.tryGetresuid (UserBuffer.Unmapped 0UL) UserBuffer.Opaque UserBuffer.Addressless system
+        UnixCredentials.tryGetresuid
+            (Callers.leader system)
+            (UserBuffer.Unmapped 0UL)
+            UserBuffer.Opaque
+            UserBuffer.Addressless
+            system
         |> shouldEqual (Ok (GetIdsAnswer.Faulted []))
 
     [<Test>]
@@ -552,18 +801,28 @@ module TestCredentialChange =
             let groups = requested |> List.map (Option.map gid)
             let noSuchCall = SimulatedUnixFlavour.Darwin
 
-            UnixCredentials.trySetresuid users.[0] users.[1] users.[2] system
+            UnixCredentials.trySetresuid (Callers.leader system) users.[0] users.[1] users.[2] system
             |> Result.map fst
             |> shouldEqual (Error (SetIdsRefusal.NoSuchCall noSuchCall))
 
-            UnixCredentials.trySetresgid groups.[0] groups.[1] groups.[2] system
+            UnixCredentials.trySetresgid (Callers.leader system) groups.[0] groups.[1] groups.[2] system
             |> Result.map fst
             |> shouldEqual (Error (SetIdsRefusal.NoSuchCall noSuchCall))
 
-            UnixCredentials.tryGetresuid UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped system
+            UnixCredentials.tryGetresuid
+                (Callers.leader system)
+                UserBuffer.Mapped
+                UserBuffer.Mapped
+                UserBuffer.Mapped
+                system
             |> shouldEqual (Error (GetIdsRefusal.NoSuchCall noSuchCall))
 
-            UnixCredentials.tryGetresgid UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped system
+            UnixCredentials.tryGetresgid
+                (Callers.leader system)
+                UserBuffer.Mapped
+                UserBuffer.Mapped
+                UserBuffer.Mapped
+                system
             |> shouldEqual (Error (GetIdsRefusal.NoSuchCall noSuchCall))
 
         let gen =
@@ -598,11 +857,21 @@ module TestCredentialChange =
                 (CpuId 0)
 
         let _, system =
-            UnixCredentials.trySetresgid (Some (gid 1000u)) (Some (gid 1001u)) (Some (gid 1002u)) system
+            UnixCredentials.trySetresgid
+                (Callers.leader system)
+                (Some (gid 1000u))
+                (Some (gid 1001u))
+                (Some (gid 1002u))
+                system
             |> ok
 
         let _, system =
-            UnixCredentials.trySetresuid (Some (uid 1003u)) (Some (uid 1004u)) (Some UserId.root) system
+            UnixCredentials.trySetresuid
+                (Callers.leader system)
+                (Some (uid 1003u))
+                (Some (uid 1004u))
+                (Some UserId.root)
+                system
             |> ok
 
         let creating : OpenFlags =
@@ -615,15 +884,18 @@ module TestCredentialChange =
                 CloseOnExec = false
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = false
             }
 
         let system =
-            match OpenFlagWords.openPath creating (PathArg.ofText "/tmp/owned") 0o600 system with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            match OpenFlagWords.openPath (PathArg.ofText "/tmp/owned") creating 0o600 system with
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"open: %A{other}"
 
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/tmp/owned") system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText "/tmp/owned") system
+        with
         | Ok (FileStatusAnswer.Reported status) -> $"owner=%O{status.UserId}:%O{status.GroupId}" |> shouldEqual row.[2]
         | other -> failwith $"stat: %A{other}"
 
@@ -669,6 +941,7 @@ module TestCredentialChange =
 
             let _, afterUsers =
                 UnixCredentials.trySetresuid
+                    (Callers.leader system)
                     (Option.map uid requests.[0])
                     (Option.map uid requests.[1])
                     (Option.map uid requests.[2])
@@ -682,6 +955,7 @@ module TestCredentialChange =
 
             let _, afterGroups =
                 UnixCredentials.trySetresgid
+                    (Callers.leader system)
                     (Option.map gid requests.[0])
                     (Option.map gid requests.[1])
                     (Option.map gid requests.[2])
@@ -694,7 +968,7 @@ module TestCredentialChange =
             |> shouldEqual true
 
             // And it can never install a supplementary list.
-            UnixCredentials.trySetgroups 0 (GroupListWords.Readable []) system
+            UnixCredentials.trySetgroups (Callers.leader system) 0 (GroupListWords.Readable []) system
             |> ok
             |> fst
             |> shouldEqual (SyscallAnswer.Failed UnixError.EPERM)
@@ -706,7 +980,7 @@ module TestCredentialChange =
 
     [<Test>]
     let ``a sequence of credential calls keeps the system sound, through step as through the primitives`` () : unit =
-        let callGen : Gen<Syscall> =
+        let callGen : Gen<Syscall<int, string>> =
             Gen.oneof
                 [
                     Gen.listOfLength 3 requestGen
@@ -731,33 +1005,43 @@ module TestCredentialChange =
                     }
                 ]
 
-        let primitive (call : Syscall) (system : UnixSystem<int, string>) =
+        let primitive
+            (call : Syscall<int, string>)
+            (system : UnixSystem<int, string>)
+            : Result<SteppedCall<int, string>, SyscallRefusal<int>>
+            =
             match call with
             | Syscall.SetResUid (r, e, s) ->
-                UnixCredentials.trySetresuid r e s system
-                |> Result.mapError SyscallRefusal.SetIds
+                UnixCredentials.trySetresuid (Callers.leader system) r e s system
+                |> Result.map SteppedCall.SetResUid
+                |> Result.mapError SyscallRefusal.SetResUid
             | Syscall.SetResGid (r, e, s) ->
-                UnixCredentials.trySetresgid r e s system
-                |> Result.mapError SyscallRefusal.SetIds
+                UnixCredentials.trySetresgid (Callers.leader system) r e s system
+                |> Result.map SteppedCall.SetResGid
+                |> Result.mapError SyscallRefusal.SetResGid
             | Syscall.SetGroups (size, words) ->
-                UnixCredentials.trySetgroups size words system
+                UnixCredentials.trySetgroups (Callers.leader system) size words system
+                |> Result.map SteppedCall.SetGroups
                 |> Result.mapError SyscallRefusal.SetGroups
             | other -> failwith $"not a credential call: %A{other}"
 
-        let property (credentials : Credentials, calls : Syscall list) : unit =
+        let property (credentials : Credentials, calls : Syscall<int, string> list) : unit =
             let mutable system = systemWith linux CoreDumps.Suppressed credentials
 
             for call in calls do
-                let viaStep = UnixSystem.tryStep 0 call system
                 let direct = primitive call system
 
-                match viaStep, direct with
-                | Ok (SyscallOutcome.Answered stepAnswer, stepped), Ok (answer, after) ->
-                    (stepAnswer, stepped) |> shouldEqual (answer, after)
+                UnixSystem.tryStep (Callers.thread 0 system) call system
+                |> Stepped.resultShouldBe direct
+
+                match direct with
+                | Ok (SteppedCall.SetResUid (_, after))
+                | Ok (SteppedCall.SetResGid (_, after))
+                | Ok (SteppedCall.SetGroups (_, after)) ->
                     UnixSystem.checkInvariants after |> shouldEqual []
                     system <- after
-                | Error stepRefusal, Error refusal -> stepRefusal |> shouldEqual refusal
-                | other -> failwith $"%A{call}: step and the primitive disagree: %A{other}"
+                | Ok other -> failwith $"%A{call}: not a credential call's answer: %A{Stepped.view other}"
+                | Error _ -> ()
 
         Check.One (
             Config.QuickThrowOnFailure.WithMaxTest 500,

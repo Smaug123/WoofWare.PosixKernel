@@ -66,6 +66,15 @@ type internal EphemeralPortRangeRefusal =
     /// The low end is above the high end, so the range holds no port and no
     /// bind of port 0 could be answered. Contradictory.
     | Empty of low : uint16 * high : uint16
+    /// On Darwin, an end is below 1024. Darwin keeps
+    /// `net.inet.ip.portrange.first` and `last` within 1024 to 65535,
+    /// whatever is written, so no Darwin machine has such a range.
+    /// Contradictory.
+    | BelowDarwinFloor of low : uint16 * high : uint16
+    /// On Darwin, the low end is above the high end. Darwin takes such a
+    /// pair and searches the ports between them downwards, which this kernel
+    /// does not model. Unmodelled.
+    | Descending of low : uint16 * high : uint16
 
 [<RequireQualifiedAccess>]
 module internal EphemeralPortRangeRefusal =
@@ -77,12 +86,65 @@ module internal EphemeralPortRangeRefusal =
             $"the range 0-%d{high} starts at port 0, which is how a process asks for an ephemeral port, so it cannot also be one that gets handed out. Start the range at 1 or above."
         | EphemeralPortRangeRefusal.Empty (low, high) ->
             $"the range %d{low}-%d{high} is empty, so no bind of port 0 could ever be answered."
+        | EphemeralPortRangeRefusal.BelowDarwinFloor (low, high) ->
+            $"the range %d{low}-%d{high} has an end below 1024, where no Darwin machine's range can: Darwin keeps net.inet.ip.portrange.first and last within 1024 to 65535 whatever is written to them. Keep both ends at 1024 or above."
+        | EphemeralPortRangeRefusal.Descending (low, high) ->
+            $"the range %d{low}-%d{high} runs downwards. Darwin takes such a pair and searches the ports between them from the high end down, which this kernel does not model; give the low end first."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : EphemeralPortRangeRefusal) : RefusalKind =
         match refusal with
         | EphemeralPortRangeRefusal.LowIsZero _ -> RefusalKind.OutOfRange "low"
         | EphemeralPortRangeRefusal.Empty _ -> RefusalKind.Contradictory "high"
+        | EphemeralPortRangeRefusal.BelowDarwinFloor _ -> RefusalKind.OutOfRange "low"
+        | EphemeralPortRangeRefusal.Descending _ -> RefusalKind.Unmodelled
+
+/// Why `UnixBootImage.withUnprivilegedPortStart` refuses a value.
+[<RequireQualifiedAccess>]
+type internal UnprivilegedPortStartRefusal =
+    /// The machine is of `flavour` (Darwin), which has no such setting: its
+    /// privileged ports end at 1024, which nothing configures. Contradictory.
+    | NoSuchSetting of flavour : SimulatedUnixFlavour
+
+[<RequireQualifiedAccess>]
+module internal UnprivilegedPortStartRefusal =
+    /// What this library knows about why it refused the value, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : UnprivilegedPortStartRefusal) : string =
+        match refusal with
+        | UnprivilegedPortStartRefusal.NoSuchSetting flavour ->
+            $"the machine is %O{flavour}'s, which has no ip_unprivileged_port_start: its privileged ports end at 1024, and no sysctl moves that (measured: net.inet.ip.portrange.reservedlow and reservedhigh do not exist)."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : UnprivilegedPortStartRefusal) : RefusalKind =
+        match refusal with
+        | UnprivilegedPortStartRefusal.NoSuchSetting _ -> RefusalKind.Contradictory "start"
+
+/// Why `UnixBootImage.boot` refuses to boot an image with a launch.
+[<RequireQualifiedAccess>]
+type internal BootRefusal =
+    /// The launch cannot start on the machine.
+    | Launch of LaunchRefusal
+    /// Under Linux, the ephemeral range starts at `low`, below the
+    /// unprivileged port start `start`. Linux refuses either sysctl a value
+    /// that would leave them so, so no Linux machine has them. Contradictory.
+    | EphemeralPortsBelowUnprivilegedPortStart of low : uint16 * start : uint16
+
+[<RequireQualifiedAccess>]
+module internal BootRefusal =
+    /// What this library knows about why it refused to boot, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : BootRefusal) : string =
+        match refusal with
+        | BootRefusal.Launch refusal -> LaunchRefusal.describe refusal
+        | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, start) ->
+            $"the ephemeral range starts at port %d{low}, below the unprivileged port start, %d{start}. Linux's ip_local_port_range takes a low end only at or above ip_unprivileged_port_start, and ip_unprivileged_port_start a value only at or below the range's low end (measured), so no Linux machine has these two settings. Lower the unprivileged port start to %d{low}, or start the range at %d{start} or above."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : BootRefusal) : RefusalKind =
+        match refusal with
+        | BootRefusal.Launch refusal -> LaunchRefusal.kind refusal
+        | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart _ -> RefusalKind.Contradictory "image"
 
 /// Why `UnixBootImage.withBootTime` refuses an instant.
 [<RequireQualifiedAccess>]
@@ -382,6 +444,36 @@ module internal TcpReceiveSpaceRefusal =
         | TcpReceiveSpaceRefusal.NotPositive _ -> RefusalKind.OutOfRange "value"
         | TcpReceiveSpaceRefusal.GrowsAfterHandshake _ -> RefusalKind.Unmodelled
 
+/// Why `UnixBootImage.withUdpReceiveSpace` refuses a value.
+[<RequireQualifiedAccess>]
+type internal UdpReceiveSpaceRefusal =
+    /// The value is below `floor`, the smallest receive buffer measured with
+    /// datagrams of every size on this machine's flavour, so what it admits
+    /// is a guess. Unmodelled.
+    | BelowMeasured of value : int * floor : int
+    /// The value is above `ceiling`, past which a rule this library has not
+    /// measured decides what fits: Linux's admission takes another branch
+    /// above `INT_MAX >> 1`, and Darwin's `kern.ipc.maxsockbuf` (8388608)
+    /// caps the mbuf budget of a buffer above an eighth of it. Unmodelled.
+    | AboveMeasured of value : int * ceiling : int
+
+[<RequireQualifiedAccess>]
+module internal UdpReceiveSpaceRefusal =
+    /// What this library knows about why it refused the value, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : UdpReceiveSpaceRefusal) : string =
+        match refusal with
+        | UdpReceiveSpaceRefusal.BelowMeasured (value, floor) ->
+            $"%d{value} is below %d{floor}, the smallest UDP receive buffer measured with datagrams of every size on this flavour, so what it admits is a guess."
+        | UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling) ->
+            $"%d{value} is above %d{ceiling}, past which a rule this library has not measured decides what a UDP receive buffer admits."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : UdpReceiveSpaceRefusal) : RefusalKind =
+        match refusal with
+        | UdpReceiveSpaceRefusal.BelowMeasured _
+        | UdpReceiveSpaceRefusal.AboveMeasured _ -> RefusalKind.Unmodelled
+
 /// Why `UnixBootImage.withTcpSendSpaceMax` refuses a value.
 [<RequireQualifiedAccess>]
 type internal TcpSendSpaceMaxRefusal =
@@ -450,8 +542,22 @@ module UnixBootImage =
     let internal tryBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (image : UnixBootImage<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, LaunchRefusal>
+        : Result<UnixSystem<'Thread, 'Handler>, BootRefusal>
         =
+        // The two settings constrain each other, so they are judged here,
+        // where both are final, whichever setter ran first. Measured on Linux
+        // (`docs/probes/local-port-range`, `docs/probes/unprivileged-port-start`);
+        // Darwin's start is fixed at 1024, and its range is not judged
+        // against it.
+        let low, _ = image.Machine.EphemeralPortRange
+        let start = image.Machine.UnprivilegedPortStart
+
+        match SimulatedUnixPlatform.flavour image.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux when low < start ->
+            Error (BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, start))
+        | SimulatedUnixFlavour.Linux
+        | SimulatedUnixFlavour.Darwin ->
+
         let leaderThreadId =
             match ThreadIdAllocator.live image.Machine.ThreadIds |> Set.toList with
             | [ id ] -> id
@@ -460,14 +566,20 @@ module UnixBootImage =
                     $"UnixBootImage.boot: the boot image's thread ID allocator records %A{ids} as live, where it holds the first process's leader's alone (this is a bug in this library)."
 
         ProcessLaunch.launchOnto launch image.ProcessId leaderThreadId image.Machine
+        |> Result.mapError BootRefusal.Launch
         |> Result.map (fun (machine, proc, threads) ->
+            let slot : ProcessSlot<'Thread, 'Handler> =
+                {
+                    Process = proc
+                    Threads = threads
+                    Leader = ProcessLaunch.leader launch
+                }
+
             {
                 Machine = machine
                 Scheduling = UnixSchedulingState.initial
-                Process = proc
-                Threads = threads
-                Leader = ProcessLaunch.leader launch
-                Origin = FocusOrigin.NotFocused
+                Processes = ProcessTable.empty |> ProcessTable.add (ProcessId.toInt32 image.ProcessId) slot
+                Sweep = WakeMemo.none
             }
         )
 
@@ -480,9 +592,11 @@ module UnixBootImage =
     /// unless it was set, and its leader the thread ID the machine's counter
     /// starts at. Refuses a launch described for another platform, one whose
     /// leader is on a processor the machine does not have, and one whose
-    /// directory the machine's filesystem does not let it start in.
+    /// directory the machine's filesystem does not let it start in; and, on
+    /// Linux, an image whose ephemeral range starts below its unprivileged
+    /// port start.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have.</exception>
+    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have. Under Linux, the ephemeral range starts at `low`, below the unprivileged port start `start`. Linux refuses either sysctl a value that would leave them so, so no Linux machine has them. Contradictory.</exception>
     /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
     let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
@@ -490,7 +604,7 @@ module UnixBootImage =
         : UnixSystem<'Thread, 'Handler>
         =
         tryBoot launch image
-        |> Refusal.orRaise "UnixBootImage.boot" LaunchRefusal.kind LaunchRefusal.describe
+        |> Refusal.orRaise "UnixBootImage.boot" BootRefusal.kind BootRefusal.describe
 
     /// `withProcessId`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -498,7 +612,7 @@ module UnixBootImage =
         (image : UnixBootImage<'Thread, 'Handler>)
         : Result<UnixBootImage<'Thread, 'Handler>, ProcessIdRefusal>
         =
-        let pid = ProcessId.assertValid "UnixBootImage.withProcessId" pid
+        let pid = ProcessId.assertValidFor "UnixBootImage.withProcessId" "pid" pid
         let machine = image.Machine
 
         match machine.ThreadIds.Counter with
@@ -510,7 +624,7 @@ module UnixBootImage =
                     ThreadIdAllocator.startLinux "UnixBootImage.withProcessId" pidMax pid
 
                 Ok
-                    {
+                    { image with
                         Machine =
                             { machine with
                                 ThreadIds = threadIds
@@ -522,7 +636,7 @@ module UnixBootImage =
                 Error (ProcessIdRefusal.NotBelowDarwinPidMax (pid, ProcessIdTable.darwinPidMax))
             else
                 Ok
-                    {
+                    { image with
                         Machine =
                             { machine with
                                 ProcessIds = ProcessIdTable.darwinAfter pid
@@ -541,6 +655,7 @@ module UnixBootImage =
     /// (`ProcessIdTable.darwinPidMax`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">On Linux, the ID is not below the machine's `pid_max`, so a Linux kernel could not have handed it out. Contradictory. On Darwin, the ID is not below `PID_MAX` (`ProcessIdTable.darwinPidMax`, read from xnu's source and not measured), so a Darwin kernel could not have handed it out. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentException">`pid` is a forged value, such as `Unchecked.defaultof`, which is no process ID.</exception>
     let withProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (image : UnixBootImage<'Thread, 'Handler>)
@@ -622,10 +737,10 @@ module UnixBootImage =
                 entries
                 |> Map.toSeq
                 |> Seq.tryPick (fun (name, entry) ->
-                    // A forged name is refused with the seed's context, as
-                    // `ofFileSystemSeed` would refuse it, rather than reaching the
-                    // measurement as a null.
-                    let name = DirectoryEntryName.assertValid "UnixBootImage.withFileSystem seed" name
+                    // A forged name or target is refused naming the seed,
+                    // rather than reaching the measurement as a null.
+                    let name =
+                        DirectoryEntryName.assertValidFor "UnixBootImage.withFileSystem" "seed" name
 
                     if not (PathLimits.nameWithinLimit limits name) then
                         Some (FileSystemSeedFault.SeedNameTooLong (name, flavour))
@@ -634,8 +749,27 @@ module UnixBootImage =
                     else
                         match entry with
                         | SeedEntry.Directory (children, _, _) -> firstImpossibleName children
-                        | SeedEntry.File _
-                        | SeedEntry.Symlink _ -> None
+                        | SeedEntry.File _ -> None
+                        | SeedEntry.CharacterDevice _ -> Some (FileSystemSeedFault.SeedHoldsDeviceNode name)
+                        | SeedEntry.Symlink (target, _) ->
+                            let target =
+                                SymlinkTarget.assertValidFor "UnixBootImage.withFileSystem" "seed" target
+
+                            // `symlink(2)` copies its target in as it does a
+                            // pathname, so a target it could not copy in is
+                            // one no process made. Measured by
+                            // `docs/probes/symlink-target-length` on tmpfs,
+                            // ext4, APFS and HFS+: the limit is the flavour's
+                            // whatever the filesystem, as the mount type here
+                            // does not change it.
+                            match
+                                PathArgument.copyIn
+                                    limits
+                                    (PathArgumentBytes.Bytes (SymlinkTarget.toByteString target))
+                            with
+                            | PathArgument.Parsed _ -> None
+                            | PathArgument.Failed _ ->
+                                Some (FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour))
                 )
 
             match ofEachName, nameMatching with
@@ -651,22 +785,26 @@ module UnixBootImage =
         | Some fault -> Error fault
         | None ->
 
+        let rootSeed : RootFileSystemSeed =
+            {
+                SeedCreatedAt = createdAt
+                SeedOwner = defaultOwner
+                SeedEntries = seed
+            }
+
         match
-            VirtualFileSystem.ofFileSystemSeed
-                nameMatching
-                createdAt
-                defaultOwner
-                (SimulatedUnixPlatform.symlinkCreationPermissions platform SeedEntry.symlinkCreatorsUmask)
-                seed
-            |> UnixSystem.mountDeviceFileSystem machine.DeviceMount createdAt
+            UnixSystem.realiseFileSystem platform machine.DeviceMount machine.BootTime rootSeed image.DeviceContents
         with
         | Error (MountFault.CoveredEntryNotAnEmptyDirectory name) ->
             Error (FileSystemSeedFault.SeedCoversDeviceFileSystem name)
         | Ok filesystem ->
-            { machine with
-                CommittedFileSystem = CommittedFileSystem.initial filesystem
+            { image with
+                Machine =
+                    { machine with
+                        CommittedFileSystem = CommittedFileSystem.initial filesystem
+                    }
+                RootSeed = rootSeed
             }
-            |> withMachine image
             |> Ok
 
     /// <summary>
@@ -682,16 +820,24 @@ module UnixBootImage =
     /// Every name in the seed is checked against the machine's platform: its
     /// `NAME_MAX`, then its rule for which names it binds, the order a binding
     /// checks them in. A name a kernel could never have created is not one its
-    /// filesystem can hold. Also refuses a seed whose `dev` at the root is
+    /// filesystem can hold. Likewise every symbolic link's target is checked
+    /// against the longest target the platform's `symlink(2)` stores, which is
+    /// its `PATH_MAX` less the NUL, whatever `withMount` says the filesystem
+    /// is. Also refuses a seed whose `dev` at the root is
     /// anything but an empty directory, since the device filesystem is mounted
     /// there.
     ///
     /// On Darwin, whose filesystem holds at most one canonically equivalent
     /// spelling of a name in a directory, also refuses a seed with a directory
     /// holding two names that might be two such spellings: this library holds
-    /// no Unicode tables to tell, and raises `UnmodelledException`.
+    /// no Unicode tables to tell, and raises `UnmodelledException`. Refuses a
+    /// seed holding a device node the same way: this kernel holds device nodes
+    /// only in the device filesystem (`withDeviceFileSystem`).
+    ///
+    /// The device filesystem holds what `withDeviceFileSystem` last set,
+    /// whichever of the two was called first.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
+    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed holds a symbolic link whose target is longer than this flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux), so no process of that flavour could have created it. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds. The seed holds a forged name or symbolic-link target, such as `Unchecked.defaultof`.</exception>
     let withFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
@@ -701,6 +847,147 @@ module UnixBootImage =
         =
         tryWithFileSystem createdAt defaultOwner seed image
         |> Refusal.orRaise "UnixBootImage.withFileSystem" FileSystemSeedFault.kind FileSystemSeedFault.describe
+
+    /// `withDeviceFileSystem`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithDeviceFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, DeviceFileSystemFault>
+        =
+        let machine = image.Machine
+        let platform = machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let limits = SimulatedUnixPlatform.pathLimits platform
+
+        let root =
+            {
+                User = UserId.root
+                Group = GroupId.parseOrFail "UnixBootImage.withDeviceFileSystem" 0u
+            }
+
+        // What the device filesystem refuses of one entry, apart from its
+        // children. Linux binds any name and matches names byte for byte, so
+        // the length is all there is to check of a name there.
+        let entryFault (name : DirectoryEntryName) (entry : SeedEntry) : DeviceFileSystemFault option =
+            match machine.DeviceMount with
+            | DeviceFileSystemMount.Devtmpfs _ ->
+                if not (PathLimits.nameWithinLimit limits name) then
+                    Some (DeviceFileSystemFault.NameTooLong (name, 255))
+                else
+                    match entry with
+                    | SeedEntry.Directory _
+                    | SeedEntry.CharacterDevice _ -> None
+                    | SeedEntry.File _
+                    | SeedEntry.Symlink _ -> Some (DeviceFileSystemFault.NotMadeByDeviceFileSystem name)
+            | DeviceFileSystemMount.Devfs _ ->
+                // devfs keeps a name in a 32-byte buffer with its NUL, and
+                // `pathconf(_PC_NAME_MAX)` of `/dev` reports 31 (measured on
+                // Darwin 27.0, `darwin-devfs.c`, PATHCONF row).
+                if UnixByteString.length (DirectoryEntryName.toByteString name) > 31 then
+                    Some (DeviceFileSystemFault.NameTooLong (name, 31))
+                else
+                    match entry with
+                    | SeedEntry.Directory (_, permissions, owner) ->
+                        let owner = owner |> Option.defaultValue root
+
+                        if permissions <> PermissionBits 0o555 || owner <> root then
+                            Some (DeviceFileSystemFault.DirectoryNotAsDevfsMakesIt (name, permissions, owner))
+                        else
+                            None
+                    | SeedEntry.CharacterDevice (number, _, _) ->
+                        if DeviceNumber.isEncodableUnder flavour number then
+                            None
+                        else
+                            Some (DeviceFileSystemFault.NumberNotEncodable (name, number))
+                    | SeedEntry.File _
+                    | SeedEntry.Symlink _ -> Some (DeviceFileSystemFault.NotMadeByDeviceFileSystem name)
+
+        // The first offender in `Map` order, a directory's children before
+        // the names after it, and a directory's own pair of possibly
+        // equivalent names after all of them, as `withFileSystem` finds one.
+        let rec firstFault (entries : Map<DirectoryEntryName, SeedEntry>) : DeviceFileSystemFault option =
+            let ofEachName =
+                entries
+                |> Map.toSeq
+                |> Seq.tryPick (fun (name, entry) ->
+                    let name =
+                        DirectoryEntryName.assertValidFor "UnixBootImage.withDeviceFileSystem" "contents" name
+
+                    match entryFault name entry with
+                    | Some fault -> Some fault
+                    | None ->
+                        match entry with
+                        | SeedEntry.Directory (children, _, _) -> firstFault children
+                        | SeedEntry.CharacterDevice _
+                        | SeedEntry.File _
+                        | SeedEntry.Symlink _ -> None
+                )
+
+            match ofEachName, SimulatedUnixPlatform.entryNameMatching platform with
+            | Some fault, _ -> Some fault
+            | None, EntryNameMatching.Bytes -> None
+            | None, EntryNameMatching.CanonicalEquivalence ->
+                EntryNameMatching.firstPossiblyEquivalentPair (Map.keys entries)
+                |> Option.map DeviceFileSystemFault.NamesPossiblyEquivalent
+
+        match firstFault contents with
+        | Some fault -> Error fault
+        | None ->
+
+        match UnixSystem.realiseFileSystem platform machine.DeviceMount machine.BootTime image.RootSeed contents with
+        | Error fault ->
+            failwith
+                $"UnixBootImage.withDeviceFileSystem: mounting the device filesystem failed with %A{fault}, over a root seed it was mounted over before (this is a bug in this library)."
+        | Ok filesystem ->
+            { image with
+                Machine =
+                    { machine with
+                        CommittedFileSystem = CommittedFileSystem.initial filesystem
+                    }
+                DeviceContents = contents
+            }
+            |> Ok
+
+    /// <summary>
+    /// Set what the machine's device filesystem, mounted at `/dev`, holds:
+    /// `contents`, realised as `withFileSystem` realises a seed, owned by root
+    /// unless an entry says otherwise. On Linux it is a devtmpfs, whose every
+    /// inode is made at the epoch, as devtmpfs makes its own nodes before the
+    /// realtime clock is set; on Darwin a devfs, whose inodes are made at the
+    /// whole second `withBootTime` set and born at the epoch.
+    ///
+    /// Each name is what `readdir(3)` lists and `stat(2)` reports, whether or
+    /// not this kernel has a driver for the number a node holds; opening a
+    /// node whose number has none raises `UnmodelledException`
+    /// (`CharacterDevice.all` lists the drivers, all of them Linux's). A name
+    /// it does not hold is ENOENT. `UnixSystem.defaultDevtmpfsContents` and
+    /// `UnixSystem.defaultDevfsContents` are what it holds unless this is
+    /// called.
+    ///
+    /// Raises `UnmodelledException` for contents holding a regular file or a
+    /// symbolic link: a device filesystem makes only device nodes and the
+    /// directories holding them, at boot, and anything else in it was made by
+    /// a process afterwards, at a time and with an access-time history this
+    /// configuration does not describe. Likewise, on Darwin, for a directory
+    /// whose mode is not 0555 or whose owner is not root, which is how devfs
+    /// makes every directory, and for a directory holding two names that might
+    /// be canonically equivalent spellings of one, which this kernel cannot
+    /// tell apart.
+    ///
+    /// The root filesystem is what `withFileSystem` last set, whichever of the
+    /// two was called first.
+    /// </summary>
+    /// <exception cref="T:System.ArgumentException">The contents hold an entry whose name is longer than the device filesystem holds: Linux's `NAME_MAX` for a devtmpfs, 31 bytes for Darwin's devfs. On Darwin, a node holds a number its 32-bit `dev_t` cannot encode: a major past 255 or a minor past 0xFFFFFF. The contents hold a forged name, such as `Unchecked.defaultof`.</exception>
+    let withDeviceFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithDeviceFileSystem contents image
+        |> Refusal.orRaise
+            "UnixBootImage.withDeviceFileSystem"
+            DeviceFileSystemFault.kind
+            DeviceFileSystemFault.describe
 
     /// `withUserAddressLimit`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithUserAddressLimit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -801,11 +1088,23 @@ module UnixBootImage =
         : Result<UnixBootImage<'Thread, 'Handler>, EphemeralPortRangeRefusal>
         =
         let machine = image.Machine
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
+        // Measured on Linux (`docs/probes/local-port-range`): the sysctl takes
+        // ip_unprivileged_port_start <= low <= high, the first of which `boot`
+        // judges, once the unprivileged port start is final too. Measured on
+        // Darwin 27.0 as root (`docs/probes/darwin-root/port-range.c`): any
+        // value below 1024 written to first or last reads back 1024, and any
+        // above 65535 reads back 65535; a first above last is kept, and binds
+        // of port 0 then take the ports between them downwards.
         if low = 0us then
             Error (EphemeralPortRangeRefusal.LowIsZero high)
+        elif flavour = SimulatedUnixFlavour.Darwin && (low < 1024us || high < 1024us) then
+            Error (EphemeralPortRangeRefusal.BelowDarwinFloor (low, high))
         elif low > high then
-            Error (EphemeralPortRangeRefusal.Empty (low, high))
+            match flavour with
+            | SimulatedUnixFlavour.Darwin -> Error (EphemeralPortRangeRefusal.Descending (low, high))
+            | SimulatedUnixFlavour.Linux -> Error (EphemeralPortRangeRefusal.Empty (low, high))
         else
 
         { machine with
@@ -820,10 +1119,15 @@ module UnixBootImage =
     /// cursor into it: a cursor left outside the range would hand out its first
     /// port from wherever the previous range had reached.
     ///
-    /// Refuses a range that starts at port 0, and an empty one.
+    /// Refuses a range that starts at port 0, and an empty one. On Linux,
+    /// `boot` refuses a range that starts below the unprivileged port start
+    /// (`withUnprivilegedPortStart`), as Linux's sysctl does. On Darwin it
+    /// refuses a range with an end below 1024, which Darwin's sysctls never
+    /// hold, and one whose low end is above its high end, which Darwin
+    /// searches downwards and this kernel does not model.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
-    /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentException">On Linux, the low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out; or, on Darwin, has an end below 1024, where no Darwin machine's range does. Contradictory.</exception>
     let withEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
         (image : UnixBootImage<'Thread, 'Handler>)
@@ -834,6 +1138,46 @@ module UnixBootImage =
             "UnixBootImage.withEphemeralPortRange"
             EphemeralPortRangeRefusal.kind
             EphemeralPortRangeRefusal.describe
+
+    /// `withUnprivilegedPortStart`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithUnprivilegedPortStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (start : uint16)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, UnprivilegedPortStartRefusal>
+        =
+        let machine = image.Machine
+
+        match SimulatedUnixPlatform.flavour machine.UnixPlatform with
+        | SimulatedUnixFlavour.Darwin -> Error (UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin)
+        | SimulatedUnixFlavour.Linux ->
+            { machine with
+                UnprivilegedPortStart = start
+            }
+            |> withMachine image
+            |> Ok
+
+    /// <summary>
+    /// Sets Linux's <c>net.ipv4.ip_unprivileged_port_start</c>: the lowest port
+    /// a process without privilege may bind. A port below it is
+    /// <c>EACCES</c> to an unprivileged <c>bind(2)</c>, at every address. 0
+    /// and 1 leave no port privileged.
+    ///
+    /// Linux takes a value only at or below the ephemeral range's low end, and
+    /// a range only starting at or above it, so <c>boot</c> refuses an image
+    /// whose range starts below the value, whichever of the two setters ran
+    /// first. Darwin has no such setting, and refuses any value.
+    /// </summary>
+    /// <exception cref="T:System.ArgumentException">The machine is of `flavour` (Darwin), which has no such setting: its privileged ports end at 1024, which nothing configures. Contradictory.</exception>
+    let withUnprivilegedPortStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (start : uint16)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithUnprivilegedPortStart start image
+        |> Refusal.orRaise
+            "UnixBootImage.withUnprivilegedPortStart"
+            UnprivilegedPortStartRefusal.kind
+            UnprivilegedPortStartRefusal.describe
 
     /// `withBootTime`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithBootTime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -858,14 +1202,32 @@ module UnixBootImage =
             Error (BootTimeRefusal.FinerThanMicrosecond bootTime)
         else
 
+        // A devfs's times are the boot's, so the filesystem is realised afresh
+        // from what the other setters last set.
+        match
+            UnixSystem.realiseFileSystem
+                machine.UnixPlatform
+                machine.DeviceMount
+                bootTime
+                image.RootSeed
+                image.DeviceContents
+        with
+        | Error fault ->
+            failwith
+                $"UnixBootImage.withBootTime: mounting the device filesystem failed with %A{fault}, over a root seed it was mounted over before (this is a bug in this library)."
+        | Ok filesystem ->
+
         { machine with
             BootTime = bootTime
+            CommittedFileSystem = CommittedFileSystem.initial filesystem
         }
         |> withMachine image
         |> Ok
 
     /// <summary>
-    /// Set what the realtime clock read when this machine booted.
+    /// Set what the realtime clock read when this machine booted. On Darwin,
+    /// the device filesystem's times are this instant's whole second, whichever
+    /// of this and the filesystem setters was called first.
     ///
     /// Refuses an instant before the Unix epoch, since this library models no
     /// realtime clock reading before it, and one after `UnixMachineState.maxBootTimeSeconds`, from
@@ -888,7 +1250,11 @@ module UnixBootImage =
     /// this machine's own. The wildcard always binds. Beyond that the flavours
     /// read the lists differently: Linux binds any address inside a route's
     /// prefix, so `127.9.9.9` binds under `127.0.0.0/8`, while Darwin binds
-    /// only the addresses themselves.
+    /// only the addresses themselves. Likewise a TCP connect: Linux answers it
+    /// at any address inside a route's prefix, while Darwin answers it only at
+    /// the addresses themselves and drops the SYN to any other address on a
+    /// route, a wait `connect(2)` refuses to model. A datagram connect needs
+    /// only the route, on both.
     ///
     /// Admits any lists, stored as given. An empty list is a machine with
     /// nothing in it: with no addresses, only the wildcard binds. Entries may
@@ -1228,6 +1594,62 @@ module UnixBootImage =
             "UnixBootImage.withTcpReceiveSpace"
             TcpReceiveSpaceRefusal.kind
             TcpReceiveSpaceRefusal.describe
+
+    /// `withUdpReceiveSpace`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithUdpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (value : int option)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, UdpReceiveSpaceRefusal>
+        =
+        let machine = image.Machine
+
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+        // Measured with datagrams of every size at the defaults, and on Linux
+        // at 1048576 too (`udp-capacity.c` and `udp-truesize.c` in
+        // docs/plans/2026-10-18-udp-data-path); the rules scale with the
+        // buffer between those and the ceilings.
+        let floor = UnixMachineState.defaultUdpReceiveSpace flavour
+
+        let ceiling =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> System.Int32.MaxValue >>> 1
+            | SimulatedUnixFlavour.Darwin -> 8388608 / 8
+
+        let resolved =
+            match value with
+            | None -> Ok floor
+            | Some value when value < floor -> Error (UdpReceiveSpaceRefusal.BelowMeasured (value, floor))
+            | Some value when value > ceiling -> Error (UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling))
+            | Some value -> Ok value
+
+        resolved
+        |> Result.map (fun resolved ->
+            { machine with
+                UdpReceiveSpace = resolved
+            }
+            |> withMachine image
+        )
+
+    /// Set the receive buffer a new UDP socket starts with (`UdpReceiveSpace`):
+    /// Linux's `net.core.rmem_default` sysctl, Darwin's
+    /// `net.inet.udp.recvspace`. `None` takes the measured default of this
+    /// machine's flavour, 212992 on Linux and 786896 on Darwin.
+    ///
+    /// Refuses a value below that default, the smallest buffer measured with
+    /// datagrams of every size, and one above `INT_MAX >> 1` on Linux or
+    /// 1048576 on Darwin, past which a rule this library has not measured
+    /// decides what fits.
+    let withUdpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (value : int option)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithUdpReceiveSpace value image
+        |> Refusal.orRaise
+            "UnixBootImage.withUdpReceiveSpace"
+            UdpReceiveSpaceRefusal.kind
+            UdpReceiveSpaceRefusal.describe
 
     /// `withTcpSendSpaceMax`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithTcpSendSpaceMax<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

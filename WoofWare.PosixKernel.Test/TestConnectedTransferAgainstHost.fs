@@ -213,56 +213,11 @@ module TestConnectedTransferAgainstHost =
 
     // The host the suite runs on
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
-    extern int private hostSetSockOpt(int fd, int level, int optionName, byte[] value, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "recv", SetLastError = true)>]
     extern nativeint private hostRecv(int fd, byte[] buffer, unativeint count, int flags)
 
     [<DllImport("libc", EntryPoint = "send", SetLastError = true)>]
     extern nativeint private hostSend(int fd, byte[] buffer, unativeint count, int flags)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably (Apple's arm64 ABI passes variadic arguments on the stack), so
-    // these go through .NET's own fixed-arity wrappers in `System.Native`.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<Literal>]
     let private AF_INET = 2
@@ -307,12 +262,12 @@ module TestConnectedTransferAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (everyEvent flavour)) <<< 32) |]
 
-        if hostPoll (entry, 1un, 0) < 0 then
+        if HostCalls.pollPacked (entry, 1un, 0) < 0 then
             failwith $"poll failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let mutable available = 0
 
-        if hostBytesAvailable (nativeint fd, &available) <> 0 then
+        if HostCalls.bytesAvailable (nativeint fd, &available) <> 0 then
             failwith $"FIONREAD failed on fd %d{fd}"
 
         {
@@ -327,32 +282,32 @@ module TestConnectedTransferAgainstHost =
             if result < 0 then
                 failwith $"%s{what} failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-        let listener = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let listener = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
         check "socket" listener
 
         let address =
             SimulatedUnixPlatform.encodeInternetSockaddr platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 0us)
 
-        check "bind" (hostBind (listener, address, uint32 address.Length))
-        check "listen" (hostListen (listener, 8))
+        check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+        check "listen" (HostCalls.listen (listener, 8))
         let name = Array.zeroCreate<byte> address.Length
         let mutable length = uint32 name.Length
-        check "getsockname" (hostGetSockName (listener, name, &length))
-        let client = hostSocket (AF_INET, SOCK_STREAM, 0)
+        check "getsockname" (HostCalls.getSockName (listener, name, &length))
+        let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
         check "socket" client
-        check "connect" (hostConnect (client, name, length))
-        let server = hostAccept (listener, 0n, 0n)
+        check "connect" (HostCalls.connect (client, name, length))
+        let server = HostCalls.accept (listener, 0n, 0n)
         check "accept" server
-        hostClose listener |> ignore<int>
+        HostCalls.close listener |> ignore<int>
 
         for fd in [ client ; server ] do
-            if hostSetNonBlocking (nativeint fd, 1) <> 0 then
+            if HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                 failwith $"could not make fd %d{fd} non-blocking"
 
         client, server
 
     let private writeExactly (fd : int) (count : int) : unit =
-        let written = hostWrite (fd, payload, unativeint count)
+        let written = HostCalls.write (fd, payload, unativeint count)
 
         if written <> nativeint count then
             failwith $"a write of %d{count} took %d{written} (errno %d{Marshal.GetLastPInvokeError ()})"
@@ -364,11 +319,11 @@ module TestConnectedTransferAgainstHost =
         let s, p = hostPair platform
 
         let fill () : unit =
-            while hostWrite (s, payload, 65536un) > 0n do
+            while HostCalls.write (s, payload, 65536un) > 0n do
                 ()
 
         let closed () : int option =
-            hostClose p |> ignore<int>
+            HostCalls.close p |> ignore<int>
             None
 
         let peer =
@@ -392,7 +347,7 @@ module TestConnectedTransferAgainstHost =
                 writeExactly p 1000
                 let peer = closed ()
                 settle ()
-                let got = hostRead (s, Array.zeroCreate 4096, 4096un)
+                let got = HostCalls.read (s, Array.zeroCreate 4096, 4096un)
 
                 if got <> 1000n then
                     failwith $"FIN_DRAINED: the drain read %d{got}"
@@ -411,7 +366,7 @@ module TestConnectedTransferAgainstHost =
                 let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
                 if
-                    hostSetSockOpt (
+                    HostCalls.setSockOpt (
                         p,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         lingerOption flavour,
@@ -458,7 +413,7 @@ module TestConnectedTransferAgainstHost =
             let mutable length = 4u
 
             if
-                hostGetSockOpt (
+                HostCalls.getSockOptInt (
                     s,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     SimulatedUnixPlatform.socketErrorOption platform,
@@ -470,8 +425,8 @@ module TestConnectedTransferAgainstHost =
                 failwith $"getsockopt(SO_ERROR) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             [ 0L, value ]
-        | Operation.Read -> thrice (fun _ -> hostRead (s, buffer, 4096un))
-        | Operation.ReadZero -> thrice (fun _ -> hostRead (s, buffer, 0un))
+        | Operation.Read -> thrice (fun _ -> HostCalls.read (s, buffer, 4096un))
+        | Operation.ReadZero -> thrice (fun _ -> HostCalls.read (s, buffer, 0un))
         | Operation.Recv -> thrice (fun _ -> hostRecv (s, buffer, 4096un, 0))
         | Operation.RecvZero -> thrice (fun _ -> hostRecv (s, buffer, 0un, 0))
         | Operation.Peek ->
@@ -479,18 +434,18 @@ module TestConnectedTransferAgainstHost =
                 if i < 2 then
                     hostRecv (s, buffer, 4096un, MSG_PEEK)
                 else
-                    hostRead (s, buffer, 4096un)
+                    HostCalls.read (s, buffer, 4096un)
             )
-        | Operation.Write -> thrice (fun _ -> hostWrite (s, payload, 100un))
-        | Operation.WriteZero -> thrice (fun _ -> hostWrite (s, payload, 0un))
+        | Operation.Write -> thrice (fun _ -> HostCalls.write (s, payload, 100un))
+        | Operation.WriteZero -> thrice (fun _ -> HostCalls.write (s, payload, 0un))
         | Operation.Send -> thrice (fun _ -> hostSend (s, payload, 100un, 0))
         | Operation.SendZero -> thrice (fun _ -> hostSend (s, payload, 0un, 0))
         | Operation.SendNoSignal -> thrice (fun _ -> hostSend (s, payload, 100un, noSignal flavour))
         | Operation.DontWait ->
-            hostSetNonBlocking (nativeint s, 0) |> ignore<int>
+            HostCalls.setNonBlocking (nativeint s, 0) |> ignore<int>
             let received = call (fun () -> hostRecv (s, buffer, 4096un, dontWait flavour))
             let sent = call (fun () -> hostSend (s, payload, 65536un, dontWait flavour))
-            hostSetNonBlocking (nativeint s, 1) |> ignore<int>
+            HostCalls.setNonBlocking (nativeint s, 1) |> ignore<int>
             [ received ; sent ]
 
     /// What the row says the host's calls answer, in the host's numbering.
@@ -539,8 +494,8 @@ module TestConnectedTransferAgainstHost =
                                 $"%A{row.State} %A{row.Operation}: after the calls this host reports %A{after}, measured %A{row.After}"
                         ]
                     finally
-                        hostClose s |> ignore<int>
-                        peer |> Option.iter (hostClose >> ignore<int>)
+                        HostCalls.close s |> ignore<int>
+                        peer |> Option.iter (HostCalls.close >> ignore<int>)
                 )
                 |> Seq.concat
                 |> Seq.toList
@@ -589,7 +544,7 @@ module TestConnectedTransferAgainstHost =
         CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback kernelPort)
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -604,7 +559,12 @@ module TestConnectedTransferAgainstHost =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -622,7 +582,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen: %A{other}"
 
@@ -635,13 +595,18 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"connect: %A{other}"
 
         let server, system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let system = kernelClose listener system
-        let _, system = UnixDescriptor.setNonBlocking client true system
-        let _, system = UnixDescriptor.setNonBlocking server true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server true system
+
         client, server, system
 
     /// A write of `count` bytes of the payload through `fd`: what it answered,
@@ -722,13 +687,13 @@ module TestConnectedTransferAgainstHost =
         (system : UnixSystem<int, string>)
         : Readiness * string * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    (Lone.leader system)
+                    (Callers.leader system)
                     [
                         {
                             Fd = fd
@@ -742,8 +707,8 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"poll: %A{other}"
 
         let readable =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         let socketId =
@@ -759,7 +724,7 @@ module TestConnectedTransferAgainstHost =
                     | Some description -> description
                     | None -> failwith $"fd %d{fd} names no description"
 
-                $"epoll=0x%x{LinuxReadiness.ofDescription description system}"
+                $"epoll=0x%x{Lone.LinuxReadiness.ofDescription description system}"
             | SimulatedUnixFlavour.Darwin ->
                 let fflags (error : UnixError option) : int =
                     match error with
@@ -767,7 +732,7 @@ module TestConnectedTransferAgainstHost =
                     | Some error -> UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
 
                 let render (name : string) (filter : KqueueFilter) : string =
-                    match DarwinReadiness.ofSocket filter socketId system.Machine with
+                    match DarwinReadiness.ofSocket filter socketId (Kernel.machine system) with
                     | None -> $"%s{name}(-)"
                     | Some (KqueueFilterReport.Ready data) -> $"%s{name}(data=%d{data} fflags=0)"
                     | Some (KqueueFilterReport.EndOfFile (data, error)) ->
@@ -803,13 +768,20 @@ module TestConnectedTransferAgainstHost =
 
         match operation with
         | Operation.Readiness ->
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
 
             let level = SimulatedUnixPlatform.socketOptionLevel platform
             let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
             match
-                UnixSocket.tryGetsockoptLength s level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
+                Lone.UnixSocket.tryGetsockoptLength
+                    s
+                    level
+                    optionName
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    (Some 4u)
+                    system
             with
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int 0), system) -> [ Seen.PendingError None ], system
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int raw), system) ->

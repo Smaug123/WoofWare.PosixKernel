@@ -131,10 +131,12 @@ module TestLink =
         | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"refused: %s{LinkRefusal.describe refusal}"
 
-    let private refusedForDevices (answer : string) : bool = answer.StartsWith "refused: the path"
+    /// A name the call would bind in Linux's devtmpfs, refused.
+    let private refusedForNewDeviceName (answer : string) : bool =
+        answer.StartsWith "refused: the call would bind"
 
     let private kindAt (p : string) (system : UnixSystem<int, string>) : string * int64 * int64 =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text p) system with
+        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
         | Ok (FileStatusAnswer.Reported status) ->
             let kind =
                 match status.Mode &&& 0o170000 with
@@ -236,7 +238,7 @@ module TestLink =
         | None -> Eager.tryLink (text source) (text dest) system
         | Some flags ->
             let atFdCwd = AtDirectory.atFdCwd (SimulatedUnixPlatform.flavour platform)
-            UnixNamespace.tryLinkatEager atFdCwd (text source) atFdCwd (text dest) flags system
+            Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) atFdCwd (text dest) flags system
 
     /// LINKSRC: link each source kind to "n" three ways; on success, what "n"
     /// is (the source itself or f, which a followed link names) and the
@@ -306,9 +308,9 @@ module TestLink =
         ]
         |> shouldEqual []
 
-    /// LINKDEV: across the root filesystem and /dev. This library's device
-    /// filesystem holds only the nodes it has drivers for, so a name it does
-    /// not hold there is refused rather than looked up; every other row is
+    /// LINKDEV: across the root filesystem and /dev. This library's devtmpfs
+    /// holds what it was configured with and nothing a process adds, so a
+    /// Linux link that binds a name there is refused; every other row is
     /// answered as measured.
     let private replayLinkDevices (envelope : Envelope) : unit =
         let rows = section envelope.Resource "LINKDEV"
@@ -324,19 +326,12 @@ module TestLink =
 
                 let actual = Eager.tryLink (text pair.[0]) (text pair.[1]) system |> rendered
 
-                let refusedHere =
-                    match SimulatedUnixPlatform.flavour envelope.Platform with
-                    // Darwin's devfs is not modelled at all.
-                    | SimulatedUnixFlavour.Darwin ->
-                        pair.[0].StartsWith "/dev" || (pair.[1].StartsWith "/dev" && pair.[0] <> "nx")
-                    // Only the device nodes this library has drivers for exist.
-                    | SimulatedUnixFlavour.Linux -> pair.[0] = "/dev/nx" || (pair.[1] = "/dev/n" && pair.[0] <> "nx")
-
                 let ok =
-                    if refusedHere then
-                        refusedForDevices actual
-                    else
-                        actual = probe
+                    match SimulatedUnixPlatform.flavour envelope.Platform with
+                    // Where the kernel bound the name, in /dev.
+                    | SimulatedUnixFlavour.Linux when pair.[1] = "/dev/n" && probe = "ok" ->
+                        refusedForNewDeviceName actual
+                    | _ -> actual = probe
 
                 if not ok then
                     yield $"%s{row.[0]}: the probe answered %s{probe}, this library %s{actual}"
@@ -512,21 +507,10 @@ module TestLink =
                     let system = rulesSystem darwinFlavour protection caller
                     let actual = Eager.tryLink (text source) (text dest) system |> rendered
 
-                    // A free name in /dev is refused unless the source alone
-                    // decides the call: this library's device filesystem knows
-                    // only the nodes it has drivers for.
-                    let sourceDecides =
-                        source = "nx"
-                        || (source = "s/sf" && (darwinFlavour || caller <> 0))
-                        || (darwinFlavour && source = "d")
-
-                    let ok =
-                        if dest = "/dev/n" && not sourceDecides then
-                            refusedForDevices actual
-                        else
-                            actual = probe
-
-                    if not ok then
+                    // Every Linux source is on the root filesystem, so a link
+                    // into /dev is EXDEV as measured, and Darwin's devfs
+                    // refuses uid 501 EPERM.
+                    if actual <> probe then
                         yield
                             $"protected_hardlinks=%d{protection} caller=%d{caller} %s{source} -> %s{dest}: the probe answered %s{probe}, this library %s{actual}"
         ]
@@ -570,7 +554,7 @@ module TestLink =
                     let system = rulesSystem darwinFlavour protection caller
 
                     let actual =
-                        UnixNamespace.tryLinkatEager atFdCwd (text source) destFd dest 0 system
+                        Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) destFd dest 0 system
                         |> rendered
 
                     if actual <> probe then
@@ -670,11 +654,12 @@ module TestLink =
                 CloseOnExec = false
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = false
             }
 
-        match Answered.openPath flags (UnixPath.parseOrFail context p) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context p) flags 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 
     let private linuxEmptyPath : int = 0x1000
@@ -724,7 +709,10 @@ module TestLink =
                         fd, "", emptyPath, system
                     | "own file, unlinked" ->
                         let fd, system = opened "g" system
-                        let _, system = Answered.unlink (UnixPath.parseOrFail context "g") system
+
+                        let _, system =
+                            Answered.unlink (Callers.leader system) (UnixPath.parseOrFail context "g") system
+
                         fd, "", emptyPath, system
                     | "another user's 0644 file" ->
                         let fd, system = opened "o644" system
@@ -742,7 +730,7 @@ module TestLink =
                     | other -> failwith $"%s{context}: the probe has no EMPTY row %s{other}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager fd (text path) -100 (text "n") flags system
+                    Eager.tryLinkatAs (Callers.leader system) fd (text path) -100 (text "n") flags system
                     |> rendered
 
                 let expected = expectedEmptyPath caller fd path flags probe
@@ -812,7 +800,7 @@ module TestLink =
                         failwith $"%s{context}: the probe has no CRED row %s{label}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager dirfd (text path) linuxAtFdCwd (text "n") flags system
+                    Eager.tryLinkatAs (Callers.leader system) dirfd (text path) linuxAtFdCwd (text "n") flags system
                     |> rendered
 
                 let expected = expectedEmptyPath caller dirfd path flags probe
@@ -835,7 +823,9 @@ module TestLink =
                 let probe = probeAnswer row.[2]
                 let system = emptyPathSystem caller
                 let fd, system = opened "g" system
-                let _, system = Answered.unlink (UnixPath.parseOrFail context "g") system
+
+                let _, system =
+                    Answered.unlink (Callers.leader system) (UnixPath.parseOrFail context "g") system
 
                 let dest, destFd =
                     match label with
@@ -853,20 +843,12 @@ module TestLink =
                     | other -> failwith $"%s{context}: the probe has no UNLINKED row %s{other}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager fd (text "") destFd dest linuxEmptyPath system
+                    Eager.tryLinkatAs (Callers.leader system) fd (text "") destFd dest linuxEmptyPath system
                     |> rendered
 
                 let expected = expectedEmptyPath caller fd "" linuxEmptyPath probe
 
-                // A free name in /dev is refused: this library's device
-                // filesystem knows only the nodes it has drivers for.
-                let ok =
-                    if caller = 0 && label = "\"/dev/n\"" then
-                        refusedForDevices actual
-                    else
-                        actual = expected
-
-                if not ok then
+                if actual <> expected then
                     yield
                         $"caller=%d{caller} %s{label}: the probe answered %s{probe}, so this library must answer %s{expected}; it answered %s{actual}"
         ]
@@ -972,9 +954,14 @@ module TestLink =
                 let system = rulesSystem darwinFlavour 0 1000
 
                 let direct =
-                    match UnixNamespace.tryLinkatEager atFdCwd (text source) atFdCwd (text dest) 0 system with
-                    | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
-                    | Error refusal -> Error (SyscallRefusal.Link refusal)
+                    match
+                        Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) atFdCwd (text dest) 0 system
+                    with
+                    | Ok answered -> Ok (SteppedCall.LinkAt answered)
+                    | Error refusal -> Error (SyscallRefusal.LinkAt refusal)
 
-                UnixSystem.tryStep 0 (Syscall.LinkAt (atFdCwd, text source, atFdCwd, text dest, 0)) system
-                |> shouldEqual direct
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.LinkAt (atFdCwd, text source, atFdCwd, text dest, 0))
+                    system
+                |> Stepped.resultShouldBe direct

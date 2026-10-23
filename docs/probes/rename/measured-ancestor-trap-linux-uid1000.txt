@@ -7,3 +7,11 @@ rename(a/b/c, a/b) parent         : ENOTEMPTY
 rename(a/b/c, a/b) parent 0555    : ENOTEMPTY
 rename(a/l, a) l symlink          : ENOTEMPTY
 rename(a/b/f, a) a/b 0555, f file : ENOTEMPTY
+rename(a/f/, a) f file            : ENOTDIR
+rename(a/f, a/) f file            : ENOTDIR
+rename(a/f/, a/) f file           : ENOTDIR
+rename(a/l/, a) l symlink         : ENOTDIR
+rename(a/b/f, a/) f file          : ENOTDIR
+rename(a/b/f/, a) a/b 0555        : ENOTDIR
+rename(a/sub/, a/) sub dir        : ENOTEMPTY
+rename(a/f, z/) not an ancestor   : ENOTDIR

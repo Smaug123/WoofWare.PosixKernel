@@ -36,6 +36,14 @@
 // declares no setresuid, setresgid, getresuid or getresgid. Its rows are the
 // same size and buffer arguments as Linux's, from the process's own
 // credentials, since uid 501 cannot take any other.
+// On Linux the probe makes two files, in $TMPDIR if that is set and in /tmp
+// otherwise: a directory every user may write to, which this probe's
+// children create a file in. Each is unlinked first and created with
+// O_EXCL|O_NOFOLLOW, so a link planted at the name is never followed.
+//
+// docs/probes/darwin-root/run.sh runs the same rows as Darwin's root
+// (setresid.darwin-*-root.txt); docs/probes/darwin-root/credentials.c
+// measures what a privileged setgroups leaves the process holding.
 //
 // Measured on Linux 6.18.5 (aarch64, root in the container, gcc:14) and Darwin
 // 27.0 (arm64, uid 501) on 2026-10-03. The output is beside this file as
@@ -115,17 +123,22 @@ static void groups_text(char *out, size_t n) {
     free(g);
 }
 
+// How many children did not exit 0; any makes the probe exit 1.
+static int failures;
+
 static void wait_child(pid_t pid) {
-    int status;
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        failures++;
         printf("CHILD-FAILED\tstatus=%d\n", status);
         fflush(stdout);
     }
 }
 
 #ifdef __linux__
-static const char *secret = "/tmp/setresid-probe-secret";
+// The files this probe makes, under $TMPDIR or /tmp (see main).
+static char secret[PATH_MAX];
+static char owned[PATH_MAX];
 
 static const char *privileged(void) {
     int fd = open(secret, O_RDONLY);
@@ -338,13 +351,13 @@ static void fs_owner_row(void) {
     pid_t pid = fork();
     if (pid == 0) {
         alarm(10);
-        const char *path = "/tmp/setresid-probe-owned";
+        const char *path = owned;
         unlink(path);
         if (setresgid(1000, 1001, 1002) != 0 || setresuid(1003, 1004, 0) != 0) {
             printf("SETUP-FAILED\tfsowner\t%s\n", en(errno));
             _exit(1);
         }
-        int fd = open(path, O_CREAT | O_WRONLY | O_EXCL, 0600);
+        int fd = open(path, O_CREAT | O_WRONLY | O_EXCL | O_NOFOLLOW, 0600);
         if (fd < 0) {
             printf("FSOWNER\tcreate\t%s\n", en(errno));
             _exit(0);
@@ -378,9 +391,16 @@ int main(void) {
         fclose(f);
     }
     printf("SUID_DUMPABLE\t%d\n", suid_dumpable);
-    int fd = open(secret, O_CREAT | O_WRONLY | O_TRUNC, 0600);
-    if (fd >= 0) close(fd);
-    chmod(secret, 0600);
+    const char *tmp = getenv("TMPDIR");
+    if (tmp == NULL || tmp[0] == '\0') tmp = "/tmp";
+    snprintf(secret, sizeof secret, "%s/setresid-probe-secret", tmp);
+    snprintf(owned, sizeof owned, "%s/setresid-probe-owned", tmp);
+    unlink(secret);
+    int fd = open(secret, O_CREAT | O_WRONLY | O_EXCL | O_NOFOLLOW, 0600);
+    if (fd >= 0) {
+        fchmod(fd, 0600);
+        close(fd);
+    }
 
     for (int a = 0; a < 3; a++)
         for (int b = 0; b < 3; b++)
@@ -418,5 +438,5 @@ int main(void) {
     setgroups_rows(who, limit);
 #endif
     printf("DONE\n");
-    return 0;
+    return failures ? 1 : 0;
 }

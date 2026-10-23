@@ -40,9 +40,9 @@ type internal CapacityRefusal =
     | Apfs
     /// The filesystem is an NFS mount, whose counts are the server's.
     | Nfs
-    /// The filesystem is the device filesystem, whose file count counts every
-    /// node a real one holds, and whose block counts are a share of the
-    /// machine's memory.
+    /// The filesystem is the device filesystem, whose counts follow what the
+    /// machine is: on Linux, shares of its memory; on Darwin, every node its
+    /// drivers registered, which its configuration need not describe.
     | DeviceFileSystem
 
 [<RequireQualifiedAccess>]
@@ -55,7 +55,7 @@ module internal CapacityRefusal =
         | CapacityRefusal.Nfs ->
             "the filesystem is an NFS mount, whose block and file counts are the server's, which nothing in this machine determines."
         | CapacityRefusal.DeviceFileSystem ->
-            "the filesystem is the device filesystem. Its free-file count is its inode limit less every node a real one holds, and this kernel's holds only the nodes of the devices it has drivers for; its block counts are a share of the machine's memory, which this machine does not describe."
+            "the filesystem is the device filesystem, whose block and file counts follow what the machine is: on Linux, shares of its memory; on Darwin, every node its drivers registered, which its configuration need not describe."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : CapacityRefusal) : RefusalKind =
@@ -316,12 +316,31 @@ module FileSystemStatistics =
             failwith
                 $"FileSystemStatistics.%s{context}: %s{text} is not a Unix string (%O{defect}) (this is a bug in this library)"
 
+    // Why no kernel of `platform` could have `mount`, if none could.
+    let private incoherence (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : string option =
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let fsType = EmulatedMount.fileSystemType mount
+
+        if EmulatedFileSystemType.isReportableUnder flavour fsType then
+            None
+        else
+            Some
+                $"asked what a %O{flavour} kernel reports on a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+
+    // The check `ofMount` and `ofObject` make of the platform and mount a
+    // client hands them.
+    let private requireCoherent (operation : string) (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : unit =
+        match incoherence platform mount with
+        | None -> ()
+        | Some description -> raise (Refusal.exceptionOf operation (RefusalKind.Contradictory "mount") description)
+
     /// What `statfs(2)` reports for any file or directory on the machine's one
     /// mount, under a kernel of this platform.
     ///
-    /// Refuses a platform and mount that do not describe one machine (see
-    /// `EmulatedFileSystemType.isReportableUnder`).
+    /// Throws `ArgumentException` for a platform and mount that do not
+    /// describe one machine (see `EmulatedFileSystemType.isReportableUnder`).
     let ofMount (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : FileSystemStatistics =
+        requireCoherent "FileSystemStatistics.ofMount" platform mount
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let pageSize =
@@ -348,11 +367,18 @@ module FileSystemStatistics =
                     // count as 0 however full it is.
                     CapacityResult = Ok FileSystemCapacity.unlimited
                     FileSystemIdResult = Ok tmpfs.FileSystemId
-                    // `ST_VALID` is on every mount. `ST_NOATIME` because nothing
-                    // in this kernel moves an access time, which is what a
-                    // `noatime` mount does; tmpfs's own default is `relatime`,
-                    // which this kernel does not implement.
-                    FlagsResult = Ok (linuxValid ||| linuxNoAccessTime)
+                    // `ST_VALID` is on every mount, and the access-time option
+                    // is the one the mount's reads obey.
+                    FlagsResult =
+                        match AccessTimeUpdate.ofMount mount with
+                        | AccessTimeUpdate.Never -> Ok (linuxValid ||| linuxNoAccessTime)
+                        | AccessTimeUpdate.WhenBeforeModification ->
+                            failwith
+                                "FileSystemStatistics.ofMount: a Linux tmpfs whose reads move an access time as APFS's do, which no Linux mount option makes (this is a bug in this library)."
+                        | AccessTimeUpdate.Relative
+                        | AccessTimeUpdate.Always ->
+                            failwith
+                                "FileSystemStatistics.ofMount: the root tmpfs is mounted relatime or strictatime, which EmulatedMount does not describe (this is a bug in this library)."
                 }
         | FileSystemTypeFields.Darwin (fType, name), EmulatedMount.Apfs apfs ->
             // Measured 2026-09-26 on Darwin 27.0.0, nine APFS volumes in three
@@ -383,15 +409,24 @@ module FileSystemStatistics =
                                 Owner = apfs.Owner
                                 // Local, journaled, volfs and multilabel were set on
                                 // every APFS volume measured. Root, because this
-                                // filesystem is mounted at `/`. No-atime, because
-                                // nothing in this kernel moves an access time.
+                                // filesystem is mounted at `/`. The access-time
+                                // option is the one the mount's reads obey: APFS's
+                                // default is neither `noatime` nor `strictatime`.
                                 Flags =
                                     darwinLocal
                                     ||| darwinJournaled
                                     ||| darwinVolumeFileSystem
                                     ||| darwinMultiLabel
                                     ||| darwinRootFileSystem
-                                    ||| darwinNoAccessTime
+                                    ||| (
+                                        match AccessTimeUpdate.ofMount mount with
+                                        | AccessTimeUpdate.Never -> darwinNoAccessTime
+                                        | AccessTimeUpdate.WhenBeforeModification -> 0u
+                                        | AccessTimeUpdate.Relative
+                                        | AccessTimeUpdate.Always ->
+                                            failwith
+                                                "FileSystemStatistics.ofMount: an APFS volume mounted relatime or strictatime, which EmulatedMount does not describe (this is a bug in this library)."
+                                    )
                                 // 0 on every volume measured but the root data
                                 // volume, which this filesystem is not.
                                 ExtendedFlags = 0u
@@ -429,8 +464,7 @@ module FileSystemStatistics =
     /// What `statfs(2)` reports for anything on the device filesystem `mount`,
     /// under a kernel of this platform.
     ///
-    /// Refuses a device filesystem this platform cannot mount, and Darwin's
-    /// devfs, which this kernel does not model and no path reaches.
+    /// Throws for a device filesystem this platform cannot mount.
     let internal ofDeviceMount
         (platform : SimulatedUnixPlatform)
         (mount : DeviceFileSystemMount)
@@ -438,15 +472,47 @@ module FileSystemStatistics =
         =
         let flavour = SimulatedUnixPlatform.flavour platform
 
-        match mount with
-        | DeviceFileSystemMount.Devfs ->
-            failwith
-                "FileSystemStatistics.ofDeviceMount: asked what Darwin's devfs reports, which this kernel does not model and which no path or descriptor reaches (this is a bug in the caller)."
-        | DeviceFileSystemMount.Devtmpfs devtmpfs ->
-
         if not (DeviceFileSystemMount.isMountableUnder flavour mount) then
             failwith
-                $"FileSystemStatistics.ofDeviceMount: a %O{flavour} kernel cannot mount a devtmpfs (this is a bug in the caller)."
+                $"FileSystemStatistics.ofDeviceMount: a %O{flavour} kernel cannot mount %O{mount} (this is a bug in the caller)."
+
+        match mount with
+        | DeviceFileSystemMount.Devfs devfs ->
+            // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, STATFS
+            // rows, through `/dev`, a node and a subdirectory, on two boots):
+            // devfs's type number and name, 512-byte blocks and I/O size, and
+            // an `f_fsid` of its `st_dev` and type number, as APFS's is. Its
+            // block and inode counts follow the nodes the machine holds, which
+            // this configuration does not describe.
+            FileSystemStatistics.Darwin
+                {
+                    TypeValue = 19u
+                    TypeNameValue = unixString "ofDeviceMount" "devfs"
+                    GeometryResult =
+                        Ok
+                            {
+                                BlockSize = 512u
+                                IoSize = 512
+                            }
+                    CapacityResult = Error CapacityRefusal.DeviceFileSystem
+                    FileSystemIdResult =
+                        Ok
+                            {
+                                First = int32 devfs.DeviceId
+                                Second = 19
+                            }
+                    MountResult =
+                        Ok
+                            {
+                                Owner = 0u
+                                Flags = devfs.Flags
+                                ExtendedFlags = 0u
+                                SubType = 0u
+                                MountedOn = unixString "ofDeviceMount" "/dev"
+                                MountedFrom = unixString "ofDeviceMount" "devfs"
+                            }
+                }
+        | DeviceFileSystemMount.Devtmpfs devtmpfs ->
 
         let pageSize =
             int64 (SimulatedPageSize.bytes (SimulatedUnixPlatform.pageSize platform))
@@ -477,12 +543,9 @@ module FileSystemStatistics =
     /// `UnixSystem.initial` and `UnixBootImage.withMount` keep the pair
     /// coherent, but a machine record assembled field by field bypasses both.
     let internal assertCoherent (context : string) (platform : SimulatedUnixPlatform) (mount : EmulatedMount) : unit =
-        let flavour = SimulatedUnixPlatform.flavour platform
-        let fsType = EmulatedMount.fileSystemType mount
-
-        if not (EmulatedFileSystemType.isReportableUnder flavour fsType) then
-            failwith
-                $"%s{context}: asked what a %O{flavour} kernel reports on a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+        match incoherence platform mount with
+        | None -> ()
+        | Some description -> failwith $"%s{context}: %s{description} (this is a bug in this library)"
 
     /// What `fstatfs(2)` reports for a descriptor naming `target`, under a
     /// kernel of this platform whose root filesystem is `mount`.
@@ -491,8 +554,10 @@ module FileSystemStatistics =
     /// say which filesystem its inode is on, so this does not answer for one on
     /// the device filesystem. `UnixPathResolution.fstatfs` and `statfs` do.
     ///
-    /// Refuses a platform and mount that do not describe one machine (see
-    /// `EmulatedFileSystemType.isReportableUnder`), whatever the object.
+    /// Throws `ArgumentException` for a platform and mount that do not describe
+    /// one machine (see `EmulatedFileSystemType.isReportableUnder`), whatever
+    /// the object, and for a kqueue under a Linux platform, which only Darwin
+    /// has.
     let ofObject
         (platform : SimulatedUnixPlatform)
         (mount : EmulatedMount)
@@ -503,7 +568,7 @@ module FileSystemStatistics =
         // is answered from the flavour alone, so a pipe on a machine that is
         // Linux for its files and macOS for its pipes would otherwise get a
         // quietly wrong answer rather than a loud one.
-        assertCoherent "FileSystemStatistics.ofObject" platform mount
+        requireCoherent "FileSystemStatistics.ofObject" platform mount
         let flavour = SimulatedUnixPlatform.flavour platform
 
         let pseudoFileSystem (fileSystem : PseudoFileSystem) : FileSystemStatisticsAnswer =
@@ -557,5 +622,9 @@ module FileSystemStatistics =
             // not on a mount.
             | SimulatedUnixFlavour.Darwin -> FileSystemStatisticsAnswer.Failed UnixError.EINVAL
             | SimulatedUnixFlavour.Linux ->
-                failwith
-                    "FileSystemStatistics.ofObject: a Linux-flavoured kernel holds a kqueue, which only Darwin has (this is a bug in the caller's state construction)."
+                raise (
+                    Refusal.exceptionOf
+                        "FileSystemStatistics.ofObject"
+                        (RefusalKind.Contradictory "target")
+                        "asked what a Linux-flavoured kernel reports for a kqueue, which only Darwin has."
+                )

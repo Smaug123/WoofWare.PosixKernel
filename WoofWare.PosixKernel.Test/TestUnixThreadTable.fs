@@ -1,5 +1,6 @@
 namespace WoofWare.PosixKernel.Test
 
+open System.Reflection
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -13,7 +14,7 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestUnixThreadTable =
 
-    let private empty : Map<int, UnixThreadState> = Map.empty
+    let private empty : ThreadTable<int> = UnixThreadTable.empty
 
     /// A Linux process whose leader is thread 0, with process ID 4242, on a
     /// machine with four processors.
@@ -24,17 +25,17 @@ module TestUnixThreadTable =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private withThread (name : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.trySpawn (Lone.leader system) name (CpuId cpu) system with
+        match UnixThreadLifecycle.trySpawn (Callers.leader system) name (CpuId cpu) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{name} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{name} was refused: %s{SpawnRefusal.describe refusal}"
 
-    let private idOf (name : int) (threads : Map<int, UnixThreadState>) : uint64 =
+    let private idOf (name : int) (threads : ThreadTable<int>) : uint64 =
         OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get name threads))
 
     [<Test>]
     let ``a spawned thread is readable`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 7 3))
+        let threads = (Lone.threadTable (initial |> withThread 7 3))
 
         UnixThreadState.cpu (UnixThreadTable.get 7 threads) |> shouldEqual (CpuId 3)
         idOf 7 threads |> shouldEqual 4243UL
@@ -53,12 +54,12 @@ module TestUnixThreadTable =
         let system = initial |> withThread 7 3
 
         let exn =
-            Assert.Throws<exn> (fun () -> withThread 7 5 system |> ignore<UnixSystem<int, string>>)
+            Assert.Throws<System.ArgumentException> (fun () -> withThread 7 5 system |> ignore<UnixSystem<int, string>>)
 
         exn.Message |> shouldContainText "already names a thread"
 
         let leader =
-            Assert.Throws<exn> (fun () -> withThread 0 5 system |> ignore<UnixSystem<int, string>>)
+            Assert.Throws<System.ArgumentException> (fun () -> withThread 0 5 system |> ignore<UnixSystem<int, string>>)
 
         leader.Message |> shouldContainText "already names a thread"
 
@@ -82,8 +83,9 @@ module TestUnixThreadTable =
                 {
                     Syscall = ParkedSyscall.EpollWait wait
                     Ordinal = ParkOrdinal 0L
+                    State = ParkState.Asleep
                 }
-                (Lone.threads system)
+                (Lone.threadTable system)
 
         UnixThreadTable.parkedFor 7 parked
         |> shouldEqual (Some (ParkedSyscall.EpollWait wait))
@@ -97,21 +99,21 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``reconcile is silent when the table matches`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([], [])
 
     [<Test>]
     let ``reconcile reports a live thread the table has no entry for`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0))
+        let threads = (Lone.threadMap (initial |> withThread 1 0))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [])
 
     [<Test>]
     let ``reconcile reports an entry no live thread claims`` () : unit =
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) threads
         |> shouldEqual ([], [ 2 ])
@@ -120,7 +122,20 @@ module TestUnixThreadTable =
     let ``reconcile reports both directions at once`` () : unit =
         // The row that separates "reports both" from "reports whichever it
         // happens to check first".
-        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 3 1))
+        let threads = (Lone.threadMap (initial |> withThread 1 0 |> withThread 3 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [ 3 ])
+
+    /// A client names a thread by its own identity, and the process holds a thread
+    /// by that name only from its creation to its exit; so the library has no
+    /// public question about one thread by its name, and a client looks the
+    /// name up in `UnixSystem.threads` and reads the state it finds.
+    [<Test>]
+    let ``UnixThreadTable asks nothing about a single thread by its name`` () : unit =
+        let table =
+            typeof<VirtualFileSystem>.Assembly.GetType ("WoofWare.PosixKernel.UnixThreadTable", true)
+
+        table.GetMethods (BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
+        |> Array.map (fun (f : MethodInfo) -> f.Name)
+        |> shouldEqual [| "reconcile" |]

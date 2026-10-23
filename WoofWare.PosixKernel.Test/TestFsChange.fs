@@ -64,7 +64,7 @@ module TestFsChange =
 
         let private bytesOf (inode : Inode) : byte[] option =
             match inode.Content with
-            | InodeContent.RegularFile (contents, _) -> Some (Seq.toArray contents)
+            | InodeContent.RegularFile (contents, _) -> Some (Seq.toArray (FileContents.toImmutableArray contents))
             | InodeContent.Directory _
             | InodeContent.CharacterDevice _
             | InodeContent.Socket _
@@ -89,14 +89,20 @@ module TestFsChange =
             | InodeContent.Fifo _
             | InodeContent.Symlink _ -> false
 
-        /// Everything about an inode a diff compares, with its contents as an
-        /// array because `ImmutableArray` compares by reference.
+        /// An inode's content as a diff compares it: a file's bytes as an array,
+        /// because `ImmutableArray` compares by reference.
+        [<RequireQualifiedAccess>]
+        type private ProjectedContent =
+            | File of contents : byte[] * permissions : PermissionBits
+            | Other of InodeContent
+
+        /// Everything about an inode a diff compares.
         let private projection (vfs : VirtualFileSystem) (inode : InodeNumber) (entry : Inode) =
             let content =
                 match entry.Content with
                 | InodeContent.RegularFile (contents, permissions) ->
-                    sprintf "file %A %O" (Seq.toArray contents) permissions
-                | other -> sprintf "%A" other
+                    ProjectedContent.File (Seq.toArray (FileContents.toImmutableArray contents), permissions)
+                | other -> ProjectedContent.Other other
 
             content, entry.Owner, entry.Times, VirtualFileSystem.bindingCount inode vfs
 
@@ -225,7 +231,7 @@ module TestFsChange =
                 | FsChange.ContentChanged _
                 | FsChange.AttributesChanged _ -> false
 
-            let sorted (changes : FsChange list) : FsChange list = List.sortBy (sprintf "%A") changes
+            let sorted (changes : FsChange list) : FsChange list = List.sort changes
 
             [
                 // Names and forgotten inodes: exactly, each once.
@@ -438,7 +444,14 @@ module TestFsChange =
         | Op.MakeFile (p, n, length) ->
             pick (directories vfs) p
             |> Option.bind (fun parent ->
-                VirtualFileSystem.createFile parent (name n) (bits 0o644) Owners.linuxDefault now (bytes length) vfs
+                VirtualFileSystem.createFile
+                    parent
+                    (name n)
+                    (bits 0o644)
+                    Owners.linuxDefault
+                    now
+                    (FileContents.ofImmutableArray (bytes length))
+                    vfs
                 |> Result.toOption
                 |> Option.map (fun (_, mutation) -> mutation, Reached.Created)
             )
@@ -686,7 +699,14 @@ module TestFsChange =
         let vfs, d, _, f, _ = fixture
 
         let made, mutation =
-            VirtualFileSystem.createFile d (name "n") (bits 0o644) Owners.linuxDefault later (bytes 0) vfs
+            VirtualFileSystem.createFile
+                d
+                (name "n")
+                (bits 0o644)
+                Owners.linuxDefault
+                later
+                (FileContents.ofImmutableArray (bytes 0))
+                vfs
             |> ok
 
         VfsMutation.changes mutation
@@ -830,7 +850,7 @@ module TestFsChange =
 
     [<Test>]
     let ``committing a mutation leaves its graph on the machine`` () : unit =
-        let machine = (booted ()).Machine
+        let machine = Kernel.machine (booted ())
         let root = VirtualFileSystem.root machine.FileSystem
 
         let _, mutation =
@@ -840,7 +860,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 
@@ -852,7 +872,7 @@ module TestFsChange =
 
     [<Test>]
     let ``committing a mutation of another graph is refused`` () : unit =
-        let machine = (booted ()).Machine
+        let machine = Kernel.machine (booted ())
         let root = VirtualFileSystem.root machine.FileSystem
 
         let _, first =
@@ -862,7 +882,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 
@@ -875,7 +895,7 @@ module TestFsChange =
                 (bits 0o644)
                 Owners.linuxDefault
                 later
-                (bytes 1)
+                (FileContents.ofImmutableArray (bytes 1))
                 machine.FileSystem
             |> ok
 

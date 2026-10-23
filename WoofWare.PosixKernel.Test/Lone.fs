@@ -2,13 +2,11 @@ namespace WoofWare.PosixKernel.Test
 
 open WoofWare.PosixKernel
 
-/// `Proc` for a test of a machine holding one process: the same reach into
+/// `Proc` for a test of a system holding one process: the same reach into
 /// that process's internals, without naming it.
 ///
-/// Each function fails loudly unless the machine holds exactly one process, and
-/// each that reaches into the process also unless `system` is the view of it,
-/// as `Proc`'s do. A test of a machine holding several names the process,
-/// through `Proc`.
+/// Each function fails loudly unless the system holds exactly one process. A
+/// test of a system holding several names the process, through `Proc`.
 [<RequireQualifiedAccess>]
 module internal Lone =
 
@@ -17,9 +15,9 @@ module internal Lone =
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessId
         =
-        match Set.toList (ProcessIdTable.live system.Machine.ProcessIds) with
+        match Set.toList (UnixSystem.processIds system) with
         | [ pid ] -> pid
-        | live -> failwith $"Lone.%s{operation}: the machine holds the processes %A{live}, not exactly one"
+        | live -> failwith $"Lone.%s{operation}: the system holds the processes %A{live}, not exactly one"
 
     /// The ID of the only process on the machine: for a helper that takes the
     /// process as `Proc` does, to call it on a machine holding one.
@@ -28,6 +26,37 @@ module internal Lone =
         : ProcessId
         =
         only "pid" system
+
+    /// The view of `system` from its only process: what a function that works
+    /// on one process's view, such as a call's body, takes.
+    let view<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        Proc.view (only "view" system) system
+
+    /// The system `view` is a view of, with the view's process as the view
+    /// has it.
+    let unview<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : ProcessView<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        Proc.unview view
+
+    /// `unview` of a view whose process carries on, and the system without
+    /// the process of one whose process has ended, as `Shape.map` takes them.
+    let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Unfocus<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>> =
+        Proc.unfocus
+
+    /// `f` in the view of the only process, and the system its view is a view
+    /// of.
+    let inView<'Thread, 'Handler, 'Result when 'Thread : comparison and 'Handler : equality>
+        (f : ProcessView<'Thread, 'Handler> -> 'Result * ProcessView<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'Result * UnixSystem<'Thread, 'Handler>
+        =
+        Proc.inView (only "inView" system) f system
 
     /// The only process's own state.
     let proc<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -44,20 +73,59 @@ module internal Lone =
         =
         Proc.mapState (only "mapProc" system) f system
 
-    /// The only process's threads, by the client's name for each.
-    let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The only process's thread table, as the internal functions of
+    /// `UnixThreadTable` take it: for the tests of the table itself. Every
+    /// other test asks about one thread at a time (`thread`, `parkOf`,
+    /// `parkedIn`, `owedBy`), or reads `threadMap`.
+    let threadTable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ThreadTable<'Thread>
+        =
+        Proc.threadTable (only "threadTable" system) system
+
+    /// The only process's threads, by the client's name for each, read from
+    /// its thread table as `Proc.threadMap` reads them.
+    let threadMap<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        Proc.threads (only "threads" system) system
+        Proc.threadMap (only "threadMap" system) system
 
-    /// `system` with the only process's threads rewritten by `f`.
-    let mapThreads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (f : Map<'Thread, UnixThreadState> -> Map<'Thread, UnixThreadState>)
+    /// The only process's thread `thread`, as a client reads it. Fails loudly
+    /// unless the process has that thread.
+    let thread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        : UnixThreadState
         =
-        Proc.mapThreads (only "mapThreads" system) f system
+        Proc.thread (Caller.make (only "thread" system) thread) system
+
+    /// The park the only process's thread `thread` is in, with its place in
+    /// park order, if it is parked (`UnixThreadState.park`).
+    let parkOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ThreadPark option
+        =
+        Proc.parkOf (Caller.make (only "parkOf" system) thread) system
+
+    /// The syscall the only process's thread `thread` is parked in, if any
+    /// (`UnixThreadState.parkedIn`).
+    let parkedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ParkedSyscall option
+        =
+        Proc.parkedIn (Caller.make (only "parkedIn" system) thread) system
+
+    /// What the only process's thread `thread` owes before it makes another
+    /// call, if anything (`UnixThreadState.Owes`).
+    let owedBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : OwedReturn option
+        =
+        Proc.owedBy (Caller.make (only "owedBy" system) thread) system
 
     /// The only process's leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -99,7 +167,73 @@ module internal Lone =
         : UnixSystem<'Thread, 'Handler>
         =
         only "mapOpenFiles" system |> ignore
-        UnixSystemState.mapOpenFiles f system
+
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    OpenFiles = f machine.OpenFiles
+                }
+            )
+            system
+
+    /// `UnixWait.wake` of the only process's threads, each woken thread
+    /// answered by its name, and the system with them woken.
+    let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
+        =
+        only "wake" system |> ignore
+        let woken, system = UnixWait.wake system
+        woken |> List.map (fun (caller, fired) -> Caller.thread caller, fired), system
+
+    /// The threads of the only process that `UnixWait.wake` would wake, each
+    /// answered by its name: `wake`'s answer, for a test that asks only who
+    /// wakes, and finishes no call in the system it was asked of.
+    let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Set<WakePrimitive>) list
+        =
+        fst (wake system)
+
+    /// `system` after `UnixWait.wake`, which must wake exactly the threads of
+    /// the only process `expected` names, in that order.
+    let waking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (expected : 'Thread list)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let woken, system = wake system
+        let woken = woken |> List.map fst
+
+        if woken <> expected then
+            failwith $"Lone.waking: expected UnixWait.wake to wake %A{expected}, but it woke %A{woken}"
+
+        system
+
+    /// `UnixWait.deadlines` of the only process's sleeping threads.
+    let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int64 list
+        =
+        only "deadlines" system |> ignore
+        UnixWait.deadlines system
+
+    /// The only process's threads asleep in a call (`ParkState.Asleep`).
+    let asleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<'Thread>
+        =
+        threadMap system
+        |> Map.toSeq
+        |> Seq.choose (fun (thread, state) ->
+            match UnixThreadState.park state with
+            | Some {
+                       State = ParkState.Asleep
+                   } -> Some thread
+            | Some _
+            | None -> None
+        )
+        |> Set.ofSeq
 
     /// `system` with the machine's record of the directories processes stand
     /// in saying where the only process stands: for a test that has moved the
@@ -110,9 +244,622 @@ module internal Lone =
         =
         let standing = (Proc.state (only "restand" system) system).CurrentDirectoryInode
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CurrentDirectories = Map.ofList [ standing, 1 ]
                 }
-        }
+            )
+            system
+
+    // The library's functions that work on one process's view, which tests
+    // call directly, each made in the view of the only process: they take the
+    // system, focus it (`view`), and put back each view they answer
+    // (`unview`). A test of a system holding several processes focuses one
+    // through `Proc.view`.
+
+    /// `WoofWare.PosixKernel.Parking`'s parks, made in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module Parking =
+        let park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (parked : ParkedSyscall)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system |> WoofWare.PosixKernel.Parking.park thread parked |> unview
+
+        let parkWaiting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (parked : ParkedSyscall)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system |> WoofWare.PosixKernel.Parking.parkWaiting thread parked |> unview
+
+    /// `WoofWare.PosixKernel.UnixParkState`, made in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module UnixParkState =
+        let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (park : ThreadPark)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system |> WoofWare.PosixKernel.UnixParkState.setPark thread park |> unview
+
+        let unpark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system |> WoofWare.PosixKernel.UnixParkState.unpark thread |> unview
+
+    /// `WoofWare.PosixKernel.WakeCondition`, asked in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module WakeCondition =
+        let satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (condition : WakeCondition)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Set<WakePrimitive>
+            =
+            WoofWare.PosixKernel.WakeCondition.satisfied thread condition (view system)
+
+    /// `WoofWare.PosixKernel.ObjectLifetime`, made in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module ObjectLifetime =
+        let forgetIfUnheld<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (inode : InodeNumber)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system
+            |> WoofWare.PosixKernel.ObjectLifetime.forgetIfUnheld inode
+            |> unview
+
+        let releaseUnreferencedUnrefusable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (caller : string)
+            (descriptions : OpenFileDescriptionId list)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            view system
+            |> WoofWare.PosixKernel.ObjectLifetime.releaseUnreferencedUnrefusable caller descriptions
+            |> unview
+
+    /// `WoofWare.PosixKernel.EpollReadyList`, made in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module EpollReadyList =
+        let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (epollId : OpenFileDescriptionId)
+            (maxCount : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : (uint64 * uint32) list * UnixSystem<'Thread, 'Handler>
+            =
+            let events, after =
+                WoofWare.PosixKernel.EpollReadyList.drain epollId maxCount (view system)
+
+            events, unview after
+
+        let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (epollId : OpenFileDescriptionId)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : bool
+            =
+            WoofWare.PosixKernel.EpollReadyList.hasDeliverableEvent epollId (view system)
+
+    /// `WoofWare.PosixKernel.LinuxReadiness`, read in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module LinuxReadiness =
+        let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (targetId : OpenFileDescriptionId)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : uint32
+            =
+            WoofWare.PosixKernel.LinuxReadiness.ofDescription targetId (view system)
+
+    /// `answer`, with the view it holds put back.
+    let private unviewed<'Answer, 'Thread, 'Handler, 'Refusal when 'Thread : comparison and 'Handler : equality>
+        (answer : Result<'Answer * ProcessView<'Thread, 'Handler>, 'Refusal>)
+        : Result<'Answer * UnixSystem<'Thread, 'Handler>, 'Refusal>
+        =
+        answer |> Result.map (fun (answer, after) -> answer, unview after)
+
+    /// `WoofWare.PosixKernel.UnixConnection`'s steps, made in the view of the
+    /// only process.
+    [<RequireQualifiedAccess>]
+    module UnixConnection =
+        let acceptConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (socketId : SocketId)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : int * TcpConnection * UnixSystem<'Thread, 'Handler>
+            =
+            let fd, connection, after =
+                WoofWare.PosixKernel.UnixConnection.acceptConnection socketId (view system)
+
+            fd, connection, unview after
+
+        let connectDecoded<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (socketId : SocketId)
+            (nonBlocking : bool)
+            (declaredLength : uint32)
+            (address : ConnectAddress)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            =
+            WoofWare.PosixKernel.UnixConnection.connectDecoded socketId nonBlocking declaredLength address (view system)
+            |> unviewed
+
+        let connectSocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (socketId : SocketId)
+            (nonBlocking : bool)
+            (declaredLength : uint32)
+            (copied : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            =
+            WoofWare.PosixKernel.UnixConnection.connectSocket socketId nonBlocking declaredLength copied (view system)
+            |> unviewed
+
+        let tryConnectBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (destination : UserBuffer)
+            (declaredLength : uint32)
+            (copied : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            =
+            WoofWare.PosixKernel.UnixConnection.tryConnectBytes fd destination declaredLength copied (view system)
+            |> unviewed
+
+    /// `WoofWare.PosixKernel.UnixDescriptor`'s steps, made in the view of the
+    /// only process.
+    [<RequireQualifiedAccess>]
+    module UnixDescriptor =
+        let truncateAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (through : ReachedThrough)
+            (inode : InodeNumber)
+            (length : int64)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<UnixSystem<'Thread, 'Handler>, TruncationRefusal>
+            =
+            WoofWare.PosixKernel.UnixDescriptor.truncateAt through inode length (view system)
+            |> Result.map unview
+
+    /// `WoofWare.PosixKernel.UnixNamespace`'s steps after the path is copied
+    /// in, made in the view of the only process.
+    [<RequireQualifiedAccess>]
+    module UnixNamespace =
+        let mkdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (mode : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
+            =
+            WoofWare.PosixKernel.UnixNamespace.mkdirParsed directory path mode (view system)
+            |> unviewed
+
+        let openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (flags : OpenFlags)
+            (mode : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+            =
+            WoofWare.PosixKernel.UnixNamespace.openPathParsed directory path flags mode (view system)
+            |> unviewed
+
+        let readlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (destination : UserBuffer)
+            (capacity : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<ReadLinkAnswer, ReadLinkRefusal>
+            =
+            WoofWare.PosixKernel.UnixNamespace.readlinkParsed directory path destination capacity (view system)
+
+        let rmdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
+            =
+            WoofWare.PosixKernel.UnixNamespace.rmdirParsed directory path (view system)
+            |> unviewed
+
+        let unlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
+            =
+            WoofWare.PosixKernel.UnixNamespace.unlinkParsed directory path (view system)
+            |> unviewed
+
+    /// `WoofWare.PosixKernel.UnixPathResolution`'s walks and steps after the
+    /// path is copied in, made in the view of the only process.
+    [<RequireQualifiedAccess>]
+    module UnixPathResolution =
+        let chdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.chdirParsed path (view system)
+            |> unviewed
+
+        let chmodParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (path : UnixPath)
+            (mode : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChModRefusal>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.chmodParsed directory policy path mode (view system)
+            |> unviewed
+
+        let chownParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (path : UnixPath)
+            (user : UserId option)
+            (group : GroupId option)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChOwnRefusal>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.chownParsed directory policy path user group (view system)
+            |> unviewed
+
+        let copyIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (argument : PathArgumentBytes)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<UnixPath, UnixError>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.copyIn argument (view system)
+
+        let resolvePath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<InodeNumber, PathFailure>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.resolvePath directory policy path (view system)
+
+        let resolvePathFull<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (trailingSeparatorPolicy : TrailingSeparatorPolicy)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Resolution, PathFailure>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.resolvePathFull
+                directory
+                policy
+                trailingSeparatorPolicy
+                path
+                (view system)
+
+        let resolvePathParent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (trailingSeparatorPolicy : TrailingSeparatorPolicy)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<PausedResolution, PathFailure>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.resolvePathParent
+                directory
+                policy
+                trailingSeparatorPolicy
+                path
+                (view system)
+
+        let statOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (inode : InodeNumber)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<FileStatus, StatRefusal> option
+            =
+            WoofWare.PosixKernel.UnixPathResolution.statOf inode (view system)
+
+        let statParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (policy : SymlinkPolicy)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<FileStatusAnswer, StatRefusal>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.statParsed directory policy path (view system)
+
+        let statfsParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<FileSystemStatisticsAnswer, PathRefusal>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.statfsParsed path (view system)
+
+        let walkStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (directory : AtDirectory)
+            (path : UnixPath)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<InodeNumber, UnixError>
+            =
+            WoofWare.PosixKernel.UnixPathResolution.walkStart directory path (view system)
+
+    /// `answer`, with the view the step holds put back.
+    let private unviewedStep<'Answer, 'Thread, 'Handler, 'Refusal when 'Thread : comparison and 'Handler : equality>
+        (answer : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>, 'Refusal>)
+        : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread>, 'Refusal>
+        =
+        answer |> Result.map (WriteStep.map unfocus)
+
+    /// `WoofWare.PosixKernel.UnixReadWrite`'s steps either side of the copy,
+    /// made in the view of the only process.
+    [<RequireQualifiedAccess>]
+    module UnixReadWrite =
+        let tryAdmitWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (fd : int)
+            (buffer : UserBuffer)
+            (count : uint64)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitWrite thread fd buffer count (view system)
+            |> unviewedStep
+
+        let tryAdmitSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (fd : int)
+            (buffer : UserBuffer)
+            (count : uint64)
+            (flags : int)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitSend thread fd buffer count flags (view system)
+            |> unviewedStep
+
+        let tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteResumption, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitFinishWrite thread (view system)
+            |> unviewedStep
+
+        let tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (buffer : UserBuffer)
+            (count : uint64)
+            (offset : int64)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<PWriteAdmission, PWriteRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitPWrite fd buffer count offset (view system)
+
+        let tryApplyPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (offset : int64)
+            (into : PWriteInto)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryApplyPWrite fd offset into bytes (view system)
+            |> unviewed
+
+        let applyPWriteDeviceAnswer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (answer : WriteAnswer)
+            (inode : InodeNumber)
+            (through : ReachedThrough)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : WriteAnswer * UnixSystem<'Thread, 'Handler>
+            =
+            let answer, after =
+                WoofWare.PosixKernel.UnixReadWrite.applyPWriteDeviceAnswer answer inode through (view system)
+
+            answer, unview after
+
+        let tryApplyResumedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (into : WriteResumed)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryApplyResumedWrite thread into bytes (view system)
+            |> unviewedStep
+
+        let tryApplySend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (into : WriteInto)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.tryApplySend into bytes (view system)
+            |> unviewedStep
+
+        /// `tryApplyWrite` of a `write` through `fd`, marked as a `write`
+        /// is (`UnixReadWrite.markedThrough`), and beside it the delivery it
+        /// made.
+        let tryApplyWriteThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (into : WriteInto)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread> * Delivery option, WriteRefusal>
+            =
+            let before = view system
+
+            WoofWare.PosixKernel.UnixReadWrite.tryApplyWrite into bytes before
+            |> Result.map (fun (step, delivery) ->
+                WriteStep.map unfocus (WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before step), delivery
+            )
+
+        /// `applyWriteThenSleep` of a `write` through `fd`, marked as a
+        /// `write` is (`UnixReadWrite.markedThrough`).
+        let applyWriteThenSleepThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (fd : int)
+            (total : int)
+            (into : WriteIntoThenSleep)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
+            =
+            let before = view system
+
+            WoofWare.PosixKernel.UnixReadWrite.applyWriteThenSleep thread total into bytes before
+            |> WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before
+            |> WriteStep.map unfocus
+
+        /// `applyWriteThenSleep`, unmarked, as a `send` makes it.
+        let applyWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (thread : 'Thread)
+            (total : int)
+            (into : WriteIntoThenSleep)
+            (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
+            =
+            WoofWare.PosixKernel.UnixReadWrite.applyWriteThenSleep thread total into bytes (view system)
+            |> WriteStep.map unfocus
+
+    /// `WoofWare.PosixKernel.UnixSocket`'s steps either side of the copy,
+    /// made in the view of the only process.
+    [<RequireQualifiedAccess>]
+    module UnixSocket =
+        let bindDecoded<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (declaredLength : uint32)
+            (copied : CopiedInternetSockaddr)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.bindDecoded fd declaredLength copied (view system)
+            |> unviewed
+
+        let tryAdmitGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (level : int)
+            (optionName : int)
+            (value : UserBuffer)
+            (length : UserBuffer)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<GetSockOptAdmission, SocketOptionRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.tryAdmitGetSockOpt fd level optionName value length (view system)
+
+        let tryAdmitSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (level : int)
+            (optionName : int)
+            (value : UserBuffer)
+            (optionLength : uint32)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SetSockOptAdmission, SocketOptionRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.tryAdmitSetSockOpt fd level optionName value optionLength (view system)
+
+        let tryAdmitSockaddrCopy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (syscall : SockaddrCopySyscall)
+            (fd : int)
+            (destination : UserBuffer)
+            (declaredLength : uint32)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SockaddrCopyAdmission, SockaddrCopyRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.tryAdmitSockaddrCopy syscall fd destination declaredLength (view system)
+
+        let tryBindBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (destination : UserBuffer)
+            (declaredLength : uint32)
+            (copied : System.Collections.Immutable.ImmutableArray<byte>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.tryBindBytes fd destination declaredLength copied (view system)
+            |> unviewed
+
+        let tryGetsockoptLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (level : int)
+            (optionName : int)
+            (value : UserBuffer)
+            (length : UserBuffer)
+            (declaredLength : uint32 option)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.tryGetsockoptLength
+                fd
+                level
+                optionName
+                value
+                length
+                declaredLength
+                (view system)
+            |> unviewed
+
+        let trySetsockoptBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (fd : int)
+            (level : int)
+            (optionName : int)
+            (value : UserBuffer)
+            (optionLength : uint32)
+            (supplied : System.Collections.Immutable.ImmutableArray<byte> option)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+            =
+            WoofWare.PosixKernel.UnixSocket.trySetsockoptBytes
+                fd
+                level
+                optionName
+                value
+                optionLength
+                supplied
+                (view system)
+            |> unviewed
+
+    /// `WoofWare.PosixKernel.ProcessSignal`, made in the view of the only
+    /// process.
+    [<RequireQualifiedAccess>]
+    module ProcessSignal =
+        /// Fails the test on a full queue, which no caller expects.
+        let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (sender : SignalSender)
+            (entry : PendingSignal<'Thread>)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, ProcessEndRefusal>, SignalReceiverRefusal>
+            =
+            match WoofWare.PosixKernel.ProcessSignal.generate sender entry (view system) with
+            | Error refusal -> Error refusal
+            | Ok (SignalSent.Fate fate) -> Ok (Ok (Shape.map unfocus Shape.fate fate))
+            | Ok (SignalSent.EndRefused refusal) -> Ok (Error refusal)
+            | Ok SignalSent.QueueFull -> failwith $"generating %O{entry} found the queue full"
+
+    /// `WoofWare.PosixKernel.UnixThreadLifecycle`, made in the view of the
+    /// only process.
+    [<RequireQualifiedAccess>]
+    module UnixThreadLifecycle =
+        let tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            (termination : ProcessTermination)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<EndedProcess * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
+            =
+            WoofWare.PosixKernel.UnixThreadLifecycle.tryEndProcess termination (view system)
+            |> Shape.map unfocus (Shape.result Shape.ended)

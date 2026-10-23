@@ -60,12 +60,12 @@ module TestUnixPathBytes =
 
         let system =
             linux
-            |> Answered.mkdir (PathArg.ofPath (pathOf directory)) 0o777
+            |> (fun system -> Answered.mkdir (Callers.leader system) (PathArg.ofPath (pathOf directory)) 0o777 system)
             |> completed
-            |> Answered.chdir (PathArg.ofPath (pathOf directory))
+            |> (fun system -> Answered.chdir (Callers.leader system) (PathArg.ofPath (pathOf directory)) system)
             |> completed
 
-        match UnixPathResolution.tryGetcwd UserBuffer.Mapped 4096UL system with
+        match UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 4096UL system with
         | Ok (GetCwdAnswer.Reported bytes) -> List.ofSeq bytes |> shouldEqual (directory @ [ 0uy ])
         | other -> failwith $"expected a path, got %A{other}"
 
@@ -80,10 +80,15 @@ module TestUnixPathBytes =
             names
             |> List.fold
                 (fun system name ->
-                    Answered.mkdir (PathArg.ofPath (pathOf (parent @ [ slash ] @ name))) 0o777 system
+                    Answered.mkdir
+                        (Callers.leader system)
+                        (PathArg.ofPath (pathOf (parent @ [ slash ] @ name)))
+                        0o777
+                        system
                     |> completed
                 )
-                (Answered.mkdir (PathArg.ofPath (pathOf parent)) 0o777 linux |> completed)
+                (Answered.mkdir (Callers.leader linux) (PathArg.ofPath (pathOf parent)) 0o777 linux
+                 |> completed)
 
         let fd, system =
             match DirectoryReading.openDirectory (pathOf parent) system with
@@ -93,11 +98,7 @@ module TestUnixPathBytes =
         let records, _ = DirectoryReading.drain fd system
 
         records
-        |> List.map (fun record ->
-            DirectoryStreamName.toByteString record.Name
-            |> UnixByteString.toBytes
-            |> List.ofSeq
-        )
+        |> List.map (fun record -> PathComponent.toByteString record.Name |> UnixByteString.toBytes |> List.ofSeq)
         |> List.sort
         |> shouldEqual (List.sort ([ [ byte '.' ] ; [ byte '.' ; byte '.' ] ] @ names))
 
@@ -213,11 +214,13 @@ module TestUnixPathBytes =
         // cannot give its own process.
         let orphaned =
             seeded (Map.toList BindingProbes.tree) darwinImage
-            |> Answered.mkdir (PathArg.ofPath (pathOf (text "/gone"))) 0o777
+            |> (fun system ->
+                Answered.mkdir (Callers.leader system) (PathArg.ofPath (pathOf (text "/gone"))) 0o777 system
+            )
             |> completed
-            |> Answered.chdir (PathArg.ofPath (pathOf (text "/gone")))
+            |> (fun system -> Answered.chdir (Callers.leader system) (PathArg.ofPath (pathOf (text "/gone"))) system)
             |> completed
-            |> Answered.rmdir (pathOf (text "../gone"))
+            |> (fun system -> Answered.rmdir (Callers.leader system) (pathOf (text "../gone")) system)
             |> completed
 
         let creating : OpenFlags =
@@ -230,15 +233,16 @@ module TestUnixPathBytes =
                 CloseOnExec = false
                 Synchronous = false
                 DataSynchronous = false
+                NonBlocking = false
                 Directory = false
             }
 
         for name in [ text "g" ; [ 0xFFuy ] ] do
-            fst (Answered.mkdir (PathArg.ofPath (pathOf name)) 0o777 orphaned)
+            fst (Answered.mkdir (Callers.leader orphaned) (PathArg.ofPath (pathOf name)) 0o777 orphaned)
             |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
 
-            fst (Answered.openPath creating (pathOf name) 0o666 orphaned)
-            |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
+            fst (Answered.openPath (pathOf name) creating 0o666 orphaned)
+            |> shouldEqual (DescriptorAnswer.Failed UnixError.ENOENT)
 
             match Eager.tryRename (PathArg.ofBytes (text "/d/f")) (PathArg.ofBytes name) orphaned with
             | Ok (answer, _) -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.ENOENT)
@@ -359,6 +363,7 @@ module TestUnixPathBytes =
 
                 match
                     UnixNamespace.tryReadlink
+                        (Callers.leader system)
                         (PathArg.ofPath (pathOf [ slash ; byte 'l' ]))
                         UserBuffer.Mapped
                         8192
@@ -369,6 +374,7 @@ module TestUnixPathBytes =
 
                 match
                     UnixPathResolution.tryStat
+                        (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (PathArg.ofPath (pathOf [ slash ; byte 'l' ]))
                         system
@@ -392,6 +398,7 @@ module TestUnixPathBytes =
 
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte '.' ]))
                 system
@@ -415,6 +422,7 @@ module TestUnixPathBytes =
                 seeded [ nameOf [ byte 'l' ], SeedEntry.Symlink (targetOf (target length), None) ] darwinImage
 
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte 'a' ]))
                 system

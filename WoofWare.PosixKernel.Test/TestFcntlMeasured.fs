@@ -12,7 +12,7 @@ open WoofWare.PosixKernel
 ///
 /// The rows a replay leaves out are counted and named: those whose answer
 /// turns on `RLIMIT_NOFILE`, which this kernel does not model, and those of a
-/// call it does not make (`accept4`, `send`, Darwin's `F_DUPFD_CLOFORK`).
+/// call it does not make (`send`, Darwin's `F_DUPFD_CLOFORK`).
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestFcntlMeasured =
@@ -39,16 +39,14 @@ module TestFcntlMeasured =
                     for row in FcntlWorld.rows "KIND" run do
                         match row with
                         | [ kind ; getfl ; getfd ] ->
-                            match FcntlWorld.make kind (FcntlWorld.system run) with
-                            | None -> ()
-                            | Some (fd, system) ->
-                                replayed <- replayed + 1
-                                let modelled = $"F_GETFL %s{FcntlWorld.statusFlags fd system}"
-                                let modelledFd = $"F_GETFD %s{FcntlWorld.descriptorFlags fd system}"
+                            let fd, system = FcntlWorld.make kind (FcntlWorld.system run)
+                            replayed <- replayed + 1
+                            let modelled = $"F_GETFL %s{FcntlWorld.statusFlags fd system}"
+                            let modelledFd = $"F_GETFD %s{FcntlWorld.descriptorFlags fd system}"
 
-                                if modelled <> getfl || modelledFd <> getfd then
-                                    yield
-                                        $"%s{run.Name} %s{kind}: measured %s{getfl} %s{getfd}, modelled %s{modelled} %s{modelledFd}"
+                            if modelled <> getfl || modelledFd <> getfd then
+                                yield
+                                    $"%s{run.Name} %s{kind}: measured %s{getfl} %s{getfd}, modelled %s{modelled} %s{modelledFd}"
                         | other -> failwith $"malformed KIND row %A{other}"
                 ]
 
@@ -57,17 +55,6 @@ module TestFcntlMeasured =
             replayed |> shouldBeGreaterThan 20
 
     // ------------------------------------------------------------------ SETFL
-
-    /// The flags this kernel refuses to set (`FcntlRefusal.UnmodelledStatusFlags`),
-    /// in `platform`'s numbering.
-    let private unmodelledBits (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux ->
-            OpenFlagNumbering.LinuxAppend
-            ||| OpenFlagNumbering.LinuxAsynchronous
-            ||| OpenFlagNumbering.linuxDirect (SimulatedUnixPlatform.architecture platform)
-            ||| OpenFlagNumbering.LinuxNoAccessTime
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinAppend ||| OpenFlagNumbering.DarwinAsynchronous
 
     /// Every F_SETFL the probe made, each bit on its own beside the word
     /// `F_GETFL` reported and three whole words, on a fresh descriptor of each
@@ -85,9 +72,7 @@ module TestFcntlMeasured =
                     for row in FcntlWorld.rows "SETFL" run do
                         match row with
                         | [ kind ; label ; before ; set ; after ; clear ; after2 ] ->
-                            match FcntlWorld.make kind (FcntlWorld.system run) with
-                            | None -> ()
-                            | Some (fd, system) ->
+                            let fd, system = FcntlWorld.make kind (FcntlWorld.system run)
 
                             let measuredBefore = Convert.ToUInt32 (field "before 0x" before, 16) |> int
                             let word = Convert.ToUInt32 ((field "set 0x" set).Split(' ').[0], 16) |> int
@@ -98,9 +83,9 @@ module TestFcntlMeasured =
                                     $"%s{run.Name} %s{kind} %s{label}: before measured 0x%x{measuredBefore}, modelled %s{modelledBefore}"
                             else
 
-                            let unmodelled = word &&& unmodelledBits run.Platform <> 0
+                            let unmodelled = word &&& FcntlWorld.unmodelledStatusFlags run.Platform <> 0
 
-                            match UnixDescriptor.tryFcntl fd FcntlWorld.SetFl word system with
+                            match UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.SetFl word system with
                             | Error (FcntlRefusal.UnmodelledStatusFlags _) when unmodelled -> refused <- refused + 1
                             | Error refusal ->
                                 yield $"%s{run.Name} %s{kind} %s{label}: refused (%s{FcntlRefusal.describe refusal})"
@@ -191,8 +176,8 @@ module TestFcntlMeasured =
                                     (FcntlWorld.system run)
 
                             let copy, system =
-                                match Answered.dup fd system with
-                                | SyscallAnswer.Completed copy, system -> int copy, system
+                                match Answered.dup (Callers.leader system) fd system with
+                                | DescriptorAnswer.Returned copy, system -> copy, system
                                 | other -> failwith $"dup: %A{other}"
 
                             let _, system = FcntlWorld.fcntl copy FcntlWorld.SetFd 1 system
@@ -215,13 +200,18 @@ module TestFcntlMeasured =
                             let _, system = FcntlWorld.fcntl fd FcntlWorld.SetFd flags system
 
                             let duplicated : (int * UnixSystem<int, string>) option =
-                                let ok (answer, system) =
+                                let ok (answer : SyscallAnswer, system : UnixSystem<int, string>) =
                                     match answer with
                                     | SyscallAnswer.Completed copy -> Some (int copy, system)
                                     | SyscallAnswer.Failed error -> failwith $"%s{operation}: %A{error}"
 
+                                let okDescriptor (answer : DescriptorAnswer, system : UnixSystem<int, string>) =
+                                    match answer with
+                                    | DescriptorAnswer.Returned copy -> Some (copy, system)
+                                    | DescriptorAnswer.Failed error -> failwith $"%s{operation}: %A{error}"
+
                                 if operation = "dup" then
-                                    ok (Answered.dup fd system)
+                                    okDescriptor (Answered.dup (Callers.leader system) fd system)
                                 elif operation = "F_DUPFD" then
                                     ok (FcntlWorld.fcntl fd FcntlWorld.DupFd 0 system)
                                 elif operation = "F_DUPFD_CLOEXEC" then
@@ -230,16 +220,16 @@ module TestFcntlMeasured =
                                     // Darwin's 115 answered EBADF on an open
                                     // descriptor; this kernel models no such
                                     // command.
-                                    match UnixDescriptor.tryFcntl fd 115 0 system with
+                                    match UnixDescriptor.tryFcntl (Callers.leader system) fd 115 0 system with
                                     | Error (FcntlRefusal.UnmodelledCommand 115) -> None
                                     | other -> failwith $"F_DUPFD_CLOFORK: %A{other}"
                                 elif operation = "dup2 onto free" then
-                                    match UnixDescriptor.tryDup2 fd 40 system with
-                                    | Ok answered -> ok answered
+                                    match UnixDescriptor.tryDup2 (Callers.leader system) fd 40 system with
+                                    | Ok answered -> okDescriptor answered
                                     | Error refusal -> failwith $"dup2: %s{Dup2Refusal.describe refusal}"
                                 elif operation = "dup2 onto open (cloexec target)" then
                                     let target, system =
-                                        FcntlWorld.openRaw (2 ||| FcntlWorld.closeOnExec platform) "f" system
+                                        FcntlWorld.openRaw (2 ||| OpenFlagWords.closeOnExec platform) "f" system
 
                                     let system =
                                         match SimulatedUnixPlatform.flavour platform with
@@ -247,26 +237,26 @@ module TestFcntlMeasured =
                                             snd (FcntlWorld.fcntl target FcntlWorld.SetFd 3 system)
                                         | SimulatedUnixFlavour.Linux -> system
 
-                                    match UnixDescriptor.tryDup2 fd target system with
-                                    | Ok answered -> ok answered
+                                    match UnixDescriptor.tryDup2 (Callers.leader system) fd target system with
+                                    | Ok answered -> okDescriptor answered
                                     | Error refusal -> failwith $"dup2: %s{Dup2Refusal.describe refusal}"
                                 elif operation.StartsWith "dup2 onto itself" then
-                                    match UnixDescriptor.tryDup2 fd fd system with
+                                    match UnixDescriptor.tryDup2 (Callers.leader system) fd fd system with
                                     | Ok answered ->
                                         (field "dup2 onto itself " operation)
-                                        |> shouldEqual (FcntlWorld.number (fst answered))
+                                        |> shouldEqual (FcntlWorld.descriptorNumber (fst answered))
 
-                                        ok answered
+                                        okDescriptor answered
                                     | Error refusal -> failwith $"dup2: %s{Dup2Refusal.describe refusal}"
                                 elif operation.StartsWith "dup3" then
                                     let flags =
                                         if operation.StartsWith "dup3 O_CLOEXEC" then
-                                            OpenFlagNumbering.LinuxCloseOnExec
+                                            OpenFlagWords.closeOnExec platform
                                         else
                                             0
 
-                                    match UnixDescriptor.tryDup3 fd 40 flags system with
-                                    | Ok answered -> ok answered
+                                    match UnixDescriptor.tryDup3 (Callers.leader system) fd 40 flags system with
+                                    | Ok answered -> okDescriptor answered
                                     | Error refusal -> failwith $"dup3: %s{Dup3Refusal.describe refusal}"
                                 else
                                     failwith $"unknown CLOEXEC operation %s{operation}"
@@ -316,7 +306,7 @@ module TestFcntlMeasured =
         [ 5 ; 9 ]
         |> List.fold
             (fun system fd ->
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close %d{fd}: %A{other}"
             )
@@ -365,7 +355,7 @@ module TestFcntlMeasured =
                         else
                             FcntlWorld.dupFdCloexec run.Platform
 
-                    match UnixDescriptor.tryFcntl fd command argument table with
+                    match UnixDescriptor.tryFcntl (Callers.leader table) fd command argument table with
                     | Ok (answer, _) ->
                         replayed <- replayed + 1
 
@@ -399,12 +389,12 @@ module TestFcntlMeasured =
                     // EBADF ahead of the command, which this kernel refuses.
                     onClosed |> shouldEqual "closed EBADF"
 
-                    UnixDescriptor.tryFcntl 60 9999 0 table
+                    UnixDescriptor.tryFcntl (Callers.leader table) 60 9999 0 table
                     |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, table))
 
                     onOpen.StartsWith "open " |> shouldEqual true
 
-                    match UnixDescriptor.tryFcntl 3 9999 0 table with
+                    match UnixDescriptor.tryFcntl (Callers.leader table) 3 9999 0 table with
                     | Error (FcntlRefusal.UnmodelledCommand 9999) -> ()
                     | other -> failwith $"command 9999 on an open descriptor: %A{other}"
                 | _ -> ()
@@ -437,8 +427,8 @@ module TestFcntlMeasured =
 
         ([ 7..last ], system)
         ||> List.foldBack (fun target system ->
-            match UnixDescriptor.tryDup2 3 target system with
-            | Ok (SyscallAnswer.Completed _, system) -> system
+            match UnixDescriptor.tryDup2 (Callers.leader system) 3 target system with
+            | Ok (DescriptorAnswer.Returned _, system) -> system
             | other -> failwith $"filling the table at %d{target}: %A{other}"
         )
 
@@ -463,36 +453,36 @@ module TestFcntlMeasured =
             let mutable refused : (string * string) list = []
 
             let socket (domain : int) (kind : int) (protocol : int) (system : UnixSystem<int, string>) =
-                match UnixSocket.trySocket domain kind protocol system with
-                | Ok (Ok (fd, _)) -> Ok (SyscallAnswer.Completed (int64 fd))
-                | Ok (Error error) -> Ok (SyscallAnswer.Failed error)
+                match UnixSocket.trySocket (Callers.leader system) domain kind protocol system with
+                | Ok (answer, _) -> Ok (FcntlWorld.descriptorNumber answer)
                 | Error (SocketRefusal.DescriptorLimit refusal) -> Error refusal
                 | Error refusal ->
                     failwith $"socket(%d{domain}, %d{kind}, %d{protocol}): %s{SocketRefusal.describe refusal}"
 
             let openOf (flags : int) (path : PathArgumentBytes) (system : UnixSystem<int, string>) =
-                match OpenOutcomes.openPath flags path 0o644 system with
-                | Ok (answer, _) -> Ok answer
+                match OpenOutcomes.openPath path flags 0o644 system with
+                | Ok (answer, _) -> Ok (FcntlWorld.descriptorNumber answer)
                 | Error (OpenRefusal.DescriptorLimit refusal) -> Error refusal
                 | Error refusal -> failwith $"open: %s{OpenRefusal.describe refusal}"
 
             let pipeOf (flags : int) (system : UnixSystem<int, string>) =
-                match UnixPipe.tryPipe2 flags UserBuffer.Mapped system with
-                | Ok (Pipe2Answer.Created (r, _), _) -> Ok (SyscallAnswer.Completed 0L)
-                | Ok (Pipe2Answer.Failed error, _) -> Ok (SyscallAnswer.Failed error)
+                match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
+                | Ok (Pipe2Answer.Created (r, _), _) -> Ok (FcntlWorld.number (SyscallAnswer.Completed 0L))
+                | Ok (Pipe2Answer.Failed error, _) -> Ok (FcntlWorld.number (SyscallAnswer.Failed error))
                 | Error (Pipe2Refusal.DescriptorLimit refusal) -> Error refusal
                 | Error refusal -> failwith $"pipe2: %s{Pipe2Refusal.describe refusal}"
 
             let acceptOf (fd : int) (system : UnixSystem<int, string>) =
-                match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
-                | Ok (AcceptOutcome.Accepted (accepted, _, _), _) -> Ok (SyscallAnswer.Completed (int64 accepted))
-                | Ok (AcceptOutcome.Failed error, _) -> Ok (SyscallAnswer.Failed error)
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped (Some 16u) 0 system with
+                | Ok (AcceptOutcome.Accepted (accepted, _), _) ->
+                    Ok (FcntlWorld.number (SyscallAnswer.Completed (int64 accepted)))
+                | Ok (AcceptOutcome.Failed error, _) -> Ok (FcntlWorld.number (SyscallAnswer.Failed error))
                 | Error (AcceptRefusal.DescriptorLimit refusal) -> Error refusal
                 | other -> failwith $"accept of %d{fd}: %A{other}"
 
             let fcntlOf (fd : int) (argument : int) (system : UnixSystem<int, string>) =
-                match UnixDescriptor.tryFcntl fd FcntlWorld.DupFd argument system with
-                | Ok (answer, _) -> Ok answer
+                match UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.DupFd argument system with
+                | Ok (answer, _) -> Ok (FcntlWorld.number answer)
                 | Error (FcntlRefusal.DescriptorLimit refusal) -> Error refusal
                 | Error refusal -> failwith $"F_DUPFD: %s{FcntlRefusal.describe refusal}"
 
@@ -507,11 +497,15 @@ module TestFcntlMeasured =
                 | [ state ; call ; measured ] when state = "one left" || state = "full" ->
                     let system = tables.[state]
 
-                    let answer : Result<SyscallAnswer, DescriptorLimitRefusal> =
+                    let dupOf (fd : int) : Result<string, DescriptorLimitRefusal> =
+                        UnixDescriptor.tryDup (Callers.leader system) fd system
+                        |> Result.map (fst >> FcntlWorld.descriptorNumber)
+
+                    let answer : Result<string, DescriptorLimitRefusal> =
                         match call with
-                        | "dup" -> UnixDescriptor.tryDup 3 system |> Result.map fst
-                        | "dup of closed" -> UnixDescriptor.tryDup (bound + 1) system |> Result.map fst
-                        | "dup of -1" -> UnixDescriptor.tryDup -1 system |> Result.map fst
+                        | "dup" -> dupOf 3
+                        | "dup of closed" -> dupOf (bound + 1)
+                        | "dup of -1" -> dupOf -1
                         | "F_DUPFD arg 0" -> fcntlOf 3 0 system
                         | "F_DUPFD of closed arg 0" -> fcntlOf (bound + 1) 0 system
                         | "F_DUPFD arg -1" -> fcntlOf 3 -1 system
@@ -531,20 +525,24 @@ module TestFcntlMeasured =
                         | "pipe" -> pipeOf 0 system
                         | "pipe2 bad flag" -> pipeOf (if linux then 1 else 0x10) system
                         | "kqueue" ->
-                            match UnixKqueue.tryKqueue system with
-                            | Ok (fd, _) -> Ok (SyscallAnswer.Completed (int64 fd))
+                            match UnixKqueue.tryKqueue (Callers.leader system) system with
+                            | Ok (answer, _) -> Ok (FcntlWorld.descriptorNumber answer)
                             | Error (KqueueRefusal.DescriptorLimit refusal) -> Error refusal
                             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
                         | "epoll_create1"
                         | "epoll_create1 bad flag" ->
-                            match UnixPoll.tryEpollCreate1 (if call = "epoll_create1" then 0 else 1) system with
-                            | Ok (Ok (fd, _)) -> Ok (SyscallAnswer.Completed (int64 fd))
-                            | Ok (Error error) -> Ok (SyscallAnswer.Failed error)
+                            match
+                                UnixPoll.tryEpollCreate1
+                                    (Callers.leader system)
+                                    (if call = "epoll_create1" then 0 else 1)
+                                    system
+                            with
+                            | Ok (answer, _) -> Ok (FcntlWorld.descriptorNumber answer)
                             | Error (EpollCreateRefusal.DescriptorLimit refusal) -> Error refusal
                             | Error refusal -> failwith $"epoll_create1: %s{EpollCreateRefusal.describe refusal}"
                         | dup2 when dup2.StartsWith "dup2 onto open " ->
-                            match UnixDescriptor.tryDup2 3 (bound - 2) system with
-                            | Ok (answer, _) -> Ok answer
+                            match UnixDescriptor.tryDup2 (Callers.leader system) 3 (bound - 2) system with
+                            | Ok (answer, _) -> Ok (FcntlWorld.descriptorNumber answer)
                             | Error refusal -> failwith $"dup2: %s{Dup2Refusal.describe refusal}"
                         | "accept of closed" -> acceptOf (bound + 1) system
                         | "accept of a file" -> acceptOf 3 system
@@ -556,8 +554,7 @@ module TestFcntlMeasured =
                     | Ok answer ->
                         replayed <- replayed + 1
 
-                        (run.Name, state, call, FcntlWorld.number answer)
-                        |> shouldEqual (run.Name, state, call, measured)
+                        (run.Name, state, call, answer) |> shouldEqual (run.Name, state, call, measured)
                     | Error refusal ->
                         refused <- (state, call) :: refused
 
@@ -636,7 +633,7 @@ module TestFcntlMeasured =
 
                 (run.Name,
                  label,
-                 FcntlWorld.number answer,
+                 FcntlWorld.descriptorNumber answer,
                  $"target was %s{isOpen newFd table}, is %s{isOpen newFd after}")
                 |> shouldEqual (run.Name, label, measured, targetState)
 
@@ -654,7 +651,7 @@ module TestFcntlMeasured =
                     let oldFd = int parts.[0]
                     let newFd = int parts.[2]
 
-                    match UnixDescriptor.tryDup2 oldFd newFd table with
+                    match UnixDescriptor.tryDup2 (Callers.leader table) oldFd newFd table with
                     | Ok answered -> check label measured targetState newFd answered
                     | Error (Dup2Refusal.DescriptorLimit refusal) -> limited label measured newFd refusal
                     | Error refusal -> failwith $"%s{label}: %s{Dup2Refusal.describe refusal}"
@@ -664,7 +661,7 @@ module TestFcntlMeasured =
                     let newFd = int parts.[2]
                     let flags = Convert.ToUInt32 (parts.[4].Substring 2, 16) |> int
 
-                    match UnixDescriptor.tryDup3 oldFd newFd flags table with
+                    match UnixDescriptor.tryDup3 (Callers.leader table) oldFd newFd flags table with
                     | Ok answered -> check label measured targetState newFd answered
                     | Error (Dup3Refusal.DescriptorLimit refusal) -> limited label measured newFd refusal
                     | Error refusal -> failwith $"%s{label}: %s{Dup3Refusal.describe refusal}"
@@ -686,24 +683,24 @@ module TestFcntlMeasured =
     let ``dup3 is refused under Darwin`` () : unit =
         let system = FcntlWorld.system (runs |> List.find (fun run -> run.Name = "darwin"))
 
-        match UnixDescriptor.tryDup3 0 20 0 system with
+        match UnixDescriptor.tryDup3 (Callers.leader system) 0 20 0 system with
         | Error (Dup3Refusal.NotProvided SimulatedUnixFlavour.Darwin) -> ()
         | other -> failwith $"expected a refusal, got %A{other}"
 
     // ------------------------------------------------------------------ ONTO
 
     let private dup2OrFail (oldFd : int) (newFd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryDup2 oldFd newFd system with
-        | Ok (SyscallAnswer.Completed answer, system) when answer = int64 newFd -> system
+        match UnixDescriptor.tryDup2 (Callers.leader system) oldFd newFd system with
+        | Ok (DescriptorAnswer.Returned answer, system) when answer = newFd -> system
         | other -> failwith $"dup2(%d{oldFd}, %d{newFd}): %A{other}"
 
     let private lseekOrFail (fd : int) (offset : int64) (whence : int) (system : UnixSystem<int, string>) =
-        match UnixDescriptor.tryLseek fd offset whence system with
+        match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
         | Ok (SyscallAnswer.Completed position, system) -> position, system
         | other -> failwith $"lseek(%d{fd}): %A{other}"
 
     let private readNonBlocking (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+        match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), _) -> $"ok %d{bytes.Length}"
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"%A{error}"
         | other -> failwith $"read of %d{fd}: %A{other}"
@@ -738,13 +735,13 @@ module TestFcntlMeasured =
 
             // A pipe whose only writer is the target, with and without a dup of
             // it kept.
-            let nonBlock = FcntlWorld.nonBlock run.Platform
+            let nonBlock = OpenFlagWords.nonBlock run.Platform
 
             let lastWriter =
                 let system = FcntlWorld.system run
                 let (r, w), system = FcntlWorld.pipe 0 system
                 let (_, w2), system = FcntlWorld.pipe 0 system
-                let _, system = UnixDescriptor.setNonBlocking r true system
+                let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) r true system
                 let before = readNonBlocking r system
                 let system = dup2OrFail w2 w system
 
@@ -761,15 +758,15 @@ module TestFcntlMeasured =
                 let (_, w2), system = FcntlWorld.pipe 0 system
 
                 let kept, system =
-                    match Answered.dup w system with
-                    | SyscallAnswer.Completed kept, system -> int kept, system
+                    match Answered.dup (Callers.leader system) w system with
+                    | DescriptorAnswer.Returned kept, system -> kept, system
                     | other -> failwith $"dup: %A{other}"
 
                 let system = dup2OrFail w2 w system
                 let afterDup2 = readNonBlocking r system
 
                 let system =
-                    match UnixDescriptor.tryClose kept system with
+                    match UnixDescriptor.tryClose (Callers.leader system) kept system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"close: %s{CloseRefusal.describe refusal}"
 
@@ -788,7 +785,7 @@ module TestFcntlMeasured =
                 let source, system = FcntlWorld.openWith reading "f" system
 
                 let flock (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-                    match UnixDescriptor.tryFlock (Lone.leader system) fd operation system with
+                    match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
                     | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
                     | other -> failwith $"flock: %A{other}"
 
@@ -813,8 +810,8 @@ module TestFcntlMeasured =
                 let x, system = FcntlWorld.openWith reading "f" system
 
                 let y, system =
-                    match Answered.dup x system with
-                    | SyscallAnswer.Completed y, system -> int y, system
+                    match Answered.dup (Callers.leader system) x system with
+                    | DescriptorAnswer.Returned y, system -> y, system
                     | other -> failwith $"dup: %A{other}"
 
                 let z, system = FcntlWorld.openWith reading "f" system
@@ -827,8 +824,8 @@ module TestFcntlMeasured =
                     let x, system = FcntlWorld.openWith reading "f" system
 
                     let y, system =
-                        match Answered.dup x system with
-                        | SyscallAnswer.Completed y, system -> int y, system
+                        match Answered.dup (Callers.leader system) x system with
+                        | DescriptorAnswer.Returned y, system -> y, system
                         | other -> failwith $"dup: %A{other}"
 
                     let _, system = FcntlWorld.fcntl y FcntlWorld.SetFd 1 system
@@ -846,7 +843,12 @@ module TestFcntlMeasured =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -878,7 +880,7 @@ module TestFcntlMeasured =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFlock (Lone.leader system) fd operation system with
+        match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
         | other -> failwith $"flock(%d{fd}, %d{operation}): %A{other}"
 
@@ -919,7 +921,7 @@ module TestFcntlMeasured =
                         | "write0 rdwr" -> Some (writeOf fd [||] system)
                         | "pwrite rdwr" ->
                             match
-                                UnixReadWrite.tryPwriteBytes
+                                WriteOutcomes.admitThenPwrite
                                     (Lone.leader system)
                                     fd
                                     (ImmutableArray.CreateRange "x"B)
@@ -932,11 +934,11 @@ module TestFcntlMeasured =
                         | "ftruncate to same length" ->
                             let length = if label = "ftruncate rdwr" then 2L else 8L
 
-                            match UnixDescriptor.tryFtruncate fd length system with
+                            match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
                             | Ok (answer, system) -> Some (FcntlWorld.number answer, system)
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "read rdwr" ->
-                            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+                            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                                 Some ($"ok %d{bytes.Length}", system)
                             | other -> failwith $"read: %A{other}"
@@ -959,11 +961,11 @@ module TestFcntlMeasured =
                             let _, system = flockOf other (lockShared ||| lockNonBlocking) system
                             Some (flockOf fd (lockExclusive ||| lockNonBlocking) system)
                         | "flock through a dup" ->
-                            match Answered.dup fd system with
-                            | SyscallAnswer.Completed copy, system ->
-                                let answer, system = flockOf (int copy) (lockShared ||| lockNonBlocking) system
+                            match Answered.dup (Callers.leader system) fd system with
+                            | DescriptorAnswer.Returned copy, system ->
+                                let answer, system = flockOf copy (lockShared ||| lockNonBlocking) system
 
-                                match UnixDescriptor.tryClose (int copy) system with
+                                match UnixDescriptor.tryClose (Callers.leader system) copy system with
                                 | Ok (_, system) -> Some (answer, system)
                                 | Error refusal -> failwith $"close: %s{CloseRefusal.describe refusal}"
                             | other -> failwith $"dup: %A{other}"
@@ -1006,7 +1008,7 @@ module TestFcntlMeasured =
                     let (r, w), system = FcntlWorld.pipe 0 (FcntlWorld.system run |> ignoringSigPipe)
 
                     let system =
-                        match UnixDescriptor.tryClose r system with
+                        match UnixDescriptor.tryClose (Callers.leader system) r system with
                         | Ok (_, system) -> system
                         | Error refusal -> failwith $"close: %s{CloseRefusal.describe refusal}"
 
@@ -1028,29 +1030,27 @@ module TestFcntlMeasured =
                             let fd, system =
                                 FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadWrite) "f" system
 
-                            match UnixDescriptor.tryFtruncate fd -1L system with
+                            match UnixDescriptor.tryFtruncate (Callers.leader system) fd -1L system with
                             | Ok (answer, system) -> fd, FcntlWorld.number answer, system
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "ftruncate through O_RDONLY" ->
                             let fd, system =
                                 FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadOnly) "f" system
 
-                            match UnixDescriptor.tryFtruncate fd 0L system with
+                            match UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system with
                             | Ok (answer, system) -> fd, FcntlWorld.number answer, system
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "ftruncate of a pipe" ->
                             let (_, w), system = FcntlWorld.pipe 0 system
 
-                            match UnixDescriptor.tryFtruncate w 0L system with
+                            match UnixDescriptor.tryFtruncate (Callers.leader system) w 0L system with
                             | Ok (answer, system) -> w, FcntlWorld.number answer, system
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | _ ->
                             let fd, system =
                                 FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadWrite) "f" system
 
-                            match
-                                UnixReadWrite.tryAdmitPWrite (Lone.leader system) fd UserBuffer.Mapped 1UL -1L system
-                            with
+                            match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 1UL -1L system with
                             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> fd, $"%A{error}", system
                             | other -> failwith $"admitPWrite at -1: %A{other}"
 
@@ -1100,8 +1100,8 @@ module TestFcntlMeasured =
         let (_, w), system = FcntlWorld.pipe 0 (FcntlWorld.system run |> ignoringSigPipe)
 
         let kept, system =
-            match Answered.dup w system with
-            | SyscallAnswer.Completed kept, system -> int kept, system
+            match Answered.dup (Callers.leader system) w system with
+            | DescriptorAnswer.Returned kept, system -> kept, system
             | other -> failwith $"dup: %A{other}"
 
         let bytes = ImmutableArray.CreateRange (Array.create 200000 0uy)
@@ -1115,12 +1115,12 @@ module TestFcntlMeasured =
         |> shouldEqual (row "blocking pipe write asleep part way")
 
         let system =
-            match UnixDescriptor.tryClose w system with
+            match UnixDescriptor.tryClose (Callers.leader system) w system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"close: %A{other}"
 
         let answer =
-            match UnixReadWrite.tryAdmitFinishWrite 1 system with
+            match Lone.UnixReadWrite.tryAdmitFinishWrite 1 system with
             | Ok (WriteStep.Returns (WriteResumption.Answered (WriteAnswer.Failed error), _))
             | Ok (WriteStep.ReturnsRaising (WriteResumption.Answered (WriteAnswer.Failed error), _, _)) -> $"%A{error}"
             | other -> failwith $"finishing the ended write: %A{other}"
@@ -1153,29 +1153,37 @@ module TestFcntlMeasured =
 
                 let system =
                     if keepDup then
-                        snd (Answered.dup listening system)
+                        snd (Answered.dup (Callers.leader system) listening system)
                     else
                         system
 
                 let system =
-                    match UnixConnection.tryAccept 1 listening UserBuffer.Mapped 16u system with
+                    match
+                        UnixConnection.tryAccept
+                            (Callers.thread 1 system)
+                            listening
+                            UserBuffer.Mapped
+                            (Some 16u)
+                            0
+                            system
+                    with
                     | Ok (AcceptOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"accept on an empty listener: %A{other}"
 
                 let system =
-                    match UnixDescriptor.tryDup2 source listening system with
-                    | Ok (SyscallAnswer.Completed _, system) -> system
+                    match UnixDescriptor.tryDup2 (Callers.leader system) source listening system with
+                    | Ok (DescriptorAnswer.Returned _, system) -> system
                     | other -> failwith $"dup2 onto the accept: %A{other}"
 
                 UnixSystem.checkInvariants system |> shouldEqual []
 
-                match darwin, UnixWait.wakes (Set.singleton 1) system with
-                | false, [] -> ()
-                | true, [ 1, _ ] ->
-                    match UnixConnection.tryFinishAccept 1 system with
+                match darwin, Lone.wake system with
+                | false, ([], _) -> ()
+                | true, ([ 1, _ ], system) ->
+                    match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
                     | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, _) -> ()
                     | other -> failwith $"the ended accept answered %A{other}"
-                | _, woken -> failwith $"%s{run.Name}, dup kept %b{keepDup}: the accept woke %A{woken}"
+                | _, (woken, _) -> failwith $"%s{run.Name}, dup kept %b{keepDup}: the accept woke %A{woken}"
 
                 // flock
                 let system = FcntlWorld.system run
@@ -1185,17 +1193,20 @@ module TestFcntlMeasured =
                 let target, system = FcntlWorld.openWith reading "f" system
                 let _, system = flockOf holder 2 system
 
-                let system = if keepDup then snd (Answered.dup target system) else system
+                let system =
+                    if keepDup then
+                        snd (Answered.dup (Callers.leader system) target system)
+                    else
+                        system
 
                 let system =
-                    match UnixDescriptor.tryFlock 1 target 2 system with
+                    match UnixDescriptor.tryFlock (Callers.thread 1 system) target 2 system with
                     | Ok (SyscallOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"a contended flock: %A{other}"
 
-                match darwin, UnixDescriptor.tryDup2 source target system with
+                match darwin, UnixDescriptor.tryDup2 (Callers.leader system) source target system with
                 | true, Error (Dup2Refusal.ClosingTarget (CloseRefusal.DarwinFlockedDescriptorWithWaiter (_, 1))) -> ()
-                | false, Ok (SyscallAnswer.Completed _, after) ->
-                    UnixWait.wakes (Set.singleton 1) after |> shouldEqual []
+                | false, Ok (DescriptorAnswer.Returned _, after) -> Lone.wakes after |> shouldEqual []
                 | _, other -> failwith $"%s{run.Name}, dup kept %b{keepDup}: dup2 onto the flock answered %A{other}"
 
     /// `system` with `SIGUSR1` caught, without `SA_RESTART`, as the probe had
@@ -1206,8 +1217,14 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
             }
         )
 
@@ -1217,6 +1234,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -1244,10 +1262,10 @@ module TestFcntlMeasured =
                 | other -> failwith $"a write larger than the pipe: %A{other}"
 
             let system = signalled 1 system
-            UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
-                match UnixReadWrite.tryAdmitFinishWrite 1 system with
+                match Lone.UnixReadWrite.tryAdmitFinishWrite 1 system with
                 | Ok (WriteStep.Returns (WriteResumption.Answered (WriteAnswer.Completed n), system)) ->
                     $"ok %d{n}", system
                 | other -> failwith $"%s{run.Name}: the interrupted write: %A{other}"
@@ -1277,17 +1295,17 @@ module TestFcntlMeasured =
                 let fd, system = FcntlWorld.openWith reading "f" system
                 let _, system = flockOf holder 2 system
 
-                match UnixDescriptor.tryFlock 1 fd 2 system with
+                match UnixDescriptor.tryFlock (Callers.thread 1 system) fd 2 system with
                 | Ok (SyscallOutcome.WouldBlock _, system) -> holder, fd, system
                 | other -> failwith $"a contended flock: %A{other}"
 
             // Granted after a wait.
             let holder, fd, system = parked (FcntlWorld.system run |> catchingSigUsr1)
             let _, system = flockOf holder 8 system
-            UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
-                match UnixDescriptor.tryFlockAcquire 1 system with
+                match UnixDescriptor.tryFlockAcquire (Callers.thread 1 system) system with
                 | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
                 | other -> failwith $"%s{run.Name}: finishing the flock: %A{other}"
 
@@ -1301,11 +1319,16 @@ module TestFcntlMeasured =
             // Interrupted.
             let _, fd, system = parked (FcntlWorld.system run |> catchingSigUsr1)
             let system = signalled 1 system
-            UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
-                match UnixDescriptor.tryFlockAcquire 1 system with
-                | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
+                match UnixDescriptor.tryFlockAcquire (Callers.thread 1 system) system with
+                | Ok (SyscallOutcome.Interrupted, system) ->
+                    // The thread's return to user mode says how the call ends.
+                    match Interruptions.handled (Callers.thread 1 system) system with
+                    | Ok (InterruptedCall.FailsWithEintr, system) ->
+                        FcntlWorld.number (SyscallAnswer.Failed UnixError.EINTR), system
+                    | other -> failwith $"%s{run.Name}: the interrupted flock's return: %A{other}"
                 | other -> failwith $"%s{run.Name}: the interrupted flock: %A{other}"
 
             [
@@ -1339,15 +1362,23 @@ module TestFcntlMeasured =
             // can, until it has put in the lot.
             while answer.IsNone do
                 system <-
-                    match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 65536UL system with
+                    match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 65536UL system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                     | other -> failwith $"%s{run.Name}: draining: %A{other}"
 
-                if not (List.isEmpty (UnixWait.wakes (Set.singleton 1) system)) then
-                    match UnixReadWrite.tryAdmitFinishWrite 1 system with
-                    | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count), admitted)) ->
+                let woken, wokenSystem = Lone.wake system
+
+                if not woken.IsEmpty then
+                    system <- wokenSystem
+
+                    match Lone.UnixReadWrite.tryAdmitFinishWrite 1 system with
+                    | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
                         match
-                            UnixReadWrite.tryFinishWriteBytes 1 (ImmutableArray.Create (bytes, offset, count)) admitted
+                            Lone.UnixReadWrite.tryApplyResumedWrite
+                                1
+                                into
+                                (ImmutableArray.Create (bytes, offset, count))
+                                admitted
                         with
                         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->
                             answer <- Some $"ok %d{n}"

@@ -68,16 +68,16 @@ module internal SockOptCalls =
         =
         let expected =
             let supplied =
-                match UnixSocket.tryAdmitSetSockOpt fd level optionName value optionLength system with
+                match Lone.UnixSocket.tryAdmitSetSockOpt fd level optionName value optionLength system with
                 | Ok (SetSockOptAdmission.Transfer count) -> Some (contents count)
                 | Ok SetSockOptAdmission.NoCopy
                 | Ok (SetSockOptAdmission.Answered _)
                 | Error _ -> None
 
-            UnixSocket.trySetsockoptBytes fd level optionName value optionLength supplied system
+            Lone.UnixSocket.trySetsockoptBytes fd level optionName value optionLength supplied system
 
         let actual =
-            UnixSocket.trySetsockopt fd level optionName value optionLength system
+            UnixSocket.trySetsockopt (Callers.leader system) fd level optionName value optionLength system
             |> CallProgress.resumeWith (fun paused ->
                 let range = PausedSetSockOpt.copyRange paused
 
@@ -103,16 +103,16 @@ module internal SockOptCalls =
         =
         let expected =
             let read =
-                match UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
+                match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
                 | Ok GetSockOptAdmission.ReadLength -> Some cell
                 | Ok GetSockOptAdmission.SkipLength
                 | Ok (GetSockOptAdmission.Answered _)
                 | Error _ -> None
 
-            UnixSocket.tryGetsockoptLength fd level optionName value length read system
+            Lone.UnixSocket.tryGetsockoptLength fd level optionName value length read system
 
         let actual =
-            UnixSocket.tryGetsockopt fd level optionName value length system
+            UnixSocket.tryGetsockopt (Callers.leader system) fd level optionName value length system
             |> CallProgress.resumeWith (UnixSocket.tryGetsockoptWithLength cell)
 
         agreeing "getsockopt" expected actual

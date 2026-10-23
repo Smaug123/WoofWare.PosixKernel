@@ -659,9 +659,44 @@ module internal TcpTransferReference =
                     Stranded = 0
                 }
 
+            // The last close is a reset where a close beside an open peer
+            // would be one, or where a reset reached this end already;
+            // otherwise it makes this end's FIN, unless made already, and with
+            // nothing left to send the FIN arrives at once. One made already
+            // and still queued is behind bytes the closed peer never took, and
+            // never arrives.
+            let toMe = m.Flows.[c]
+            let unread = not toMe.Arrived.IsEmpty || not toMe.InFlight.IsEmpty
+            let exchangeDone = m.Ends.[p].FinArrived && me.FinArrived
+
+            let unreadResets =
+                unread
+                && not (
+                    if m.Linux then
+                        exchangeDone
+                    else
+                        m.Ends.[p].FinArrived && me.FinSent
+                )
+
+            let resets = me.GotReset || unreadResets || (abortive && not exchangeDone)
+            let peer = m.Ends.[p]
+
+            let queued = peer.FinSent && not peer.FinArrived
+
+            let peer =
+                if resets || queued then
+                    peer
+                else
+                    { peer with
+                        FinSent = true
+                        FinArrived = true
+                        FinPassive = if peer.FinSent then peer.FinPassive else me.FinArrived
+                    }
+
             [],
             m
             |> setEnd c closedMe
+            |> setEnd p peer
             |> setFlow c (empty m.Flows.[c])
             |> setFlow p (empty m.Flows.[p])
         elif me.GotReset then
@@ -739,6 +774,7 @@ module internal TcpTransferReference =
 /// `TcpTransfer` held to `TcpTransferReference` over random calls.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestTcpTransfer =
 
     let private ends : ConnectionEnd list =
@@ -864,13 +900,17 @@ module TestTcpTransfer =
             if TcpTransfer.closeRefused e transfer then
                 TcpTransferSeen.Refused, [], transfer
             else
-                let wakes, transfer = TcpTransfer.close e false transfer
+                let wakes, transfer =
+                    TcpTransfer.close e false PortHold.Reserved UserId.root transfer
+
                 TcpTransferSeen.Closed, wakes, transfer
         | TcpTransferOp.Abort e ->
             if TcpTransfer.abortRefused e transfer then
                 TcpTransferSeen.Refused, [], transfer
             else
-                let wakes, transfer = TcpTransfer.abort e false transfer
+                let wakes, transfer =
+                    TcpTransfer.abort e false PortHold.Reserved UserId.root transfer
+
                 TcpTransferSeen.Closed, wakes, transfer
         | TcpTransferOp.Shutdown (e, how) ->
             match TcpTransfer.shutdown e how transfer with
@@ -1327,7 +1367,9 @@ module TestTcpTransfer =
                 )
             | other, _ -> failwith $"the write of 20 was %A{other}"
 
-        let wakes, transfer = TcpTransfer.close ConnectionEnd.Client false transfer
+        let wakes, transfer =
+            TcpTransfer.close ConnectionEnd.Client false PortHold.Reserved UserId.root transfer
+
         wakes |> shouldEqual []
 
         (TcpTransfer.towards ConnectionEnd.Server transfer).Fin

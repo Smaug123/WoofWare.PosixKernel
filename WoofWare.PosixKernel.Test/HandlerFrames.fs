@@ -18,8 +18,10 @@ module HandlerFrames =
     /// carrier's disposition is put back as it was. `None` if the return to
     /// user mode that delivers the carrier would deliver anything else too.
     ///
-    /// `leader` and `threads` are as `SignalState.onReturnToUser` takes them.
+    /// `numbering`, `leader` and `threads` are as `SignalState.onReturnToUser`
+    /// takes them.
     let tryEnterVia<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (numbering : SignalNumbering)
         (carrier : Signal)
         (handler : 'Handler)
         (leader : 'Thread)
@@ -29,30 +31,32 @@ module HandlerFrames =
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler> option
         =
-        let before = SignalState.disposition carrier state
+        let before = SignalState.disposition numbering carrier state
 
         let action =
             { SignalCatch.ofHandler handler with
-                Mask = SignalMask.ofSignals (SignalState.numbering state) mask
+                Mask = SignalMask.ofSignals numbering mask
                 NoDefer = true
             }
 
         let sent =
             state
-            |> SignalState.setDisposition carrier (SignalDisposition.Catch action)
+            |> SignalState.setDisposition numbering carrier (SignalDisposition.Catch action)
             |> SignalState.enqueue
+                numbering
                 {
                     Signal = carrier
                     Target = ValueSome thread
                 }
 
-        match SignalState.onReturnToUser CoreDumps.Suppressed leader threads thread sent with
+        match SignalState.onReturnToUser numbering CoreDumps.Suppressed leader threads thread sent with
         | Ok (Some (SignalDelivery.RunHandlers [ frame ]), state) when frame.Entry.Signal = carrier ->
-            Some (SignalState.setDisposition carrier before state)
+            Some (SignalState.setDisposition numbering carrier before state)
         | _ -> None
 
     /// `tryEnterVia` with the usual `carrier`.
     let tryEnter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (numbering : SignalNumbering)
         (handler : 'Handler)
         (leader : 'Thread)
         (threads : Set<'Thread>)
@@ -61,12 +65,13 @@ module HandlerFrames =
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler> option
         =
-        tryEnterVia carrier handler leader threads thread mask state
+        tryEnterVia numbering carrier handler leader threads thread mask state
 
     /// `tryEnterVia`, failing the test if anything but the carrier would be
     /// delivered: set up the frames before the signals the test is about are
     /// generated.
     let enterVia<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (numbering : SignalNumbering)
         (carrier : Signal)
         (handler : 'Handler)
         (leader : 'Thread)
@@ -76,12 +81,13 @@ module HandlerFrames =
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        match tryEnterVia carrier handler leader threads thread mask state with
+        match tryEnterVia numbering carrier handler leader threads thread mask state with
         | Some state -> state
         | None -> failwith $"expected the carrier %O{carrier} alone to be delivered to %O{thread}"
 
     /// `enterVia` with the usual `carrier`.
     let enter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (numbering : SignalNumbering)
         (handler : 'Handler)
         (leader : 'Thread)
         (threads : Set<'Thread>)
@@ -90,7 +96,7 @@ module HandlerFrames =
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        enterVia carrier handler leader threads thread mask state
+        enterVia numbering carrier handler leader threads thread mask state
 
     /// `thread` returns from its innermost handler.
     let leave<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -110,11 +116,12 @@ module HandlerFrames =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+        let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
+        let numbering = SimulatedUnixPlatform.signalNumbering (UnixSystem.platform system)
 
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = enter handler (Lone.leader system) threads thread mask proc.Signals
+                Signals = enter numbering handler (Lone.leader system) threads thread mask proc.Signals
             }
         )

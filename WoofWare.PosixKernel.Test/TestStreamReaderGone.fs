@@ -45,7 +45,8 @@ module TestStreamReaderGone =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                Signals =
+                    SignalState.setDisposition (Kernel.signalNumbering system) Signal.SIGPIPE disposition proc.Signals
             }
         )
 
@@ -95,7 +96,6 @@ module TestStreamReaderGone =
             =
             let flavour = SimulatedUnixPlatform.flavour platform
             let mutable system = systemOn platform gone disposition
-            let mutable delivered : (int * byte list) list = []
             let mutable pending : Set<PendingSignal<int>> = Set.empty
             let mutable ended = false
 
@@ -105,19 +105,38 @@ module TestStreamReaderGone =
 
                 let bytes = payload i count
 
-                let actual = WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes system
+                let actual, delivery =
+                    match
+                        WriteOutcomes.admitThenWriteDeliveringAs
+                            (Callers.thread thread system)
+                            fd
+                            UserBuffer.Mapped
+                            bytes
+                            system
+                    with
+                    | Ok (step, delivery) -> Ok step, delivery
+                    | Error refusal -> Error refusal, None
 
-                // `write` without the admission, as a caller holding the bytes
-                // may make it, answers the same.
-                UnixReadWrite.tryWriteBytes thread fd bytes system |> shouldEqual actual
+                // What the client received from the write, as the descriptor
+                // it was launched on and the bytes.
+                let received =
+                    delivery
+                    |> Option.map (fun delivery ->
+                        let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
+                        launchedInto |> shouldEqual (Lone.pid system)
+                        fd, List.ofSeq delivery.Bytes
+                    )
 
                 if Set.contains fd gone && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
                     let raised = sigPipeFrom flavour thread
+                    received |> shouldEqual None
 
                     match disposition, actual with
-                    | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
-                        endedProcess.Termination
+                    | SignalDisposition.Default, Ok (WriteStep.ProcessEnded (endedProcess, after)) ->
+                        EndedProcess.termination endedProcess
                         |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
+
+                        EndedMachine.assertAsExit (Callers.thread thread system) system after
 
                         ended <- true
                     | SignalDisposition.Ignore,
@@ -132,12 +151,23 @@ module TestStreamReaderGone =
                         Set.ofList (SignalState.pending (Lone.proc after).Signals)
                         |> shouldEqual pending
 
+                        // The signal is deliverable to the thread that takes
+                        // it: the writer on Linux, and the leader, which takes
+                        // the process's signals, on Darwin.
+                        let receiver =
+                            match raised.Target with
+                            | ValueSome thread -> thread
+                            | ValueNone -> Lone.leader system
+
+                        Lone.owedBy receiver after |> shouldEqual (Some OwedReturn.SignalDue)
+
                         after
                         |> Lone.mapProc (fun proc ->
                             { proc with
                                 Signals = (Lone.proc system).Signals
                             }
                         )
+                        |> ForgedThread.settled (Callers.thread receiver system)
                         |> shouldEqual system
 
                         system <- after
@@ -147,26 +177,23 @@ module TestStreamReaderGone =
                     | Ok (WriteStep.Returns (WriteAnswer.Completed written, after)) ->
                         written |> shouldEqual (int64 count)
 
-                        if count > 0 then
-                            delivered <- (fd, List.ofSeq bytes) :: delivered
+                        // A write that moved no bytes delivers nothing.
+                        received
+                        |> shouldEqual (if count > 0 then Some (fd, List.ofSeq bytes) else None)
 
                         system <- after
                     | other -> failwith $"%s{where}: expected the whole write, got %A{other}"
 
                 assertSound where system
 
-                let log =
-                    DeliveryLog.toList system.Machine.Delivered
-                    |> List.map (fun delivery ->
-                        let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
-                        launchedInto |> shouldEqual (UnixSystem.processId system)
-                        fd, List.ofSeq delivery.Bytes
-                    )
+                // The writer returns to user mode, taking what it takes there,
+                // and so does every other thread a signal is deliverable to:
+                // what stays pending is what none of them takes.
+                if not ended then
+                    for returning in [ thread ; 1 - thread ] do
+                        system <- ReturnsToUser.untilResumed (Callers.thread returning system) system
 
-                // NUnit's comparison walks each byte reflectively, and the log
-                // grows every step, so it is asked only to describe a mismatch.
-                if log <> List.rev delivered then
-                    log |> shouldEqual (List.rev delivered)
+                    pending <- Set.ofList (SignalState.pending (Lone.proc system).Signals)
 
         let gen =
             gen {
@@ -203,7 +230,7 @@ module TestStreamReaderGone =
             let system =
                 systemOn platform (Set.singleton 1) (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
 
-            let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+            let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
             let system =
                 system
@@ -211,6 +238,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
+                                (Kernel.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads
@@ -254,17 +282,17 @@ module TestStreamReaderGone =
 
                 // OUT|WRNORM, the empty pipe having room, and ERR: measured
                 // (pipe-epipe-sweep.c), 0xc through `poll(POLLOUT)`.
-                LinuxReadiness.ofDescription id system
+                Lone.LinuxReadiness.ofDescription id system
                 |> shouldEqual (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.Err)
 
             assertSound "launched" system
 
             let closed =
-                match UnixDescriptor.tryClose 1 system with
+                match UnixDescriptor.tryClose (Callers.leader system) 1 system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close 1: %A{other}"
 
-            Map.containsKey pipe closed.Machine.Pipes |> shouldEqual false
+            Map.containsKey pipe (UnixSystem.pipes closed) |> shouldEqual false
             assertSound "closed" closed
 
     /// A write is made by one of the process's threads, which the signal it may
@@ -277,18 +305,18 @@ module TestStreamReaderGone =
 
             for fd in [ 1 ; 99 ] do
                 let admit =
-                    Assert.Throws (fun () ->
-                        UnixReadWrite.tryAdmitWrite 7 fd UserBuffer.Mapped 1UL system
-                        |> ignore<Result<WriteStep<WriteAdmission, int, string>, WriteRefusal>>
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        UnixReadWrite.tryWrite (Callers.thread 7 system) fd UserBuffer.Mapped 1UL system
+                        |> ignore
                     )
 
                 admit.Message
                 |> shouldContainText "thread 7 is not one of the process's threads"
 
                 let write =
-                    Assert.Throws (fun () ->
-                        UnixReadWrite.tryWriteBytes 7 fd (payload 0 1) system
-                        |> ignore<Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>>
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        WriteOutcomes.writeBytes 7 fd (payload 0 1) system
+                        |> ignore<Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>>
                     )
 
                 write.Message
@@ -314,7 +342,7 @@ module TestStreamReaderGone =
 
                 match
                     SimulatedUnixPlatform.flavour platform,
-                    UnixReadWrite.tryWriteBytes (Lone.leader system) 1 ImmutableArray.Empty system
+                    WriteOutcomes.writeBytes (Lone.leader system) 1 ImmutableArray.Empty system
                 with
                 | SimulatedUnixFlavour.Linux, Ok (WriteStep.Returns (WriteAnswer.Completed 0L, _))
                 | SimulatedUnixFlavour.Darwin, Error (WriteRefusal.InitProcess _) -> ()

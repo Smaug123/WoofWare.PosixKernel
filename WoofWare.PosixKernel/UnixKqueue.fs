@@ -63,19 +63,6 @@ module KeventFlags =
     [<Literal>]
     let Eof : uint16 = 0x8000us
 
-/// The `timeout` argument of `kevent(2)`, as the kernel's copy-in finds it.
-///
-/// The caller classifies it, because only the caller knows what its memory
-/// holds.
-[<RequireQualifiedAccess>]
-type KeventTimeout =
-    /// A null pointer: the call waits for as long as it takes.
-    | Null
-    /// The pointer names a readable `struct timespec` holding these.
-    | Readable of seconds : int64 * nanoseconds : int64
-    /// The pointer is not null, and names no readable `struct timespec`.
-    | Unreadable
-
 /// Why this kernel will not answer a `kqueue(2)`.
 [<RequireQualifiedAccess>]
 type internal KqueueRefusal =
@@ -108,8 +95,7 @@ type KeventOutcome =
     ///
     /// Any change the call applied before it failed stays applied, with the
     /// system this rides with. A finishing call fails with `EBADF` when a close
-    /// has drained the kqueue (see `UnixDescriptor.close`), and with `EINTR`
-    /// when a signal with a handler interrupts the wait.
+    /// has drained the kqueue (see `UnixDescriptor.close`).
     | Failed of error : UnixError
     /// `kevent` returned these entries of its changelist, in changelist order:
     /// each change made with `EV_RECEIPT`, or that failed, while the eventlist
@@ -134,9 +120,16 @@ type KeventOutcome =
     | Answered of events : Kevent list
     /// `kevent` did not return. The calling thread is parked, and sleeps until
     /// `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wakes` wakes it; then `UnixKqueue.finishKevent` finishes the
+    /// `UnixWait.wake` wakes it; then `UnixKqueue.finishKevent` finishes the
     /// call.
     | WouldBlock of WakeCondition
+    /// The call was asleep, and a signal interrupted it. The thread is no
+    /// longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
+    /// that return says whether the call fails with `EINTR` or restarts.
+    ///
+    /// Only `UnixKqueue.finishKevent` answers this.
+    | Interrupted
 
 /// Why this kernel will not answer a `kevent(2)`.
 [<RequireQualifiedAccess>]
@@ -176,17 +169,16 @@ type internal KeventRefusal =
     /// `int64` of nanoseconds) can represent: `nanosecondsSinceBoot` plus the
     /// timeout overflows it.
     | DeadlineBeyondClock of nanosecondsSinceBoot : int64 * seconds : int64 * nanoseconds : int64
-    /// The wait was asleep, and both a close has drained the kqueue and the
-    /// wait's deadline has passed. Darwin answers whichever of the two reached
-    /// the sleeping thread first, which this library does not record.
+    /// The wait was asleep, and both a close had drained the kqueue and the
+    /// wait's deadline had passed when it was woken. Darwin answers whichever
+    /// of the two reached the sleeping thread first, which a wake that found
+    /// both does not say.
     | DrainBesideDeadline of kqueue : OpenFileDescriptionId
-    /// The wait was asleep, and both a close has drained the kqueue and it has
-    /// an event to report. Darwin answers whichever of the two reached the
-    /// sleeping thread first, which this library does not record.
-    | DrainBesideEvents of kqueue : OpenFileDescriptionId
-    /// The wait was asleep, and both its deadline has passed and the kqueue has
-    /// an event to report. Darwin answers whichever of the two reached the
-    /// sleeping thread first, which this library does not record.
+    /// The wait was asleep, both its deadline had passed and the kqueue had an
+    /// event to report when it was woken, and it has an event to report, or
+    /// the kqueue has been drained, now. Darwin answers whichever of the two
+    /// reached the sleeping thread first, which a wake that found both does
+    /// not say.
     | EventsBesideDeadline of kqueue : OpenFileDescriptionId
     /// The wait was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
@@ -216,11 +208,9 @@ module internal KeventRefusal =
         | KeventRefusal.DeadlineBeyondClock (now, seconds, nanoseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{seconds} s and %d{nanoseconds} ns, which ends past the last nanosecond the monotonic clock can represent."
         | KeventRefusal.DrainBesideDeadline kqueue ->
-            $"a thread asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and reached its deadline (0 events). Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
-        | KeventRefusal.DrainBesideEvents kqueue ->
-            $"a thread asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and an event to report. Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
+            $"a thread asleep in kevent on kqueue %O{kqueue} was woken with the kqueue both drained by a close (EBADF) and past its deadline (0 events). Darwin answers whichever of the two reached the sleeping thread first, which the wake does not say."
         | KeventRefusal.EventsBesideDeadline kqueue ->
-            $"a thread asleep in kevent on kqueue %O{kqueue} has both reached its deadline (0 events) and an event to report. Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
+            $"a thread asleep in kevent on kqueue %O{kqueue} was woken both past its deadline (0 events) and with an event to report, and has something other than 0 events to answer now. Darwin answers whichever of the two reached the sleeping thread first, which the wake does not say."
         | KeventRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -236,7 +226,6 @@ module internal KeventRefusal =
         | KeventRefusal.UnmeasuredCopyOutFault _ -> RefusalKind.Unmodelled
         | KeventRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | KeventRefusal.DrainBesideDeadline _ -> RefusalKind.Unmodelled
-        | KeventRefusal.DrainBesideEvents _ -> RefusalKind.Unmodelled
         | KeventRefusal.EventsBesideDeadline _ -> RefusalKind.Unmodelled
         | KeventRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
 
@@ -244,10 +233,10 @@ module internal KeventRefusal =
 [<RequireQualifiedAccess>]
 module UnixKqueue =
 
-    /// `kqueue`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
+    /// `tryKqueue` once `Entry` has admitted its caller.
+    let private tryKqueueIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, KqueueRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -267,32 +256,50 @@ module UnixKqueue =
         // descriptor, O_RDWR, not O_NONBLOCK; and (`fcntl-dup.c`, KIND rows)
         // F_GETFD reports FD_CLOEXEC|FD_CLOFORK.
         let fd, registry =
-            FileDescriptorRegistry.createKqueue system.Process.ProcessId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                system.Process.ProcessId
+                (UnixSystemState.fileDescriptors system)
             |> fun (fd, registry) ->
                 fd,
                 FileDescriptorRegistry.setFlags
                     fd
-                    {
-                        CloseOnExec = true
-                        CloseOnFork = true
-                    }
+                    (DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true))
                     registry
 
-        Ok (fd, UnixSystemState.withFileDescriptors registry system)
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
+
+    /// `kqueue`, with a refusal answered as the `Error` rather than raised.
+    let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
+        =
+        Entry.call
+            "UnixKqueue.kqueue"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            tryKqueueIn
+            system
 
     /// <summary>
     /// `kqueue(2)`: create a kqueue, owned by the calling process, and a
     /// descriptor onto it, the lowest one not in use. The description is
     /// blocking, and the descriptor has `FD_CLOEXEC` and `FD_CLOFORK`.
     ///
-    /// Under the Linux flavour every call is refused: Linux has no kqueue.
+    /// Every answer is `DescriptorAnswer.Returned`: with no descriptor left
+    /// below the bound (`SimulatedUnixPlatform.descriptorBound`) the call is
+    /// refused. Under the Linux flavour every call is refused: Linux has no
+    /// kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : int * UnixSystem<'Thread, 'Handler>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryKqueue system
+        tryKqueue caller system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe
 
     /// Whether a close has drained the kqueue `kqueue`: the same question the
@@ -300,7 +307,7 @@ module UnixKqueue =
     let private drained<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         WakeCondition.satisfied thread (WakeCondition.Primitive (WakePrimitive.KqueueDrained kqueue)) system
@@ -309,7 +316,7 @@ module UnixKqueue =
 
     let private kqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -319,14 +326,6 @@ module UnixKqueue =
         | other ->
             failwith
                 $"UnixKqueue: %O{kqueue} names %A{other} rather than a live kqueue, where the call resolved it as one (this is a bug in this library)."
-
-    let private withKqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (kqueue : OpenFileDescriptionId)
-        (state : KqueueState)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
-        =
-        UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
     let private filterNumber (filter : KqueueFilter) : int16 =
         match filter with
@@ -390,8 +389,8 @@ module UnixKqueue =
     let private applyChange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (change : Kevent)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixError option * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<UnixError option * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let add = KeventFlags.Add
         let delete = KeventFlags.Delete
@@ -440,13 +439,7 @@ module UnixKqueue =
 
             match key with
             | Some key when Map.containsKey key state.Registrations ->
-                let state =
-                    { state with
-                        Registrations = Map.remove key state.Registrations
-                        Active = state.Active |> List.filter (fun active -> active <> key)
-                    }
-
-                Ok (None, withKqueueState kqueue state system)
+                Ok (None, UnixSystemState.mapOpenFiles (OpenFileTable.unregisterFromKqueue kqueue key) system)
             | Some _
             | None -> Ok (Some UnixError.ENOENT, system)
         else
@@ -473,17 +466,11 @@ module UnixKqueue =
             // Measured on 27.0.0 (`kevent-register.c`, D1 to D8, X7): an ADD of
             // a pair already registered keeps its flags and replaces its udata;
             // either way the registration is activated if its filter is ready.
-            let state, system =
+            let registration, system =
                 match Map.tryFind key state.Registrations with
                 | Some registration ->
-                    { state with
-                        Registrations =
-                            Map.add
-                                key
-                                { registration with
-                                    UserData = change.UserData
-                                }
-                                state.Registrations
+                    { registration with
+                        UserData = change.UserData
                     },
                     system
                 | None ->
@@ -498,9 +485,7 @@ module UnixKqueue =
                             Socket = socketId
                         }
 
-                    { state with
-                        Registrations = Map.add key registration state.Registrations
-                    },
+                    registration,
                     { system with
                         Machine =
                             { system.Machine with
@@ -510,7 +495,7 @@ module UnixKqueue =
 
             Ok (
                 None,
-                withKqueueState kqueue state system
+                UnixSystemState.mapOpenFiles (OpenFileTable.registerInKqueue kqueue key registration) system
                 |> KqueueQueue.activateRegistration kqueue key
             )
         | Some target -> Error (KeventRefusal.UnmodelledTarget (change, target))
@@ -520,8 +505,8 @@ module UnixKqueue =
     /// applied changes left.
     [<RequireQualifiedAccess>]
     type private ChangelistOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-        | Applied of echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
-        | Failed of error : UnixError * echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
+        | Applied of echoed : Kevent list * system : ProcessView<'Thread, 'Handler>
+        | Failed of error : UnixError * echoed : Kevent list * system : ProcessView<'Thread, 'Handler>
 
     /// Apply the readable `changes` of a changelist of `nchanges` entries in
     /// order, with room for `room` entries in `eventlist`.
@@ -531,7 +516,7 @@ module UnixKqueue =
         (changes : Kevent list)
         (room : int)
         (eventlist : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
         =
         let numbering = SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform
@@ -546,7 +531,7 @@ module UnixKqueue =
         let rec apply
             (echoed : Kevent list)
             (room : int)
-            (system : UnixSystem<'Thread, 'Handler>)
+            (system : ProcessView<'Thread, 'Handler>)
             (remaining : Kevent list)
             : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
             =
@@ -590,23 +575,25 @@ module UnixKqueue =
             Ok (ChangelistOutcome.Failed (UnixError.EFAULT, echoed, system))
         | other -> other
 
-    /// `kevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryKevent` once `Entry` has admitted its caller.
+    let private tryKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (kq : int)
         (nchanges : int)
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
-        (timeout : KeventTimeout)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (timeout : TimespecArgument)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         if List.length changes > max nchanges 0 then
-            failwith
-                $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
-
-        UnixThreadTable.requireIssuer "UnixKqueue.kevent" thread system.Threads
+            raise (
+                Refusal.exceptionOf
+                    "UnixKqueue.kevent"
+                    (RefusalKind.Contradictory "changes")
+                    $"%d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
+            )
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -617,16 +604,16 @@ module UnixKqueue =
         // nevents, then the kqueue itself.
         let timeout =
             match timeout with
-            | KeventTimeout.Unreadable -> Error UnixError.EFAULT
-            | KeventTimeout.Readable (seconds, nanoseconds) when
-                seconds < 0L
-                || seconds > int64 System.Int32.MaxValue
-                || nanoseconds < 0L
-                || nanoseconds > UnixTimestamp.nanosecondsPerSecond
+            | TimespecArgument.Unreadable -> Error UnixError.EFAULT
+            | TimespecArgument.Readable fields when
+                fields.Seconds < 0L
+                || fields.Seconds > int64 System.Int32.MaxValue
+                || fields.Nanoseconds < 0L
+                || fields.Nanoseconds > UnixTimestamp.nanosecondsPerSecond
                 ->
                 Error UnixError.EINVAL
-            | KeventTimeout.Readable (seconds, nanoseconds) -> Ok (Some (seconds, nanoseconds))
-            | KeventTimeout.Null -> Ok None
+            | TimespecArgument.Readable fields -> Ok (Some (fields.Seconds, fields.Nanoseconds))
+            | TimespecArgument.Null -> Ok None
 
         match timeout with
         | Error error -> Ok (KeventOutcome.Failed error, system)
@@ -684,7 +671,7 @@ module UnixKqueue =
                         Deadline = deadline
                     }
 
-            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
 
         match timeout with
         | None -> park None
@@ -700,8 +687,28 @@ module UnixKqueue =
         else
             park (Some (now + duration))
 
+    /// `kevent`, with a refusal answered as the `Error` rather than raised.
+    let internal tryKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (kq : int)
+        (nchanges : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (eventlist : UserBuffer)
+        (timeout : TimespecArgument)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        =
+        Entry.call
+            "UnixKqueue.kevent"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryKeventIn (Caller.thread caller) kq nchanges changes nevents eventlist timeout)
+            system
+
     /// <summary>
-    /// `kevent(2)`, made by `thread` through the descriptor `kq`, with a
+    /// `kevent(2)`, made by `caller` through the descriptor `kq`, with a
     /// changelist of `nchanges` entries and room for `nevents` events in
     /// `eventlist`.
     ///
@@ -736,10 +743,10 @@ module UnixKqueue =
     /// reports leaves it if it was added with `EV_CLEAR` and otherwise goes
     /// back to the tail; entries the walk did not reach stay queued in order.
     /// With nothing to report, a timeout of zero returns
-    /// no events at once; a positive one parks `thread` until an event is
-    /// reportable or that much time has passed on the machine's monotonic
-    /// clock, and a null one parks it until an event is reportable. A parked
-    /// wait is finished with `finishKevent`.
+    /// no events at once; a positive one parks the caller's thread until an
+    /// event is reportable or that much time has passed on the machine's
+    /// monotonic clock, and a null one parks it until an event is reportable.
+    /// A parked wait is finished with `finishKevent`.
     ///
     /// Every waiter on one kqueue is woken by an event to report and by the
     /// close that drains it, and a deadline or a signal is each waiter's own.
@@ -747,28 +754,29 @@ module UnixKqueue =
     /// Refused are a change this library does not apply,
     /// a copy of events to an eventlist that is not `Mapped`, and an echo into
     /// an `Opaque` or `Addressless` one.
-    /// `thread` must not already be parked. Under the Linux flavour every call
-    /// is refused: Linux has no kqueue.
+    /// The caller's thread must not already be parked. Under the Linux flavour
+    /// every call is refused: Linux has no kqueue.
     /// </summary>
+    /// <exception cref="T:System.ArgumentException">`changes` holds more changes than `nchanges`, or any for an `nchanges` of zero or less: the copy-in reads at most `nchanges`.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (kq : int)
         (nchanges : int)
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryKevent thread kq nchanges changes nevents eventlist timeout system
+        tryKevent caller kq nchanges changes nevents eventlist timeout system
         |> Refusal.orRaise "UnixKqueue.kevent" KeventRefusal.kind KeventRefusal.describe
 
     let private finishKeventHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
             UnixThreadTable.expectParked
@@ -787,20 +795,78 @@ module UnixKqueue =
 
         let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
-        let completing (outcome : KeventOutcome) (answered : UnixSystem<'Thread, 'Handler>) =
-            SyscallInterruption.beforeCompleting thread system
-            |> Result.mapError KeventRefusal.Interruption
-            |> Result.map (fun () -> outcome, (UnixParkState.unpark thread answered))
+        let completing (outcome : KeventOutcome) (answered : ProcessView<'Thread, 'Handler>) =
+            Ok (outcome, UnixParkState.unpark thread answered)
 
-        if isDrained && timedOut then
-            Error (KeventRefusal.DrainBesideDeadline parked.Kqueue)
-        elif isDrained && deliverable then
-            Error (KeventRefusal.DrainBesideEvents parked.Kqueue)
-        elif isDrained then
-            // Measured on 27.0.0 (`kqueue-kevent.c`, section E).
+        let interrupted () =
+            match SyscallInterruption.ofPark thread system with
+            | Error refusal -> Error (KeventRefusal.Interruption refusal)
+            | Ok (Some interruption) ->
+                Ok (
+                    KeventOutcome.Interrupted,
+                    OwedReturns.interrupt thread interruption (UnixParkState.unpark thread system)
+                )
+            | Ok None ->
+                failwith
+                    $"UnixKqueue.finishKevent: a signal woke thread %O{thread}'s kevent, which a signal gone by its finish fails with EINTR or is refused, and SyscallInterruption.ofPark says it sleeps on (this is a bug in this library)."
+
+        // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the events
+        // rows): held off the CPU from its wake until a second wake-up had
+        // come, a woken kevent answered what woke it: a drain's EBADF, 0 events
+        // for its deadline, or EINTR for a signal, whatever came second. Woken
+        // by an event, it reports what it finds, or EBADF if a close has since
+        // drained the kqueue. A close of the kqueue waits for the waiter to
+        // leave its call, so nothing comes between a drain and the waiter's
+        // answer. Woken by more than one, it gives their answer where they
+        // agree (a drain and an event both answer EBADF; an event with nothing
+        // left to report waits again, as below), and otherwise cannot be told
+        // which came first.
+        let fired = SyscallInterruption.wokenBy thread system
+
+        let byDrain =
+            fired
+            |> Set.exists (fun primitive ->
+                match primitive with
+                | WakePrimitive.KqueueDrained _ -> true
+                | _ -> false
+            )
+
+        let byEvent =
+            fired
+            |> Set.exists (fun primitive ->
+                match primitive with
+                | WakePrimitive.KqueueEventDeliverable _ -> true
+                | _ -> false
+            )
+
+        let byDeadline =
+            fired
+            |> Set.exists (fun primitive ->
+                match primitive with
+                | WakePrimitive.DeadlinePassed _ -> true
+                | _ -> false
+            )
+
+        let bySignal = Set.contains WakePrimitive.SignalDeliverable fired
+
+        let signalBeside =
+            KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)
+
+        match byDrain, byEvent, byDeadline, bySignal with
+        | true, _, true, _ -> Error (KeventRefusal.DrainBesideDeadline parked.Kqueue)
+        | true, _, false, true -> Error signalBeside
+        // Measured on 27.0.0 (`kqueue-kevent.c`, section E).
+        | true, _, false, false -> completing (KeventOutcome.Failed UnixError.EBADF) system
+        | false, false, true, false -> completing (KeventOutcome.Answered []) system
+        | false, false, false, true -> interrupted ()
+        | false, false, true, true -> Error signalBeside
+        | false, true, true, _ when deliverable || isDrained -> Error (KeventRefusal.EventsBesideDeadline parked.Kqueue)
+        | false, true, _, true when deliverable || isDrained -> Error signalBeside
+        | false, true, _, _
+        | false, false, false, false ->
+
+        if isDrained then
             completing (KeventOutcome.Failed UnixError.EBADF) system
-        elif deliverable && timedOut then
-            Error (KeventRefusal.EventsBesideDeadline parked.Kqueue)
         elif deliverable then
             let reports, answered = KqueueQueue.drain parked.Kqueue parked.MaxEvents system
 
@@ -811,18 +877,25 @@ module UnixKqueue =
                     answered
             )
         elif timedOut then
-            completing (KeventOutcome.Answered []) system
+            // What woke it has gone, and its deadline has passed since: it
+            // waits again, and whether a pending signal or the deadline then
+            // ends that wait is unmeasured.
+            match SyscallInterruption.beforeCompleting thread system with
+            | Error refusal -> Error (KeventRefusal.Interruption refusal)
+            | Ok SyscallInterruption.Completion.Completes -> completing (KeventOutcome.Answered []) system
+            | Ok (SyscallInterruption.Completion.Interrupted _) -> Error signalBeside
         else
 
         // Measured on 27.0.0 (`kqueue-kevent.c`, section D): a caught signal
-        // ends the wait with EINTR, under SA_RESTART or not.
+        // ends the wait with EINTR, under SA_RESTART or not, which the
+        // thread's return to user mode answers (`SyscallInterruption.ruleOf`).
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (KeventRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) ->
-            Ok (KeventOutcome.Failed UnixError.EINTR, (UnixParkState.unpark thread system))
-        | Ok (Some SyscallInterruption.Restart) ->
-            failwith
-                "UnixKqueue.finishKevent: a kevent restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
+        | Ok (Some interruption) ->
+            Ok (
+                KeventOutcome.Interrupted,
+                OwedReturns.interrupt thread interruption (UnixParkState.unpark thread system)
+            )
         | Ok None ->
             // Whatever woke the thread has gone again: another waiter took it, or
             // its filter is no longer ready. The thread walks the queue as a woken
@@ -830,13 +903,17 @@ module UnixKqueue =
             // filter is no longer ready, and sleeps again.
             let _, swept = KqueueQueue.drain parked.Kqueue parked.MaxEvents system
             let parkedAgain = ParkedSyscall.Kevent parked
-            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain swept)
 
-    /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+            Ok (
+                KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                Parking.parkWaiting thread parkedAgain swept
+            )
+
+    /// `tryFinishKevent` once `Entry` has admitted its caller.
+    let internal tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
@@ -851,30 +928,54 @@ module UnixKqueue =
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixKqueue.finishKevent" held after
         )
 
+    /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        =
+        Entry.call
+            "UnixKqueue.finishKevent"
+            CallerRequirement.Woken
+            caller
+            (Shape.result Shape.withSystem)
+            (tryFinishKeventIn (Caller.thread caller))
+            system
+
     /// <summary>
-    /// Finish the `kevent` wait `thread` is parked in, as a woken real wait does.
+    /// Finish the `kevent` wait `caller` is parked in, as a woken real wait does.
     ///
-    /// Answers `EBADF` when a close has drained the kqueue; the events it has to
-    /// report (as `kevent` reports them), up to the call's `nevents`; no events
-    /// when the deadline has passed; `EINTR` when a signal with a handler
-    /// interrupts the wait; and otherwise re-parks the thread on the same kqueue
-    /// and deadline. Refused, since Darwin answers whichever reached the
-    /// sleeping thread first and this library does not record which did: a
-    /// drain beside an expired deadline or an event, an event beside an
-    /// expired deadline, and a signal pending beside any answer but `EINTR`.
+    /// Answers as what woke the thread (`ParkState.Woken`) says, whatever has
+    /// happened since: `EBADF` for a close that drained the kqueue; no events
+    /// for the deadline; `Interrupted` for a signal, which the thread's return
+    /// to user mode then ends, failing the call with `EINTR` even if another
+    /// thread has ignored the signal since; and for an event, the events it
+    /// has to report (as `kevent` reports them), up to the call's `nevents`,
+    /// or `EBADF` if a close has drained the kqueue since. Woken by an event
+    /// and finding nothing to report, it answers no events if the deadline has
+    /// passed, `Interrupted` if the thread would take a signal as it returned
+    /// to user mode, and otherwise re-parks the thread on the same kqueue and
+    /// deadline. Refused, since Darwin answers whichever reached the sleeping
+    /// thread first, where the wake found two of these whose answers differ:
+    /// a drain beside an expired deadline or a signal, an expired deadline
+    /// beside a signal, and an event beside either while there is an event to
+    /// report or the kqueue has been drained. Refused too, since they are
+    /// unmeasured: a call with a timeout whose waking signal has gone, and one
+    /// woken by an event, finding nothing to report past its deadline with a
+    /// signal pending.
     /// An answer clears the park, and with it the call's hold on the kqueue,
     /// which goes then if no descriptor names it any more.
     ///
     /// Reporting events copies them out to the eventlist the call was made
     /// with; see `kevent` for the eventlists that refuses.
     ///
-    /// `thread` must be parked in a `kevent`.
+    /// `caller` must be parked in a `kevent`, and woken (`UnixWait.wake`).
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let finishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishKevent thread system
+        tryFinishKevent caller system
         |> Refusal.orRaise "UnixKqueue.finishKevent" KeventRefusal.kind KeventRefusal.describe

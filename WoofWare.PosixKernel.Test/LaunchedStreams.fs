@@ -20,7 +20,7 @@ module LaunchedStreams =
     /// `UnixSystem.initial` numbers them.
     let registry : FileDescriptorRegistry =
         FileDescriptorRegistry.ofLaunchedPipes
-            DescriptorCensus.Complete
+            SimulatedUnixFlavour.Linux
             ([ 0 ; 1 ; 2 ]
              |> List.map (fun fd -> fd, (PipeId (int64 fd), endOf fd))
              |> Map.ofList)
@@ -40,5 +40,5 @@ module LaunchedStreams =
                 | PipeEnd.Write -> FileAccessMode.WriteOnly
             NonBlocking = false
             Flock = None
-            Status = OpenFileStatus.none
+            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
         }

@@ -40,7 +40,12 @@ module TestConnectedTransfer =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -74,8 +79,13 @@ module TestConnectedTransfer =
 
         let server, system = KeventWorld.accept listener system
         let system = KeventWorld.close listener system
-        let _, system = UnixDescriptor.setNonBlocking client nonBlocking system
-        let _, system = UnixDescriptor.setNonBlocking server nonBlocking system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client nonBlocking system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server nonBlocking system
+
         client, server, system
 
     /// A write of the first `count` bytes of the payload through `fd`, by the
@@ -85,10 +95,10 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
-        WriteOutcomes.admitThenWrite
-            (Proc.leader pid system)
+        WriteOutcomes.admitThenWriteAs
+            (Caller.make pid (Proc.leader pid system))
             fd
             UserBuffer.Mapped
             (ImmutableArray.Create (payload, 0, count))
@@ -99,7 +109,7 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         sendIn (Lone.pid system) fd count system
 
@@ -199,7 +209,7 @@ module TestConnectedTransfer =
 
     /// `shutdown(fd, how)`, which must answer 0.
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 
@@ -219,12 +229,12 @@ module TestConnectedTransfer =
         let client, system = KeventWorld.client port system
         let server, system = KeventWorld.accept listener system
 
-        (UnixMachineState.socket (socketOf client system) system.Machine).Phase
+        (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase
         |> SocketPhase.connectionEnd
         |> Option.map snd
         |> shouldEqual (Some ConnectionEnd.Client)
 
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the report pending, got %A{other}"
 
@@ -237,7 +247,7 @@ module TestConnectedTransfer =
         read |> shouldEqual 7
 
         // The transfers leave the report pending; the next connect makes it.
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the report pending, got %A{other}"
 
@@ -253,7 +263,7 @@ module TestConnectedTransfer =
 
     [<Test>]
     let ``a blocking transfer that would sleep sleeps, and one that need not is answered`` () : unit =
-        let sleeps (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) : unit =
+        let sleeps (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) : unit =
             match outcome with
             | Ok (WriteStep.WouldBlock _) -> ()
             | other -> failwith $"expected the write to sleep, got %A{other}"
@@ -261,7 +271,7 @@ module TestConnectedTransfer =
         for platform in Machines.platforms do
             let client, server, system = pair false (systemOn small platform)
 
-            match UnixReadWrite.tryRead (Lone.leader system) client UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) client UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -276,14 +286,19 @@ module TestConnectedTransfer =
 
             send client payload.Length system |> sleeps
 
-            let _, system = UnixDescriptor.setNonBlocking client true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
             let _, system = fill client system
-            let _, system = UnixDescriptor.setNonBlocking client false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client false system
 
             send client 1 system |> sleeps
 
             // A FIN answers a blocking read at once, with end of file.
-            let _, system = UnixDescriptor.setNonBlocking server true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
             let rec drain (system : UnixSystem<int, string>) =
                 match received server 65536 system with
@@ -318,7 +333,7 @@ module TestConnectedTransfer =
             |> Result.map fst
             |> shouldEqual (Ok (WriteAnswer.Completed 0L))
 
-            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
+            Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
             |> Result.map (fun outcome ->
                 match outcome with
                 | WriteStep.Returns (admission, _) -> admission
@@ -327,7 +342,7 @@ module TestConnectedTransfer =
             |> shouldEqual (Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
             // Something to copy.
-            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
+            Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
             |> shouldEqual (Error (WriteRefusal.ConnectionFault (socketOf client system)))
 
             let system = sentAll server 10 system
@@ -365,19 +380,20 @@ module TestConnectedTransfer =
 
     /// An edge-triggered registration of `fd` for `what` ('r', 'w' or 'b'), on
     /// a fresh epoll instance or kqueue, as the probe's `edge_register` makes
-    /// one; and the wait the probe's `edge_wait` makes on it, rendered as it
-    /// prints.
-    let private edgeRegister
+    /// one in the process `pid`; and the wait the probe's `edge_wait` makes on
+    /// it, rendered as it prints.
+    let private edgeRegisterIn
+        (pid : ProcessId)
         (fd : int)
         (what : char)
         (system : UnixSystem<int, string>)
         : (UnixSystem<int, string> -> string * UnixSystem<int, string>) * UnixSystem<int, string>
         =
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             let epoll, system =
-                match UnixPoll.tryEpollCreate1 0 system with
-                | Ok (Ok created) -> created
+                match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid system)) 0 system with
+                | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                 | other -> failwith $"epoll_create1: %A{other}"
 
             let events =
@@ -389,6 +405,7 @@ module TestConnectedTransfer =
             let system =
                 match
                     UnixPoll.tryEpollCtl
+                        (Caller.make pid (Proc.leader pid system))
                         epoll
                         1
                         fd
@@ -399,30 +416,30 @@ module TestConnectedTransfer =
                 | other -> failwith $"epoll_ctl: %A{other}"
 
             let wait (system : UnixSystem<int, string>) =
-                match UnixPoll.tryEpollWait 4 epoll 2 UserBuffer.Mapped 0 system with
+                match UnixPoll.tryEpollWait (Caller.make pid 4) epoll 2 UserBuffer.Mapped 0 system with
                 | Ok (EpollWaitOutcome.Answered [], system) -> "none", system
                 | Ok (EpollWaitOutcome.Answered ((_, events) :: _), system) -> $"0x%x{events}", system
                 | other -> failwith $"epoll_wait: %A{other}"
 
             wait, system
         | SimulatedUnixFlavour.Darwin ->
-            let kq, system = KeventWorld.kqueue system
+            let kq, system = KeventWorld.kqueueIn pid system
             let clear = KeventFlags.Add ||| KeventFlags.Clear
 
             let system =
                 if what <> 'w' then
-                    KeventWorld.register kq fd KeventFilter.Read clear 0UL system
+                    KeventWorld.registerIn pid kq fd KeventFilter.Read clear 0UL system
                 else
                     system
 
             let system =
                 if what <> 'r' then
-                    KeventWorld.register kq fd KeventFilter.Write clear 0UL system
+                    KeventWorld.registerIn pid kq fd KeventFilter.Write clear 0UL system
                 else
                     system
 
             let wait (system : UnixSystem<int, string>) =
-                match KeventWorld.apply kq [] 2 system with
+                match KeventWorld.applyIn pid kq [] 2 system with
                 | KeventOutcome.Answered [], system -> "none", system
                 | KeventOutcome.Answered events, system ->
                     events
@@ -442,6 +459,15 @@ module TestConnectedTransfer =
                 | other, _ -> failwith $"kevent: %A{other}"
 
             wait, system
+
+    /// `edgeRegisterIn` the only process on the machine.
+    let private edgeRegister
+        (fd : int)
+        (what : char)
+        (system : UnixSystem<int, string>)
+        : (UnixSystem<int, string> -> string * UnixSystem<int, string>) * UnixSystem<int, string>
+        =
+        edgeRegisterIn (Lone.pid system) fd what system
 
     /// E1, E2 up to the fill, and E3, replayed: the steps the model holds to
     /// the byte. `c` is the observed socket and `s` its peer, as in the probe.
@@ -534,7 +560,7 @@ module TestConnectedTransfer =
             let writable (system : UnixSystem<int, string>) : bool =
                 match
                     UnixPoll.tryPoll
-                        0
+                        (Callers.thread 0 system)
                         [
                             {
                                 Fd = c
@@ -602,7 +628,7 @@ module TestConnectedTransfer =
                 if pollBetween then
                     match
                         UnixPoll.tryPoll
-                            0
+                            (Callers.thread 0 system)
                             [
                                 {
                                     Fd = c
@@ -672,7 +698,7 @@ module TestConnectedTransfer =
         let level (system : UnixSystem<int, string>) : int16 =
             match
                 UnixPoll.tryPoll
-                    0
+                    (Callers.thread 0 system)
                     [
                         {
                             Fd = c
@@ -707,7 +733,7 @@ module TestConnectedTransfer =
     /// `l_onoff` of `onOff` and a time of `seconds`, through `SO_LINGER_SEC`
     /// where the flavour has it and `SO_LINGER` otherwise.
     let private lingerFor (fd : int) (onOff : int) (seconds : int) (system : UnixSystem<int, string>) =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -720,11 +746,11 @@ module TestConnectedTransfer =
         let length = uint32 value.Length
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | other -> failwith $"admitting SO_LINGER on fd %d{fd}: %A{other}"
 
-        match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
+        match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
         | Ok (SetSockOptAnswer.Set, system) -> system
         | other -> failwith $"setting SO_LINGER on fd %d{fd}: %A{other}"
 
@@ -768,14 +794,16 @@ module TestConnectedTransfer =
 
         let system = if lingers then system else lingerFor c 0 1 system
 
-        (UnixMachineState.socket (socketOf c system) system.Machine).Options.Linger
+        (UnixMachineState.socket (socketOf c system) (Kernel.machine system)).Options.Linger
         |> shouldEqual
             {
                 Enabled = lingers
                 Hundredths = 100L
             }
 
-        let _, system = UnixDescriptor.setNonBlocking c (not blocking) system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) c (not blocking) system
+
         c, p, filled, system
 
     /// Section G of `tcp-shutdown.c` (docs/plans/2026-10-08-tcp-shutdown-linger),
@@ -818,12 +846,14 @@ module TestConnectedTransfer =
 
             let c, p, filled, system = lingerRowSetUp platform written lingers blocking
 
-            match expected, UnixDescriptor.tryClose c system with
+            match expected, UnixDescriptor.tryClose (Callers.leader system) c system with
             | LingerRow.Waited,
               Error (CloseRefusal.Release (DescriptionReleaseRefusal.LingeringClose (socket, _, unsent))) ->
                 socket |> shouldEqual (socketOf c system)
                 // Whatever the peer's receive buffer could not take.
-                let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> snd
+                let connection =
+                    (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> snd
+
                 let arrived = TcpTransfer.readable ConnectionEnd.Server connection.Transfer
                 int64 unsent |> shouldEqual (filled - int64 arrived)
                 unsent |> shouldBeGreaterThan 0
@@ -845,6 +875,127 @@ module TestConnectedTransfer =
                 | other -> failwith $"%s{row}: SO_ERROR(p) answered %A{other}"
             | _, other -> failwith $"%s{row}: expected %A{expected}, got %A{other}"
 
+    /// A process's end closes its descriptors, so where section G's close of
+    /// `c` would wait, and the end releases `c` while its peer is still open,
+    /// every call that would end the process refuses, as the close does,
+    /// naming the same socket: `exit_group`, which the public
+    /// function raises as `UnmodelledException`, the last thread's exit, a
+    /// `kill` or `raise` whose signal kills, a return to user mode that takes
+    /// such a signal, and a write whose SIGPIPE does.
+    [<Test>]
+    let ``every call that would end a process refuses where its end would close a socket that lingers`` () : unit =
+        let rows =
+            [
+                SimulatedUnixPlatform.linuxX64, false
+                SimulatedUnixPlatform.linuxX64, true
+                SimulatedUnixPlatform.macOsArm64, true
+            ]
+
+        for platform, blocking in rows do
+            let row = $"%A{SimulatedUnixPlatform.flavour platform} blocking %b{blocking}"
+            let c, _, _, system = lingerRowSetUp platform "unsent" true blocking
+            let caller = Callers.leader system
+
+            // `c` at the highest descriptor, so that each flavour's end releases
+            // it first, while its peer is still open.
+            let c, system =
+                match UnixDescriptor.dup2 caller c 20 system with
+                | DescriptorAnswer.Returned 20, system ->
+                    match UnixDescriptor.close caller c system with
+                    | SyscallAnswer.Completed 0L, system -> 20, system
+                    | other -> failwith $"%s{row}: close: %A{other}"
+                | other -> failwith $"%s{row}: dup2: %A{other}"
+
+            let socket = socketOf c system
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
+            let signo (signal : Signal) : int = Signal.toRawSignoUnder numbering signal
+
+            let lingers (call : string) (refusal : ProcessEndRefusal) : unit =
+                match refusal with
+                | ProcessEndRefusal.Release (DescriptionReleaseRefusal.LingeringClose (refused, _, unsent)) ->
+                    (call, refused) |> shouldEqual (call, socket)
+                    unsent |> shouldBeGreaterThan 0
+                | other -> failwith $"%s{row}: %s{call} was refused with %A{other}"
+
+            match UnixThreadLifecycle.tryExitGroup caller 0 system with
+            | Error refusal -> lingers "exit_group" refusal
+            | Ok _ -> failwith $"%s{row}: exit_group ended the process"
+
+            let thrown =
+                Assert.Throws<UnmodelledException> (fun () -> UnixThreadLifecycle.exitGroup caller 0 system |> ignore)
+
+            thrown.Message |> shouldContainText "SO_LINGER"
+
+            match UnixSignal.tryKill caller (ProcessId.toInt32 (Lone.pid system)) (signo Signal.SIGKILL) system with
+            | Error (KillRefusal.ProcessEnd refusal) -> lingers "kill" refusal
+            | other -> failwith $"%s{row}: kill answered %A{other}"
+
+            match UnixSignal.tryPthreadKill caller 0 (signo Signal.SIGTERM) system with
+            | Error (ThreadKillRefusal.ProcessEnd refusal) -> lingers "raise" refusal
+            | other -> failwith $"%s{row}: raise answered %A{other}"
+
+            // SIGTERM pending behind the mask, and then unblocked.
+            let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
+
+            let how (block : bool) : int =
+                if block then
+                    MaskHow.block numbering
+                else
+                    MaskHow.unblock numbering
+
+            let mask (block : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                match UnixSignal.pthreadSigmask caller (how block) (Some sigterm) system with
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
+
+            let unblocked =
+                match UnixSignal.pthreadKill caller 0 (signo Signal.SIGTERM) (mask true system) with
+                | ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system) -> mask false system
+                | other -> failwith $"%s{row}: raising a blocked SIGTERM answered %A{other}"
+
+            match UnixSignal.tryOnReturnToUser caller unblocked with
+            | Error (ReturnToUserRefusal.ProcessEnd refusal) -> lingers "the return to user mode" refusal
+            | other -> failwith $"%s{row}: the return to user mode answered %A{other}"
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Linux ->
+                let alone =
+                    ([ 1..4 ], system)
+                    ||> List.foldBack (fun thread system ->
+                        match UnixThreadLifecycle.exitThread (Callers.thread thread system) 0 system with
+                        | ProcessFate.Continues ((), system) -> system
+                        | other -> failwith $"%s{row}: thread %d{thread}'s exit answered %A{other}"
+                    )
+
+                match UnixThreadLifecycle.tryExitThread caller 0 alone with
+                | Error (ThreadExitRefusal.ProcessEnd refusal) -> lingers "the last thread's exit" refusal
+                | other -> failwith $"%s{row}: the last thread's exit answered %A{other}"
+
+            // A write into a pipe with no reader, with SIGPIPE at its default.
+            let writeFd, broken =
+                let system =
+                    match
+                        UnixSignal.sigaction caller (signo Signal.SIGPIPE) (Some SignalDisposition.Default) system
+                    with
+                    | SigactionAnswer.Completed _, system -> system
+                    | SigactionAnswer.Failed errno, _ -> failwith $"%s{row}: sigaction: %O{errno}"
+
+                match UnixPipe.pipe2 caller 0 UserBuffer.Mapped system with
+                | Pipe2Answer.Created (readFd, writeFd), system ->
+                    match UnixDescriptor.close caller readFd system with
+                    | SyscallAnswer.Completed 0L, system -> writeFd, system
+                    | other -> failwith $"%s{row}: close: %A{other}"
+                | other -> failwith $"%s{row}: pipe2: %A{other}"
+
+            match UnixReadWrite.tryWrite caller writeFd UserBuffer.Mapped 1UL broken with
+            | Error (WriteRefusal.ProcessEnd (_, refusal)) -> lingers "write" refusal
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                match UnixReadWrite.tryWriteWithBytes (ImmutableArray.Create 0uy) paused with
+                | Error (WriteRefusal.ProcessEnd (_, refusal)) -> lingers "write" refusal
+                | other -> failwith $"%s{row}: the write answered %A{other}"
+            | other -> failwith $"%s{row}: the write answered %A{other}"
+
     /// A close under `SO_LINGER` {1, 0} never waits, so bytes still in the
     /// send buffer do not make it a `LingeringClose`. Darwin keeps them
     /// counted there after the peer's reset, which leaves the closer's
@@ -861,9 +1012,10 @@ module TestConnectedTransfer =
             let system = KeventWorld.close p system
             // Through a blocking description, where Darwin's positive linger
             // time would wait.
-            let _, system = UnixDescriptor.setNonBlocking c false system
+            let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) c false system
 
-            let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> snd
+            let connection =
+                (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> snd
 
             let expectedStranded =
                 match SimulatedUnixPlatform.flavour platform with
@@ -879,7 +1031,7 @@ module TestConnectedTransfer =
             TcpTransfer.sendSpace ConnectionEnd.Client connection.Transfer < capacity
             |> shouldEqual expectedStranded
 
-            match UnixDescriptor.tryClose c system with
+            match UnixDescriptor.tryClose (Callers.leader system) c system with
             | Ok (SyscallAnswer.Completed 0L, system) -> assertClean system
             | other -> failwith $"%A{SimulatedUnixPlatform.flavour platform}: closing c answered %A{other}"
 
@@ -919,51 +1071,6 @@ module TestConnectedTransfer =
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.ECONNRESET))
 
             assertClean system
-
-    /// `write` given the bytes without an admission first answers as the
-    /// admission and its write do, `SIGPIPE` included: three writes of 100
-    /// bytes each way, from each state a close can leave the writer in.
-    [<Test>]
-    let ``a write that skips its admission answers a connection as one that makes it`` () : unit =
-        let summary (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) =
-            match outcome with
-            | Ok (WriteStep.Returns (answer, system)) -> (answer, None), system
-            | Ok (WriteStep.ReturnsRaising (answer, entry, system)) -> (answer, Some entry.Signal), system
-            | other -> failwith $"%A{other}"
-
-        for platform in Machines.platforms do
-            // The peer closed over unread bytes; closed cleanly; or neither.
-            for build in [ "reset" ; "fin" ; "open" ] do
-                let c, s, system = pair true (systemOn id platform)
-
-                let system =
-                    match build with
-                    | "reset" -> sentAll c 10 system |> KeventWorld.close s
-                    | "fin" -> KeventWorld.close s system
-                    | _ -> system
-
-                let thrice
-                    (write : UnixSystem<int, string> -> Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>)
-                    =
-                    ((system, []), [ 1..3 ])
-                    ||> List.fold (fun (system, seen) _ ->
-                        let answer, system = summary (write system)
-                        system, seen @ [ answer ]
-                    )
-                    |> snd
-
-                let admitted = thrice (send c 100)
-
-                let direct =
-                    thrice (fun system ->
-                        UnixReadWrite.tryWriteBytes
-                            (Lone.leader system)
-                            c
-                            (ImmutableArray.Create (payload, 0, 100))
-                            system
-                    )
-
-                (build, direct) |> shouldEqual (build, admitted)
 
     /// What a reset leaves of the survivor's binding and options, against a
     /// FIN, replayed from `reset-binding.c`'s rows for both flavours: a reset
@@ -1031,7 +1138,7 @@ module TestConnectedTransfer =
                 let system = KeventWorld.listen listener system
 
                 let port =
-                    match (UnixMachineState.socket (socketOf listener system) system.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (socketOf listener system) (Kernel.machine system)).Ipv4Binding with
                     | Some binding -> binding.Endpoint.Port
                     | None -> failwith "the listener is unbound"
 
@@ -1061,7 +1168,7 @@ module TestConnectedTransfer =
                 let system = KeventWorld.close gone system
 
                 let endpoint =
-                    match (UnixMachineState.socket (socketOf keep system) system.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (socketOf keep system) (Kernel.machine system)).Ipv4Binding with
                     | Some binding -> binding.Endpoint
                     | None -> failwith "the survivor is unbound"
 
@@ -1074,11 +1181,11 @@ module TestConnectedTransfer =
                 let reuse = SimulatedUnixPlatform.reuseAddressOption platform
 
                 let setsockopt, system =
-                    match UnixSocket.tryAdmitSetSockOpt keep level reuse UserBuffer.Mapped 4u system with
+                    match Lone.UnixSocket.tryAdmitSetSockOpt keep level reuse UserBuffer.Mapped 4u system with
                     | Ok (SetSockOptAdmission.Answered error) -> Some error, system
                     | Ok (SetSockOptAdmission.Transfer _) ->
                         match
-                            UnixSocket.trySetsockoptBytes
+                            Lone.UnixSocket.trySetsockoptBytes
                                 keep
                                 level
                                 reuse
@@ -1112,7 +1219,7 @@ module TestConnectedTransfer =
                 let bindReuse, system = bindFresh true system
 
                 let portSame =
-                    (UnixMachineState.socket (socketOf keep system) system.Machine).Ipv4Binding
+                    (UnixMachineState.socket (socketOf keep system) (Kernel.machine system)).Ipv4Binding
                     |> Option.map (fun binding -> binding.Endpoint)
                     |> (=) (Some endpoint)
 
@@ -1163,7 +1270,9 @@ module TestConnectedTransfer =
                     let system = KeventWorld.close accepted system
 
                     let source =
-                        match (UnixMachineState.socket (socketOf client system) system.Machine).Ipv4Binding with
+                        match
+                            (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Ipv4Binding
+                        with
                         | Some binding -> binding.Endpoint
                         | None -> failwith "the client is unbound"
 
@@ -1210,7 +1319,7 @@ module TestConnectedTransfer =
                 CopyIn.connect second UserBuffer.Mapped 16u (CopyIn.inet platform (KeventWorld.loopback port)) system
             with
             | Ok (SyscallAnswer.Completed 0L, system) ->
-                (UnixMachineState.socket (socketOf second system) system.Machine).Ipv4Binding
+                (UnixMachineState.socket (socketOf second system) (Kernel.machine system)).Ipv4Binding
                 |> Option.map (fun binding -> binding.Endpoint.Port)
                 |> shouldEqual (Some 40000us)
 
@@ -1238,7 +1347,7 @@ module TestConnectedTransfer =
 
             match CopyIn.bind fresh UserBuffer.Mapped 16u (CopyIn.inet platform (KeventWorld.loopback 0us)) system with
             | Ok (BindAnswer.Bound _, system) ->
-                (UnixMachineState.socket (socketOf fresh system) system.Machine).Ipv4Binding
+                (UnixMachineState.socket (socketOf fresh system) (Kernel.machine system)).Ipv4Binding
                 |> Option.map (fun binding -> binding.Endpoint.Port)
                 |> shouldEqual (Some 40000us)
 
@@ -1344,7 +1453,15 @@ module TestConnectedTransfer =
         let system = sentAll client 10 system
 
         let system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
+            with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1384,7 +1501,15 @@ module TestConnectedTransfer =
             let system = ReuseAddress.set (not listenerReuse) listener system
 
             let system =
-                match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+                match
+                    UnixConnection.tryAccept
+                        (Callers.thread 1 system)
+                        listener
+                        UserBuffer.Mapped
+                        (Some 0xFFFFFFFFu)
+                        0
+                        system
+                with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
                 | other -> failwith $"accept: %A{other}"
 
@@ -1412,6 +1537,55 @@ module TestConnectedTransfer =
             | BindAnswer.Bound _ when listenerReuse -> ()
             | BindAnswer.Failed UnixError.EADDRINUSE when not listenerReuse -> ()
             | other -> failwith $"listener SO_REUSEADDR %b{listenerReuse}: a bind with it answered %A{other}"
+
+    /// A connection a Linux accept drops leaves its server end holding the
+    /// listener's port as an accepted socket would, one `bind(2)` or
+    /// `listen(2)` made, which Linux's search for a connect's port passes over
+    /// though it shares one connect's own implicit bind made
+    /// (`docs/probes/connect-search-holders`, rows fe and f). That the end
+    /// keeps the listener's bind bucket is inferred from Linux's source
+    /// (`__inet_inherit_port`), not measured.
+    [<Test>]
+    let ``a connection a Linux accept drops holds the listener's port against a connect's search`` () : unit =
+        let system =
+            systemOn
+                (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                 >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                SimulatedUnixPlatform.linuxX64
+
+        let listener, system = KeventWorld.listenerAt 40000us system
+        let _, system = KeventWorld.listenerAt port system
+        let client, system = KeventWorld.stream true system
+        let _, system = KeventWorld.connect client 40000us system
+
+        let system =
+            match
+                UnixConnection.tryAccept
+                    (Callers.thread 1 system)
+                    listener
+                    UserBuffer.Mapped
+                    (Some 0xFFFFFFFFu)
+                    0
+                    system
+            with
+            | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
+            | other -> failwith $"accept: %A{other}"
+
+        let system = KeventWorld.close listener system
+        assertClean system
+
+        // 40000 is the dropped server end's, bind-made; 40001 the client's,
+        // made by its connect, and shared towards another destination.
+        let searching, system = KeventWorld.stream false system
+
+        match KeventWorld.connect searching port system with
+        | SyscallAnswer.Completed 0L, system ->
+            match (UnixMachineState.socket (socketOf searching system) (Kernel.machine system)).Ipv4Binding with
+            | Some binding -> binding.Endpoint.Port |> shouldEqual 40001us
+            | None -> failwith "the searching socket is unbound"
+
+            assertClean system
+        | other, _ -> failwith $"the search's connect answered %A{other}"
 
     /// `bind-late-reuse.c`'s rows (docs/plans/2026-10-08-tcp-shutdown-linger),
     /// through the syscalls on each flavour: a client's `SO_REUSEADDR` flipped
@@ -1468,7 +1642,7 @@ module TestConnectedTransfer =
 
                 let cport =
                     int
-                        (UnixMachineState.socket (socketOf client system) system.Machine)
+                        (UnixMachineState.socket (socketOf client system) (Kernel.machine system))
                             .Ipv4Binding.Value.Endpoint.Port
 
                 let system = shut client 1 system
@@ -1479,10 +1653,12 @@ module TestConnectedTransfer =
                 let value = Some (OptionValue.ofInt (if before then 0 else 1))
 
                 let flipped =
-                    match UnixSocket.tryAdmitSetSockOpt client level name UserBuffer.Mapped 4u system with
+                    match Lone.UnixSocket.tryAdmitSetSockOpt client level name UserBuffer.Mapped 4u system with
                     | Ok (SetSockOptAdmission.Answered _) -> Ok ("-1", system)
                     | Ok (SetSockOptAdmission.Transfer _) ->
-                        match UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u value system with
+                        match
+                            Lone.UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u value system
+                        with
                         | Ok (SetSockOptAnswer.Set, system) -> Ok ("0", system)
                         | Ok (SetSockOptAnswer.Failed _, system) -> Ok ("-1", system)
                         | Error refusal -> Error refusal
@@ -1495,7 +1671,9 @@ module TestConnectedTransfer =
                     // Setting the value it has changes no copy, and is served.
                     let unchanged = Some (OptionValue.ofInt (if before then 1 else 0))
 
-                    match UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u unchanged system with
+                    match
+                        Lone.UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u unchanged system
+                    with
                     | Ok (SetSockOptAnswer.Set, _) -> ()
                     | other -> failwith $"Linux %s{row}: setting the value it has answered %A{other}"
                 | Error refusal -> failwith $"%A{flavour} %s{row}: refused %A{refusal}"
@@ -1564,7 +1742,7 @@ module TestConnectedTransfer =
                         else
                             KeventWorld.close accepted system
 
-                    match UnixSocket.tryListen listener 8 system with
+                    match UnixSocket.tryListen (Callers.leader system) listener 8 system with
                     | Ok (ListenAnswer.Listening _, system) -> assertClean system
                     | other ->
                         failwith $"%O{platform}, listener SO_REUSEADDR %b{listenerReuse}, child %s{child}: %A{other}"
@@ -1579,22 +1757,25 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : ConnectionId * UnixSystem<int, string>
         =
-        let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> fst
-        let tcp = system.Machine.Connections.[connection]
+        let connection =
+            (Kernel.machine system).Connections |> Map.toList |> List.exactlyOne |> fst
+
+        let tcp = (Kernel.machine system).Connections.[connection]
 
         connection,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections =
                         Map.add
                             connection
                             { tcp with
                                 Transfer = change tcp.Transfer
                             }
-                            system.Machine.Connections
+                            machine.Connections
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``checkInvariants rejects a connection whose bytes or ends disagree with its sockets`` () : unit =
@@ -1647,7 +1828,10 @@ module TestConnectedTransfer =
 
             // An end closed under its socket.
             system
-            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false >> snd)
+            |> withTransfer (
+                TcpTransfer.close ConnectionEnd.Client false PortHold.Connected UserId.root
+                >> snd
+            )
             |> snd
             |> UnixSystem.checkInvariants
             |> shouldEqual
@@ -1662,18 +1846,19 @@ module TestConnectedTransfer =
             // An end open with no socket: the server's socket has forgotten it.
             let serverSocket = socketOf s system
 
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 serverSocket
-                                { system.Machine.Sockets.[serverSocket] with
+                                { UnixMachineState.socket serverSocket machine with
                                     Phase = SocketPhase.Idle
                                 }
-                                system.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                system
             |> UnixSystem.checkInvariants
             |> shouldEqual
                 [
@@ -1690,35 +1875,27 @@ module TestConnectedTransfer =
     let private across
         (a : ProcessId)
         (b : ProcessId)
-        (machine : SimulatedMachine<int, string>)
-        : int * int * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : int * int * UnixSystem<int, string>
         =
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b port) machine
+
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a port) machine
 
         let accepted, machine =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
-                    accepted, UnixDescriptor.setNonBlocking accepted true view |> snd
+                    let accepted, view = KeventWorld.acceptIn b listener view
+
+                    accepted,
+                    UnixDescriptor.setNonBlocking (Caller.make b (Proc.leader b view)) accepted true view
+                    |> snd
                 )
                 machine
 
         client, accepted, machine
-
-    let private woken
-        (asleep : (ProcessId * int) list)
-        (machine : SimulatedMachine<int, string>)
-        : (ProcessId * int) list
-        =
-        let asleep =
-            asleep
-            |> List.groupBy fst
-            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-            |> Map.ofList
-
-        Machines.wakes asleep machine |> List.map fst
 
     /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
@@ -1727,15 +1904,15 @@ module TestConnectedTransfer =
         (thread : int)
         (fd : int)
         (what : char)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         Machines.doIn
             pid
             (fun view ->
-                match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform view) with
                 | SimulatedUnixFlavour.Linux ->
-                    let wait, view = edgeRegister fd what view
+                    let wait, view = edgeRegisterIn pid fd what view
                     let _, view = wait view
 
                     let epoll =
@@ -1748,11 +1925,11 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixPoll.tryEpollWait thread epoll 2 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait (Caller.make pid thread) epoll 2 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 | SimulatedUnixFlavour.Darwin ->
-                    let wait, view = edgeRegister fd what view
+                    let wait, view = edgeRegisterIn pid fd what view
                     let _, view = wait view
 
                     let kq =
@@ -1765,7 +1942,17 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixKqueue.tryKevent thread kq 0 [] 2 UserBuffer.Mapped KeventTimeout.Null view with
+                    match
+                        UnixKqueue.tryKevent
+                            (Caller.make pid thread)
+                            kq
+                            0
+                            []
+                            2
+                            UserBuffer.Mapped
+                            TimespecArgument.Null
+                            view
+                    with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
             )
@@ -1786,7 +1973,7 @@ module TestConnectedTransfer =
                     (fun view ->
                         match
                             UnixPoll.tryPoll
-                                2
+                                (Caller.make b 2)
                                 [
                                     {
                                         Fd = accepted
@@ -1802,11 +1989,15 @@ module TestConnectedTransfer =
                     machine
 
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let machine = Machines.doIn a (sentAllIn a client 100) machine
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> List.sort |> shouldEqual [ b, 1 ; b, 2 ]
+
+            Machines.wakes machine
+            |> List.map fst
+            |> List.sort
+            |> shouldEqual [ b, 1 ; b, 2 ]
 
     [<Test>]
     let ``a read in one process wakes another asleep for send space on its end`` () : unit =
@@ -1818,10 +2009,10 @@ module TestConnectedTransfer =
             // `b` fills its end, then sleeps for room.
             let machine = Machines.doIn b (fun view -> fillIn b accepted view |> snd) machine
             let machine = sleepOn b 1 accepted 'w' machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             // `a` drains until `b`'s end has room by its flavour's rule.
-            let rec drain (reads : int) (machine : SimulatedMachine<int, string>) =
+            let rec drain (reads : int) (machine : UnixSystem<int, string>) =
                 if reads = 0 then
                     failwith "the drain never woke the writer"
                 else
@@ -1830,9 +2021,9 @@ module TestConnectedTransfer =
 
                     Machines.assertClean machine
 
-                    match woken [ b, 1 ] machine with
+                    match Machines.wakes machine with
                     | [] -> drain (reads - 1) machine
-                    | woke -> woke
+                    | woke -> woke |> List.map fst
 
             drain 2000 machine |> shouldEqual [ b, 1 ]
 
@@ -1854,12 +2045,8 @@ module TestConnectedTransfer =
                     else
                         Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
-                let ended =
-                    Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
-                    |> fst
-
                 let machine =
-                    match Machines.tryEndProcess ended machine with
+                    match UnixThreadLifecycle.tryExitGroup (Caller.make a 0) 0 machine with
                     | Ok (_, machine) -> machine
                     | Error refusal -> failwith $"%A{refusal}"
 

@@ -61,6 +61,16 @@ type private ClockDecoding =
     | Refused of ClockGettimeRefusal
     | Invalid
 
+/// What a `clock_gettime(2)` answered.
+[<RequireQualifiedAccess>]
+type ClockGettimeAnswer =
+    /// The call returned 0, having written `time` to the caller's
+    /// `struct timespec`.
+    | Completed of time : UnixTimestamp
+    /// The call returned -1, and the client stores `error` wherever its libc
+    /// keeps errno.
+    | Failed of error : UnixError
+
 [<RequireQualifiedAccess>]
 module UnixClock =
 
@@ -172,27 +182,40 @@ module UnixClock =
             (UnixTimestamp.seconds reading)
             (nanoseconds - nanoseconds % granularity)
 
-    /// `gettimeofday(2)`: the realtime clock in whole microseconds, on every
-    /// flavour, as a timestamp.
-    let gettimeofday<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+    /// `gettimeofday` once `Entry` has admitted its caller, which a call of
+    /// another family reads the clock through as `gettimeofday` would.
+    let internal gettimeofdayIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
         : UnixTimestamp
         =
         truncate 1000 (UnixMachineState.realtime system.Scheduling system.Machine)
 
-    /// `clockGettime`, with a refusal answered as the `Error` rather than raised.
-    let internal tryClockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (clockId : int)
+    /// `gettimeofday(2)`: the realtime clock in whole microseconds, on every
+    /// flavour, as a timestamp.
+    let gettimeofday<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<UnixTimestamp, UnixError>, ClockGettimeRefusal>
+        : UnixTimestamp
+        =
+        Entry.call "UnixClock.gettimeofday" CallerRequirement.Running caller Shape.answer gettimeofdayIn system
+
+    /// `tryClockGettime` once `Entry` has admitted its caller.
+    let private tryClockGettimeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (clockId : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ClockGettimeAnswer, ClockGettimeRefusal>
         =
         let machine = system.Machine
 
         match decode (SimulatedUnixPlatform.flavour machine.UnixPlatform) clockId with
-        | ClockDecoding.Invalid -> Ok (Error UnixError.EINVAL)
+        | ClockDecoding.Invalid -> Ok (ClockGettimeAnswer.Failed UnixError.EINVAL)
         | ClockDecoding.Refused refusal -> Error refusal
         | ClockDecoding.Reads (ClockSource.Realtime granularity) ->
-            Ok (Ok (truncate granularity (UnixMachineState.realtime system.Scheduling machine)))
+            Ok (
+                ClockGettimeAnswer.Completed (
+                    truncate granularity (UnixMachineState.realtime system.Scheduling machine)
+                )
+            )
         | ClockDecoding.Reads (ClockSource.SinceBoot granularity) ->
             let sinceBoot = system.Scheduling.NanosecondsSinceBoot
 
@@ -208,7 +231,22 @@ module UnixClock =
                     (sinceBoot / UnixTimestamp.nanosecondsPerSecond)
                     (int (sinceBoot % UnixTimestamp.nanosecondsPerSecond))
 
-            Ok (Ok (truncate granularity reading))
+            Ok (ClockGettimeAnswer.Completed (truncate granularity reading))
+
+    /// `clockGettime`, with a refusal answered as the `Error` rather than raised.
+    let internal tryClockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (clockId : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ClockGettimeAnswer, ClockGettimeRefusal>
+        =
+        Entry.call
+            "UnixClock.clockGettime"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryClockGettimeIn clockId)
+            system
 
     /// `clock_gettime(2)`: read the clock `clockId` names on this machine's flavour.
     ///
@@ -233,9 +271,10 @@ module UnixClock =
     /// dropping the finer digits. Every other answered clock reports to the
     /// nanosecond.
     let clockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (clockId : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixTimestamp, UnixError>
+        : ClockGettimeAnswer
         =
-        tryClockGettime clockId system
+        tryClockGettime caller clockId system
         |> Refusal.orRaise "UnixClock.clockGettime" ClockGettimeRefusal.kind ClockGettimeRefusal.describe

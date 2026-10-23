@@ -176,6 +176,7 @@ module TestInodeOwner =
     let private ownerAt (path : string) (system : UnixSystem<int, string>) : InodeOwner =
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context path))
                 system
@@ -197,6 +198,7 @@ module TestInodeOwner =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -204,12 +206,18 @@ module TestInodeOwner =
     /// report who owns each.
     let private createBoth (system : UnixSystem<int, string>) : InodeOwner * InodeOwner =
         let system =
-            match Answered.openPath creating (UnixPath.parseOrFail context "/p/file") 0o644 system with
-            | SyscallAnswer.Completed _, system -> system
+            match Answered.openPath (UnixPath.parseOrFail context "/p/file") creating 0o644 system with
+            | DescriptorAnswer.Returned _, system -> system
             | other -> failwith $"expected the file to be created, got %O{other}"
 
         let system =
-            match Answered.mkdir (PathArg.ofPath (UnixPath.parseOrFail context "/p/dir")) 0o755 system with
+            match
+                Answered.mkdir
+                    (Callers.leader system)
+                    (PathArg.ofPath (UnixPath.parseOrFail context "/p/dir"))
+                    0o755
+                    system
+            with
             | SyscallAnswer.Completed 0L, system -> system
             | other -> failwith $"expected the directory to be created, got %O{other}"
 
@@ -324,13 +332,18 @@ module TestInodeOwner =
                 (name "dev")
                 (mode 0o755)
                 (owner 0u 0u)
-                (CharacterDevice.all
-                 |> List.map (fun device -> CharacterDevice.name device, device, CharacterDevice.permissions device))
-                epoch
+                (mode 0o777)
+                UnixSystem.defaultDevtmpfsContents
+                {
+                    Access = epoch
+                    Modification = epoch
+                    StatusChange = epoch
+                    Birth = epoch
+                }
                 vfs
             |> ok
 
-        system.Machine.FileSystem |> shouldEqual withDevices
+        UnixSystem.fileSystem system |> shouldEqual withDevices
 
     [<Test>]
     let ``every inode of a seed without owners belongs to the default owner`` () : unit =

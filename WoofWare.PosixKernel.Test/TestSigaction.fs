@@ -26,9 +26,6 @@ module TestSigaction =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams leader (CpuId 0)
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     /// Which way a call reaches the kernel: the probe's `libc` and `raw` rows.
     type private Entry =
         | CLibrary
@@ -41,11 +38,11 @@ module TestSigaction =
         (signo : int)
         (action : SignalDisposition<string> option)
         (system : UnixSystem<int, string>)
-        : Result<SignalDisposition<string> * UnixSystem<int, string>, UnixError>
+        : SigactionAnswer<string> * UnixSystem<int, string>
         =
         match entry with
-        | Entry.CLibrary -> UnixSignal.sigaction signo action system
-        | Entry.Syscall -> UnixSignal.sigactionSyscall signo action system
+        | Entry.CLibrary -> UnixSignal.sigaction (Callers.leader system) signo action system
+        | Entry.Syscall -> UnixSignal.sigactionSyscall (Callers.leader system) signo action system
 
     /// The highest signal number, written out rather than taken from
     /// `Signal.highestSignoUnder`, so that this oracle and the implementation
@@ -102,7 +99,7 @@ module TestSigaction =
     /// A handler action as the probe installs it: `sa_mask` holding every bit.
     let private probeHandler (flavour : SimulatedUnixFlavour) : SignalDisposition<string> =
         let mask =
-            match SignalMask.ofWord (numberingOf flavour) (fullWord flavour) with
+            match SignalMask.ofWord (HostPlatform.signalNumberingOf flavour) (fullWord flavour) with
             | Ok mask -> mask
             | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
@@ -113,12 +110,12 @@ module TestSigaction =
 
     /// One call of the probe's sequence, as the probe prints it: `EINVAL`, or
     /// the old action reported.
-    let private describe (answer : Result<SignalDisposition<string> * UnixSystem<int, string>, UnixError>) : string =
+    let private describe (answer : SigactionAnswer<string> * UnixSystem<int, string>) : string =
         match answer with
-        | Error errno -> $"%O{errno}"
-        | Ok (SignalDisposition.Default, _) -> "DFL"
-        | Ok (SignalDisposition.Ignore, _) -> "IGN"
-        | Ok (SignalDisposition.Catch action, _) -> action.Handler
+        | SigactionAnswer.Failed errno, _ -> $"%O{errno}"
+        | SigactionAnswer.Completed SignalDisposition.Default, _ -> "DFL"
+        | SigactionAnswer.Completed SignalDisposition.Ignore, _ -> "IGN"
+        | SigactionAnswer.Completed (SignalDisposition.Catch action), _ -> action.Handler
 
     [<Test>]
     let ``sigaction answers the measured rows`` () : unit =
@@ -148,8 +145,10 @@ module TestSigaction =
 
                             let system =
                                 match answer with
-                                | Ok (_, system) -> system
-                                | Error _ -> system
+                                | SigactionAnswer.Completed _, system -> system
+                                | SigactionAnswer.Failed _, after ->
+                                    after |> shouldEqual system
+                                    system
 
                             system, answers @ [ $"%s{label}=%s{describe answer}" ]
                         )
@@ -181,11 +180,11 @@ module TestSigaction =
                     if measured flavour entry signo = Row.Accepted then
                         let installed =
                             match call entry signo (Some (probeHandler flavour)) (systemOn flavour) with
-                            | Ok (_, system) -> system
-                            | Error errno -> failwith $"%O{flavour} %A{entry} %d{signo}: %O{errno}"
+                            | SigactionAnswer.Completed _, system -> system
+                            | SigactionAnswer.Failed errno, _ -> failwith $"%O{flavour} %A{entry} %d{signo}: %O{errno}"
 
                         match call entry signo None installed with
-                        | Ok (SignalDisposition.Catch action, after) ->
+                        | SigactionAnswer.Completed (SignalDisposition.Catch action), after ->
                             after |> shouldEqual installed
 
                             (flavour, entry, signo, SignalMask.toWord action.Mask)
@@ -216,7 +215,7 @@ module TestSigaction =
     [<Test>]
     let ``sigaction behaves as a table of dispositions with the measured refusals`` () : unit =
         let actionGen (flavour : SimulatedUnixFlavour) : Gen<SignalDisposition<string> option> =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let catchGen =
                 gen {
@@ -272,7 +271,7 @@ module TestSigaction =
             }
 
         let property (flavour : SimulatedUnixFlavour, calls : (Entry * int * SignalDisposition<string> option) list) =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let installedNow (oracle : Map<int, Installed>) (signo : int) : Installed =
                 Map.tryFind signo oracle |> Option.defaultValue Installed.Dfl
@@ -284,19 +283,20 @@ module TestSigaction =
                     let answer = call entry signo action system
 
                     match row, action, answer with
-                    | Row.Refused, _, Error errno
-                    | Row.DefaultOnly, Some _, Error errno ->
+                    | Row.Refused, _, (SigactionAnswer.Failed errno, after)
+                    | Row.DefaultOnly, Some _, (SigactionAnswer.Failed errno, after) ->
                         errno |> shouldEqual UnixError.EINVAL
+                        after |> shouldEqual system
                         system, oracle
-                    | Row.DefaultOnly, None, Ok (old, after) ->
+                    | Row.DefaultOnly, None, (SigactionAnswer.Completed old, after) ->
                         old |> shouldEqual SignalDisposition.Default
                         after |> shouldEqual system
                         system, oracle
-                    | Row.Accepted, None, Ok (old, after) ->
+                    | Row.Accepted, None, (SigactionAnswer.Completed old, after) ->
                         installedOf old |> shouldEqual (installedNow oracle signo)
                         after |> shouldEqual system
                         system, oracle
-                    | Row.Accepted, Some installed, Ok (old, after) ->
+                    | Row.Accepted, Some installed, (SigactionAnswer.Completed old, after) ->
                         installedOf old |> shouldEqual (installedNow oracle signo)
 
                         let stored =
@@ -319,13 +319,27 @@ module TestSigaction =
             // Every number now reads back as the oracle says, through the
             // syscall, which answers for every signal Linux has.
             for signo in [ 1 .. highestSigno flavour ] do
-                match UnixSignal.sigactionSyscall signo None finalSystem with
-                | Ok (now, _) -> (signo, installedOf now) |> shouldEqual (signo, installedNow finalOracle signo)
-                | Error errno ->
+                match UnixSignal.sigactionSyscall (Callers.leader finalSystem) signo None finalSystem with
+                | SigactionAnswer.Completed now, _ ->
+                    (signo, installedOf now) |> shouldEqual (signo, installedNow finalOracle signo)
+                | SigactionAnswer.Failed errno, after ->
+                    after |> shouldEqual finalSystem
+
                     (signo, measured flavour Entry.Syscall signo)
                     |> shouldEqual (signo, Row.Refused)
 
                     errno |> shouldEqual UnixError.EINVAL
+
+            // And through `SignalState.disposition`, which needs no call, and reads Darwin's
+            // SIGKILL and SIGSTOP, which the syscall refuses to report, as their default.
+            let signals =
+                UnixSystem.signals (Caller.processId (Callers.leader finalSystem)) finalSystem
+
+            for signo in [ 1 .. highestSigno flavour ] do
+                let signal = Signal.ofRawSignoUnder numbering signo |> ValueOption.get
+
+                (signo, installedOf (SignalState.disposition numbering signal signals))
+                |> shouldEqual (signo, installedNow finalOracle signo)
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
@@ -370,7 +384,7 @@ module TestSigaction =
         // handler: a signal generated while caught is pending on both
         // flavours, so the change alone decides whether it stays.
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signo in [ 1 .. highestSigno flavour ] do
                 if measured flavour Entry.CLibrary signo = Row.Accepted && signo <> 27 then
@@ -382,24 +396,32 @@ module TestSigaction =
                                 match
                                     systemOn flavour
                                     |> HandlerFrames.enterIn "carrier" leader (Set.singleton signal)
-                                    |> UnixSignal.sigaction signo (Some (toDisposition Disposition.HTr))
+                                    |> fun system ->
+                                        UnixSignal.sigaction
+                                            (Callers.leader system)
+                                            signo
+                                            (Some (toDisposition Disposition.HTr))
+                                            system
                                 with
-                                | Ok (_, system) -> system
-                                | Error errno -> failwith $"%O{flavour} %d{signo}: %O{errno}"
+                                | SigactionAnswer.Completed _, system -> system
+                                | SigactionAnswer.Failed errno, _ -> failwith $"%O{flavour} %d{signo}: %O{errno}"
 
                             let generated =
                                 let answer =
                                     if threadDirected then
-                                        UnixSignal.tryPthreadKill leader signo caught |> Result.mapError string
+                                        UnixSignal.tryPthreadKill (Callers.leader caught) leader signo caught
+                                        |> Result.mapError string
                                     else
                                         UnixSignal.tryKill
-                                            (ProcessId.toInt32 (UnixSystem.processId caught))
+                                            (Callers.leader caught)
+                                            (ProcessId.toInt32 (Lone.pid caught))
                                             signo
                                             caught
                                         |> Result.mapError string
 
                                 match answer with
-                                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
+                                    system
                                 | other -> failwith $"%O{flavour} %d{signo}: generating it answered %A{other}"
 
                             let isPending (system : UnixSystem<int, string>) : bool =
@@ -409,11 +431,17 @@ module TestSigaction =
                             isPending generated |> shouldEqual true
 
                             let changed =
-                                match UnixSignal.sigaction signo (Some (toDisposition toward)) generated with
-                                | Ok (old, system) ->
+                                match
+                                    UnixSignal.sigaction
+                                        (Callers.leader generated)
+                                        signo
+                                        (Some (toDisposition toward))
+                                        generated
+                                with
+                                | SigactionAnswer.Completed old, system ->
                                     old |> shouldEqual (toDisposition Disposition.HTr)
                                     system
-                                | Error errno -> failwith $"%O{flavour} %d{signo}: %O{errno}"
+                                | SigactionAnswer.Failed errno, _ -> failwith $"%O{flavour} %d{signo}: %O{errno}"
 
                             (flavour, signo, threadDirected, toward, isPending changed)
                             |> shouldEqual (flavour, signo, threadDirected, toward, not (discards flavour toward signo))
@@ -430,7 +458,7 @@ module TestSigaction =
             }
 
         let property (flavour : SimulatedUnixFlavour, entry : Entry, signo : int, pendingSigno : int) =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             // Something pending, so that a query that discarded would show.
             let system =
@@ -439,14 +467,14 @@ module TestSigaction =
                     match
                         systemOn flavour
                         |> HandlerFrames.enterIn "carrier" leader (Set.singleton signal)
-                        |> UnixSignal.tryPthreadKill leader pendingSigno
+                        |> fun system -> UnixSignal.tryPthreadKill (Callers.leader system) leader pendingSigno system
                     with
-                    | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+                    | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
                     | other -> failwith $"generating %d{pendingSigno}: %A{other}"
                 | _ -> systemOn flavour
 
             match call entry signo None system with
-            | Ok (_, after) -> after |> shouldEqual system
-            | Error _ -> ()
+            | SigactionAnswer.Completed _, after
+            | SigactionAnswer.Failed _, after -> after |> shouldEqual system
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)

@@ -228,15 +228,20 @@ module Signal =
     /// Both columns were measured with a C probe rather than transcribed, on
     /// Linux 6.18.5 / glibc 2.41 and Darwin 27.0.0.
     ///
-    /// Throws for a signal the platform does not have (see <c>existsUnder</c>),
-    /// which no number under its numbering could stand for.
+    /// Throws <c>ArgumentException</c> for a signal the platform does not have
+    /// (see <c>existsUnder</c>), which no number under its numbering could
+    /// stand for.
     /// </remarks>
     let toRawSignoUnder (numbering : SignalNumbering) (signal : Signal) : int =
         match tryRawSignoUnder numbering signal with
         | ValueSome signo -> signo
         | ValueNone ->
-            failwith
-                $"Signal.toRawSignoUnder: %O{signal} is not a signal under the %O{numbering} numbering, so it has no number there."
+            raise (
+                Refusal.exceptionOf
+                    "Signal.toRawSignoUnder"
+                    (RefusalKind.Contradictory "signal")
+                    $"%O{signal} is not a signal under the %O{numbering} numbering, so it has no number there."
+            )
 
     /// <summary>
     /// Convert a raw signo, read under the chosen platform's numbering, to a
@@ -745,7 +750,7 @@ module SignalMask =
 
     /// The mask naming exactly `signals`, under `numbering`.
     ///
-    /// Fails loudly on a signal the numbering does not have (see
+    /// Throws `ArgumentException` on a signal the numbering does not have (see
     /// `Signal.existsUnder`), which a client can build only by hand: one read
     /// from a signal number went through `Signal.ofRawSignoUnder`, which
     /// refuses those.
@@ -754,8 +759,12 @@ module SignalMask =
             (0UL, signals)
             ||> Set.fold (fun word signal ->
                 if not (Signal.existsUnder numbering signal) then
-                    failwith
-                        $"SignalMask.ofSignals: %O{signal} is not a signal under the %O{numbering} numbering, so no mask there can name it."
+                    raise (
+                        Refusal.exceptionOf
+                            "SignalMask.ofSignals"
+                            (RefusalKind.Contradictory "signals")
+                            $"%O{signal} is not a signal under the %O{numbering} numbering, so no mask there can name it."
+                    )
 
                 word ||| (1UL <<< (Signal.toRawSignoUnder numbering signal - 1))
             )

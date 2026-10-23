@@ -93,30 +93,32 @@ module TestFifoOpenPark =
                         PartnerOpens = 0L
                     }
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.Parking.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
             let closed =
-                match UnixDescriptor.tryClose 0 asleep with
+                match UnixDescriptor.tryClose (Callers.leader asleep) 0 asleep with
                 | Ok (SyscallAnswer.Completed 0L, closed) -> closed
                 | other -> failwith $"closing fd 0 under %O{flavour}: %A{other}"
 
-            OpenFileTable.holdCount opener closed.Machine.OpenFiles |> shouldEqual (Some 1)
+            OpenFileTable.holdCount opener (UnixSystem.openFiles closed)
+            |> shouldEqual (Some 1)
 
             closed
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton thread) closed |> shouldEqual []
+            Lone.deadlines closed |> shouldEqual []
 
             // This library keeps no count of a FIFO's opens, so the primitive
             // cannot be evaluated, and asking fails loudly rather than guessing.
             let error =
                 Assert.Throws<Exception> (fun () ->
-                    UnixWait.satisfied thread closed |> ignore<Set<WakePrimitive> option>
+                    UnixWait.satisfied (Callers.thread thread closed) closed
+                    |> ignore<Set<WakePrimitive> option>
                 )
 
             error.Message |> shouldContainText "FifoOpen"

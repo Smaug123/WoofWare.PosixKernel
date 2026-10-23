@@ -95,11 +95,6 @@ module TestDualModeMeasured =
         @ match flavour with
           | SimulatedUnixFlavour.Linux ->
               [
-                  Unmodelled.Row (
-                      "A7 V6ONLY=0, connect ::ffff:127.0.0.2:L (listener 127.0.0.1)",
-                      "a source address for a destination other than 127.0.0.1 is unmeasured (ConnectRefusal.SourceForNonLoopbackDestination)"
-                  )
-                  Unmodelled.Following ("A7 after: getsockname", "the refused connect bound nothing here")
                   yield!
                       bindRows
                           0
@@ -118,7 +113,7 @@ module TestDualModeMeasured =
               [
                   Unmodelled.Row (
                       "A7 V6ONLY=0, connect ::ffff:127.0.0.2:L (listener 127.0.0.1)",
-                      "127.0.0.2 is not an address Darwin holds (ConnectRefusal.DestinationNotLocal)"
+                      "127.0.0.2 is not an address Darwin holds, so it drops the SYN (ConnectRefusal.UnheldDestination)"
                   )
                   Unmodelled.Following ("A7 after: getsockname", "the refused connect bound nothing here")
                   for length in [ 0 ; 1 ; 2 ; 8 ; 16 ; 23 ] do

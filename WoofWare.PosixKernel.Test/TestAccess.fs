@@ -101,7 +101,7 @@ module TestAccess =
 
     let private contentOf (kind : Kind) (bits : PermissionBits) : InodeContent =
         match kind with
-        | Kind.File -> InodeContent.RegularFile (ImmutableArray.Empty, bits)
+        | Kind.File -> InodeContent.RegularFile (FileContents.empty, bits)
         | Kind.Dir ->
             InodeContent.Directory
                 {
@@ -114,7 +114,11 @@ module TestAccess =
 
     [<Test>]
     let ``denied answers the probe's prediction for every standing, mode, question and kind`` () : unit =
-        for rule in [ PrivilegedExecution.NeedsAnExecuteBit ; PrivilegedExecution.Unmeasured ] do
+        for rule in
+            [
+                PrivilegedExecution.NeedsAnExecuteBit
+                PrivilegedExecution.RegularFileNeedsAnExecuteBit
+            ] do
             for standing in allStandings do
                 for kind in [ Kind.File ; Kind.Dir ; Kind.Link ] do
                     for raw in 0..0o7777 do
@@ -123,17 +127,30 @@ module TestAccess =
 
                         for amode in 0..7 do
                             let privileged = standing.Privilege = CallerPrivilege.Privileged
+                            let executeAsked = amode &&& 1 <> 0
 
+                            // Darwin's root (`root-files.c`): a link asked about
+                            // itself is always executable, and a regular file
+                            // with no execute bit is EPERM; X_OK asked beside
+                            // R_OK or W_OK of such a file is unmeasured.
                             let expected =
-                                if
-                                    rule = PrivilegedExecution.Unmeasured
-                                    && privileged
-                                    && amode &&& 1 <> 0
-                                    && kind <> Kind.Dir
-                                then
-                                    Error (ExecutionRefusal.UnmeasuredPrivilegedCaller (standing, bits))
-                                else
-                                    Ok (predictDenied privileged standing.Owns standing.InGroup kind raw amode)
+                                match rule with
+                                | PrivilegedExecution.RegularFileNeedsAnExecuteBit when
+                                    privileged && executeAsked && kind = Kind.Link
+                                    ->
+                                    Ok None
+                                | PrivilegedExecution.RegularFileNeedsAnExecuteBit when
+                                    privileged && executeAsked && kind = Kind.File && raw &&& 0o111 = 0
+                                    ->
+                                    if amode &&& 6 <> 0 then
+                                        Error (ExecutionRefusal.UnmeasuredPrivilegedCombination bits)
+                                    else
+                                        Ok (Some UnixError.EPERM)
+                                | _ ->
+                                    if predictDenied privileged standing.Owns standing.InGroup kind raw amode then
+                                        Ok (Some UnixError.EACCES)
+                                    else
+                                        Ok None
 
                             let actual =
                                 AccessRules.denied rule standing content bits (AccessQuestion.ofLowBits amode)
@@ -144,7 +161,8 @@ module TestAccess =
 
     [<Test>]
     let ``root's execute rows, as measured`` () : unit =
-        // `ownership-probe.c`'s ACCESS-X rows, Linux 6.18.5: a real and
+        // `ownership-probe.c`'s ACCESS-X rows, Linux 6.18.5, and the same
+        // modes of `root-files.c`'s ACCESS rows, Darwin 27.0: a real and
         // effective root, on a regular file root does not own.
         let root : Standing =
             {
@@ -153,12 +171,42 @@ module TestAccess =
                 InGroup = false
             }
 
-        for bits, denied in [ 0o644, true ; 0o100, false ; 0o010, false ; 0o001, false ; 0o000, true ] do
-            PermissionBits.executionDenied PrivilegedExecution.NeedsAnExecuteBit root (mode bits)
-            |> shouldEqual (Ok denied)
+        let denial (error : UnixError) (denied : bool) : Result<UnixError option, ExecutionRefusal> =
+            Ok (if denied then Some error else None)
 
-            PermissionBits.executionDenied PrivilegedExecution.Unmeasured root (mode bits)
-            |> shouldEqual (Error (ExecutionRefusal.UnmeasuredPrivilegedCaller (root, mode bits)))
+        for bits, denied in [ 0o644, true ; 0o100, false ; 0o010, false ; 0o001, false ; 0o000, true ] do
+            PermissionBits.executionDenied
+                PrivilegedExecution.NeedsAnExecuteBit
+                root
+                ExecutionTarget.RegularFile
+                (mode bits)
+            |> shouldEqual (denial UnixError.EACCES denied)
+
+            PermissionBits.executionDenied
+                PrivilegedExecution.RegularFileNeedsAnExecuteBit
+                root
+                ExecutionTarget.RegularFile
+                (mode bits)
+            |> shouldEqual (denial UnixError.EPERM denied)
+
+            // Darwin's root executes a link of any mode, asked about itself.
+            PermissionBits.executionDenied
+                PrivilegedExecution.RegularFileNeedsAnExecuteBit
+                root
+                ExecutionTarget.Symlink
+                (mode bits)
+            |> shouldEqual (Ok None)
+
+        // What Darwin's root may execute of anything else is unmeasured.
+        for target in
+            [
+                ExecutionTarget.Fifo
+                ExecutionTarget.Socket
+                ExecutionTarget.CharacterDevice
+            ] do
+            for bits in [ 0o000 ; 0o755 ] do
+                PermissionBits.executionDenied PrivilegedExecution.RegularFileNeedsAnExecuteBit root target (mode bits)
+                |> shouldEqual (Error (ExecutionRefusal.UnmeasuredPrivilegedTarget target))
 
         // A directory with no bits at all is still searchable by root.
         AccessRules.denied
@@ -167,7 +215,7 @@ module TestAccess =
             (contentOf Kind.Dir (mode 0))
             (mode 0)
             (AccessQuestion.ofLowBits 1)
-        |> shouldEqual (Ok false)
+        |> shouldEqual (Ok None)
 
     [<Test>]
     let ``each platform names its flavour's privileged execution rule`` () : unit =
@@ -175,9 +223,95 @@ module TestAccess =
             [
                 SimulatedUnixPlatform.linuxX64, PrivilegedExecution.NeedsAnExecuteBit
                 SimulatedUnixPlatform.linuxArm64, PrivilegedExecution.NeedsAnExecuteBit
-                SimulatedUnixPlatform.macOsArm64, PrivilegedExecution.Unmeasured
+                SimulatedUnixPlatform.macOsArm64, PrivilegedExecution.RegularFileNeedsAnExecuteBit
             ] do
             SimulatedUnixPlatform.privilegedExecution platform |> shouldEqual expected
+
+    [<Test>]
+    let ``Darwin's root-files ACCESS rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // root and uid 501 (groups 20 and 701), each against inodes owned by
+        // root, by uid 501 and by uid 502, in groups 0, 20, 701 and 7777.
+        // Executing a script is the client's business (process creation), so
+        // its rows are not replayed here.
+        let rule =
+            SimulatedUnixPlatform.privilegedExecution SimulatedUnixPlatform.macOsArm64
+
+        let rows = DarwinRootFiles.section "ACCESS"
+        let executions, replayed = rows |> List.partition (fun row -> row.Call = "execve")
+        executions |> List.length |> shouldEqual 10
+        replayed |> List.length |> shouldEqual 160
+
+        let mismatches =
+            [
+                for row in replayed do
+                    let standing = Standing.toward (DarwinRootFiles.credentialsOf row.Caller) row.Owner
+
+                    let kind =
+                        match row.Kind with
+                        | DarwinRootFiles.Kind.File -> Kind.File
+                        | DarwinRootFiles.Kind.Dir -> Kind.Dir
+                        | DarwinRootFiles.Kind.Link -> Kind.Link
+
+                    for raw in 0..0o7777 do
+                        let bits = mode raw
+
+                        let refusedOf (requests : AccessRequest list) : char =
+                            if
+                                requests
+                                |> List.exists (fun request -> PermissionBits.deniedTo standing request bits)
+                            then
+                                'A'
+                            else
+                                '.'
+
+                        let access (amode : int) : char =
+                            match
+                                AccessRules.denied
+                                    rule
+                                    standing
+                                    (contentOf kind bits)
+                                    bits
+                                    (AccessQuestion.ofLowBits amode)
+                            with
+                            | Ok (Some error) -> DarwinRootFiles.cellOf error
+                            | Ok None -> '.'
+                            | Error _ -> 'R'
+
+                        let modelled =
+                            match row.Call with
+                            | "open(O_RDONLY)"
+                            | "open(O_RDONLY|O_DIRECTORY)" -> refusedOf [ AccessRequest.Read ]
+                            | "open(O_WRONLY)" -> refusedOf [ AccessRequest.Write ]
+                            | "open(O_RDWR)" -> refusedOf [ AccessRequest.Read ; AccessRequest.Write ]
+                            | "search" -> refusedOf [ AccessRequest.SearchDirectory ]
+                            | "create" -> refusedOf [ AccessRequest.Write ; AccessRequest.SearchDirectory ]
+                            | "access(R_OK)"
+                            | "faccessat(R_OK,NOFOLLOW)" -> access 4
+                            | "access(W_OK)"
+                            | "faccessat(W_OK,NOFOLLOW)" -> access 2
+                            | "access(X_OK)"
+                            | "faccessat(X_OK,NOFOLLOW)" -> access 1
+                            | "readlink" ->
+                                if
+                                    PermissionBits.linkReadDenied
+                                        (SimulatedUnixPlatform.linkReadRule SimulatedUnixPlatform.macOsArm64)
+                                        standing
+                                        bits
+                                then
+                                    'A'
+                                else
+                                    '.'
+                            | other -> failwith $"unexpected ACCESS call %s{other}"
+
+                        if modelled <> row.Cells.[raw] then
+                            yield
+                                $"%s{row.Caller} %A{row.Kind} %O{row.Owner} %s{row.Call} 0o%04o{raw}: measured %c{row.Cells.[raw]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
 
     // ------------------------------------------------------------- which IDs
 
@@ -446,12 +580,13 @@ module TestAccess =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = inodeAt vfs cwd
@@ -591,7 +726,13 @@ module TestAccess =
 
                             let actual =
                                 if effective || kind = Kind.Link then
-                                    UnixPathResolution.tryFaccessatEager linuxAtFdCwd (bytes target) amode flags system
+                                    Eager.tryFaccessatAs
+                                        (Callers.leader system)
+                                        linuxAtFdCwd
+                                        (bytes target)
+                                        amode
+                                        flags
+                                        system
                                 else
                                     Eager.tryAccess (bytes target) amode system
 
@@ -634,7 +775,7 @@ module TestAccess =
 
             (label,
              Eager.tryAccess target 0 system |> answered,
-             UnixPathResolution.tryFaccessatEager linuxAtFdCwd target 0 0x200 system
+             Eager.tryFaccessatAs (Callers.leader system) linuxAtFdCwd target 0 0x200 system
              |> answered)
             |> shouldEqual (label, viaAccess, viaEAccess)
 
@@ -677,60 +818,58 @@ module TestAccess =
                     let viaAccess = Eager.tryAccess (bytes target) amode system
 
                     let viaEAccess =
-                        UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes target) amode 0x10 system
+                        Eager.tryFaccessatAs (Callers.leader system) darwinAtFdCwd (bytes target) amode 0x10 system
 
                     if viaAccess <> expected || viaEAccess <> expected then
                         failwith
                             $"%s{target}, amode %d{amode}: access answered %s{answered viaAccess} and AT_EACCESS %s{answered viaEAccess}, the probe measured %s{answered expected}"
 
     [<Test>]
-    let ``Darwin refuses root's execute question on a non-directory, and answers the rest`` () : unit =
+    let ``Darwin's root executes a file with an execute bit, is EPERM on one without, and executes any link``
+        ()
+        : unit
+        =
+        // `root-files.c`'s ACCESS rows, Darwin 27.0, end to end.
         let vfs =
             VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/t" (owner 0u 0u) 0o755
             |> file "/t/f" (owner 501u 20u) 0o755
+            |> file "/t/n" (owner 501u 20u) 0o644
             |> directory "/t/d" (owner 501u 20u) 0o000
             |> symlink "/t/l" (owner 501u 20u) "f"
+            |> symlink "/t/ln" (owner 501u 20u) "n"
 
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root "/t" vfs
-        let rootStanding = Standing.toward Owners.root (owner 501u 20u)
 
-        Eager.tryAccess (bytes "f") 1 system
+        Eager.tryAccess (bytes "f") 1 system |> answered |> shouldEqual "ok"
+        Eager.tryAccess (bytes "n") 1 system |> answered |> shouldEqual "EPERM"
+        // Read and write alone are granted on a file root may not execute.
+        Eager.tryAccess (bytes "n") 4 system |> answered |> shouldEqual "ok"
+        Eager.tryAccess (bytes "n") 2 system |> answered |> shouldEqual "ok"
+
+        // Asked together with execution, they are unmeasured.
+        Eager.tryAccess (bytes "n") 5 system
         |> shouldEqual (
             Error (
                 AccessRefusal.UnmeasuredExecution (
-                    inodeAt vfs "/t/f",
-                    ExecutionRefusal.UnmeasuredPrivilegedCaller (rootStanding, mode 0o755)
+                    inodeAt vfs "/t/n",
+                    ExecutionRefusal.UnmeasuredPrivilegedCombination (mode 0o644)
                 )
             )
         )
 
         // Through a link it is the target that is asked about; of the link
-        // itself, it is the link.
-        Eager.tryAccess (bytes "l") 5 system
-        |> shouldEqual (
-            Error (
-                AccessRefusal.UnmeasuredExecution (
-                    inodeAt vfs "/t/f",
-                    ExecutionRefusal.UnmeasuredPrivilegedCaller (rootStanding, mode 0o755)
-                )
-            )
-        )
+        // itself, it is the link, which root may execute whatever its target.
+        Eager.tryAccess (bytes "l") 5 system |> answered |> shouldEqual "ok"
+        Eager.tryAccess (bytes "ln") 1 system |> answered |> shouldEqual "EPERM"
 
-        UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes "l") 1 0x20 system
-        |> shouldEqual (
-            Error (
-                AccessRefusal.UnmeasuredExecution (
-                    inodeAt vfs "/t/l",
-                    ExecutionRefusal.UnmeasuredPrivilegedCaller (rootStanding, SymlinkModes.linux)
-                )
-            )
-        )
+        Eager.tryFaccessatAs (Callers.leader system) darwinAtFdCwd (bytes "ln") 1 0x20 system
+        |> answered
+        |> shouldEqual "ok"
 
         // Search is not execution: root searching a directory is the same
         // question every path walk asks.
         Eager.tryAccess (bytes "d") 1 system |> answered |> shouldEqual "ok"
-        // The path is resolved before the question is refused.
         Eager.tryAccess (bytes "nx") 1 system |> answered |> shouldEqual "ENOENT"
 
     [<Test>]
@@ -778,7 +917,7 @@ module TestAccess =
                  |> file "/f" (owner 501u 20u) 0o777)
 
         for flag in [ 0x800 ; 0x2000 ; 0x8000 ] do
-            UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes "/f") 0 flag system
+            Eager.tryFaccessatAs (Callers.leader system) darwinAtFdCwd (bytes "/f") 0 flag system
             |> shouldEqual (
                 Error (
                     AccessRefusal.UnmodelledFlags
@@ -853,9 +992,9 @@ module TestAccess =
                 (label,
                  Eager.tryAccess (bytes p) 0 system |> answered,
                  Eager.tryAccess (bytes p) 2 system |> answered,
-                 UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 0 noFollow system
+                 Eager.tryFaccessatAs (Callers.leader system) atFdCwd (bytes p) 0 noFollow system
                  |> answered,
-                 UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 2 noFollow system
+                 Eager.tryFaccessatAs (Callers.leader system) atFdCwd (bytes p) 2 noFollow system
                  |> answered)
                 |> shouldEqual (label, existsAnswer, writeAnswer, existsNoFollow, writeNoFollow)
 
@@ -871,7 +1010,7 @@ module TestAccess =
             let system = systemOn SimulatedUnixPlatform.linuxX64 credentials "/" vfs
 
             for amode in 0..7 do
-                UnixPathResolution.tryFaccessatEager linuxAtFdCwd (bytes "/l") amode 0x100 system
+                Eager.tryFaccessatAs (Callers.leader system) linuxAtFdCwd (bytes "/l") amode 0x100 system
                 |> answered
                 |> shouldEqual "ok"
 
@@ -894,12 +1033,13 @@ module TestAccess =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private openOrFail (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath plainOpen (path p) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (path p) plainOpen 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"open(%s{p}) did not open: %O{other}"
 
     /// The probe's base as the current directory, with a descriptor open on it
@@ -937,7 +1077,7 @@ module TestAccess =
 
         for label, dirfd, expected in linuxRows do
             let ask (p : string) (amode : int) (flags : int) =
-                UnixPathResolution.tryFaccessatEager dirfd (bytes p) amode flags linux
+                Eager.tryFaccessatAs (Callers.leader linux) dirfd (bytes p) amode flags linux
                 |> answered
 
             (label,
@@ -967,7 +1107,8 @@ module TestAccess =
 
         for label, dirfd, expected in darwinRows do
             let ask (p : string) =
-                UnixPathResolution.tryFaccessatEager dirfd (bytes p) 0 0 darwin |> answered
+                Eager.tryFaccessatAs (Callers.leader darwin) dirfd (bytes p) 0 0 darwin
+                |> answered
 
             (label, [ ask "/b/screen_f" ; ask "screen_f" ; ask "screen_nx" ; ask "" ])
             |> shouldEqual (label, expected)
@@ -985,7 +1126,8 @@ module TestAccess =
             (flags : int)
             : string
             =
-            UnixPathResolution.tryFaccessatEager dirfd p amode flags system |> answered
+            Eager.tryFaccessatAs (Callers.leader system) dirfd p amode flags system
+            |> answered
 
         let tooLong (platform : SimulatedUnixPlatform) : PathArgumentBytes =
             let length = PathLimits.pathMaxBytes (SimulatedUnixPlatform.pathLimits platform)
@@ -1126,7 +1268,7 @@ module TestAccess =
 
         [ 0 ; 4 ; 2 ; 1 ]
         |> List.map (fun amode ->
-            UnixPathResolution.tryFaccessatEager linuxAtFdCwd (bytes "") amode 0x1000 system
+            Eager.tryFaccessatAs (Callers.leader system) linuxAtFdCwd (bytes "") amode 0x1000 system
             |> answered
         )
         |> shouldEqual [ "ok" ; "ok" ; "EACCES" ; "ok" ]
@@ -1145,26 +1287,26 @@ module TestAccess =
                 systemOn platform credentials "/b" (screenTree (InodeOwner.ofProcess credentials))
 
             let (readFd, _), system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                 | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
-            UnixPathResolution.tryFaccessatEager readFd (bytes "screen_f") 0 0 system
+            Eager.tryFaccessatAs (Callers.leader system) readFd (bytes "screen_f") 0 0 system
             |> shouldEqual (Ok (SyscallAnswer.Failed expected))
 
             // Linux's AT_EMPTY_PATH would ask about the pipe itself, which is
             // unmeasured.
             if atFdCwd = linuxAtFdCwd then
-                UnixPathResolution.tryFaccessatEager readFd (bytes "") 0 0x1000 system
+                Eager.tryFaccessatAs (Callers.leader system) readFd (bytes "") 0 0x1000 system
                 |> shouldEqual (Error (AccessRefusal.Path (PathRefusal.UnmodelledStartingObject readFd)))
 
             // An absolute path never looks at the dirfd.
-            UnixPathResolution.tryFaccessatEager readFd (bytes "/b/screen_f") 0 0 system
+            Eager.tryFaccessatAs (Callers.leader system) readFd (bytes "/b/screen_f") 0 0 system
             |> answered
             |> shouldEqual "ok"
 
             // Neither does AT_FDCWD's path, of course.
-            UnixPathResolution.tryFaccessatEager atFdCwd (bytes "screen_f") 0 0 system
+            Eager.tryFaccessatAs (Callers.leader system) atFdCwd (bytes "screen_f") 0 0 system
             |> answered
             |> shouldEqual "ok"
 
@@ -1181,7 +1323,7 @@ module TestAccess =
                 systemOn platform credentials "/pd" (pathTree (InodeOwner.ofProcess credentials))
 
             Eager.tryAccess (bytes p) amode system
-            |> shouldEqual (UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) amode 0 system)
+            |> shouldEqual (Eager.tryFaccessatAs (Callers.leader system) atFdCwd (bytes p) amode 0 system)
 
         let paths =
             Gen.elements [ "f" ; "sub" ; "lf" ; "dang" ; "cyc" ; "nx" ; "" ; "/pd/f" ; "f/" ; "/" ]
@@ -1203,22 +1345,28 @@ module TestAccess =
         let system =
             systemOn SimulatedUnixPlatform.linuxX64 credentials "/b" (screenTree (InodeOwner.ofProcess credentials))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_f", 4, 0)) system
-        |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system))
+        UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_f", 4, 0)) system
+        |> Stepped.resultShouldBe (Ok (SteppedCall.FAccessAt (SyscallAnswer.Completed 0L)))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_z", 4, 0)) system
-        |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EACCES), system))
+        UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_z", 4, 0)) system
+        |> Stepped.resultShouldBe (Ok (SteppedCall.FAccessAt (SyscallAnswer.Failed UnixError.EACCES)))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_nx", 0, 0x200)) system
-        |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ENOENT), system))
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_nx", 0, 0x200))
+            system
+        |> Stepped.resultShouldBe (Ok (SteppedCall.FAccessAt (SyscallAnswer.Failed UnixError.ENOENT)))
 
         let darwin =
             systemOn SimulatedUnixPlatform.macOsArm64 u501 "/b" (screenTree (owner 501u 20u))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (darwinAtFdCwd, bytes "screen_f", 0, 0x800)) darwin
-        |> shouldEqual (
+        UnixSystem.tryStep
+            (Callers.thread 0 darwin)
+            (Syscall.FAccessAt (darwinAtFdCwd, bytes "screen_f", 0, 0x800))
+            darwin
+        |> Stepped.resultShouldBe (
             Error (
-                SyscallRefusal.Access (
+                SyscallRefusal.FAccessAt (
                     AccessRefusal.UnmodelledFlags
                         {
                             Flavour = SimulatedUnixFlavour.Darwin
@@ -1251,15 +1399,17 @@ module TestAccess =
             systemOn SimulatedUnixPlatform.macOsArm64 u501 "/b" (screenTree (owner 501u 20u))
 
         [
-            UnixPathResolution.tryAccess 8 linux |> progress
-            UnixPathResolution.tryFaccessat linuxAtFdCwd 0 0x40000000 linux |> progress
-            UnixPathResolution.tryAccess 4 linux |> progress
-            UnixPathResolution.tryAccess 8 darwin |> progress
-            UnixPathResolution.tryFaccessat darwinAtFdCwd 0 0x40000000 darwin |> progress
+            UnixPathResolution.tryAccess (Callers.leader linux) 8 linux |> progress
+            UnixPathResolution.tryFaccessat (Callers.leader linux) linuxAtFdCwd 0 0x40000000 linux
+            |> progress
+            UnixPathResolution.tryAccess (Callers.leader linux) 4 linux |> progress
+            UnixPathResolution.tryAccess (Callers.leader darwin) 8 darwin |> progress
+            UnixPathResolution.tryFaccessat (Callers.leader darwin) darwinAtFdCwd 0 0x40000000 darwin
+            |> progress
         ]
         |> shouldEqual [ "EINVAL" ; "EINVAL" ; "needs the path" ; "needs the path" ; "EINVAL" ]
 
-        match UnixPathResolution.tryFaccessat 12345 4 0 linux with
+        match UnixPathResolution.tryFaccessat (Callers.leader linux) 12345 4 0 linux with
         | Ok (CallProgress.NeedsCopyIn paused) ->
             UnixPathResolution.tryAccessWithPath (bytes "/b/screen_f") paused
             |> answered

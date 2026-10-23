@@ -103,8 +103,7 @@ module TestSignalWaitPark =
         : unit
         =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let deadline = 1_000_000L
 
@@ -119,19 +118,20 @@ module TestSignalWaitPark =
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.Parking.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
+            Lone.deadlines asleep |> shouldEqual [ deadline ]
 
             // Which pending signals a wait may take is not modelled, so asking
             // fails loudly rather than guessing.
             let error =
                 Assert.Throws<Exception> (fun () ->
-                    UnixWait.satisfied thread asleep |> ignore<Set<WakePrimitive> option>
+                    UnixWait.satisfied (Callers.thread thread asleep) asleep
+                    |> ignore<Set<WakePrimitive> option>
                 )
 
             error.Message |> shouldContainText "SignalWait"

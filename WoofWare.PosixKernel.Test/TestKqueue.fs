@@ -49,50 +49,54 @@ module TestKqueue =
         | None -> failwith $"fd %d{fd} names no description"
 
     let private createKqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixKqueue.tryKqueue system with
-        | Ok (fd, system) -> fd, system
+        match UnixKqueue.tryKqueue (Callers.leader system) system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+        | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+        match
+            FileDescriptorRegistry.dup
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                fd
+                (Lone.fileDescriptors system)
+        with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup: %O{error}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, closed) -> closed
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 
     let private after (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     /// A wait for one event, with no changes.
     let private waits
         (thread : int)
         (fd : int)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         (system : UnixSystem<int, string>)
         : Result<KeventOutcome * UnixSystem<int, string>, KeventRefusal>
         =
-        UnixKqueue.tryKevent thread fd 0 [] 1 UserBuffer.Mapped timeout system
+        UnixKqueue.tryKevent (Callers.thread thread system) fd 0 [] 1 UserBuffer.Mapped timeout system
 
-    let private parks (thread : int) (fd : int) (timeout : KeventTimeout) (system : UnixSystem<int, string>) =
+    let private parks (thread : int) (fd : int) (timeout : TimespecArgument) (system : UnixSystem<int, string>) =
         match waits thread fd timeout system with
         | Ok (KeventOutcome.WouldBlock condition, parked) -> condition, parked
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
+    /// `thread`, woken (`Woken.thread`), finishes its `kevent`.
     let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
-        match UnixKqueue.tryFinishKevent thread system with
+        let system = Woken.thread thread system
+
+        match UnixKqueue.tryFinishKevent (Callers.thread thread system) system with
         | Ok (outcome, finished) ->
-            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
+            Lone.parkedIn thread finished |> shouldEqual None
             outcome, finished
         | Error refusal ->
             failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
-
-    let private woken (asleep : int list) (system : UnixSystem<int, string>) : (int * Set<WakePrimitive>) list =
-        UnixWait.wakes (Set.ofList asleep) system
 
     /// `system` with a caught SIGUSR1 pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -101,8 +105,12 @@ module TestKqueue =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -169,23 +177,24 @@ module TestKqueue =
                         AccessMode = FileAccessMode.ReadWrite
                         NonBlocking = false
                         Flock = None
-                        Status = OpenFileStatus.none
+                        Status = OpenFileStatus.none SimulatedUnixFlavour.Darwin
                     }
 
                 // A fresh description, not one any other descriptor shares.
-                OpenFileTable.descriptions system.Machine.OpenFiles
+                OpenFileTable.descriptions (UnixSystem.openFiles system)
                 |> Map.containsKey id
                 |> shouldEqual false
             | None -> failwith "the kqueue's descriptor names nothing"
 
             // Nothing but the descriptor table and the open file descriptions
             // changed.
-            { created with
-                Machine =
-                    { created.Machine with
-                        OpenFiles = system.Machine.OpenFiles
+            (Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        OpenFiles = UnixSystem.openFiles system
                     }
-            }
+                )
+                created)
             |> Lone.mapProc (fun _ -> Lone.proc system)
             |> shouldEqual system
 
@@ -199,10 +208,10 @@ module TestKqueue =
 
     [<Test>]
     let ``Linux has no kqueue, so kqueue and kevent are refused`` () : unit =
-        UnixKqueue.tryKqueue linux
+        UnixKqueue.tryKqueue (Callers.leader linux) linux
         |> shouldEqual (Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux))
 
-        waits 1 3 KeventTimeout.Null linux
+        waits 1 3 TimespecArgument.Null linux
         |> shouldEqual (Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux))
 
     // ------------------------------------------------------------------
@@ -244,13 +253,17 @@ module TestKqueue =
         | "unreadable" -> UserBuffer.Unmapped 8UL
         | other -> failwith $"unknown eventlist column %s{other}"
 
-    let private timeoutOf (column : string) : KeventTimeout =
+    let private timeoutOf (column : string) : TimespecArgument =
         let readable (seconds : int64) (nanoseconds : int64) =
-            KeventTimeout.Readable (seconds, nanoseconds)
+            TimespecArgument.Readable
+                {
+                    Seconds = seconds
+                    Nanoseconds = nanoseconds
+                }
 
         match column with
-        | "NULL" -> KeventTimeout.Null
-        | "unreadable" -> KeventTimeout.Unreadable
+        | "NULL" -> TimespecArgument.Null
+        | "unreadable" -> TimespecArgument.Unreadable
         | "{0,0}" -> readable 0L 0L
         | "{0,20ms}" -> readable 0L 20_000_000L
         | "{0,-1}" -> readable 0L -1L
@@ -294,13 +307,13 @@ module TestKqueue =
             after |> shouldEqual before
         | "rv=0", "-", "slept=0", KeventOutcome.Answered [] -> after |> shouldEqual before
         | "rv=0", "-", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread (Lone.threads after) with
+            match Lone.parkedIn thread after with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = Some deadline
                                          }) -> deadline - now |> shouldBeSmallerThan probeTimer
             | other -> failwith $"expected a park with a deadline, got %A{other}"
         | "rv=-1", "EINTR", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread (Lone.threads after) with
+            match Lone.parkedIn thread after with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = None
                                          }) -> ()
@@ -326,26 +339,36 @@ module TestKqueue =
                     ReuseAddress = false
                     Options = SocketOptions.initial
                     Phase = SocketPhase.Idle
+                    Drained = false
+                    Uid = UserId.root
                 }
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket system.Machine.NextSocketId (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    (Kernel.machine system).NextSocketId
+                    (Lone.fileDescriptors system)
 
-            let (SocketId raw) = system.Machine.NextSocketId
+            let (SocketId raw) = (Kernel.machine system).NextSocketId
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
-                        Sockets = Map.add system.Machine.NextSocketId socket system.Machine.Sockets
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Sockets = SocketTable.set machine.NextSocketId socket machine.Sockets
+                        DatagramReceivers = ForgedSocket.receivers machine.NextSocketId socket machine
                         NextSocketId = SocketId (raw + 1L)
                     }
-            }
+                )
+                system
             |> withRegistry registry
 
         let fileFd, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -378,7 +401,7 @@ module TestKqueue =
 
                 match
                     UnixKqueue.tryKevent
-                        1
+                        (Callers.thread 1 system)
                         (descriptor fd)
                         nchanges
                         readable
@@ -389,7 +412,7 @@ module TestKqueue =
                 with
                 | Ok (outcome, after) ->
                     try
-                        agreesWith system.Scheduling.NanosecondsSinceBoot rv errno slept outcome system after 1
+                        agreesWith (UnixSystem.nanosecondsSinceBoot system) rv errno slept outcome system after 1
                     with e ->
                         failwith $"line %A{line}: %s{e.Message}"
                 | Error refusal -> failwith $"line %A{line}: refused, %s{KeventRefusal.describe refusal}"
@@ -401,7 +424,7 @@ module TestKqueue =
     let private drained : int * UnixSystem<int, string> =
         let k, system = createKqueue darwin
         let d, system = dup k system
-        let _, system = parks 1 k KeventTimeout.Null system
+        let _, system = parks 1 k TimespecArgument.Null system
         let system = close k system
 
         match finishes 1 system with
@@ -422,7 +445,7 @@ module TestKqueue =
 
                 match
                     UnixKqueue.tryKevent
-                        2
+                        (Callers.thread 2 system)
                         d
                         nchanges
                         readable
@@ -433,7 +456,7 @@ module TestKqueue =
                 with
                 | Ok (outcome, after) ->
                     try
-                        agreesWith system.Scheduling.NanosecondsSinceBoot rv errno slept outcome system after 2
+                        agreesWith (UnixSystem.nanosecondsSinceBoot system) rv errno slept outcome system after 2
                     with e ->
                         failwith $"line %A{line}: %s{e.Message}"
                 | Error refusal -> failwith $"line %A{line}: refused, %s{KeventRefusal.describe refusal}"
@@ -497,12 +520,15 @@ module TestKqueue =
         (nchanges : int)
         (readable : Kevent list)
         (nevents : int)
-        (timeout : KeventTimeout)
+        (timeout : TimespecArgument)
         : Result<KeventOutcome option, KeventRefusal>
         =
         match timeout with
-        | KeventTimeout.Unreadable -> Ok (Some (KeventOutcome.Failed UnixError.EFAULT))
-        | KeventTimeout.Readable (seconds, nanoseconds) when
+        | TimespecArgument.Unreadable -> Ok (Some (KeventOutcome.Failed UnixError.EFAULT))
+        | TimespecArgument.Readable {
+                                        Seconds = seconds
+                                        Nanoseconds = nanoseconds
+                                    } when
             seconds < 0L
             || seconds > 2147483647L
             || nanoseconds < 0L
@@ -522,7 +548,10 @@ module TestKqueue =
             Ok (Some (KeventOutcome.Answered []))
         else
             match timeout with
-            | KeventTimeout.Readable (0L, 0L) -> Ok (Some (KeventOutcome.Answered []))
+            | TimespecArgument.Readable {
+                                            Seconds = 0L
+                                            Nanoseconds = 0L
+                                        } -> Ok (Some (KeventOutcome.Answered []))
             | _ -> Ok None
 
     let private change : Gen<Kevent> =
@@ -551,7 +580,7 @@ module TestKqueue =
                 }
         }
 
-    let private timeoutGen : Gen<KeventTimeout> =
+    let private timeoutGen : Gen<TimespecArgument> =
         let seconds =
             Gen.oneof
                 [
@@ -568,9 +597,18 @@ module TestKqueue =
 
         Gen.oneof
             [
-                Gen.constant KeventTimeout.Null
-                Gen.constant KeventTimeout.Unreadable
-                Gen.map2 (fun s ns -> KeventTimeout.Readable (s, ns)) seconds nanoseconds
+                Gen.constant TimespecArgument.Null
+                Gen.constant TimespecArgument.Unreadable
+                Gen.map2
+                    (fun s ns ->
+                        TimespecArgument.Readable
+                            {
+                                Seconds = s
+                                Nanoseconds = ns
+                            }
+                    )
+                    seconds
+                    nanoseconds
             ]
 
     [<Test>]
@@ -587,15 +625,23 @@ module TestKqueue =
                 return nchanges, readable, nevents, timeout
             }
 
-        let property (nchanges : int, readable : Kevent list, nevents : int, timeout : KeventTimeout) : unit =
+        let property (nchanges : int, readable : Kevent list, nevents : int, timeout : TimespecArgument) : unit =
             let actual =
-                UnixKqueue.tryKevent 1 fd nchanges readable nevents UserBuffer.Mapped timeout system
+                UnixKqueue.tryKevent
+                    (Callers.thread 1 system)
+                    fd
+                    nchanges
+                    readable
+                    nevents
+                    UserBuffer.Mapped
+                    timeout
+                    system
 
             match oracle system nchanges readable nevents timeout, actual with
             | Error expected, actual -> actual |> shouldEqual (Error expected)
             | Ok (Some expected), actual -> actual |> shouldEqual (Ok (expected, system))
             | Ok None, Ok (KeventOutcome.WouldBlock _, parked) ->
-                match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
+                match Lone.parkedIn 1 parked with
                 | Some (ParkedSyscall.Kevent wait) ->
                     wait.Kqueue |> shouldEqual (idOf fd system)
                     wait.Fd |> shouldEqual fd
@@ -612,7 +658,7 @@ module TestKqueue =
         ()
         : unit
         =
-        let property (fd : int, timeout : KeventTimeout, nchanges : int, nevents : int) : unit =
+        let property (fd : int, timeout : TimespecArgument, nchanges : int, nevents : int) : unit =
             let expected =
                 match oracle darwin 0 [] 1 timeout with
                 | Ok (Some (KeventOutcome.Failed error)) when error <> UnixError.EBADF -> KeventOutcome.Failed error
@@ -621,7 +667,7 @@ module TestKqueue =
             // Even a readable change, which a kqueue would apply or refuse, is never reached.
             let readable = if nchanges > 0 then [ someChange ] else []
 
-            UnixKqueue.tryKevent 1 fd nchanges readable nevents UserBuffer.Mapped timeout darwin
+            UnixKqueue.tryKevent (Callers.thread 1 darwin) fd nchanges readable nevents UserBuffer.Mapped timeout darwin
             |> shouldEqual (Ok (expected, darwin))
 
         // Standard input, output and error are pipe ends; 7 and -1 are not open.
@@ -644,7 +690,15 @@ module TestKqueue =
             let fd, system = createKqueue (after now darwin)
 
             let condition, parked =
-                parks 1 fd (KeventTimeout.Readable (seconds, nanoseconds)) system
+                parks
+                    1
+                    fd
+                    (TimespecArgument.Readable
+                        {
+                            Seconds = seconds
+                            Nanoseconds = nanoseconds
+                        })
+                    system
 
             let deadline = now + seconds * nanosecondsPerSecond + nanoseconds
 
@@ -660,26 +714,23 @@ module TestKqueue =
                 )
             )
 
-            UnixWait.deadlines (Set.singleton 1) parked |> shouldEqual [ deadline ]
+            Lone.deadlines parked |> shouldEqual [ deadline ]
 
-            // One nanosecond short: nothing wakes it, and a finish attempted anyway parks again
-            // on the same deadline, behind every other park.
+            // One nanosecond short: nothing wakes it, so there is no call to finish, and it
+            // sleeps on to the same deadline.
             let short = after (deadline - 1L - now) parked
-            woken [ 1 ] short |> shouldEqual []
+            Lone.wakes short |> shouldEqual []
 
-            let ordinalBefore = (UnixThreadTable.parkOf 1 (Lone.threads parked)).Value.Ordinal
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixKqueue.tryFinishKevent (Callers.thread 1 short) short |> ignore
+            )
+            |> ignore<System.InvalidOperationException>
 
-            match UnixKqueue.tryFinishKevent 1 short with
-            | Ok (KeventOutcome.WouldBlock _, reparked) ->
-                UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
-
-                (UnixThreadTable.parkOf 1 (Lone.threads reparked)).Value.Ordinal
-                |> shouldBeGreaterThan ordinalBefore
-            | other -> failwith $"expected a re-park, got %A{other}"
+            Lone.deadlines short |> shouldEqual [ deadline ]
 
             let expired = after (deadline - now) parked
 
-            woken [ 1 ] expired
+            Lone.wakes expired
             |> shouldEqual [ 1, Set.singleton (WakePrimitive.DeadlinePassed deadline) ]
 
             finishes 1 expired |> fst |> shouldEqual (KeventOutcome.Answered [])
@@ -698,7 +749,7 @@ module TestKqueue =
     [<Test>]
     let ``a null timeout waits for an event, a drain or a signal, and no deadline`` () : unit =
         let fd, system = createKqueue darwin
-        let condition, parked = parks 1 fd KeventTimeout.Null system
+        let condition, parked = parks 1 fd TimespecArgument.Null system
 
         condition
         |> shouldEqual (
@@ -711,7 +762,7 @@ module TestKqueue =
             )
         )
 
-        match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
+        match Lone.parkedIn 1 parked with
         | Some (ParkedSyscall.Kevent wait) ->
             wait
             |> shouldEqual
@@ -724,18 +775,36 @@ module TestKqueue =
                 }
         | other -> failwith $"expected a kevent park, got %A{other}"
 
-        UnixWait.deadlines (Set.singleton 1) parked |> shouldEqual []
-        woken [ 1 ] (after 1_000_000_000_000_000L parked) |> shouldEqual []
+        Lone.deadlines parked |> shouldEqual []
+        Lone.wakes (after 1_000_000_000_000_000L parked) |> shouldEqual []
 
     [<Test>]
     let ``a deadline past the clock's range is refused`` () : unit =
         let fd, system = createKqueue (after (Int64.MaxValue - 5L) darwin)
 
-        waits 1 fd (KeventTimeout.Readable (0L, 6L)) system
+        waits
+            1
+            fd
+            (TimespecArgument.Readable
+                {
+                    Seconds = 0L
+                    Nanoseconds = 6L
+                })
+            system
         |> shouldEqual (Error (KeventRefusal.DeadlineBeyondClock (Int64.MaxValue - 5L, 0L, 6L)))
 
         // Exactly the last nanosecond is representable.
-        match waits 1 fd (KeventTimeout.Readable (0L, 5L)) system with
+        match
+            waits
+                1
+                fd
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 5L
+                    })
+                system
+        with
         | Ok (KeventOutcome.WouldBlock _, _) -> ()
         | other -> failwith $"expected a park, got %A{other}"
 
@@ -747,7 +816,15 @@ module TestKqueue =
     let ``closing the descriptor a sleeper entered through ends its wait with EBADF`` () : unit =
         // Measured (section E, rows E1, E6 and E7): with no other descriptor onto the kqueue,
         // and with or without a timeout.
-        for timeout in [ KeventTimeout.Null ; KeventTimeout.Readable (0L, 300_000_000L) ] do
+        for timeout in
+            [
+                TimespecArgument.Null
+                TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 300_000_000L
+                    }
+            ] do
             let k, system = createKqueue darwin
             let kqueue = idOf k system
             let _, parked = parks 1 k timeout system
@@ -758,7 +835,7 @@ module TestKqueue =
             FileDescriptorRegistry.tryFindId k (Lone.fileDescriptors closed)
             |> shouldEqual None
 
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.tryFind kqueue
             |> Option.map _.Target
             |> shouldEqual (
@@ -775,14 +852,14 @@ module TestKqueue =
 
             UnixSystem.checkInvariants closed |> shouldEqual []
 
-            woken [ 1 ] closed
+            Lone.wakes closed
             |> shouldEqual [ 1, Set.singleton (WakePrimitive.KqueueDrained kqueue) ]
 
             // The kqueue goes as the call holding it returns.
             let outcome, finished = finishes 1 closed
             outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
 
-            OpenFileTable.descriptions finished.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles finished)
             |> Map.containsKey kqueue
             |> shouldEqual false
 
@@ -818,7 +895,7 @@ module TestKqueue =
                         | ThroughK -> k
                         | ThroughD -> d
 
-                    parks thread fd KeventTimeout.Null system |> snd
+                    parks thread fd TimespecArgument.Null system |> snd
                 )
 
             let closing, surviving, through = if closeK then k, d, ThroughK else d, k, ThroughD
@@ -832,7 +909,7 @@ module TestKqueue =
             | other -> failwith $"expected the surviving kqueue, got %A{other}"
 
             if drains then
-                woken threads closed
+                Lone.wakes closed
                 |> shouldEqual (
                     threads
                     |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
@@ -850,14 +927,22 @@ module TestKqueue =
                 // once, whatever its timeout.
                 for timeout in
                     [
-                        KeventTimeout.Null
-                        KeventTimeout.Readable (0L, 0L)
-                        KeventTimeout.Readable (1L, 0L)
+                        TimespecArgument.Null
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            }
+                        TimespecArgument.Readable
+                            {
+                                Seconds = 1L
+                                Nanoseconds = 0L
+                            }
                     ] do
                     waits 9 surviving timeout (Threads.ensure 9 finished)
                     |> shouldEqual (Ok (KeventOutcome.Failed UnixError.EBADF, Threads.ensure 9 finished))
             else
-                woken threads closed |> shouldEqual []
+                Lone.wakes closed |> shouldEqual []
 
         let gen =
             Gen.zip
@@ -885,13 +970,13 @@ module TestKqueue =
                         | ThroughK -> k
                         | ThroughD -> d
 
-                    parks thread fd KeventTimeout.Null system |> snd
+                    parks thread fd TimespecArgument.Null system |> snd
                 )
 
             let closed = parked |> close k |> close d
             UnixSystem.checkInvariants closed |> shouldEqual []
 
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.tryFind kqueue
             |> Option.map _.Target
             |> shouldEqual (
@@ -906,7 +991,7 @@ module TestKqueue =
                 )
             )
 
-            woken threads closed
+            Lone.wakes closed
             |> shouldEqual (
                 threads
                 |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
@@ -919,14 +1004,14 @@ module TestKqueue =
                     outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
                     UnixSystem.checkInvariants system |> shouldEqual []
 
-                    OpenFileTable.descriptions system.Machine.OpenFiles
+                    OpenFileTable.descriptions (UnixSystem.openFiles system)
                     |> Map.containsKey kqueue
                     |> shouldEqual (thread < List.length threads)
 
                     system
                 )
 
-            OpenFileTable.descriptions finished.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles finished)
             |> Map.containsKey kqueue
             |> shouldEqual false
 
@@ -938,23 +1023,38 @@ module TestKqueue =
 
     [<Test>]
     let ``a drain and an expired deadline together are refused, as is a signal beside either`` () : unit =
-        // Darwin answers whichever reached the sleeper first, which nothing records.
+        // Darwin answers whichever reached the sleeper first, which a wake that
+        // found both does not say.
         let k, system = createKqueue darwin
         let d, system = dup k system
         let kqueue = idOf k system
-        let _, parked = parks 1 k (KeventTimeout.Readable (0L, 5L)) system
+
+        let _, parked =
+            parks
+                1
+                k
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 5L
+                    })
+                system
 
         let both = close k parked |> after 5L
 
-        UnixKqueue.tryFinishKevent 1 both
+        UnixKqueue.tryFinishKevent (Callers.thread 1 both) (Woken.thread 1 both)
         |> shouldEqual (Error (KeventRefusal.DrainBesideDeadline kqueue))
 
-        match UnixKqueue.tryFinishKevent 1 (signalled 1 (close k parked)) with
+        let signalledDrained = signalled 1 (close k parked)
+
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledDrained) (Woken.thread 1 signalledDrained) with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the drain to be refused, got %A{other}"
 
-        match UnixKqueue.tryFinishKevent 1 (signalled 1 (after 5L parked)) with
+        let signalledExpired = signalled 1 (after 5L parked)
+
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledExpired) (Woken.thread 1 signalledExpired) with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the deadline to be refused, got %A{other}"
@@ -968,17 +1068,29 @@ module TestKqueue =
     [<Test>]
     let ``a caught signal ends the wait with EINTR, timed or not`` () : unit =
         // Measured (section D): EINTR under SA_RESTART and without, NULL timeout and 2 s.
-        for timeout in [ KeventTimeout.Null ; KeventTimeout.Readable (2L, 0L) ] do
+        for timeout in
+            [
+                TimespecArgument.Null
+                TimespecArgument.Readable
+                    {
+                        Seconds = 2L
+                        Nanoseconds = 0L
+                    }
+            ] do
             let fd, system = createKqueue darwin
             let _, parked = parks 1 fd timeout system
             let interrupted = signalled 1 parked
 
-            woken [ 1 ] interrupted
+            Lone.wakes interrupted
             |> shouldEqual [ 1, Set.singleton WakePrimitive.SignalDeliverable ]
 
-            finishes 1 interrupted
-            |> fst
-            |> shouldEqual (KeventOutcome.Failed UnixError.EINTR)
+            let outcome, finished = finishes 1 interrupted
+            outcome |> shouldEqual KeventOutcome.Interrupted
+
+            // The return to user mode runs the handler and fails the call.
+            let call, frames, _ = Interruptions.ends (Callers.thread 1 finished) finished
+            call |> shouldEqual InterruptedCall.FailsWithEintr
+            frames |> List.length |> shouldEqual 1
 
         SyscallInterruption.ruleOf
             SimulatedUnixFlavour.Darwin
@@ -999,25 +1111,38 @@ module TestKqueue =
     [<Test>]
     let ``a parked thread cannot wait again, and an unparked one cannot finish`` () : unit =
         let fd, system = createKqueue darwin
-        let _, parked = parks 1 fd KeventTimeout.Null system
+        let _, parked = parks 1 fd TimespecArgument.Null system
 
         let exn =
-            Assert.Throws<exn> (fun () -> waits 1 fd KeventTimeout.Null parked |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                waits 1 fd TimespecArgument.Null parked |> ignore
+            )
 
         exn.Message |> shouldContainText "is parked"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixKqueue.tryFinishKevent 1 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixKqueue.tryFinishKevent (Callers.thread 1 system) system |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 
         let exn =
-            Assert.Throws<exn> (fun () ->
-                UnixKqueue.tryKevent 1 fd 1 [ someChange ; someChange ] 1 UserBuffer.Mapped KeventTimeout.Null system
+            Assert.Throws<System.ArgumentException> (fun () ->
+                UnixKqueue.tryKevent
+                    (Callers.thread 1 system)
+                    fd
+                    1
+                    [ someChange ; someChange ]
+                    1
+                    UserBuffer.Mapped
+                    TimespecArgument.Null
+                    system
                 |> ignore
             )
 
         exn.Message |> shouldContainText "at most nchanges"
+        exn.ParamName |> shouldEqual "changes"
 
     [<Test>]
     let ``checkInvariants rejects a kevent park no call could have made`` () : unit =
@@ -1025,7 +1150,7 @@ module TestKqueue =
         let kqueue = idOf k system
 
         let forged (park : ParkedKevent) (system : UnixSystem<int, string>) =
-            UnixSystem.checkInvariants (UnixWait.park 1 (ParkedSyscall.Kevent park) system)
+            UnixSystem.checkInvariants (Lone.Parking.park 1 (ParkedSyscall.Kevent park) system)
 
         let honest =
             {
@@ -1043,7 +1168,7 @@ module TestKqueue =
                 MaxEvents = 0
             }
             system
-        |> shouldEqual [ UnixSystemDefect.ParkedKeventCountNotPositive (1, 0) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedKeventCountNotPositive (Callers.ofDefault 1, 0) ]
 
         // Entered through stdin, which names a pipe end, not the kqueue.
         forged
@@ -1053,12 +1178,12 @@ module TestKqueue =
             system
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedKeventDescriptorRebound (1, 0, kqueue, Some (idOf 0 system))
+                UnixSystemDefect.ParkedKeventDescriptorRebound (Callers.ofDefault 1, 0, kqueue, Some (idOf 0 system))
             ]
 
         // ...which a drain excuses: the descriptor it entered through may have gone.
         let d, withDup = dup k system
-        let drained = close k (UnixWait.park 1 (ParkedSyscall.Kevent honest) withDup)
+        let drained = close k (Lone.Parking.park 1 (ParkedSyscall.Kevent honest) withDup)
         UnixSystem.checkInvariants drained |> shouldEqual []
         ignore<int> d
 
@@ -1071,7 +1196,7 @@ module TestKqueue =
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKeventOnNonKqueue (
-                    1,
+                    Callers.ofDefault 1,
                     idOf 0 system,
                     (FileDescriptorRegistry.tryFindTarget 0 (Lone.fileDescriptors system)).Value
                 )
@@ -1080,7 +1205,10 @@ module TestKqueue =
     [<Test>]
     let ``checkInvariants rejects an object the flavour's kernel does not have`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc linux).ProcessId (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                (Lone.proc linux).ProcessId
+                (Lone.fileDescriptors linux)
 
         let withKqueue = withRegistry registry linux
 
@@ -1100,7 +1228,10 @@ module TestKqueue =
                 )
             ]
 
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors darwin)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform darwin))
+                (Lone.fileDescriptors darwin)
 
         let withEpoll = withRegistry registry darwin
 

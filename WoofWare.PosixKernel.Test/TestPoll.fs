@@ -43,12 +43,13 @@ module TestPoll =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
     let private linux : UnixSystem<int, string> =
         systemOn SimulatedUnixPlatform.linuxX64
@@ -73,13 +74,14 @@ module TestPoll =
         =
         let system = Threads.ensure poller system
 
-        match UnixPoll.tryPoll poller entries milliseconds system with
+        match UnixPoll.tryPoll (Callers.thread poller system) entries milliseconds system with
         | Error refusal -> Error refusal
         | Ok (PollOutcome.Answered (reported, count), after) ->
             after |> shouldEqual system
             Ok (reported, count)
         | Ok (PollOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %A{condition}"
         | Ok (PollOutcome.Failed error, _) -> failwith $"expected an answer, got %A{error}"
+        | Ok (PollOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
 
     let private pollOrFail
         (entries : PollEntry list)
@@ -99,7 +101,7 @@ module TestPoll =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
 
         let (SocketId raw) = socketId
 
@@ -115,19 +117,26 @@ module TestPoll =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = phase
+                Drained = false
+                Uid = UserId.root
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (raw + 1L)
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// An idle IPv4 stream socket.
@@ -141,6 +150,9 @@ module TestPoll =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 accessMode
@@ -194,7 +206,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = []
-                            Drained = false
                         }),
                 0x0000s
                 "IPv4 TCP, listening, queue nonempty",
@@ -205,7 +216,6 @@ module TestPoll =
                         {
                             Backlog = 8
                             Queue = [ ForgedConnection.queued queued ]
-                            Drained = false
                         }),
                 0x0041s
                 "IPv4 TCP, established, peer alive",
@@ -336,7 +346,6 @@ module TestPoll =
                     {
                         Backlog = 1
                         Queue = [ ForgedConnection.queued (ConnectionId 0L) ]
-                        Drained = false
                     })
                 linux
 
@@ -506,7 +515,7 @@ module TestPoll =
                     let system = Threads.ensure poller system
 
                     for events in masks do
-                        match UnixPoll.tryPoll poller [ entry fd events ] 0 system with
+                        match UnixPoll.tryPoll (Callers.thread poller system) [ entry fd events ] 0 system with
                         | Ok _
                         | Error _ -> ()
 
@@ -516,7 +525,9 @@ module TestPoll =
     [<Test>]
     let ``an entry naming an epoll instance is refused`` () : unit =
         let queueFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                (Lone.fileDescriptors linux)
 
         let system = Lone.withFileDescriptors registry linux
 
@@ -535,9 +546,12 @@ module TestPoll =
     [<Test>]
     let ``the refusal names the first unmeasured entry in list order`` () : unit =
         let firstEpoll, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                (Lone.fileDescriptors linux)
 
-        let secondEpoll, registry = FileDescriptorRegistry.createEpoll registry
+        let secondEpoll, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry linux
 

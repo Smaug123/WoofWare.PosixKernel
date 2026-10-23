@@ -33,12 +33,13 @@ module TestStateQueries =
     [<Test>]
     let ``platform is the one the machine was started on`` () : unit =
         for platform in platforms do
-            UnixMachineState.platform (initialOn platform).Machine |> shouldEqual platform
+            UnixMachineState.platform (Kernel.machine (initialOn platform))
+            |> shouldEqual platform
 
     [<Test>]
     let ``processorCount is the default until set, and then what was set`` () : unit =
         for platform in platforms do
-            UnixMachineState.processorCount (initialOn platform).Machine
+            UnixMachineState.processorCount (Kernel.machine (initialOn platform))
             |> shouldEqual UnixSystem.defaultProcessorCount
 
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
@@ -46,7 +47,7 @@ module TestStateQueries =
             |> UnixBootImage.tryWithProcessorCount count
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual count
 
         Check.One (
@@ -76,8 +77,8 @@ module TestStateQueries =
             uptime |> shouldEqual (List.sum advances)
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual uptime
 
-            match UnixClock.tryClockGettime (fullPrecisionSinceBoot platform) system with
-            | Ok (Ok reading) ->
+            match UnixClock.tryClockGettime (Callers.leader system) (fullPrecisionSinceBoot platform) system with
+            | Ok (ClockGettimeAnswer.Completed reading) ->
                 UnixTimestamp.seconds reading * 1_000_000_000L
                 + int64 (UnixTimestamp.nanoseconds reading)
                 |> shouldEqual uptime
@@ -89,45 +90,6 @@ module TestStateQueries =
         Check.One (
             propertyConfig,
             Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf advance))) property
-        )
-
-    [<Test>]
-    let ``delivered is every write to a drained stream, oldest first`` () : unit =
-        let property (platform : SimulatedUnixPlatform, writes : (int * int) list) : unit =
-            let initial = initialOn platform
-
-            DeliveryLog.count (UnixMachineState.delivered initial.Machine) |> shouldEqual 0
-
-            let final, expected =
-                ((initial, []), List.indexed writes)
-                ||> List.fold (fun (system, expected) (index, (fd, count)) ->
-                    let bytes =
-                        ImmutableArray.Create<byte> (Array.init count (fun i -> byte (index + i)))
-
-                    match WriteOutcomes.write fd bytes system with
-                    | Ok (WriteAnswer.Completed _, after) ->
-                        let expected =
-                            if count = 0 then
-                                expected
-                            else
-                                {
-                                    Endpoint = ExternalEndpoint (UnixSystem.processId after, fd)
-                                    Bytes = bytes
-                                }
-                                :: expected
-
-                        after, expected
-                    | other -> failwith $"write(%d{fd}, %d{count} bytes) answered %A{Result.map fst other}"
-                )
-
-            DeliveryLog.toList (UnixMachineState.delivered final.Machine)
-            |> shouldEqual (List.rev expected)
-
-        let write = Gen.zip (Gen.elements [ 1 ; 2 ]) (Gen.choose (0, 4))
-
-        Check.One (
-            propertyConfig,
-            Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf write |> Gen.resize 10))) property
         )
 
     /// Arbitrary non-NUL bytes, short and drawn from a small alphabet.
@@ -174,32 +136,24 @@ module TestStateQueries =
             |> shouldEqual path
 
     [<Test>]
-    let ``signals is the process's own, read under its platform's numbering`` () : unit =
-        for platform in platforms do
-            UnixProcessState.signals (Lone.proc (initialOn platform))
-            |> SignalState.numbering
-            |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
-
-    [<Test>]
     let ``park is absent until a thread sleeps, and then names the syscall it sleeps in`` () : unit =
         for platform in platforms do
             let system = initialOn platform
 
-            UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
-            |> shouldEqual None
+            UnixThreadState.park (Lone.thread 0 system) |> shouldEqual None
 
             let system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (3, 4), system) -> system
                 | other -> failwith $"pipe2: %A{other}"
 
             let system =
-                match UnixReadWrite.tryRead 0 3 UserBuffer.Mapped 16UL system with
+                match UnixReadWrite.tryRead (Callers.thread 0 system) 3 UserBuffer.Mapped 16UL system with
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 
-            let park = UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
-            park |> shouldEqual (UnixThreadTable.parkOf 0 (Lone.threads system))
+            let park = UnixThreadState.park (Lone.thread 0 system)
+            park |> shouldEqual (Lone.thread 0 system).Parked
 
             match park |> Option.map (fun park -> park.Syscall) with
             | Some (ParkedSyscall.PipeRead _) -> ()
@@ -227,32 +181,23 @@ module TestStateQueries =
                         (CpuId 0))
                 |> UnixSystem.advanceClock 1_234L
 
-            UnixSystem.leader system |> shouldEqual (Lone.leader system)
-            UnixSystem.threads system |> shouldEqual (Lone.threads system)
+            UnixSystem.leader (Lone.pid system) system |> shouldEqual (Lone.leader system)
+
+            UnixSystem.threads (Lone.pid system) system
+            |> shouldEqual (Lone.threadMap system)
+
             UnixSystem.platform system |> shouldEqual platform
             UnixSystem.processorCount system |> shouldEqual 3
-            UnixSystem.environment system |> shouldEqual [ entry ]
-            UnixSystem.processPath system |> shouldEqual (Some path)
+            UnixSystem.environment (Lone.pid system) system |> shouldEqual [ entry ]
+            UnixSystem.processPath (Lone.pid system) system |> shouldEqual (Some path)
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual 1_234L
 
-            UnixSystem.signals system
+            UnixSystem.signals (Lone.pid system) system
             |> shouldEqual (UnixProcessState.signals (Lone.proc system))
-
-            UnixSystem.delivered system
-            |> shouldEqual (UnixMachineState.delivered system.Machine)
 
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do
-                UnixSystem.descriptorTarget fd system
+                UnixSystem.descriptorTarget (Lone.pid system) fd system
                 |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system))
 
-            UnixSystem.descriptorTarget 3 system |> shouldEqual None
-
-            // And a write that reaches the client is what `delivered` reports.
-            match UnixReadWrite.tryWriteBytes 0 1 (ImmutableArray.Create<byte> [| 7uy |]) system with
-            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, written)) ->
-                UnixSystem.delivered written
-                |> DeliveryLog.toList
-                |> List.map (fun delivery -> List.ofSeq delivery.Bytes)
-                |> shouldEqual [ [ 7uy ] ]
-            | other -> failwith $"writing to standard output: %A{other}"
+            UnixSystem.descriptorTarget (Lone.pid system) 3 system |> shouldEqual None

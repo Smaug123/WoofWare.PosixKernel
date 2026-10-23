@@ -103,8 +103,8 @@ module TestUnmodelledException =
             )
             |> List.ofArray
 
-        // A control: a function whose `Error` is an errno.
-        answered |> shouldContain ("UnixSignal.sigaction", "UnixError")
+        // A control: a parser, whose `Error` says what was wrong with its input.
+        answered |> shouldContain ("SignalMask.ofWord", "SignalMaskRefusal")
 
         answered
         |> List.filter (fun (_, error : string) -> not (publicErrors.Contains error))
@@ -117,6 +117,7 @@ module TestUnmodelledException =
         | RefusalKind.Unmodelled -> typeof<UnmodelledException>
         | RefusalKind.Contradictory _ -> typeof<ArgumentException>
         | RefusalKind.OutOfRange _ -> typeof<ArgumentOutOfRangeException>
+        | RefusalKind.Null _ -> typeof<ArgumentNullException>
         | RefusalKind.Misuse -> typeof<InvalidOperationException>
         | RefusalKind.NotOnPlatform -> typeof<PlatformNotSupportedException>
 
@@ -129,6 +130,7 @@ module TestUnmodelledException =
                 Gen.constant RefusalKind.Unmodelled
                 parameter |> Gen.map RefusalKind.Contradictory
                 parameter |> Gen.map RefusalKind.OutOfRange
+                parameter |> Gen.map RefusalKind.Null
                 Gen.constant RefusalKind.Misuse
                 Gen.constant RefusalKind.NotOnPlatform
             ]
@@ -168,7 +170,8 @@ module TestUnmodelledException =
 
                 match kind, e with
                 | RefusalKind.Contradictory parameter, (:? ArgumentException as e)
-                | RefusalKind.OutOfRange parameter, (:? ArgumentException as e) -> e.ParamName |> shouldEqual parameter
+                | RefusalKind.OutOfRange parameter, (:? ArgumentException as e)
+                | RefusalKind.Null parameter, (:? ArgumentException as e) -> e.ParamName |> shouldEqual parameter
                 | _ -> ()
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 500, Prop.forAll (Arb.fromGen gen) property)
@@ -251,8 +254,10 @@ module TestUnmodelledException =
 
         // And through a call that refuses one: getrandom into memory whose bytes
         // the client cannot produce.
+        let system = booted SimulatedUnixPlatform.linuxX64
+
         Assert.Throws<UnmodelledException> (fun () ->
-            UnixEntropy.getRandom 0 UserBuffer.Opaque 8UL 0u (booted SimulatedUnixPlatform.linuxX64)
+            UnixEntropy.getRandom (Callers.thread 0 system) UserBuffer.Opaque 8UL 0u system
             |> ignore<GetRandomAnswer * UnixSystem<int, string>>
         )
         |> ignore
@@ -277,8 +282,8 @@ module TestUnmodelledException =
                 agrees
                     SocketRefusal.kind
                     SocketRefusal.describe
-                    (fun () -> UnixSocket.trySocket domain kind protocol system)
-                    (fun () -> UnixSocket.socket domain kind protocol system)
+                    (fun () -> UnixSocket.trySocket (Callers.leader system) domain kind protocol system)
+                    (fun () -> UnixSocket.socket (Callers.leader system) domain kind protocol system)
             )
             [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]
 
@@ -295,8 +300,8 @@ module TestUnmodelledException =
                 agrees
                     ClockGettimeRefusal.kind
                     ClockGettimeRefusal.describe
-                    (fun () -> UnixClock.tryClockGettime clockId system)
-                    (fun () -> UnixClock.clockGettime clockId system)
+                    (fun () -> UnixClock.tryClockGettime (Callers.leader system) clockId system)
+                    (fun () -> UnixClock.clockGettime (Callers.leader system) clockId system)
             )
             [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]
 
@@ -325,20 +330,20 @@ module TestUnmodelledException =
                     agrees
                         FcntlRefusal.kind
                         FcntlRefusal.describe
-                        (fun () -> UnixDescriptor.tryFcntl fd word other system)
-                        (fun () -> UnixDescriptor.fcntl fd word other system)
+                        (fun () -> UnixDescriptor.tryFcntl (Callers.leader system) fd word other system)
+                        (fun () -> UnixDescriptor.fcntl (Callers.leader system) fd word other system)
                 | 1 ->
                     agrees
                         Dup3Refusal.kind
                         Dup3Refusal.describe
-                        (fun () -> UnixDescriptor.tryDup3 fd other word system)
-                        (fun () -> UnixDescriptor.dup3 fd other word system)
+                        (fun () -> UnixDescriptor.tryDup3 (Callers.leader system) fd other word system)
+                        (fun () -> UnixDescriptor.dup3 (Callers.leader system) fd other word system)
                 | _ ->
                     agrees
                         PosixFadviseRefusal.kind
                         PosixFadviseRefusal.describe
-                        (fun () -> UnixDescriptor.tryPosixFadvise fd 0L 0L word system)
-                        (fun () -> UnixDescriptor.posixFadvise fd 0L 0L word system)
+                        (fun () -> UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L word system)
+                        (fun () -> UnixDescriptor.posixFadvise (Callers.leader system) fd 0L 0L word system)
             )
             [
                 Observed.Answered
@@ -375,8 +380,8 @@ module TestUnmodelledException =
                 agrees
                     GetIdsRefusal.kind
                     GetIdsRefusal.describe
-                    (fun () -> UnixCredentials.tryGetresuid real effective saved system)
-                    (fun () -> UnixCredentials.getresuid real effective saved system)
+                    (fun () -> UnixCredentials.tryGetresuid (Callers.leader system) real effective saved system)
+                    (fun () -> UnixCredentials.getresuid (Callers.leader system) real effective saved system)
             )
             [
                 Observed.Answered
@@ -433,7 +438,7 @@ module TestUnmodelledException =
                 Observed.Refused (RefusalKind.OutOfRange "")
             ]
 
-    let private syscallGen : Gen<Syscall> =
+    let private syscallGen : Gen<Syscall<int, string>> =
         let fd = Gen.choose (-1, 5)
         let word = Gen.oneof [ Gen.choose (-3, 40) ; Gen.choose (0, 0x2000) ]
 
@@ -463,11 +468,14 @@ module TestUnmodelledException =
                     agrees
                         SyscallRefusal.kind
                         SyscallRefusal.describe
-                        (fun () -> UnixSystem.tryStep 0 call system)
-                        (fun () -> UnixSystem.step 0 call system)
+                        (fun () ->
+                            UnixSystem.tryStep (Callers.thread 0 system) call system
+                            |> Result.map Stepped.view
+                        )
+                        (fun () -> UnixSystem.step (Callers.thread 0 system) call system |> Stepped.view)
 
                 let machine = Machines.ofSystem system
-                let pid = UnixSystem.processId system
+                let pid = Lone.pid system
 
                 let unwrap (answer : 'a option) : 'a =
                     match answer with
@@ -478,12 +486,8 @@ module TestUnmodelledException =
                     agrees
                         SyscallRefusal.kind
                         SyscallRefusal.describe
-                        (fun () ->
-                            match unwrap (Machines.tryStep pid 0 call machine) with
-                            | Ok outcome, machine -> Ok (outcome, machine)
-                            | Error refusal, _ -> Error refusal
-                        )
-                        (fun () -> unwrap (Machines.step pid 0 call machine))
+                        (fun () -> unwrap (Machines.tryStep pid 0 call machine) |> Result.map Stepped.view)
+                        (fun () -> unwrap (Machines.step pid 0 call machine) |> Stepped.view)
 
                 onMachine |> shouldEqual onSystem
                 onSystem
@@ -580,49 +584,21 @@ module TestUnmodelledException =
 
     [<Test>]
     let ``exitThread throws exactly when tryExitThread refuses`` () : unit =
-        // Thread 0 leads, and thread 2 is parked in an `flock` on an event queue,
-        // so the leader's exit is unmodelled, the parked thread's is a misuse,
-        // and thread 1's is answered.
-        let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
-            let system = booted platform
-
-            let create =
-                match SimulatedUnixPlatform.flavour platform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
-
-            let fd, registry = create (Lone.fileDescriptors system)
-
-            let queue =
-                match FileDescriptorRegistry.tryFindWithId fd registry with
-                | Some (id, _) -> id
-                | None -> failwith $"fd %d{fd} names no description"
-
-            Lone.withFileDescriptors registry system
-            |> Threads.ensure 1
-            |> Threads.ensure 2
-            |> UnixWait.park
-                2
-                (ParkedSyscall.Flock
-                    {
-                        Requester = queue
-                        Mode = FlockMode.Exclusive
-                    })
+        // Thread 0 leads, so its exit is unmodelled, and thread 1's is answered.
+        // A parked thread's exit is refused before the call, by the caller's
+        // check, which `TestCallerChecks` holds the public function to.
+        let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> = booted platform |> Threads.ensure 1
 
         covering
             40
-            (Gen.zip platformGen (Gen.choose (0, 2)))
+            (Gen.zip platformGen (Gen.choose (0, 1)))
             (fun (platform, thread) ->
                 let system = world platform
 
                 agrees
                     ThreadExitRefusal.kind
                     ThreadExitRefusal.describe
-                    (fun () -> UnixThreadLifecycle.tryExitThread thread 0 system)
-                    (fun () -> UnixThreadLifecycle.exitThread thread 0 system)
+                    (fun () -> UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system)
+                    (fun () -> UnixThreadLifecycle.exitThread (Callers.thread thread system) 0 system)
             )
-            [
-                Observed.Answered
-                Observed.Refused RefusalKind.Unmodelled
-                Observed.Refused RefusalKind.Misuse
-            ]
+            [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]

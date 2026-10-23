@@ -19,41 +19,11 @@ module TestDeviceDescriptorsAgainstHost =
 
     let private context : string = "TestDeviceDescriptorsAgainstHost"
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWriteAt(int fd, nativeint buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "pread", SetLastError = true)>]
     extern nativeint private hostPRead(int fd, byte[] buffer, unativeint count, int64 offset)
 
     [<DllImport("libc", EntryPoint = "pwrite", SetLastError = true)>]
     extern nativeint private hostPWrite(int fd, byte[] buffer, unativeint count, int64 offset)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)>]
-    extern int private hostFTruncate(int fd, int64 length)
 
     /// Returns the errno rather than setting it.
     [<DllImport("libc", EntryPoint = "posix_fadvise")>]
@@ -64,15 +34,6 @@ module TestDeviceDescriptorsAgainstHost =
 
     [<DllImport("libc", EntryPoint = "tcgetattr", SetLastError = true)>]
     extern int private hostTcGetAttr(int fd, byte[] termios)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
-    [<DllImport("libc", EntryPoint = "epoll_ctl", SetLastError = true)>]
-    extern int private hostEpollCtl(int epfd, int op, int fd, byte[] event)
 
     [<DllImport("libc", EntryPoint = "flock", SetLastError = true)>]
     extern int private hostFlock(int fd, int operation)
@@ -106,12 +67,12 @@ module TestDeviceDescriptorsAgainstHost =
         hostAnswer (int64 (hostIoctlInt (fd, fionread, &available)))
 
     let private hostPollOnce (fd : int) (events : int16) : Answer =
-        let mutable entry = PollFd ()
+        let mutable entry = HostCalls.PollFd ()
         entry.Fd <- fd
         entry.Events <- events
         let entries = [| entry |]
 
-        hostAnswer (int64 (hostPoll (entries, 1un, 0)))
+        hostAnswer (int64 (HostCalls.poll (entries, 1un, 0)))
         |> Result.map (fun _ -> int64 entries.[0].Revents)
 
     let private rdwr : int = 2
@@ -127,6 +88,7 @@ module TestDeviceDescriptorsAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -137,14 +99,14 @@ module TestDeviceDescriptorsAgainstHost =
     let private modelOpen (access : FileAccessMode) (path : string) (system : UnixSystem<int, string>) =
         match
             OpenFlagWords.openPath
+                (PathArg.ofText path)
                 { reading with
                     Access = access
                 }
-                (PathArg.ofText path)
                 0
                 system
         with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"the model's open(%s{path}): %A{other}"
 
     let private ofSyscall (answer : SyscallAnswer) : Answer =
@@ -166,8 +128,8 @@ module TestDeviceDescriptorsAgainstHost =
     /// Every row, as (description, the host's answer, the model's answer), for
     /// the device at `path`.
     let private rows (flavour : SimulatedUnixFlavour) (path : string) : (string * Answer * Answer) list =
-        let host = hostOpen (path, rdwr, 0)
-        let hostWriteOnly = hostOpen (path, wronly, 0)
+        let host = HostCalls.openFile (path, rdwr, 0)
+        let hostWriteOnly = HostCalls.openFile (path, wronly, 0)
 
         if host < 0 || hostWriteOnly < 0 then
             failwith $"opening the host's %s{path} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -176,16 +138,16 @@ module TestDeviceDescriptorsAgainstHost =
         let writeOnly, system = modelOpen FileAccessMode.WriteOnly path system
 
         let read (fd : int) (buffer : UserBuffer) (count : uint64) : Answer =
-            match UnixReadWrite.tryRead 0 fd buffer count system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd buffer count system with
             | Ok (ReadOutcome.Answered answer, _) -> ofRead answer
             | other -> failwith $"the model's read: %A{other}"
 
         let admitWrite (buffer : UserBuffer) (count : uint64) : Answer =
-            match UnixReadWrite.tryAdmitWrite 0 fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite 0 fd buffer count system with
             | Ok (WriteStep.Returns (WriteAdmission.Answered answer, _)) -> ofWrite answer
-            | Ok (WriteStep.Returns (WriteAdmission.Transfer count, after)) ->
+            | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), after)) ->
                 match
-                    UnixReadWrite.tryWriteBytes 0 fd (ImmutableArray.CreateRange (Array.zeroCreate<byte> count)) after
+                    WriteOutcomes.applyWrite fd into (ImmutableArray.CreateRange (Array.zeroCreate<byte> count)) after
                 with
                 | Ok (WriteStep.Returns (answer, _)) -> ofWrite answer
                 | other -> failwith $"the model's write: %A{other}"
@@ -196,53 +158,55 @@ module TestDeviceDescriptorsAgainstHost =
                 for whence in -1 .. 6 do
                     for offset in [ 0L ; -5L ; System.Int64.MaxValue ] do
                         $"lseek %d{offset} %d{whence}",
-                        hostAnswer (hostLSeek (host, offset, whence)),
-                        (match UnixDescriptor.tryLseek fd offset whence system with
+                        hostAnswer (HostCalls.lseek (host, offset, whence)),
+                        (match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
                          | Ok (answer, _) -> ofSyscall answer
                          | Error refusal -> failwith $"the model's lseek: %A{refusal}")
 
                 for count in [ 0 ; 1 ; 7 ; 4096 ; 65536 ] do
                     $"read %d{count}",
-                    hostAnswer (int64 (hostRead (host, Array.zeroCreate (max count 1), unativeint count))),
+                    hostAnswer (int64 (HostCalls.read (host, Array.zeroCreate (max count 1), unativeint count))),
                     read fd UserBuffer.Mapped (uint64 count)
 
                 for count in [ 0 ; 1 ; 100 ] do
                     $"read NULL %d{count}",
-                    hostAnswer (int64 (hostReadAt (host, 0n, unativeint count))),
+                    hostAnswer (int64 (HostCalls.readPointer (host, 0n, unativeint count))),
                     read fd (UserBuffer.Unmapped 0UL) (uint64 count)
 
                 "read through O_WRONLY",
-                hostAnswer (int64 (hostRead (hostWriteOnly, Array.zeroCreate 16, 16un))),
+                hostAnswer (int64 (HostCalls.read (hostWriteOnly, Array.zeroCreate 16, 16un))),
                 read writeOnly UserBuffer.Mapped 16UL
 
                 for count in [ 0 ; 1 ; 4096 ] do
                     $"write %d{count}",
-                    hostAnswer (int64 (hostWrite (host, Array.zeroCreate (max count 1), unativeint count))),
+                    hostAnswer (int64 (HostCalls.write (host, Array.zeroCreate (max count 1), unativeint count))),
                     admitWrite UserBuffer.Mapped (uint64 count)
 
                 for count in [ 0 ; 1 ; 16 ] do
                     $"write NULL %d{count}",
-                    hostAnswer (int64 (hostWriteAt (host, 0n, unativeint count))),
+                    hostAnswer (int64 (HostCalls.writePointer (host, 0n, unativeint count))),
                     admitWrite (UserBuffer.Unmapped 0UL) (uint64 count)
 
                 for offset in [ 0L ; 1L <<< 40 ; -1L ; System.Int64.MaxValue ] do
                     $"pread 16@%d{offset}",
                     hostAnswer (int64 (hostPRead (host, Array.zeroCreate 16, 16un, offset))),
-                    (match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 16UL offset system with
+                    (match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 16UL offset system with
                      | Ok (answer, _) -> ofRead answer
                      | Error refusal -> failwith $"the model's pread: %A{refusal}")
 
                     $"pwrite 16@%d{offset}",
                     hostAnswer (int64 (hostPWrite (host, Array.zeroCreate 16, 16un, offset))),
-                    (match UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 16UL offset system with
-                     | Ok (PWriteAdmission.Answered answer) -> ofWrite answer
-                     | Ok (PWriteAdmission.Transfer count) ->
+                    (match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 16UL offset system with
+                     | Ok (PWriteAdmission.Answered answer)
+                     | Ok (PWriteAdmission.DeviceAnswered (answer, _, _)) -> ofWrite answer
+                     | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
+                     | Ok (PWriteAdmission.Transfer (count, into)) ->
                          match
-                             UnixReadWrite.tryPwriteBytes
-                                 0
+                             Lone.UnixReadWrite.tryApplyPWrite
                                  fd
-                                 (ImmutableArray.CreateRange (Array.zeroCreate<byte> count))
                                  offset
+                                 into
+                                 (ImmutableArray.CreateRange (Array.zeroCreate<byte> count))
                                  system
                          with
                          | Ok (answer, _) -> ofWrite answer
@@ -251,8 +215,8 @@ module TestDeviceDescriptorsAgainstHost =
 
                 for length in [ 0L ; 10L ; -1L ] do
                     $"ftruncate %d{length}",
-                    hostAnswer (int64 (hostFTruncate (host, length))),
-                    (match UnixDescriptor.tryFtruncate fd length system with
+                    hostAnswer (int64 (HostCalls.ftruncate (host, length))),
+                    (match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
                      | Ok (answer, _) -> ofSyscall answer
                      | Error refusal -> failwith $"the model's ftruncate: %A{refusal}")
 
@@ -264,29 +228,30 @@ module TestDeviceDescriptorsAgainstHost =
                     ] do
                     $"posix_fadvise %d{offset} %d{length} %d{advice}",
                     fromErrno (hostFadvise (host, offset, length, advice)),
-                    (match UnixDescriptor.tryPosixFadvise fd offset length advice system with
+                    (match UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system with
                      | Ok FileAdviceAnswer.Completed -> Ok 0L
                      | Ok (FileAdviceAnswer.Failed error) -> Error error
                      | Error refusal -> failwith $"the model's posix_fadvise: %A{refusal}")
 
                 "FIONREAD",
                 hostFionread host,
-                (match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
-                 | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
-                 | Ok (BytesAvailableAnswer.Failed error) -> Error error
+                (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
+                 | Ok (BytesAvailableAnswer.Reported count, _) -> Ok (int64 count)
+                 | Ok (BytesAvailableAnswer.Failed error, _) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",
                 hostAnswer (int64 (hostTcGetAttr (host, Array.zeroCreate 256))),
-                (match UnixDescriptor.terminalAttributes fd system with
-                 | TerminalAttributesAnswer.NotATerminal error -> Error error)
+                (match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
+                 | TerminalAttributesAnswer.NotATerminal error -> Error error
+                 | TerminalAttributesAnswer.Attributes _ -> failwith "the model's tcgetattr found a terminal")
 
                 for events in [ 0s ; 1s ; 4s ; 0x7FFFs ] do
                     $"poll %d{events}",
                     hostPollOnce host events,
                     (match
                         UnixPoll.tryPoll
-                            0
+                            (Callers.thread 0 system)
                             [
                                 {
                                     Fd = fd
@@ -300,22 +265,32 @@ module TestDeviceDescriptorsAgainstHost =
                      | other -> failwith $"the model's poll: %A{other}")
 
                 "epoll_ctl ADD",
-                (let epoll = hostEpollCreate1 0
+                (let epoll = HostCalls.epollCreate1 0
 
                  try
                      // struct epoll_event, EPOLLIN, laid out wide enough for either
                      // architecture's packing.
                      let event = Array.zeroCreate<byte> 16
                      event.[0] <- 1uy
-                     hostAnswer (int64 (hostEpollCtl (epoll, 1, host, event)))
+                     hostAnswer (int64 (HostCalls.epollCtl (epoll, 1, host, event)))
                  finally
-                     hostClose epoll |> ignore<int>),
+                     HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =
-                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+                    FileDescriptorRegistry.createEpoll
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                        (Lone.fileDescriptors system)
 
                  let system = Lone.withFileDescriptors registry system
 
-                 match UnixPoll.tryEpollCtl queueFd 1 fd (EpollEventArgument.Readable (1u, 0UL)) system with
+                 match
+                     UnixPoll.tryEpollCtl
+                         (Callers.leader system)
+                         queueFd
+                         1
+                         fd
+                         (EpollEventArgument.Readable (1u, 0UL))
+                         system
+                 with
                  | Ok (EpollCtlAnswer.Changed, _) -> Ok 0L
                  | Ok (EpollCtlAnswer.Failed EpollCtlError.TargetNotPollable, _) -> Error UnixError.EPERM
                  | other -> failwith $"the model's epoll_ctl: %A{other}")
@@ -325,16 +300,16 @@ module TestDeviceDescriptorsAgainstHost =
                  let second = hostAnswer (int64 (hostFlock (hostWriteOnly, 6)))
                  hostFlock (host, 8) |> ignore<int>
                  first |> Result.bind (fun _ -> second)),
-                (match UnixDescriptor.tryFlock 0 fd 6 system with
+                (match UnixDescriptor.tryFlock (Callers.thread 0 system) fd 6 system with
                  | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), locked) ->
-                     match UnixDescriptor.tryFlock 0 writeOnly 6 locked with
+                     match UnixDescriptor.tryFlock (Callers.thread 0 locked) writeOnly 6 locked with
                      | Ok (SyscallOutcome.Answered answer, _) -> ofSyscall answer
                      | other -> failwith $"the model's second flock: %A{other}"
                  | other -> failwith $"the model's first flock: %A{other}")
             ]
         finally
-            hostClose host |> ignore<int>
-            hostClose hostWriteOnly |> ignore<int>
+            HostCalls.close host |> ignore<int>
+            HostCalls.close hostWriteOnly |> ignore<int>
 
     [<Test>]
     let ``every syscall through a device's descriptor answers what the host's does`` () : unit =
@@ -342,8 +317,9 @@ module TestDeviceDescriptorsAgainstHost =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
                 for path in [ "/dev/null" ; "/dev/urandom" ] do
-                    match OpenFlagWords.openPath reading (PathArg.ofText path) 0 (booted flavour) with
-                    | Error (OpenRefusal.Path (PathRefusal.UnmodelledFileSystem _)) -> ()
+                    match OpenFlagWords.openPath (PathArg.ofText path) reading 0 (booted flavour) with
+                    // This kernel has no Darwin driver yet.
+                    | Error (OpenRefusal.UndrivenDevice _) -> ()
                     | other -> failwith $"open %s{path} on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux ->
 

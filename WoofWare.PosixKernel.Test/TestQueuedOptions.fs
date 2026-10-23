@@ -92,11 +92,13 @@ module TestQueuedOptions =
         : UnixSystem<int, string>
         =
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped (uint32 value.Length) system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped (uint32 value.Length) system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | other -> failwith $"setsockopt(%d{level}, %d{option}) on fd %d{fd} was admitted as %A{other}"
 
-        match UnixSocket.trySetsockoptBytes fd level option UserBuffer.Mapped (uint32 value.Length) supplied system with
+        match
+            Lone.UnixSocket.trySetsockoptBytes fd level option UserBuffer.Mapped (uint32 value.Length) supplied system
+        with
         | Ok (SetSockOptAnswer.Set, system) -> system
         | other -> failwith $"setsockopt(%d{level}, %d{option}) of %A{value} on fd %d{fd}: %A{other}"
 
@@ -105,11 +107,11 @@ module TestQueuedOptions =
         let size = if linger then 8u else 4u
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level option UserBuffer.Mapped UserBuffer.Mapped system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level option UserBuffer.Mapped UserBuffer.Mapped system with
             | Ok GetSockOptAdmission.ReadLength -> Some size
             | other -> failwith $"getsockopt(%d{level}, %d{option}) on fd %d{fd} was admitted as %A{other}"
 
-        match UnixSocket.tryGetsockoptLength fd level option UserBuffer.Mapped UserBuffer.Mapped read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level option UserBuffer.Mapped UserBuffer.Mapped read system with
         | Ok (GetSockOptAnswer.Reported bytes, _) when bytes.Length = int size ->
             let field (offset : int) =
                 BitConverter.ToInt32 (bytes.AsSpan().Slice (offset, 4))
@@ -137,7 +139,7 @@ module TestQueuedOptions =
     /// kernel and printed as the probe prints it.
     let private kernelO (flavour : SimulatedUnixFlavour) (name : string) (values : string list) : string =
         let system = systemOn (platformOf flavour)
-        let level, option, linger = optionNamed system.Machine.UnixPlatform name
+        let level, option, linger = optionNamed (UnixSystem.platform system) name
 
         let v0, v1, v2 =
             match values with
@@ -209,20 +211,30 @@ module TestQueuedOptions =
     /// listener's socket.
     let private kernelD (completed : string) (accepted : string) : Result<string, AcceptRefusal * SocketId> =
         let system = systemOn SimulatedUnixPlatform.linuxX64
-        let level, option, _ = optionNamed system.Machine.UnixPlatform "SO_LINGER"
+        let level, option, _ = optionNamed (UnixSystem.platform system) "SO_LINGER"
         let listener, system = KeventWorld.listenerAt port system
         let system = set listener (level, option) (valueOf completed) system
         let client, system = connectTo system
         let system = set listener (level, option) (valueOf accepted) system
 
-        match UnixConnection.tryAccept 1 listener UserBuffer.Mapped UInt32.MaxValue system with
+        match
+            UnixConnection.tryAccept
+                (Callers.thread 1 system)
+                listener
+                UserBuffer.Mapped
+                (Some UInt32.MaxValue)
+                0
+                system
+        with
         | Error refusal ->
             match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socket) -> Error (refusal, socket)
             | other -> failwith $"the listener's fd %d{listener} names %A{other}"
         | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) ->
             UnixSystem.checkInvariants system |> shouldEqual []
-            let _, system = UnixDescriptor.setNonBlocking client true system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
             let read =
                 match ReadOutcomes.read client UserBuffer.Mapped 16UL system with

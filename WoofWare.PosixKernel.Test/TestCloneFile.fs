@@ -153,13 +153,13 @@ module TestCloneFile =
                 0
                 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -182,7 +182,7 @@ module TestCloneFile =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>
         =
-        UnixNamespace.tryCloneFileEager (argument source) (argument destination) flags system
+        Eager.tryCloneFileAs (Callers.leader system) (argument source) (argument destination) flags system
 
     let private answerText (result : Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>) : string =
         match result with
@@ -192,7 +192,7 @@ module TestCloneFile =
         | Error refusal -> $"refused: %A{refusal}"
 
     let private entryAt (system : UnixSystem<int, string>) (p : string) : Inode =
-        (VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem).Value
+        (VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system)).Value
 
     [<Test>]
     let ``clonefile answers each measured row`` () : unit =
@@ -272,7 +272,8 @@ module TestCloneFile =
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 match (entryAt after created).Content with
                 | InodeContent.RegularFile (contents, _) ->
-                    Text.Encoding.ASCII.GetString (contents |> Seq.toArray) |> shouldEqual "hello"
+                    Text.Encoding.ASCII.GetString (contents |> FileContents.toImmutableArray |> Seq.toArray)
+                    |> shouldEqual "hello"
                 | other -> failwith $"%s{created}: %A{other}"
 
                 match (entryAt after ("/" + destination.Split('/').[0])).Content with
@@ -299,16 +300,26 @@ module TestCloneFile =
     let ``bad flags are answered before either pathname is read, and the source before the destination`` () : unit =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
-        UnixNamespace.tryCloneFileEager PathArgumentBytes.Unreadable PathArgumentBytes.Unreadable (1 <<< 20) system
+        Eager.tryCloneFileAs
+            (Callers.leader system)
+            PathArgumentBytes.Unreadable
+            PathArgumentBytes.Unreadable
+            (1 <<< 20)
+            system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
-        UnixNamespace.tryCloneFileEager PathArgumentBytes.Unreadable PathArgumentBytes.Unreadable 0x4 system
+        Eager.tryCloneFileAs
+            (Callers.leader system)
+            PathArgumentBytes.Unreadable
+            PathArgumentBytes.Unreadable
+            0x4
+            system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, system))
 
-        UnixNamespace.tryCloneFileEager (argument "nx") PathArgumentBytes.Unreadable 0x4 system
+        Eager.tryCloneFileAs (Callers.leader system) (argument "nx") PathArgumentBytes.Unreadable 0x4 system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.ENOENT, system))
 
-        UnixNamespace.tryCloneFileEager (argument "f") PathArgumentBytes.Unreadable 0x4 system
+        Eager.tryCloneFileAs (Callers.leader system) (argument "f") PathArgumentBytes.Unreadable 0x4 system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, system))
 
     [<Test>]
@@ -376,7 +387,7 @@ module TestCloneFile =
             let system =
                 systemOnWith (Launched.umask (mode 0o777)) SimulatedUnixPlatform.macOsArm64 u501 vfs
 
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             match clone "src" "w/dst" 0x4 system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
@@ -405,6 +416,85 @@ module TestCloneFile =
             | other -> failwith $"%A{other}"
 
     [<Test>]
+    let ``Darwin's root-files CLONE rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // clonefile of a source of each of the 4096 modes into its own
+        // directory, by root (flags 0 and CLONE_NOOWNERCOPY) and by uid 501.
+        // A cell is `.` when the clone has the source's mode, the digit of the
+        // special bits it dropped otherwise, and `A` for EACCES; the IDS rows
+        // give the clone's owner and group.
+        let rows = DarwinRootFiles.section "CLONE"
+        rows |> List.length |> shouldEqual 12
+
+        let ids =
+            DarwinRootFiles.spot "IDS" |> List.filter (fun idsRow -> idsRow.[0] = "CLONE")
+
+        let idsOf (text : string) : InodeOwner =
+            match text.Split ':' with
+            | [| user ; group |] -> owner (uint32 user) (uint32 group)
+            | _ -> failwith $"unexpected owner %s{text}"
+
+        let mismatches =
+            [
+                for row in rows do
+                    // "clonefile(flags=CLONE_NOOWNERCOPY) into a dir 0:20"
+                    let flags = if row.Call.Contains "CLONE_NOOWNERCOPY" then 0x2 else 0
+                    let directoryOwner = idsOf (row.Call.Substring (row.Call.LastIndexOf ' ' + 1))
+
+                    let sourceIds =
+                        $"%d{UserId.toUInt32 row.Owner.User}:%d{GroupId.toUInt32 row.Owner.Group}"
+
+                    let cloneOwner =
+                        ids
+                        |> List.find (fun idsRow ->
+                            idsRow.[1] = row.Caller
+                            && idsRow.[3] = row.Call
+                            && idsRow.[2].EndsWith sourceIds
+                        )
+                        |> fun idsRow -> idsOf (idsRow.[4].Split '=').[0]
+
+                    let baseTree =
+                        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
+                        |> directory "/dir" directoryOwner 0o755
+                        |> file "/dir/s" row.Owner 0o644 "source"
+
+                    let booted =
+                        systemOn SimulatedUnixPlatform.macOsArm64 (DarwinRootFiles.credentialsOf row.Caller) baseTree
+
+                    for raw in 0..0o7777 do
+                        let system =
+                            Kernel.mapMachine
+                                (fun machine ->
+                                    { machine with
+                                        CommittedFileSystem =
+                                            CommittedFileSystem.initial (chmodded "/dir/s" raw baseTree)
+                                    }
+                                )
+                                booted
+
+                        let modelled =
+                            match clone "/dir/s" "/dir/c" flags system with
+                            | Ok (SyscallAnswer.Completed 0L, after) ->
+                                let cloned = entryAt after "/dir/c"
+                                let bits = PermissionBits.toInt (Inode.permissions cloned)
+
+                                if cloned.Owner <> cloneOwner then 'O'
+                                elif bits = raw then '.'
+                                else char (int '0' + ((raw &&& ~~~bits) >>> 9))
+                            | Ok (SyscallAnswer.Failed error, _) -> DarwinRootFiles.cellOf error
+                            | Ok (SyscallAnswer.Completed _, _)
+                            | Error _ -> 'R'
+
+                        if modelled <> row.Cells.[raw] then
+                            yield
+                                $"%s{row.Caller} %O{row.Owner} %s{row.Call} 0o%04o{raw}: measured %c{row.Cells.[raw]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
+
+    [<Test>]
     let ``clonefile refuses what it was not measured for`` () : unit =
         let darwin = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
@@ -416,9 +506,10 @@ module TestCloneFile =
         |> Result.map fst
         |> shouldEqual (Error (CloneFileRefusal.DirectorySource (inodeAt tree "/d")))
 
+        // A privileged caller's CLONE_ACL, measured only without it.
         clone "f" "new" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 Owners.root tree)
         |> Result.map fst
-        |> shouldEqual (Error CloneFileRefusal.PrivilegedCaller)
+        |> shouldEqual (Error (CloneFileRefusal.PrivilegedAclCopy 0x4))
 
         let linux =
             systemOn
@@ -433,26 +524,34 @@ module TestCloneFile =
         let nfs =
             systemOnWith id SimulatedUnixPlatform.macOsArm64 u501 tree
             |> fun system ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Mount = EmulatedMount.Nfs
                         }
-                }
+                    )
+                    system
 
         clone "f" "new" 0x4 nfs
         |> Result.map fst
         |> shouldEqual (Error (CloneFileRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // Special bits on a source the caller does not own, or S_ISGID on one
-        // whose group it is not in: unmeasured.
-        for by, bits in [ owner 0u 0u, 0o4644 ; owner 0u 0u, 0o1644 ; owner 501u 0u, 0o2644 ] do
+        // whose group it is not in (`root-files.c`): both set-ID bits go and
+        // the sticky bit stays.
+        for by, bits, expected in
+            [
+                owner 0u 0u, 0o4644, 0o0644
+                owner 0u 0u, 0o1644, 0o1644
+                owner 501u 0u, 0o2644, 0o0644
+            ] do
             let vfs =
                 VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
                 |> file "/s" by bits "x"
 
             match clone "s" "c" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs) with
-            | Error (CloneFileRefusal.UnmeasuredSpecialBits _) -> ()
+            | Ok (SyscallAnswer.Completed 0L, after) ->
+                Inode.permissions (entryAt after "/c") |> shouldEqual (mode expected)
             | other -> failwith $"0o%o{bits} owned by %A{by}: %A{other}"
 
         // Without special bits, someone else's readable file clones as the
@@ -484,7 +583,12 @@ module TestCloneFile =
             |> Lone.restand
 
         let system =
-            match UnixNamespace.tryRmdir (PathArg.ofPath (UnixPath.parseOrFail context "/orph")) system with
+            match
+                UnixNamespace.tryRmdir
+                    (Callers.leader system)
+                    (PathArg.ofPath (UnixPath.parseOrFail context "/orph"))
+                    system
+            with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"rmdir: %A{other}"
 
@@ -513,9 +617,9 @@ module TestCloneFile =
             match clone source destination 0x4 system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 let created =
-                    VirtualFileSystem.inodes after.Machine.FileSystem
+                    VirtualFileSystem.inodes (UnixSystem.fileSystem after)
                     |> Map.filter (fun inode _ ->
-                        not (Map.containsKey inode (VirtualFileSystem.inodes system.Machine.FileSystem))
+                        not (Map.containsKey inode (VirtualFileSystem.inodes (UnixSystem.fileSystem system)))
                     )
                     |> Map.toList
 
@@ -523,26 +627,26 @@ module TestCloneFile =
                 | [ _, clone ] ->
                     let sourceEntry =
                         match
-                            UnixPathResolution.resolvePath
+                            Lone.UnixPathResolution.resolvePath
                                 AtDirectory.CurrentDirectory
                                 SymlinkPolicy.Follow
                                 (UnixPath.parseOrFail context source)
                                 system
                         with
-                        | Ok inode -> (VirtualFileSystem.tryGet inode system.Machine.FileSystem).Value
+                        | Ok inode -> (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system)).Value
                         | Error error -> failwith $"%s{source}: %O{error}"
 
                     match clone.Content, sourceEntry.Content with
                     | InodeContent.RegularFile (cloned, _), InodeContent.RegularFile (original, _) ->
-                        cloned |> Seq.toArray |> shouldEqual (original |> Seq.toArray)
+                        cloned |> shouldEqual original
                     | other -> failwith $"%A{other}"
 
                     // Every inode that was there before is unchanged, but for
                     // the one directory that gained the name.
                     let changed =
-                        VirtualFileSystem.inodes system.Machine.FileSystem
+                        VirtualFileSystem.inodes (UnixSystem.fileSystem system)
                         |> Map.filter (fun inode entry ->
-                            Map.find inode (VirtualFileSystem.inodes after.Machine.FileSystem) <> entry
+                            Map.find inode (VirtualFileSystem.inodes (UnixSystem.fileSystem after)) <> entry
                         )
                         |> Map.toList
 
@@ -564,7 +668,12 @@ module TestCloneFile =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
         for destination in [ "new" ; "g" ] do
-            match UnixSystem.tryStep 0 (Syscall.CloneFile (argument "f", argument destination, 0x4)) system with
-            | Ok (SyscallOutcome.Answered answer, after) ->
+            match
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.CloneFile (argument "f", argument destination, 0x4))
+                    system
+            with
+            | Ok (SteppedCall.CloneFile (answer, after)) ->
                 Ok (answer, after) |> shouldEqual (clone "f" destination 0x4 system)
             | other -> failwith $"%A{other}"

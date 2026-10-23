@@ -6,12 +6,12 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// `ParkedSyscall.DatagramReceive` and `ParkedSyscall.DatagramSend`, which are
-/// reserved: nothing parks a thread in either yet. What every reader of a park
-/// already answers for them (the wake condition, the description each holds,
-/// how a signal ends each), and the invariant that reports a thread parked in
-/// one, which is what makes "nothing parks a thread in it" checked wherever a
-/// fuzzer checks invariants.
+/// `ParkedSyscall.DatagramSend`, which is reserved: nothing parks a thread in
+/// it yet. What every reader of a park already answers for it (the wake
+/// condition, the description it holds, how a signal ends it), and the
+/// invariant that reports a thread parked in one, which is what makes
+/// "nothing parks a thread in it" checked wherever a fuzzer checks
+/// invariants. `TestDatagramBlockingReceive` has the receive.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestDatagramPark =
@@ -22,28 +22,20 @@ module TestDatagramPark =
         gen {
             let! socket = ArbMap.defaults |> ArbMap.generate<int64> |> Gen.map OpenFileDescriptionId
 
-            return!
-                Gen.elements
-                    [
-                        ParkedSyscall.DatagramReceive
-                            {
-                                ParkedDatagramReceive.Socket = socket
-                            }
-                        ParkedSyscall.DatagramSend
-                            {
-                                ParkedDatagramSend.Socket = socket
-                            }
-                    ]
+            return
+                ParkedSyscall.DatagramSend
+                    {
+                        ParkedDatagramSend.Socket = socket
+                    }
         }
 
     let private socketOf (parked : ParkedSyscall) : OpenFileDescriptionId =
         match parked with
-        | ParkedSyscall.DatagramReceive receive -> receive.Socket
         | ParkedSyscall.DatagramSend send -> send.Socket
-        | other -> failwith $"not a datagram park: %A{other}"
+        | other -> failwith $"not a datagram send's park: %A{other}"
 
     [<Test>]
-    let ``a datagram transfer waits for a signal alone while reserved, holds its socket, and restarts under SA_RESTART``
+    let ``a datagram send waits for a signal alone while reserved, holds its socket, and restarts under SA_RESTART``
         ()
         : unit
         =
@@ -57,9 +49,8 @@ module TestDatagramPark =
             // the socket across a close of its descriptor.
             ParkedSyscall.descriptions parked |> shouldEqual [ socketOf parked ]
 
-            // Measured (rows R2 and S4): a receive restarts under SA_RESTART on
-            // both flavours, and a Linux Unix-domain send does too. A Darwin
-            // send never sleeps.
+            // Measured (row S4): a Linux Unix-domain send restarts under
+            // SA_RESTART. A Darwin send never sleeps.
             for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
                 SyscallInterruption.ruleOf flavour parked
                 |> shouldEqual SignalRestartRule.RestartsUnderSaRestart
@@ -73,7 +64,7 @@ module TestDatagramPark =
     let private thread : int = 1
 
     [<Test>]
-    let ``a thread parked in a datagram transfer is a ReservedPark defect`` () : unit =
+    let ``a thread parked in a datagram send is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
@@ -85,23 +76,25 @@ module TestDatagramPark =
 
             for parked in
                 [
-                    ParkedSyscall.DatagramReceive
-                        {
-                            ParkedDatagramReceive.Socket = socket
-                        }
                     ParkedSyscall.DatagramSend
                         {
                             ParkedDatagramSend.Socket = socket
                         }
                 ] do
-                let asleep = UnixWait.park thread parked awake
+                let asleep = Lone.Parking.park thread parked awake
 
                 asleep
                 |> UnixSystem.checkInvariants
-                |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+                |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
                 // The park holds the description it names, once.
-                OpenFileTable.holdCount socket awake.Machine.OpenFiles |> shouldEqual (Some 0)
-                OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-                UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
-                UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
+                OpenFileTable.holdCount socket (UnixSystem.openFiles awake)
+                |> shouldEqual (Some 0)
+
+                OpenFileTable.holdCount socket (UnixSystem.openFiles asleep)
+                |> shouldEqual (Some 1)
+
+                Lone.deadlines asleep |> shouldEqual []
+
+                UnixWait.satisfied (Callers.thread thread asleep) asleep
+                |> shouldEqual (Some Set.empty)

@@ -82,7 +82,7 @@ module TestUnixScheduling =
         {
             Platform : SimulatedUnixPlatform
             Count : int
-            Machine : SimulatedMachine<int, string>
+            System : UnixSystem<int, string>
             /// In creation order.
             Live : Live list
             NextName : Map<ProcessId, int>
@@ -147,21 +147,26 @@ module TestUnixScheduling =
         /// A dispatch onto a processor the machine does not have, which throws.
         | BeyondDispatch
 
-    let private throws (f : unit -> 'a) : bool =
+    /// Whether `f` throws, failing the test if it throws anything but an
+    /// `'Exception` exactly.
+    let private throws<'Exception, 'a when 'Exception :> exn> (f : unit -> 'a) : bool =
         try
             f () |> ignore<'a>
             false
-        with _ ->
+        with e ->
+            if e.GetType () <> typeof<'Exception> then
+                failwith $"expected %s{typeof<'Exception>.Name}, got %O{e}"
+
             true
 
-    let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.Machine
+    let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.System
 
-    let private withPipe (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
+    let private withPipe (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         machine
         |> Machines.doIn
             pid
             (fun view ->
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped view with
+                match UnixPipe.tryPipe2 (Caller.make pid (Proc.leader pid view)) 0 UserBuffer.Mapped view with
                 | Ok (Pipe2Answer.Created (3, 4), view) -> view
                 | other -> failwith $"pipe2: %A{other}"
             )
@@ -174,12 +179,12 @@ module TestUnixScheduling =
         let cpu = CpuId (cpu % world.Count)
 
         match
-            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.Machine
+            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.System
         with
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         | Ok (pid, machine) ->
             { world with
-                Machine = withPipe pid machine
+                System = withPipe pid machine
                 Live =
                     world.Live
                     @ [
@@ -205,12 +210,12 @@ module TestUnixScheduling =
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 leaderCpu
 
-        let pid = UnixSystem.processId system
+        let pid = Lone.pid system
 
         {
             Platform = platform
             Count = count
-            Machine = Machines.ofSystem system |> withPipe pid
+            System = Machines.ofSystem system |> withPipe pid
             Live =
                 [
                     {
@@ -253,11 +258,6 @@ module TestUnixScheduling =
                 @ world.Events
         }
 
-    let private endOn (ended : EndedProcess<int, string>) (machine : SimulatedMachine<int, string>) =
-        match Machines.tryEndProcess ended machine with
-        | Ok (_, machine) -> machine
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
-
     let private beyondCpus (count : int) : int list =
         [ -1 ; count ; count + 1 ; Int32.MinValue ; Int32.MaxValue ]
 
@@ -271,17 +271,17 @@ module TestUnixScheduling =
                 let cpu = CpuId (cpu % world.Count)
 
                 let machine =
-                    world.Machine
+                    world.System
                     |> Machines.doIn
                         pid
                         (fun view ->
-                            match UnixThreadLifecycle.trySpawn 0 name cpu view with
+                            match UnixThreadLifecycle.trySpawn (Caller.make pid 0) name cpu view with
                             | Ok (SpawnAnswer.Spawned _, view) -> view
                             | other -> failwith $"spawn: %A{other}"
                         )
 
                 { world with
-                    Machine = machine
+                    System = machine
                     Live =
                         world.Live
                         @ [
@@ -309,7 +309,9 @@ module TestUnixScheduling =
                     let cpu = CpuId (List.item (k % List.length cpus) cpus)
                     cover Reached.BeyondDispatch
 
-                    throws (fun () -> UnixScheduling.dispatch thread.Name cpu (viewOf thread.Pid world))
+                    throws<ArgumentOutOfRangeException, _> (fun () ->
+                        UnixScheduling.dispatch (Caller.make thread.Pid thread.Name) cpu (viewOf thread.Pid world)
+                    )
                     |> shouldEqual true
 
                     world
@@ -329,9 +331,11 @@ module TestUnixScheduling =
                         cover Reached.CrossProcessDisplacement
 
                     { world with
-                        Machine =
-                            world.Machine
-                            |> Machines.doIn thread.Pid (UnixScheduling.dispatch thread.Name cpu)
+                        System =
+                            world.System
+                            |> Machines.doIn
+                                thread.Pid
+                                (UnixScheduling.dispatch (Caller.make thread.Pid thread.Name) cpu)
                         Events = Event.Dispatched (thread.Serial, cpu) :: world.Events
                     }
         | SchedulingOp.DispatchWoken (index, cpu) ->
@@ -348,11 +352,13 @@ module TestUnixScheduling =
             | None -> world
             | Some thread ->
                 let outcome, machine =
-                    world.Machine
+                    world.System
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryRead thread.Name 3 UserBuffer.Mapped 1UL view with
+                            match
+                                UnixReadWrite.tryRead (Caller.make thread.Pid thread.Name) 3 UserBuffer.Mapped 1UL view
+                            with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -361,7 +367,7 @@ module TestUnixScheduling =
 
                 let world =
                     { world with
-                        Machine = machine
+                        System = machine
                     }
 
                 if outcome then
@@ -379,28 +385,27 @@ module TestUnixScheduling =
             | None -> world
             | Some pid ->
                 let machine =
-                    world.Machine
+                    world.System
                     |> Machines.doIn
                         pid
                         (fun view ->
                             match
-                                WriteOutcomes.admitThenWrite 0 4 UserBuffer.Mapped (ImmutableArray.Create 1uy) view
+                                WriteOutcomes.admitThenWriteAs
+                                    (Caller.make pid 0)
+                                    4
+                                    UserBuffer.Mapped
+                                    (ImmutableArray.Create 1uy)
+                                    view
                             with
                             | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, view)) -> view
                             | other -> failwith $"write: %A{other}"
                         )
 
-                let asleep =
-                    world.Live
-                    |> List.filter (fun live -> live.Asleep)
-                    |> List.groupBy (fun live -> live.Pid)
-                    |> List.map (fun (pid, threads) -> pid, threads |> List.map (fun live -> live.Name) |> Set.ofList)
-                    |> Map.ofList
-
-                let woken = Machines.wakes asleep machine |> List.map fst |> Set.ofList
+                let woken, machine = Machines.wake machine
+                let woken = woken |> List.map fst |> Set.ofList
 
                 { world with
-                    Machine = machine
+                    System = machine
                     Live =
                         world.Live
                         |> List.map (fun live ->
@@ -418,11 +423,11 @@ module TestUnixScheduling =
             | None -> world
             | Some thread ->
                 let parksAgain, machine =
-                    world.Machine
+                    world.System
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryFinishRead thread.Name view with
+                            match UnixReadWrite.tryFinishRead (Caller.make thread.Pid thread.Name) view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -436,7 +441,7 @@ module TestUnixScheduling =
                             Woken = false
                         }
                         { world with
-                            Machine = machine
+                            System = machine
                         }
 
                 if parksAgain then
@@ -464,16 +469,18 @@ module TestUnixScheduling =
             match pick index candidates with
             | None -> world
             | Some thread ->
-                match UnixThreadLifecycle.tryExitThread thread.Name 0 (viewOf thread.Pid world) with
+                match
+                    UnixThreadLifecycle.tryExitThread (Caller.make thread.Pid thread.Name) 0 (viewOf thread.Pid world)
+                with
                 | Ok (ProcessFate.Continues ((), view)) ->
                     { world with
-                        Machine = Machines.unfocus view world.Machine
+                        System = Machines.unfocus view world.System
                         Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
                         Events = Event.Exited thread.Serial :: world.Events
                     }
-                | Ok (ProcessFate.ProcessEnded e) ->
+                | Ok (ProcessFate.ProcessEnded (_, machine)) ->
                     { world with
-                        Machine = endOn e world.Machine
+                        System = machine
                     }
                     |> ended thread.Pid
                 | Error refusal -> failwith $"exitThread: %s{ThreadExitRefusal.describe refusal}"
@@ -481,16 +488,17 @@ module TestUnixScheduling =
             match pick proc (processes world) with
             | None -> world
             | Some pid ->
-                let e = UnixThreadLifecycle.exitGroup 0 0 (viewOf pid world)
+                let _, machine =
+                    UnixThreadLifecycle.exitGroup (Caller.make pid 0) 0 (viewOf pid world)
 
                 { world with
-                    Machine = endOn e world.Machine
+                    System = machine
                 }
                 |> ended pid
 
     /// Everything the reference says, asked of the library.
     let private check (cover : Reached -> unit) (world : World) : unit =
-        Machines.assertClean world.Machine
+        Machines.assertClean world.System
 
         let linux =
             SimulatedUnixPlatform.flavour world.Platform = SimulatedUnixFlavour.Linux
@@ -502,26 +510,28 @@ module TestUnixScheduling =
             let context () : string =
                 $"%A{thread}, after %A{List.rev world.Events}"
 
-            UnixScheduling.runningOn thread.Name view
+            let caller = Caller.make thread.Pid thread.Name
+
+            UnixScheduling.runningOn caller view
             |> fun answered ->
                 if answered <> running then
                     failwith $"runningOn %A{answered}: %s{context ()}"
 
-            (UnixThreadTable.get thread.Name (Proc.threads thread.Pid view)).Cpu
+            (Proc.thread (Caller.make thread.Pid thread.Name) view).Cpu
             |> shouldEqual (cpuOracle thread.Serial world.Events)
 
             let parked = thread.Asleep || thread.Woken
 
             match running with
             | Some cpu ->
-                if not (obj.ReferenceEquals (UnixScheduling.dispatch thread.Name cpu view, view)) then
+                if not (obj.ReferenceEquals (UnixScheduling.dispatch caller cpu view, view)) then
                     failwith $"re-dispatching to %O{cpu} changed the system: %s{context ()}"
             | None -> ()
 
             if linux then
                 match running with
                 | Some cpu when not parked ->
-                    UnixScheduling.tryGetcpu thread.Name view
+                    UnixScheduling.tryGetcpu caller view
                     |> shouldEqual (
                         Ok
                             {
@@ -534,10 +544,13 @@ module TestUnixScheduling =
                     if not parked && lastDispatched thread.Serial world.Events then
                         cover Reached.DisplacedGetCpu
 
-                    if not (throws (fun () -> UnixScheduling.tryGetcpu thread.Name view)) then
+                    if not (throws<InvalidOperationException, _> (fun () -> UnixScheduling.tryGetcpu caller view)) then
                         failwith $"getcpu answered for a thread not running, or parked: %s{context ()}"
+            elif parked then
+                if not (throws<InvalidOperationException, _> (fun () -> UnixScheduling.tryGetcpu caller view)) then
+                    failwith $"getcpu answered for a parked thread: %s{context ()}"
             else
-                UnixScheduling.tryGetcpu thread.Name view
+                UnixScheduling.tryGetcpu caller view
                 |> shouldEqual (Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
     let private op : Gen<SchedulingOp> =
@@ -626,23 +639,27 @@ module TestUnixScheduling =
             | [ first ; second ] -> first, second
             | other -> failwith $"expected two processes, got %A{other}"
 
-        let runningOn (pid : ProcessId) (machine : SimulatedMachine<int, string>) : CpuId option =
-            UnixScheduling.runningOn 0 (Machines.viewOf pid machine)
+        let runningOn (pid : ProcessId) (machine : UnixSystem<int, string>) : CpuId option =
+            UnixScheduling.runningOn (Caller.make pid 0) (Machines.viewOf pid machine)
 
-        let getcpu (pid : ProcessId) (machine : SimulatedMachine<int, string>) : bool =
-            not (throws (fun () -> UnixScheduling.tryGetcpu 0 (Machines.viewOf pid machine)))
+        let getcpu (pid : ProcessId) (machine : UnixSystem<int, string>) : bool =
+            not (
+                throws<InvalidOperationException, _> (fun () ->
+                    UnixScheduling.tryGetcpu (Caller.make pid 0) (Machines.viewOf pid machine)
+                )
+            )
 
         let mutable machine = machine
 
         for round in 1..3 do
             for pid, other in [ first, second ; second, first ] do
-                machine <- Machines.doIn pid (UnixScheduling.dispatch 0 (CpuId 0)) machine
+                machine <- Machines.doIn pid (UnixScheduling.dispatch (Caller.make pid 0) (CpuId 0)) machine
                 runningOn pid machine |> shouldEqual (Some (CpuId 0))
                 runningOn other machine |> shouldEqual None
                 getcpu pid machine |> shouldEqual true
                 getcpu other machine |> shouldEqual false
                 // The displaced thread keeps the processor as its own.
-                (UnixThreadTable.get 0 (Proc.threads other (Machines.viewOf other machine))).Cpu
+                (Proc.thread (Caller.make other 0) (Machines.viewOf other machine)).Cpu
                 |> shouldEqual (CpuId 0)
 
                 Machines.assertClean machine
@@ -656,16 +673,20 @@ module TestUnixScheduling =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.spawn 1
 
+        let leader = Callers.thread 0 system
+
         let system =
             system
-            |> UnixScheduling.dispatch 0 (CpuId 0)
-            |> UnixScheduling.dispatch 0 (CpuId 1)
+            |> UnixScheduling.dispatch leader (CpuId 0)
+            |> UnixScheduling.dispatch leader (CpuId 1)
 
-        system.Scheduling.Occupants
-        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 (Lone.threads system)).OsThreadId ])
+        (Kernel.scheduling system).Occupants
+        |> shouldEqual (Map.ofList [ CpuId 1, (Lone.thread 0 system).OsThreadId ])
 
-        UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 1))
-        UnixScheduling.runningOn 1 system |> shouldEqual None
+        UnixScheduling.runningOn (Callers.thread 0 system) system
+        |> shouldEqual (Some (CpuId 1))
+
+        UnixScheduling.runningOn (Callers.thread 1 system) system |> shouldEqual None
         UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]
@@ -673,21 +694,22 @@ module TestUnixScheduling =
         let system : UnixSystem<int, string> =
             UnixSystem.initial SimulatedUnixPlatform.macOsArm64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> UnixScheduling.dispatch 0 (CpuId 0)
+            |> fun system -> UnixScheduling.dispatch (Callers.thread 0 system) (CpuId 0) system
 
-        UnixScheduling.tryGetcpu 0 system
+        UnixScheduling.tryGetcpu (Callers.thread 0 system) system
         |> shouldEqual (Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
-        UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 0))
+        UnixScheduling.runningOn (Callers.thread 0 system) system
+        |> shouldEqual (Some (CpuId 0))
 
     [<Test>]
     let ``runningOn answers None for a name that is no thread`` () : unit =
         let system : UnixSystem<int, string> =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> UnixScheduling.dispatch 0 (CpuId 0)
+            |> fun system -> UnixScheduling.dispatch (Callers.thread 0 system) (CpuId 0) system
 
-        UnixScheduling.runningOn 7 system |> shouldEqual None
+        UnixScheduling.runningOn (Callers.thread 7 system) system |> shouldEqual None
 
     // --- the machine's record, forged ---
 
@@ -695,18 +717,19 @@ module TestUnixScheduling =
     /// public route can do.
     let private withOccupants
         (occupants : (CpuId * OsThreadId) list)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
-        { machine with
-            Scheduling =
-                { machine.Scheduling with
+        Kernel.mapScheduling
+            (fun scheduling ->
+                { scheduling with
                     Occupants = Map.ofList occupants
                 }
-        }
+            )
+            machine
 
-    let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
-        (UnixThreadTable.get thread (Proc.threads pid (Machines.viewOf pid machine))).OsThreadId
+    let private threadIdOf (pid : ProcessId) (thread : int) (machine : UnixSystem<int, string>) : OsThreadId =
+        (Proc.thread (Caller.make pid thread) (Machines.viewOf pid machine)).OsThreadId
 
     [<Test>]
     let ``checkInvariants reports an occupied processor the machine does not have`` () : unit =
@@ -725,9 +748,7 @@ module TestUnixScheduling =
         let defects = Machines.checkInvariants forged
 
         defects
-        |> List.contains (
-            SimulatedMachineDefect.Machine (UnixSystemDefect.OccupiedCpuBeyondMachine (CpuId 2, leader, 2))
-        )
+        |> List.contains (UnixSystemDefect.OccupiedCpuBeyondMachine (CpuId 2, leader, 2))
         |> shouldEqual true
 
     [<Test>]
@@ -750,7 +771,7 @@ module TestUnixScheduling =
                 Machines.doIn
                     first
                     (fun view ->
-                        match UnixThreadLifecycle.tryExitThread 1 0 view with
+                        match UnixThreadLifecycle.tryExitThread (Caller.make first 1) 0 view with
                         | Ok (ProcessFate.Continues ((), view)) -> view
                         | other -> failwith $"exitThread: %A{other}"
                     )
@@ -758,23 +779,15 @@ module TestUnixScheduling =
 
             nobody, exited
 
-        // A thread ID no thread holds is reported by the machine and by each
-        // view.
+        // A thread ID no thread holds is reported.
         let forged = withOccupants [ CpuId 0, nobody ] machine
         let defect = UnixSystemDefect.OccupantWithoutThread (CpuId 0, nobody)
 
-        Machines.checkInvariants forged
-        |> shouldEqual [ SimulatedMachineDefect.Machine defect ]
+        Machines.checkInvariants forged |> shouldEqual [ defect ]
 
-        UnixSystem.checkInvariants (Machines.viewOf first forged)
-        |> shouldEqual [ defect ]
-
-        // Another process's running thread is no defect in a view that cannot
-        // see that process's threads.
+        // Another process's running thread is no defect.
         let shared = withOccupants [ CpuId 0, secondLeader ] machine
         Machines.checkInvariants shared |> shouldEqual []
-        UnixSystem.checkInvariants (Machines.viewOf first shared) |> shouldEqual []
-        UnixSystem.checkInvariants (Machines.viewOf second shared) |> shouldEqual []
 
     [<Test>]
     let ``checkInvariants reports a running thread whose processor is another`` () : unit =
@@ -791,10 +804,7 @@ module TestUnixScheduling =
         let forged = withOccupants [ CpuId 1, threadIdOf pid 0 machine ] machine
 
         Machines.checkInvariants forged
-        |> shouldEqual
-            [
-                SimulatedMachineDefect.Machine (UnixSystemDefect.OccupantOnAnotherCpu (0, CpuId 1, CpuId 0))
-            ]
+        |> shouldEqual [ UnixSystemDefect.OccupantOnAnotherCpu (Caller.make pid 0, CpuId 1, CpuId 0) ]
 
     [<Test>]
     let ``re-dispatching a running thread allocates nothing`` () : unit =
@@ -806,16 +816,23 @@ module TestUnixScheduling =
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.spawn 1
-            |> UnixScheduling.dispatch 0 (CpuId 0)
-            |> UnixScheduling.dispatch 1 (CpuId 1)
+
+        // Made once, as a client makes the callers of its threads once.
+        let first = Callers.thread 0 system
+        let second = Callers.thread 1 system
+
+        let system =
+            system
+            |> UnixScheduling.dispatch first (CpuId 0)
+            |> UnixScheduling.dispatch second (CpuId 1)
 
         // Made once, as a client reads them off the thread rather than constructing them.
         let zero = CpuId 0
         let one = CpuId 1
 
         let redispatch () : bool =
-            obj.ReferenceEquals (UnixScheduling.dispatch 0 zero system, system)
-            && obj.ReferenceEquals (UnixScheduling.dispatch 1 one system, system)
+            obj.ReferenceEquals (UnixScheduling.dispatch first zero system, system)
+            && obj.ReferenceEquals (UnixScheduling.dispatch second one system, system)
 
         // Warm up, so that nothing the first calls do once is counted.
         for _ in 1..100 do

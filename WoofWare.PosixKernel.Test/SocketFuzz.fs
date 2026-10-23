@@ -96,7 +96,7 @@ module SocketFuzz =
     /// `close(2)`. A refusal is the model's, and is reported as one; an errno
     /// comes back, because that is an answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> raise (ModelRefusal $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}")
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -289,6 +289,7 @@ module SocketFuzz =
         =
         match
             UnixPoll.tryEpollCtl
+                (Callers.leader state.Kernel)
                 (slotFd epoll state)
                 op
                 (slotFd target state)
@@ -326,7 +327,7 @@ module SocketFuzz =
             // directly: bind/listen semantics are deliberately outside the
             // fuzzed vocabulary (see the plan doc's altitude option).
             let socketId = socketIdOfSlot slot state
-            let sock = UnixMachineState.socket socketId state.Kernel.Machine
+            let sock = UnixMachineState.socket socketId (Kernel.machine state.Kernel)
 
             match sock.Phase with
             | SocketPhase.Idle -> ()
@@ -335,11 +336,11 @@ module SocketFuzz =
             let port = state.NextListenerPort
 
             let kernel =
-                { state.Kernel with
-                    Machine =
-                        { state.Kernel.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { sock with
                                         Addressing =
@@ -357,12 +358,12 @@ module SocketFuzz =
                                                 {
                                                     Backlog = 8
                                                     Queue = []
-                                                    Drained = false
                                                 }
                                     }
-                                    state.Kernel.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    state.Kernel
 
             "ok",
             { state with
@@ -374,7 +375,9 @@ module SocketFuzz =
             // slot of it, so ask the kernel at connect time — the harness
             // does the same with getsockname.
             let endpoint =
-                match (UnixMachineState.socket (socketIdOfSlot listener state) state.Kernel.Machine).Ipv4Binding with
+                match
+                    (UnixMachineState.socket (socketIdOfSlot listener state) (Kernel.machine state.Kernel)).Ipv4Binding
+                with
                 | Some binding when binding.Endpoint.Port <> 0us -> binding.Endpoint
                 | _ -> failwith $"FUZZ-DRIVER BUG: conn targets slot %d{listener}, whose socket never listened."
 
@@ -382,7 +385,7 @@ module SocketFuzz =
 
             let outcome, kernel =
                 match
-                    UnixConnection.connectSocket
+                    Lone.UnixConnection.connectSocket
                         socketId
                         true
                         16u
@@ -408,7 +411,7 @@ module SocketFuzz =
 
             let outcome, kernel =
                 match
-                    UnixConnection.connectSocket
+                    Lone.UnixConnection.connectSocket
                         socketId
                         true
                         16u
@@ -432,14 +435,14 @@ module SocketFuzz =
         | FuzzOp.Accept (listener, newSlot) ->
             let socketId = socketIdOfSlot listener state
 
-            match (UnixMachineState.socket socketId state.Kernel.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine state.Kernel)).Phase with
             | SocketPhase.Listening listenState when List.isEmpty listenState.Queue ->
                 // Nonblocking accept of an empty queue, exactly accept4's
                 // answer; `acceptConnection` requires a nonempty queue.
                 "EAGAIN", state
             | _ ->
 
-            let fd, _, kernel = UnixConnection.acceptConnection socketId state.Kernel
+            let fd, _, kernel = Lone.UnixConnection.acceptConnection socketId state.Kernel
 
             "ok",
             assignSlot
@@ -473,7 +476,12 @@ module SocketFuzz =
                 // shrink towards.
                 failwith $"close of fd %d{fd} answered %O{error}, which is not EBADF"
         | FuzzOp.Dup (slot, newSlot) ->
-            match FileDescriptorRegistry.dup (slotFd slot state) (Lone.fileDescriptors state.Kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform state.Kernel))
+                    (slotFd slot state)
+                    (Lone.fileDescriptors state.Kernel)
+            with
             | Ok (fd, registry) ->
                 "ok",
                 assignSlot
@@ -485,7 +493,9 @@ module SocketFuzz =
             | Error FileDescriptorDupError.BadFd -> "EBADF", state
         | FuzzOp.NewEpoll slot ->
             let fd, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors state.Kernel)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform state.Kernel))
+                    (Lone.fileDescriptors state.Kernel)
 
             "ok",
             assignSlot
@@ -510,12 +520,12 @@ module SocketFuzz =
             // cannot disagree; asked here because a generated sequence drives
             // the epoll instance through phases no hand-written row reaches.
             let system = state.Kernel
-            let predicted = EpollReadyList.hasDeliverableEvent queueId system
-            let delivered, system = EpollReadyList.drain queueId maxEvents system
+            let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId system
+            let delivered, system = Lone.EpollReadyList.drain queueId maxEvents system
 
             if List.isEmpty delivered = predicted then
                 failwith
-                    $"FUZZ-DRIVER BUG: EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events."
+                    $"FUZZ-DRIVER BUG: Lone.EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events."
 
             let kernel = system
 
@@ -555,13 +565,14 @@ module SocketFuzz =
             // registered here for the call is never left behind in the state.
             let polling = Threads.ensure pollThread state.Kernel
 
-            match UnixPoll.tryPoll pollThread [ entry ] 0 polling with
+            match UnixPoll.tryPoll (Callers.thread pollThread polling) [ entry ] 0 polling with
             | Error refusal -> raise (ModelRefusal $"poll of fd %d{fd} refused: %s{PollRefusal.describe refusal}")
             | Ok (PollOutcome.WouldBlock condition, _) ->
                 failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 parked on %A{condition}."
             | Ok (PollOutcome.Failed error, _) ->
-                failwith
-                    $"FUZZ-DRIVER BUG: a poll at timeout 0 failed with %A{error}, which only a finishing call answers."
+                failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 failed with %A{error}."
+            | Ok (PollOutcome.Interrupted, _) ->
+                failwith "FUZZ-DRIVER BUG: a poll at timeout 0 was interrupted, which only a finishing call answers."
             | Ok (PollOutcome.Answered ([ reported ], _), _) -> $"<%s{pollMaskString reported}>", state
             | Ok (PollOutcome.Answered (reported, _), _) ->
                 failwith $"FUZZ-DRIVER BUG: one poll entry was answered with %d{List.length reported} reports."
@@ -684,9 +695,11 @@ module SocketFuzz =
     /// Raw `<sys/epoll.h>` events for `EpollAdd` and `EpollMod`: Linux's named
     /// readiness bits, including those the interest bits cannot express, alone
     /// and together, and bits epoll names nothing for, which it stores and
-    /// never reports. Edge-triggered but for one draw in 32, which asks for a mode the model refuses
-    /// (level-triggering, `EPOLLEXCLUSIVE`, `EPOLLONESHOT` or `EPOLLWAKEUP`),
-    /// so that the failures which precede a refusal are compared too.
+    /// never reports. In every trigger mode: edge-triggered, level-triggered,
+    /// and one-shot of either, each often enough that a sequence's waits see
+    /// one requeued or disarmed; and in one draw in 32 with a mode the model
+    /// refuses (`EPOLLEXCLUSIVE` or `EPOLLWAKEUP`), so that the failures which
+    /// precede a refusal are compared too.
     let private randomEpollEvents (rng : Random) : uint32 =
         let readiness =
             [
@@ -714,18 +727,23 @@ module SocketFuzz =
             | 6 -> uint32 (rng.Next 0x10000000)
             | _ -> pick rng [ 0x20u ; 0x800u ; 0x1000u ; 0x4000u ; 0x8000u ; 0x100000u ; 0x8000000u ]
 
-        if rng.Next 32 = 0 then
-            body
-            ||| pick
+        let mode =
+            match rng.Next 32 with
+            | 0 ->
+                pick
                     rng
                     [
-                        0u
+                        EpollEvents.Exclusive
                         EpollEvents.EdgeTriggered ||| EpollEvents.Exclusive
-                        EpollEvents.EdgeTriggered ||| EpollEvents.OneShot
+                        EpollEvents.WakeUp
                         EpollEvents.EdgeTriggered ||| EpollEvents.WakeUp
                     ]
-        else
-            body ||| EpollEvents.EdgeTriggered
+            | draw when draw < 11 -> 0u
+            | draw when draw < 15 -> EpollEvents.OneShot
+            | draw when draw < 19 -> EpollEvents.OneShot ||| EpollEvents.EdgeTriggered
+            | _ -> EpollEvents.EdgeTriggered
+
+        body ||| mode
 
     /// A `poll(2)` request mask, in Linux's own `<poll.h>` numbering.
     ///

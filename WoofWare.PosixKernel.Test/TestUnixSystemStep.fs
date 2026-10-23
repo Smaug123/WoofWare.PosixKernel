@@ -23,10 +23,11 @@ module TestUnixSystemStep =
 
     /// Whether the syscall `waiter` parked in on `condition` would get further now.
     let private holds (waiter : int) (condition : WakeCondition) (system : UnixSystem<int, string>) : bool =
-        not (Set.isEmpty (WakeCondition.satisfied waiter condition system))
+        not (Set.isEmpty (Lone.WakeCondition.satisfied waiter condition system))
 
     /// A system with thread `name` registered, since a park is recorded against a
-    /// thread and `UnixThreadTable` is loudly partial in names it has never minted.
+    /// thread, and the kernel is loudly partial in thread names it has never
+    /// minted.
     let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Threads.ensure name system
 
@@ -74,25 +75,29 @@ module TestUnixSystemStep =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     (ImmutableArray.CreateRange [ 1uy ; 2uy ; 3uy ; 4uy ; 5uy ])
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the file: %O{error}"
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial filesystem
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A second descriptor onto the seeded file, opened with the access mode
@@ -112,6 +117,9 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 accessMode
@@ -129,20 +137,21 @@ module TestUnixSystemStep =
         match result with
         | Ok (SyscallOutcome.Answered answer, _) -> answer
         | Ok (SyscallOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %O{condition}"
-        | Ok (SyscallOutcome.Restarts, _) -> failwith "expected an answer, got a restart"
+        | Ok (SyscallOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
         | Error e -> failwith $"expected an answer, got a refusal: %O{e}"
 
-    /// A `step` result with its outcome unwrapped to the answer it carries, so
-    /// that a row which cannot block can be compared against the per-syscall
-    /// function's own narrower type.
+    /// A `step` result unwrapped to the `SyscallAnswer` and the system its case
+    /// holds, so that a row can be compared against the per-syscall function's
+    /// own type.
     let private stepAnswered
-        (result : Result<SyscallOutcome * UnixSystem<int, string>, 'a>)
+        (result : Result<SteppedCall<int, string>, 'a>)
         : Result<SyscallAnswer * UnixSystem<int, string>, 'a>
         =
         match result with
-        | Ok (SyscallOutcome.Answered answer, system) -> Ok (answer, system)
-        | Ok (SyscallOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %O{condition}"
-        | Ok (SyscallOutcome.Restarts, _) -> failwith "expected an answer, got a restart"
+        | Ok stepped ->
+            match Stepped.syscallAnswer stepped with
+            | Some (answer, Some system) -> Ok (answer, system)
+            | _ -> failwith $"expected an answer and a system, got %A{Stepped.view stepped}"
         | Error e -> Error e
 
     // -------------------------------------------------------------------- read
@@ -290,6 +299,8 @@ module TestUnixSystemStep =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
+            Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
         }
@@ -299,15 +310,19 @@ module TestUnixSystemStep =
     /// A descriptor onto one unbound, unconnected INET stream socket.
     let private withSocket (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketZero (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketZero
+                (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.ofList [ socketZero, socketDescription ]
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = ForgedSocket.table [ socketZero, socketDescription ]
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     let private notConnected
@@ -321,11 +336,11 @@ module TestUnixSystemStep =
         let fd, system = withSocket system
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Sockets =
-                        Map.ofList
+                        ForgedSocket.table
                             [
                                 socketZero,
                                 { socketDescription with
@@ -333,7 +348,8 @@ module TestUnixSystemStep =
                                 }
                             ]
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``a socket with a refused connection's error is refused, and the refusal names it`` () : unit =
@@ -412,7 +428,6 @@ module TestUnixSystemStep =
                     {
                         ListenState.Backlog = 4
                         ListenState.Queue = []
-                        ListenState.Drained = false
                     }
                 SocketPhase.Established (ConnectionId 0L, ConnectionEnd.Client)
                 SocketPhase.EstablishedPendingReport (ConnectionId 0L)
@@ -424,14 +439,17 @@ module TestUnixSystemStep =
 
         for phase in phases do
             let fd, registry =
-                FileDescriptorRegistry.createSocket socketZero (Lone.fileDescriptors linux)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                    socketZero
+                    (Lone.fileDescriptors linux)
 
             let system =
-                { linux with
-                    Machine =
-                        { linux.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with
@@ -439,7 +457,8 @@ module TestUnixSystemStep =
                                         }
                                     ]
                         }
-                }
+                    )
+                    linux
                 |> Lone.withFileDescriptors registry
 
             ReadOutcomes.read fd UserBuffer.Mapped 0UL system
@@ -449,7 +468,7 @@ module TestUnixSystemStep =
             // a sleep on a connection with nothing to read, and a refusal with
             // an error, so the row above is about the length rather than about
             // the phase.
-            match phase, UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 1UL system with
+            match phase, UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 1UL system with
             | SocketPhase.Idle, answer
             | SocketPhase.Listening _, answer ->
                 answer
@@ -529,7 +548,9 @@ module TestUnixSystemStep =
 
         WriteAdmissions.unchanged fd UserBuffer.Mapped 3UL system
         |> admitted
-        |> shouldEqual (WriteAdmission.Transfer 3)
+        |> function
+            | WriteAdmission.Transfer (3, WriteInto.File (into, _, 0L, _)) -> into |> shouldEqual fd
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``a buffer with no bytes is refused at the copy, not faulted`` () : unit =
@@ -566,7 +587,9 @@ module TestUnixSystemStep =
 
         WriteAdmissions.unchanged fd UserBuffer.Mapped 3UL system
         |> admitted
-        |> shouldEqual (WriteAdmission.Transfer 3)
+        |> function
+            | WriteAdmission.Transfer (3, WriteInto.File (into, _, 0L, _)) -> into |> shouldEqual fd
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``a write to a file lands, and advances the offset by what moved`` () : unit =
@@ -580,9 +603,10 @@ module TestUnixSystemStep =
             | Some (OpenFileTarget.File (inode, offset)) ->
                 offset |> shouldEqual 2L
 
-                match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGetContent inode (UnixSystem.fileSystem after) with
                 | Some (InodeContent.RegularFile (contents, _)) ->
-                    List.ofSeq contents |> shouldEqual [ 9uy ; 9uy ; 3uy ; 4uy ; 5uy ]
+                    List.ofSeq (FileContents.toImmutableArray contents)
+                    |> shouldEqual [ 9uy ; 9uy ; 3uy ; 4uy ; 5uy ]
                 | other -> failwith $"expected a regular file, got %O{other}"
             | other -> failwith $"expected a file descriptor, got %O{other}"
         | other -> failwith $"unexpected: %A{other}"
@@ -591,28 +615,27 @@ module TestUnixSystemStep =
     let ``a write to a drained standard stream is delivered rather than stored`` () : unit =
         let bytes = ImmutableArray.CreateRange [ 0x68uy ; 0x69uy ]
 
-        match WriteOutcomes.write 1 bytes linux with
-        | Ok (WriteAnswer.Completed written, after) ->
+        match WriteOutcomes.writeDelivering 1 bytes linux with
+        | Ok ((WriteAnswer.Completed written, after), delivery) ->
             written |> shouldEqual 2L
 
-            DeliveryLog.toList after.Machine.Delivered
-            |> shouldEqual
-                [
+            delivery
+            |> shouldEqual (
+                Some
                     {
-                        Endpoint = ExternalEndpoint (UnixSystem.processId after, 1)
+                        Endpoint = ExternalEndpoint (Lone.pid after, 1)
                         Bytes = bytes
                     }
-                ]
+            )
 
-            after.Machine.Pipes
+            UnixSystem.pipes after
             |> Map.forall (fun _ pipe -> PipeBuffer.held pipe.Buffer = 0)
             |> shouldEqual true
         | other -> failwith $"unexpected: %A{other}"
 
     [<Test>]
     let ``write answers the descriptor questions itself`` () : unit =
-        // A caller that skipped the admission gets a kernel's answer rather than
-        // an inconsistent one, which is what lets the second call take no buffer.
+        // The whole call answers them before its copy.
         WriteOutcomes.write 7 (ImmutableArray.CreateRange [ 1uy ]) linux
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, linux))
 
@@ -623,10 +646,8 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``an empty write changes nothing, but only after the descriptor checks`` () : unit =
-        // `admitWrite` answers this case too, so the arm is unreachable for a
-        // caller that used the pair — but a caller that did not must get the
-        // same answer. Measured: a zero-length write leaves `mtime` and `ctime`
-        // where they were and does not extend the file, and
+        // Answered before the copy. Measured: a zero-length write leaves
+        // `mtime` and `ctime` where they were and does not extend the file, and
         // `VirtualFileSystem.writeFile` asserts a non-empty write for exactly
         // that reason.
         let fd, system = withOpenFile linux
@@ -647,17 +668,20 @@ module TestUnixSystemStep =
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, readOnly))
 
     /// Whether `outcome` is a process ended by `SIGPIPE`'s default action.
-    let private endedBySigPipe (outcome : Result<WriteStep<'Answer, int, string>, WriteRefusal>) : bool =
+    let private endedBySigPipe
+        (outcome : Result<WriteStep<'Answer, UnixSystem<int, string>, int>, WriteRefusal>)
+        : bool
+        =
         match outcome with
-        | Ok (WriteStep.ProcessEnded ended) -> ended.Termination = ProcessTermination.Signaled (Signal.SIGPIPE, false)
+        | Ok (WriteStep.ProcessEnded (ended, _)) ->
+            EndedProcess.termination ended = ProcessTermination.Signaled (Signal.SIGPIPE, false)
         | _ -> false
 
     [<Test>]
     let ``a socket with a refused connection's error is refused by both halves of the write`` () : unit =
         // What a write reports of a refused connection's error is not modelled.
-        // Both calls must refuse: the admission because a caller must not
-        // extract bytes for a write that cannot happen, and `write` because a
-        // caller that skipped the admission must not get a guess either.
+        // The admission refuses, so that a caller never extracts bytes for a
+        // write that cannot happen.
         let socketId = SocketId 0L
         let refused = SocketPhase.Refused RefusalError.Pending
 
@@ -667,20 +691,26 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = refused
+                Drained = false
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                socketId
+                (Lone.fileDescriptors linux)
 
         let system =
-            { linux with
-                Machine =
-                    { linux.Machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
-            }
+                )
+                linux
             |> Lone.withFileDescriptors registry
 
         let expected =
@@ -700,11 +730,11 @@ module TestUnixSystemStep =
         // `write(socket, buf, 0)` is the socket's own error. On Linux that is
         // EPIPE and SIGPIPE, whose default action ends the process.
         let idle =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.ofList
+                            ForgedSocket.table
                                 [
                                     socketId,
                                     { socket with
@@ -712,14 +742,15 @@ module TestUnixSystemStep =
                                     }
                                 ]
                     }
-            }
+                )
+                system
 
         for count in [ 0UL ; 5UL ] do
-            UnixReadWrite.tryAdmitWrite (Lone.leader idle) fd UserBuffer.Mapped count idle
+            Lone.UnixReadWrite.tryAdmitWrite (Lone.leader idle) fd UserBuffer.Mapped count idle
             |> endedBySigPipe
             |> shouldEqual true
 
-        UnixReadWrite.tryWriteBytes (Lone.leader idle) fd (ImmutableArray.CreateRange [ 1uy ]) idle
+        WriteOutcomes.writeBytes (Lone.leader idle) fd (ImmutableArray.CreateRange [ 1uy ]) idle
         |> endedBySigPipe
         |> shouldEqual true
 
@@ -749,10 +780,10 @@ module TestUnixSystemStep =
                     Error (WriteRefusal.UnmodelledSocketPhase (socketZero, SocketDomain.Inet, SocketKind.Stream, phase))
 
                 for count in [ 0UL ; 1UL ] do
-                    UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped count system
+                    Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped count system
                     |> shouldEqual refused
 
-                UnixReadWrite.tryWriteBytes (Lone.leader system) fd (ImmutableArray.CreateRange [ 1uy ]) system
+                WriteOutcomes.writeBytes (Lone.leader system) fd (ImmutableArray.CreateRange [ 1uy ]) system
                 |> shouldEqual refused
 
     [<Test>]
@@ -770,21 +801,27 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = SocketPhase.Idle
+                Drained = false
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }
 
         let withSocket (flavour : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let fd, registry =
-                FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors flavour)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform flavour))
+                    socketId
+                    (Lone.fileDescriptors flavour)
 
             fd,
-            { flavour with
-                Machine =
-                    { flavour.Machine with
-                        Sockets = Map.ofList [ socketId, socket ]
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Sockets = ForgedSocket.table [ socketId, socket ]
                     }
-            }
+                )
+                flavour
             |> Lone.withFileDescriptors registry
 
         let wild = UserBuffer.Unmapped System.UInt64.MaxValue
@@ -802,13 +839,16 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than written`` () : unit =
         let fd, system = withOpenFile linux
 
-        let exn =
-            Assert.Throws<System.Exception> (fun () ->
-                WriteOutcomes.write fd Unchecked.defaultof<ImmutableArray<byte>> system
-                |> ignore<Result<WriteAnswer * UnixSystem<int, string>, WriteRefusal>>
-            )
+        match UnixReadWrite.write (Callers.leader system) fd UserBuffer.Mapped 1UL system with
+        | CallProgress.NeedsCopyIn paused ->
+            let exn =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixReadWrite.writeWithBytes Unchecked.defaultof<ImmutableArray<byte>> paused
+                    |> ignore<ProcessFate<WriteOutcome<int>, int, string> * Delivery option>
+                )
 
-        exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+            exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+        | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
     // ------------------------------------------------------------------- pread
 
@@ -835,30 +875,37 @@ module TestUnixSystemStep =
                     (PermissionBits.parseOrFail context 0o755)
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the directory: %O{error}"
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadOnly
                 (Lone.fileDescriptors system)
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial filesystem
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A descriptor onto an epoll instance.
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                (Lone.fileDescriptors system)
 
         fd, Lone.withFileDescriptors registry system
 
@@ -1175,7 +1222,7 @@ module TestUnixSystemStep =
                 | Ok (_, system) -> system
                 | other -> failwith $"could not advance the offset: %A{other}"
 
-            match UnixReadWrite.tryPwriteBytes 0 fd (ImmutableArray.CreateRange [ 9uy ; 9uy ]) 3L system with
+            match WriteOutcomes.admitThenPwrite 0 fd (ImmutableArray.CreateRange [ 9uy ; 9uy ]) 3L system with
             | Ok (WriteAnswer.Completed written, after) ->
                 written |> shouldEqual 2L
 
@@ -1184,9 +1231,10 @@ module TestUnixSystemStep =
                     // Exactly where `read` left it, rather than at 5.
                     offset |> shouldEqual 2L
 
-                    match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
+                    match VirtualFileSystem.tryGetContent inode (UnixSystem.fileSystem after) with
                     | Some (InodeContent.RegularFile (contents, _)) ->
-                        List.ofSeq contents |> shouldEqual [ 1uy ; 2uy ; 3uy ; 9uy ; 9uy ]
+                        List.ofSeq (FileContents.toImmutableArray contents)
+                        |> shouldEqual [ 1uy ; 2uy ; 3uy ; 9uy ; 9uy ]
                     | other -> failwith $"expected a regular file, got %O{other}"
                 | other -> failwith $"expected a file descriptor, got %O{other}"
             | other -> failwith $"unexpected: %A{other}"
@@ -1195,7 +1243,7 @@ module TestUnixSystemStep =
     let ``a pwrite past the end of the file extends it`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixReadWrite.tryPwriteBytes 0 fd (ImmutableArray.CreateRange [ 7uy ]) 7L system with
+        match WriteOutcomes.admitThenPwrite 0 fd (ImmutableArray.CreateRange [ 7uy ]) 7L system with
         | Ok (WriteAnswer.Completed written, after) ->
             written |> shouldEqual 1L
 
@@ -1203,9 +1251,9 @@ module TestUnixSystemStep =
             | Some (OpenFileTarget.File (inode, offset)) ->
                 offset |> shouldEqual 0L
 
-                match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGetContent inode (UnixSystem.fileSystem after) with
                 | Some (InodeContent.RegularFile (contents, _)) ->
-                    List.ofSeq contents
+                    List.ofSeq (FileContents.toImmutableArray contents)
                     |> shouldEqual [ 1uy ; 2uy ; 3uy ; 4uy ; 5uy ; 0uy ; 0uy ; 7uy ]
                 | other -> failwith $"expected a regular file, got %O{other}"
             | other -> failwith $"expected a file descriptor, got %O{other}"
@@ -1247,16 +1295,16 @@ module TestUnixSystemStep =
                     socketFd, socketSystem
                     queueFd, queueSystem
                 ] do
-                UnixReadWrite.tryAdmitPWrite 0 descriptor UserBuffer.Mapped 4UL -1L holding
+                Lone.UnixReadWrite.tryAdmitPWrite descriptor UserBuffer.Mapped 4UL -1L holding
                 |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
             // And it beats the buffer screen and the no-op too, which the rows
             // above cannot say: both of those sit behind the descriptor steps,
             // so a buffer with no answer at all still earns EINVAL.
-            UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Addressless 4UL -1L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Addressless 4UL -1L system
             |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
-            UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 0UL -1L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 0UL -1L system
             |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
     [<Test>]
@@ -1269,16 +1317,16 @@ module TestUnixSystemStep =
         //   pipe read end (also unwritable)   ESPIPE   EBADF
         //   regular file O_RDONLY (seekable)  EBADF    EBADF
         for fd in [ 1 ; 2 ] do
-            UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L linux
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L linux
             |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-            UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L darwin
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L darwin
             |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        UnixReadWrite.tryAdmitPWrite 0 0 UserBuffer.Mapped 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 0 UserBuffer.Mapped 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        UnixReadWrite.tryAdmitPWrite 0 0 UserBuffer.Mapped 4UL 0L darwin
+        Lone.UnixReadWrite.tryAdmitPWrite 0 UserBuffer.Mapped 4UL 0L darwin
         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
         // The control that says this is about the tie rather than about
@@ -1286,7 +1334,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withReadOnlyFile flavour
 
-            UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L system
             |> shouldEqual (pwriteFailed UnixError.EBADF)
 
         // And seekability precedes the screen on both: measured,
@@ -1294,13 +1342,13 @@ module TestUnixSystemStep =
         // Darwin, not EFAULT.
         let wild = UserBuffer.Unmapped System.UInt64.MaxValue
 
-        UnixReadWrite.tryAdmitPWrite 0 0 wild 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 0 wild 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        UnixReadWrite.tryAdmitPWrite 0 0 wild 4UL 0L darwin
+        Lone.UnixReadWrite.tryAdmitPWrite 0 wild 4UL 0L darwin
         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
-        UnixReadWrite.tryAdmitPWrite 0 1 wild 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 1 wild 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
     [<Test>]
@@ -1319,10 +1367,10 @@ module TestUnixSystemStep =
 
             for buffer in [ UserBuffer.Mapped ; wild ; UserBuffer.Opaque ; UserBuffer.Addressless ] do
                 for count in [ 0UL ; 4UL ] do
-                    UnixReadWrite.tryAdmitPWrite 0 socketFd buffer count 0L socketSystem
+                    Lone.UnixReadWrite.tryAdmitPWrite socketFd buffer count 0L socketSystem
                     |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-                    UnixReadWrite.tryAdmitPWrite 0 queueFd buffer count 0L queueSystem
+                    Lone.UnixReadWrite.tryAdmitPWrite queueFd buffer count 0L queueSystem
                     |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
         // The same socket answers a `write` itself, and so does the event queue, each
@@ -1331,7 +1379,7 @@ module TestUnixSystemStep =
         // process.
         let fd, system = withSocket linux
 
-        UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 4UL system
+        Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 4UL system
         |> endedBySigPipe
         |> shouldEqual true
 
@@ -1357,7 +1405,7 @@ module TestUnixSystemStep =
             for descriptor, holding in [ fd, system ; dirFd, dirSystem ] do
                 for buffer in [ UserBuffer.Mapped ; UserBuffer.Addressless ; UserBuffer.Unmapped 0UL ] do
                     for count in [ 0UL ; 4UL ] do
-                        UnixReadWrite.tryAdmitPWrite 0 descriptor buffer count 0L holding
+                        Lone.UnixReadWrite.tryAdmitPWrite descriptor buffer count 0L holding
                         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
     [<Test>]
@@ -1369,45 +1417,49 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        UnixReadWrite.tryAdmitPWrite 0 fd wild 0UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd wild 0UL 0L system
         |> shouldEqual (pwriteFailed UnixError.EFAULT)
 
-        UnixReadWrite.tryAdmitPWrite 0 darwinFd wild 0UL 0L darwinSystem
+        Lone.UnixReadWrite.tryAdmitPWrite darwinFd wild 0UL 0L darwinSystem
         |> shouldEqual (Ok (PWriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
         // A *null* pointer passes the screen on both — it is an ordinary user
         // address — so it reaches the no-op at length 0 and faults at the copy
         // otherwise. Measured, `pwrite(f, NULL, 0, 0)` is 0 and
-        // `pwrite(f, NULL, 4, 0)` is EFAULT, on both.
+        // `pwrite(f, NULL, 4, 0)` is EFAULT, on both, once the file's write has
+        // run (`TestFaultingFileWrite`).
         for descriptor, holding in [ fd, system ; darwinFd, darwinSystem ] do
-            UnixReadWrite.tryAdmitPWrite 0 descriptor (UserBuffer.Unmapped 0UL) 0UL 0L holding
+            Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 0UL 0L holding
             |> shouldEqual (Ok (PWriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
-            UnixReadWrite.tryAdmitPWrite 0 descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding
-            |> shouldEqual (pwriteFailed UnixError.EFAULT)
+            match Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding with
+            | Ok (PWriteAdmission.Faults (4, _, _)) -> ()
+            | other -> failwith $"pwrite(f, NULL, 4, 0): %A{other}"
 
     [<Test>]
     let ``a pwrite buffer with no bytes is refused at the copy, not faulted`` () : unit =
         let fd, system = withOpenFile linux
 
-        UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Opaque 4UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Opaque 4UL 0L system
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Addressless 4UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Addressless 4UL 0L system
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        UnixReadWrite.tryAdmitPWrite 0 darwinFd UserBuffer.Addressless 4UL 0L darwinSystem
+        Lone.UnixReadWrite.tryAdmitPWrite darwinFd UserBuffer.Addressless 4UL 0L darwinSystem
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
     let ``a pwrite that reaches the copy asks for exactly what was requested`` () : unit =
         let fd, system = withOpenFile linux
 
-        UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 9L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 3UL 9L system
         |> pwriteAdmitted
-        |> shouldEqual (PWriteAdmission.Transfer 3)
+        |> function
+            | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``admitting a pwrite changes nothing`` () : unit =
@@ -1422,31 +1474,32 @@ module TestUnixSystemStep =
                 UserBuffer.Unmapped 0UL, 3UL
                 UserBuffer.Mapped, 0UL
             ] do
-            UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd buffer count 0L system
             |> ignore<Result<PWriteAdmission, PWriteRefusal>>
 
-        UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 3UL 0L system
         |> pwriteAdmitted
-        |> shouldEqual (PWriteAdmission.Transfer 3)
+        |> function
+            | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``pwrite answers the descriptor questions itself`` () : unit =
-        // A caller that skipped the admission gets a kernel's answer rather than
-        // an inconsistent one, which is what lets the second call take no buffer.
+        // The whole call answers them before its copy.
         let bytes = ImmutableArray.CreateRange [ 1uy ]
 
-        UnixReadWrite.tryPwriteBytes 0 7 bytes 0L linux
+        WriteOutcomes.admitThenPwrite 0 7 bytes 0L linux
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, linux))
 
         let fd, system = withReadOnlyFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 fd bytes 0L system
+        WriteOutcomes.admitThenPwrite 0 fd bytes 0L system
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, system))
 
         // Including the negative offset, which precedes them all.
         let good, goodSystem = withOpenFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 good bytes -1L goodSystem
+        WriteOutcomes.admitThenPwrite 0 good bytes -1L goodSystem
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EINVAL, goodSystem))
 
     [<Test>]
@@ -1457,12 +1510,12 @@ module TestUnixSystemStep =
         // measured, `pwrite(f, buf, 0, 100000)` on a five-byte file leaves it five
         // bytes long.
         for offset in [ 0L ; 100000L ] do
-            UnixReadWrite.tryPwriteBytes 0 fd ImmutableArray<byte>.Empty offset system
+            WriteOutcomes.admitThenPwrite 0 fd ImmutableArray<byte>.Empty offset system
             |> shouldEqual (Ok (WriteAnswer.Completed 0L, system))
 
         let readOnlyFd, readOnly = withReadOnlyFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 readOnlyFd ImmutableArray<byte>.Empty 0L readOnly
+        WriteOutcomes.admitThenPwrite 0 readOnlyFd ImmutableArray<byte>.Empty 0L readOnly
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, readOnly))
 
     [<Test>]
@@ -1474,7 +1527,7 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
         let bytes = ImmutableArray.CreateRange [ 1uy ]
 
-        match UnixReadWrite.tryPwriteBytes 0 fd bytes VirtualFileSystem.maxFileLength system with
+        match WriteOutcomes.admitThenPwrite 0 fd bytes VirtualFileSystem.maxFileLength system with
         | Error (PWriteRefusal.ExceedsRepresentableLength (_, offset, count)) ->
             offset |> shouldEqual VirtualFileSystem.maxFileLength
             count |> shouldEqual 1
@@ -1487,13 +1540,16 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than pwritten`` () : unit =
         let fd, system = withOpenFile linux
 
-        let exn =
-            Assert.Throws<System.Exception> (fun () ->
-                UnixReadWrite.tryPwriteBytes 0 fd Unchecked.defaultof<ImmutableArray<byte>> 0L system
-                |> ignore<Result<WriteAnswer * UnixSystem<int, string>, PWriteRefusal>>
-            )
+        match UnixReadWrite.pwrite (Callers.thread 0 system) fd UserBuffer.Mapped 1UL 0L system with
+        | CallProgress.NeedsCopyIn paused ->
+            let exn =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixReadWrite.pwriteWithBytes Unchecked.defaultof<ImmutableArray<byte>> paused
+                    |> ignore<WriteAnswer * UnixSystem<int, string>>
+                )
 
-        exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+            exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+        | other -> failwith $"expected the pwrite to stop at its copy, got %A{other}"
 
     // ------------------------------------------------------------------- fstat
 
@@ -1510,27 +1566,30 @@ module TestUnixSystemStep =
                 GraphMutators.createSymlink
                     rootInode
                     (DirectoryEntryName.parseOrFail context "l")
-                    (SymlinkModes.at022 system.Machine.UnixPlatform)
+                    (SymlinkModes.at022 (UnixSystem.platform system))
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     (SymlinkTarget.parseOrFail context "abcdefg")
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed the symlink: %O{error}"
 
         inode,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial filesystem
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``fstat reports the fields a kernel knows about a regular file`` () : unit =
         let fd, system = withOpenFile linux
-        let status = UnixPathResolution.tryFstat fd system |> reported
+
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
 
         // `S_IFREG ||| 0o644`, composed by the library so that the two bands are
         // assembled in one place rather than by every client.
@@ -1558,7 +1617,9 @@ module TestUnixSystemStep =
     [<Test>]
     let ``a directory reports its type bits and its mount's size for it`` () : unit =
         let fd, system = withOpenDirectory linux
-        let status = UnixPathResolution.tryFstat fd system |> reported
+
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
 
         status.Mode |> shouldEqual 0o40755
         // Linux's default mount is tmpfs, where an empty directory is 40 bytes.
@@ -1573,7 +1634,7 @@ module TestUnixSystemStep =
             let inode, system = withSymlink flavour
 
             let status =
-                match UnixPathResolution.statOf inode system with
+                match Lone.UnixPathResolution.statOf inode system with
                 | Some (Ok status) -> status
                 | other -> failwith $"expected a status, got %A{other}"
 
@@ -1582,7 +1643,7 @@ module TestUnixSystemStep =
             status.Size |> shouldEqual 7L
 
             let expected =
-                SymlinkModes.at022 system.Machine.UnixPlatform |> PermissionBits.toInt
+                SymlinkModes.at022 (UnixSystem.platform system) |> PermissionBits.toInt
 
             status.Mode |> shouldEqual (0o120000 ||| expected)
 
@@ -1628,15 +1689,16 @@ module TestUnixSystemStep =
                     (InodeNumber 3L)
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial filesystem
                         }
-                }
+                    )
+                    system
 
             let status =
-                match UnixPathResolution.statOf fifo system with
+                match Lone.UnixPathResolution.statOf fifo system with
                 | Some (Ok status) -> status
                 | other -> failwith $"expected a status, got %A{other}"
 
@@ -1653,12 +1715,16 @@ module TestUnixSystemStep =
         // the epoch, is a distinction no zeroed field could carry.
         let linuxFd, linuxSystem = withOpenFile linux
 
-        (UnixPathResolution.tryFstat linuxFd linuxSystem |> reported).BirthTime
+        (UnixPathResolution.tryFstat (Callers.leader linuxSystem) linuxFd linuxSystem
+         |> reported)
+            .BirthTime
         |> shouldEqual None
 
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        (UnixPathResolution.tryFstat darwinFd darwinSystem |> reported).BirthTime
+        (UnixPathResolution.tryFstat (Callers.leader darwinSystem) darwinFd darwinSystem
+         |> reported)
+            .BirthTime
         |> shouldEqual (Some epoch)
 
     [<Test>]
@@ -1679,7 +1745,9 @@ module TestUnixSystemStep =
             |> Become.rootAgain
             |> Become.fully (Credentials.ofIds (UserId.parseOrFail "test" 41u) (GroupId.parseOrFail "test" 43u) [])
 
-        let status = UnixPathResolution.tryFstat fd system |> reported
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
+
         status.UserId |> shouldEqual Owners.linuxDefault.User
         status.GroupId |> shouldEqual Owners.linuxDefault.Group
 
@@ -1703,11 +1771,12 @@ module TestUnixSystemStep =
             imageOn SimulatedUnixPlatform.linuxX64
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixDescriptor.effectiveUserId system |> shouldEqual credentials.EffectiveUser
+        UnixCredentials.geteuid (Callers.leader system) system
+        |> shouldEqual credentials.EffectiveUser
 
     [<Test>]
     let ``fstat of a descriptor that is not open is EBADF`` () : unit =
-        UnixPathResolution.tryFstat 7 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 7 linux
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.EBADF))
 
     [<Test>]
@@ -1715,7 +1784,7 @@ module TestUnixSystemStep =
         // `None` rather than a crash, so that each caller says what a missing
         // inode means to it. `fstat` holds its inode through a live descriptor,
         // so for it a missing inode is a bug in this library, and it crashes.
-        UnixPathResolution.statOf (InodeNumber 99L) linux |> shouldEqual None
+        Lone.UnixPathResolution.statOf (InodeNumber 99L) linux |> shouldEqual None
 
     [<Test>]
     let ``a descriptor with no inode is refused, and the refusal names which kind`` () : unit =
@@ -1724,20 +1793,20 @@ module TestUnixSystemStep =
         // inode to answer them from, or for a launched pipe no owner or
         // timestamps. The launch table's pipes are the machine's first, in
         // descriptor order.
-        UnixPathResolution.tryFstat 0 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 0 linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 0L)))
 
-        UnixPathResolution.tryFstat 1 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 1 linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 1L)))
 
         let queueFd, queueSystem = withEpoll linux
 
-        UnixPathResolution.tryFstat queueFd queueSystem
+        UnixPathResolution.tryFstat (Callers.leader queueSystem) queueFd queueSystem
         |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let socketFd, socketSystem = withSocket linux
 
-        UnixPathResolution.tryFstat socketFd socketSystem
+        UnixPathResolution.tryFstat (Callers.leader socketSystem) socketFd socketSystem
         |> shouldEqual (Error (FStatRefusal.Socket socketZero))
 
     [<Test>]
@@ -1793,7 +1862,7 @@ module TestUnixSystemStep =
                 dirPermissions
                 (InodeOwner.ofProcess (Lone.proc system).Credentials)
                 epoch
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
             |> orFail "/d"
 
         let inner, vfs =
@@ -1845,12 +1914,13 @@ module TestUnixSystemStep =
         inner,
         target,
         link,
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
 
     /// The tree with every directory searchable, which is what all but one row
     /// wants.
@@ -1868,6 +1938,9 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -1875,9 +1948,13 @@ module TestUnixSystemStep =
 
         let withDescriptor = Lone.withFileDescriptors registry system
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            system
         |> shouldEqual (
-            UnixPathResolution.tryFstat fd withDescriptor
+            UnixPathResolution.tryFstat (Callers.leader withDescriptor) fd withDescriptor
             |> reported
             |> FileStatusAnswer.Reported
             |> Ok
@@ -1892,14 +1969,26 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, target, link, system = withTree flavour
 
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/l")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (statPath "/l"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.Inode |> shouldEqual target
                 status.Size |> shouldEqual 3L
                 status.Mode |> shouldEqual 0o100600
             | other -> failwith $"expected a status, got %A{other}"
 
-            match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/l")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofPath (statPath "/l"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.Inode |> shouldEqual link
                 // `/d/inner/t` is ten bytes, which is what `readlink` would copy.
@@ -1913,7 +2002,11 @@ module TestUnixSystemStep =
         // unreachable from a path.
         let _, _, _, system = withTree linux
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/nope")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/nope"))
+            system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -1934,10 +2027,14 @@ module TestUnixSystemStep =
             )
             |> Lone.restand
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "t") (at inner)
+        Lone.UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "t") (at inner)
         |> shouldEqual (Ok target)
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "t") (at rootInode)
+        Lone.UnixPathResolution.resolvePath
+            AtDirectory.CurrentDirectory
+            SymlinkPolicy.Follow
+            (statPath "t")
+            (at rootInode)
         |> shouldEqual (Error (PathFailure.Errno UnixError.ENOENT))
 
         // ...and a rooted path ignores it, which is what says the branch above is
@@ -1945,7 +2042,7 @@ module TestUnixSystemStep =
         // the root: with it at the root the two arms agree, so that row could
         // not tell "rooted paths start at the root" from "every path starts at
         // the current directory".
-        UnixPathResolution.resolvePath
+        Lone.UnixPathResolution.resolvePath
             AtDirectory.CurrentDirectory
             SymlinkPolicy.Follow
             (statPath "/d/inner/t")
@@ -1960,13 +2057,25 @@ module TestUnixSystemStep =
         // separator on a regular file would resolve.
         let inner, target, _, system = withTree linux
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "/d/inner/t/") system
+        Lone.UnixPathResolution.resolvePath
+            AtDirectory.CurrentDirectory
+            SymlinkPolicy.Follow
+            (statPath "/d/inner/t/")
+            system
         |> shouldEqual (Error (PathFailure.Errno UnixError.ENOTDIR))
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "/d/inner/") system
+        Lone.UnixPathResolution.resolvePath
+            AtDirectory.CurrentDirectory
+            SymlinkPolicy.Follow
+            (statPath "/d/inner/")
+            system
         |> shouldEqual (Ok inner)
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "/d/inner/t") system
+        Lone.UnixPathResolution.resolvePath
+            AtDirectory.CurrentDirectory
+            SymlinkPolicy.Follow
+            (statPath "/d/inner/t")
+            system
         |> shouldEqual (Ok target)
 
     [<Test>]
@@ -1975,7 +2084,11 @@ module TestUnixSystemStep =
         // system rather than passed in — so dropping root changes the answer.
         let _, _, _, system = withTreeUnder (PermissionBits.parseOrFail context 0o600) linux
 
-        UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "/d/inner/t") system
+        Lone.UnixPathResolution.resolvePath
+            AtDirectory.CurrentDirectory
+            SymlinkPolicy.Follow
+            (statPath "/d/inner/t")
+            system
         |> shouldEqual (Error (PathFailure.Errno UnixError.EACCES))
 
         // uid 0 is exempt, which is what says the rule is being read from the
@@ -1987,7 +2100,7 @@ module TestUnixSystemStep =
             |> withTreeUnder (PermissionBits.parseOrFail context 0o600)
 
         match
-            UnixPathResolution.resolvePath
+            Lone.UnixPathResolution.resolvePath
                 AtDirectory.CurrentDirectory
                 SymlinkPolicy.Follow
                 (statPath "/d/inner/t")
@@ -2025,15 +2138,24 @@ module TestUnixSystemStep =
                 | SyscallAnswer.Failed error, _ -> error
                 | other -> failwith $"expected a failure, got %A{other}"
 
+            let openAnswer (result : DescriptorAnswer * UnixSystem<int, string>) : UnixError =
+                match result with
+                | DescriptorAnswer.Failed error, _ -> error
+                | other -> failwith $"expected a failure, got %A{other}"
+
             [
-                (match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath path) system with
+                (match
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath path) system
+                 with
                  | Ok (FileStatusAnswer.Failed error) -> error
                  | other -> failwith $"expected a failure, got %A{other}")
-                Answered.mkdir (PathArg.ofPath path) 0o777 system |> answer
-                Answered.unlink path system |> answer
-                Answered.rmdir path system |> answer
-                Answered.chdir (PathArg.ofPath path) system |> answer
+                Answered.mkdir (Callers.leader system) (PathArg.ofPath path) 0o777 system
+                |> answer
+                Answered.unlink (Callers.leader system) path system |> answer
+                Answered.rmdir (Callers.leader system) path system |> answer
+                Answered.chdir (Callers.leader system) (PathArg.ofPath path) system |> answer
                 Answered.openPath
+                    path
                     {
                         Access = FileAccessMode.ReadOnly
                         Create = false
@@ -2043,16 +2165,23 @@ module TestUnixSystemStep =
                         CloseOnExec = false
                         Synchronous = false
                         DataSynchronous = false
+                        NonBlocking = false
                         Directory = false
                     }
-                    path
                     0
                     system
-                |> answer
+                |> openAnswer
                 (match DirectoryReading.openDirectory path system with
                  | Error error, _ -> error
                  | other -> failwith $"expected a failure, got %A{other}")
-                (match UnixNamespace.tryReadlink (PathArg.ofPath path) UserBuffer.Mapped 4096 system with
+                (match
+                    UnixNamespace.tryReadlink
+                        (Callers.leader system)
+                        (PathArg.ofPath path)
+                        UserBuffer.Mapped
+                        4096
+                        system
+                 with
                  | Ok (ReadLinkAnswer.Failed error) -> error
                  | other -> failwith $"expected a failure, got %A{other}")
             ]
@@ -2085,7 +2214,7 @@ module TestUnixSystemStep =
     let ``the PATH_MAX boundary is one byte short of PATH_MAX`` () : unit =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
-            let limits = SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform
+            let limits = SimulatedUnixPlatform.pathLimits (UnixSystem.platform system)
             let usable = PathLimits.pathMaxBytes limits - 1
 
             for length in [ usable - 1 ; usable ; usable + 1 ] do
@@ -2097,7 +2226,9 @@ module TestUnixSystemStep =
                     else
                         UnixError.ENOENT
 
-                match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText text) system with
+                match
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText text) system
+                with
                 | Ok (FileStatusAnswer.Failed actual) -> actual |> shouldEqual expected
                 | other -> failwith $"expected %O{expected} at %d{length} bytes, got %A{other}"
 
@@ -2116,9 +2247,16 @@ module TestUnixSystemStep =
             )
 
         let after =
-            Answered.mkdir (PathArg.ofPath (statPath "/d")) 0o777 system |> completed
+            Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/d")) 0o777 system
+            |> completed
 
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (statPath "/d"))
+                after
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode |> shouldEqual 0o40750
         | other -> failwith $"expected a status, got %A{other}"
 
@@ -2126,34 +2264,44 @@ module TestUnixSystemStep =
     let ``mkdir over a name something already holds is EEXIST`` () : unit =
         let _, _, _, system = withTree linux
 
-        Answered.mkdir (PathArg.ofPath (statPath "/d")) 0o777 system
+        Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/d")) 0o777 system
         |> failedAs UnixError.EEXIST
 
         // Including a symbolic link, which `mkdir` never dereferences — and a
         // *dangling* one is the case that says so: following it would find a free
         // name and bind a directory at the target, where the measured answer is
         // EEXIST at the link itself.
-        Answered.mkdir (PathArg.ofPath (statPath "/l")) 0o777 system
+        Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/l")) 0o777 system
         |> failedAs UnixError.EEXIST
 
-        Answered.mkdir (PathArg.ofPath (statPath "/dangling")) 0o777 system
+        Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/dangling")) 0o777 system
         |> failedAs UnixError.EEXIST
 
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/d/inner/gone")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofPath (statPath "/d/inner/gone"))
+            system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
     let ``unlink removes the name, and the inode with it when nothing holds it`` () : unit =
         let _, target, _, system = withTree linux
 
-        let after = Answered.unlink (statPath "/d/inner/t") system |> completed
+        let after =
+            Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system
+            |> completed
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) after
+        UnixPathResolution.tryStat
+            (Callers.leader after)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
         // The inode is gone too, which is the part `unlink` adds over the
         // filesystem's own unbind.
-        UnixPathResolution.statOf target after |> shouldEqual None
+        Lone.UnixPathResolution.statOf target after |> shouldEqual None
 
     [<Test>]
     let ``unlink of a file a descriptor holds leaves it readable through that descriptor`` () : unit =
@@ -2164,6 +2312,9 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -2171,38 +2322,45 @@ module TestUnixSystemStep =
 
         let system = Lone.withFileDescriptors registry system
 
-        let after = Answered.unlink (statPath "/d/inner/t") system |> completed
+        let after =
+            Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system
+            |> completed
 
         // The name has gone...
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) after
+        UnixPathResolution.tryStat
+            (Callers.leader after)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
         // ...and the inode has not.
-        UnixPathResolution.statOf target after |> shouldNotEqual None
+        Lone.UnixPathResolution.statOf target after |> shouldNotEqual None
 
         match ReadOutcomes.read fd UserBuffer.Mapped 8UL after with
         | Ok (ReadAnswer.Completed bytes, _) -> List.ofSeq bytes |> shouldEqual [ 1uy ; 2uy ; 3uy ]
         | other -> failwith $"expected the contents, got %A{other}"
 
         // And closing that last descriptor is what finally reaps it.
-        match UnixDescriptor.tryClose fd after with
-        | Ok (SyscallAnswer.Completed _, closed) -> UnixPathResolution.statOf target closed |> shouldEqual None
+        match UnixDescriptor.tryClose (Callers.leader after) fd after with
+        | Ok (SyscallAnswer.Completed _, closed) -> Lone.UnixPathResolution.statOf target closed |> shouldEqual None
         | other -> failwith $"expected a close, got %A{other}"
 
     [<Test>]
     let ``rmdir refuses a directory that still holds something`` () : unit =
         let _, _, _, system = withTree linux
 
-        Answered.rmdir (statPath "/d") system |> failedAs UnixError.ENOTEMPTY
+        Answered.rmdir (Callers.leader system) (statPath "/d") system
+        |> failedAs UnixError.ENOTEMPTY
 
         // The leaf is empty, so it goes; and then its parent is empty too.
         let after =
-            Answered.unlink (statPath "/d/inner/t") system
+            Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system
             |> completed
-            |> fun system -> Answered.rmdir (statPath "/d/inner") system |> completed
-            |> fun system -> Answered.rmdir (statPath "/d") system |> completed
+            |> fun system -> Answered.rmdir (Callers.leader system) (statPath "/d/inner") system |> completed
+            |> fun system -> Answered.rmdir (Callers.leader system) (statPath "/d") system |> completed
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after
+        UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -2221,14 +2379,12 @@ module TestUnixSystemStep =
                 | other -> failwith $"expected a directory descriptor, got %O{other}"
 
             // The clock has to have moved, or the two answers coincide.
-            let system =
-                { system with
-                    Scheduling = UnixSchedulingState.advanceClock 5_000_000_000L system.Scheduling
-                }
+            let system = UnixSystem.advanceClock 5_000_000_000L system
 
-            let after = Answered.rmdir (statPath "/d") system |> completed
+            let after =
+                Answered.rmdir (Callers.leader system) (statPath "/d") system |> completed
 
-            match UnixPathResolution.statOf inode after with
+            match Lone.UnixPathResolution.statOf inode after with
             | Some (Ok status) -> status.StatusChangeTime |> shouldEqual expected
             | Some (Error refusal) -> failwith $"refused: %A{refusal}"
             | None -> failwith "the held descriptor should have kept the inode alive"
@@ -2239,11 +2395,12 @@ module TestUnixSystemStep =
         // points are not one syscall with a flag.
         let _, _, _, system = withTree linux
 
-        match Answered.unlink (statPath "/d/inner") system with
+        match Answered.unlink (Callers.leader system) (statPath "/d/inner") system with
         | SyscallAnswer.Failed _, _ -> ()
         | other -> failwith $"unlink should not remove a directory, got %A{other}"
 
-        Answered.rmdir (statPath "/d/inner/t") system |> failedAs UnixError.ENOTDIR
+        Answered.rmdir (Callers.leader system) (statPath "/d/inner/t") system
+        |> failedAs UnixError.ENOTDIR
 
     [<Test>]
     let ``the path syscalls through step agree with the primitives`` () : unit =
@@ -2259,21 +2416,22 @@ module TestUnixSystemStep =
                 // so a dispatcher that dropped the mode would agree.
                 // AT_FDCWD on Linux.
                 Syscall.MkDirAt (-100, PathArg.ofPath (statPath "/new"), 0o700),
-                Answered.mkdir (PathArg.ofPath (statPath "/new")) 0o700 system
+                Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/new")) 0o700 system
                 // AT_FDCWD on Linux, with no flags and with Linux's
                 // AT_REMOVEDIR.
                 Syscall.UnlinkAt (-100, PathArg.ofPath (statPath "/d/inner/t"), 0),
-                Answered.unlink (statPath "/d/inner/t") system
-                Syscall.UnlinkAt (-100, PathArg.ofPath (statPath "/d"), 0x200), Answered.rmdir (statPath "/d") system
+                Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system
+                Syscall.UnlinkAt (-100, PathArg.ofPath (statPath "/d"), 0x200),
+                Answered.rmdir (Callers.leader system) (statPath "/d") system
                 // A *successful* chdir, so the comparison covers the state it
                 // moves rather than only an errno: this one changes both the
                 // current directory inode and the cached path, and a dispatcher
                 // that returned the untouched system would still match on a row
                 // that failed.
                 Syscall.ChDir (PathArg.ofPath (statPath "/d/inner")),
-                Answered.chdir (PathArg.ofPath (statPath "/d/inner")) system
+                Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/inner")) system
             ] do
-            UnixSystem.tryStep leaderThread call system
+            UnixSystem.tryStep (Callers.thread leaderThread system) call system
             |> stepAnswered
             |> shouldEqual (Ok expected)
 
@@ -2285,27 +2443,36 @@ module TestUnixSystemStep =
         let _, _, _, system = withTree linux
 
         let fd, system =
-            match OpenOutcomes.openPath 0 (PathArg.ofText "/d/inner") 0 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            match OpenOutcomes.openPath (PathArg.ofText "/d/inner") 0 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open(/d/inner) did not open: %A{other}"
 
         let viaStep =
-            UnixSystem.tryStep leaderThread (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700)) system
+            UnixSystem.tryStep
+                (Callers.thread leaderThread system)
+                (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700))
+                system
             |> stepAnswered
 
         viaStep
         |> shouldEqual (
-            UnixNamespace.tryMkdirat fd (PathArg.ofText "new") 0o700 system
-            |> Result.mapError SyscallRefusal.MkDir
+            UnixNamespace.tryMkdirat (Callers.leader system) fd (PathArg.ofText "new") 0o700 system
+            |> Result.mapError SyscallRefusal.MkDirAt
         )
 
         match viaStep with
         | Ok (SyscallAnswer.Completed _, after) ->
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/d/inner/new") after with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader after)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText "/d/inner/new")
+                    after
+            with
             | Ok (FileStatusAnswer.Reported _) -> ()
             | other -> failwith $"/d/inner/new was not created: %A{other}"
 
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/new") after
+            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/new") after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"mkdirat(/d/inner, new) did not create: %A{other}"
 
@@ -2317,21 +2484,22 @@ module TestUnixSystemStep =
         let _, _, _, system = withTree linux
 
         let opened (path : string) (system : UnixSystem<int, string>) =
-            match OpenOutcomes.openPath 0 (PathArg.ofText path) 0 system with
-            | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+            match OpenOutcomes.openPath (PathArg.ofText path) 0 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"open(%s{path}) did not open: %A{other}"
 
         let innerFd, system = opened "/d/inner" system
         let dFd, system = opened "/d" system
 
-        let step (call : Syscall) (system : UnixSystem<int, string>) =
-            UnixSystem.tryStep leaderThread call system |> stepAnswered
+        let step (call : Syscall<int, string>) (system : UnixSystem<int, string>) =
+            UnixSystem.tryStep (Callers.thread leaderThread system) call system
+            |> stepAnswered
 
         let viaStep = step (Syscall.UnlinkAt (innerFd, PathArg.ofText "t", 0)) system
 
         viaStep
         |> shouldEqual (
-            UnixNamespace.tryUnlinkat innerFd (PathArg.ofText "t") 0 system
+            UnixNamespace.tryUnlinkat (Callers.leader system) innerFd (PathArg.ofText "t") 0 system
             |> Result.mapError SyscallRefusal.UnlinkAt
         )
 
@@ -2345,26 +2513,26 @@ module TestUnixSystemStep =
 
         viaStep
         |> shouldEqual (
-            UnixNamespace.tryUnlinkat dFd (PathArg.ofText "inner") 0x200 system
+            UnixNamespace.tryUnlinkat (Callers.leader system) dFd (PathArg.ofText "inner") 0x200 system
             |> Result.mapError SyscallRefusal.UnlinkAt
         )
 
         match viaStep with
         | Ok (SyscallAnswer.Completed _, after) ->
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/d/inner") after
+            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/d/inner") after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"unlinkat(/d, inner, AT_REMOVEDIR) did not remove: %A{other}"
 
     [<Test>]
     let ``close of a descriptor that is not open is EBADF and changes nothing`` () : unit =
-        UnixDescriptor.tryClose 7 linux
+        UnixDescriptor.tryClose (Callers.leader linux) 7 linux
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, linux))
 
     [<Test>]
     let ``close drops the descriptor and answers zero`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed answer, after) ->
             // Zero rather than the descriptor number: `close(2)` reports success,
             // not what it closed.
@@ -2381,9 +2549,12 @@ module TestUnixSystemStep =
         // calls `close` directly.
         let fd, system = withOpenFile linux
 
-        UnixSystem.tryStep leaderThread (Syscall.Close fd) system
+        UnixSystem.tryStep (Callers.thread leaderThread system) (Syscall.Close fd) system
         |> stepAnswered
-        |> shouldEqual (UnixDescriptor.tryClose fd system |> Result.mapError SyscallRefusal.Close)
+        |> shouldEqual (
+            UnixDescriptor.tryClose (Callers.leader system) fd system
+            |> Result.mapError SyscallRefusal.Close
+        )
 
     [<Test>]
     let ``close reaps the inode whose last name had already gone`` () : unit =
@@ -2405,25 +2576,26 @@ module TestUnixSystemStep =
                     rootInode
                     (DirectoryEntryName.parseOrFail context "f")
                     epoch
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok (_, filesystem) ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial filesystem
                         }
-                }
+                    )
+                    system
             | Error error -> failwith $"could not unlink the file: %O{error}"
 
         // Still there while the descriptor holds it, which is what makes `read`
         // on an unlinked file work.
-        (VirtualFileSystem.tryGet inode unnamed.Machine.FileSystem).IsSome
+        (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem unnamed)).IsSome
         |> shouldEqual true
 
-        match UnixDescriptor.tryClose fd unnamed with
+        match UnixDescriptor.tryClose (Callers.leader unnamed) fd unnamed with
         | Ok (SyscallAnswer.Completed _, after) ->
-            (VirtualFileSystem.tryGet inode after.Machine.FileSystem).IsSome
+            (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after)).IsSome
             |> shouldEqual false
         | other -> failwith $"unexpected: %O{other}"
 
@@ -2440,15 +2612,16 @@ module TestUnixSystemStep =
                     rootInode
                     (DirectoryEntryName.parseOrFail context "f")
                     epoch
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok (_, filesystem) ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial filesystem
                         }
-                }
+                    )
+                    system
             | Error error -> failwith $"could not unlink the file: %O{error}"
 
         let inode =
@@ -2456,12 +2629,14 @@ module TestUnixSystemStep =
             | Some (OpenFileTarget.File (inode, _)) -> inode
             | other -> failwith $"expected a file descriptor, got %O{other}"
 
-        VirtualFileSystem.bindingCount inode unnamed.Machine.FileSystem |> shouldEqual 0
+        VirtualFileSystem.bindingCount inode (UnixSystem.fileSystem unnamed)
+        |> shouldEqual 0
+
         ObjectLifetime.pinnedInodes unnamed |> Set.contains inode |> shouldEqual true
 
-        let attempted = ObjectLifetime.forgetIfUnheld inode unnamed
+        let attempted = Lone.ObjectLifetime.forgetIfUnheld inode unnamed
 
-        (VirtualFileSystem.tryGet inode attempted.Machine.FileSystem).IsSome
+        (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem attempted)).IsSome
         |> shouldEqual true
 
     [<Test>]
@@ -2483,7 +2658,7 @@ module TestUnixSystemStep =
                     rootInode
                     (DirectoryEntryName.parseOrFail context "f")
                     epoch
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok (_, filesystem) -> filesystem
             | Error error -> failwith $"could not unlink the file: %O{error}"
@@ -2498,18 +2673,19 @@ module TestUnixSystemStep =
         let orphaned =
             Lone.withFileDescriptors
                 released
-                { system with
-                    Machine =
-                        { system.Machine with
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial unnamed
                         }
-                }
+                    )
+                    system)
 
         ObjectLifetime.pinnedInodes orphaned |> Set.contains inode |> shouldEqual false
 
-        let reaped = ObjectLifetime.forgetIfUnheld inode orphaned
+        let reaped = Lone.ObjectLifetime.forgetIfUnheld inode orphaned
 
-        (VirtualFileSystem.tryGet inode reaped.Machine.FileSystem).IsSome
+        (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem reaped)).IsSome
         |> shouldEqual false
 
     [<Test>]
@@ -2517,24 +2693,22 @@ module TestUnixSystemStep =
         // Not a `SyscallAnswer`: `geteuid(2)` cannot fail, so a shape that
         // admitted `Failed` would make an unreachable state representable. The
         // per-syscall function is the primitive for exactly this reason.
-        UnixDescriptor.effectiveUserId linux
+        UnixCredentials.geteuid (Callers.leader linux) linux
         |> shouldEqual (UserId.parseOrFail "test" 1000u)
 
     [<Test>]
     let ``step agrees with the primitive it dispatches to`` () : unit =
         // The dispatcher is sugar. If the two ever disagree, the surface a client
         // logs and replays through is not the surface it computes through.
-        match UnixSystem.tryStep leaderThread Syscall.GetEffectiveUserId linux |> stepAnswered with
-        | Ok (SyscallAnswer.Completed answer, after) ->
-            answer
-            |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId linux)))
-
-            after |> shouldEqual linux
-        | other -> failwith $"unexpected: %O{other}"
+        UnixSystem.tryStep (Callers.thread leaderThread linux) Syscall.GetEffectiveUserId linux
+        |> Stepped.resultShouldBe (
+            Ok (SteppedCall.GetEffectiveUserId (UnixCredentials.geteuid (Callers.leader linux) linux))
+        )
 
     [<Test>]
     let ``getpid reports the configured process ID, through step as through the primitive`` () : unit =
-        UnixSystem.processId linux |> shouldEqual UnixSystem.defaultProcessId
+        UnixSystem.processId (Callers.leader linux) linux
+        |> shouldEqual UnixSystem.defaultProcessId
 
         // Away from the default, so that a primitive answering a constant fails.
         let configured =
@@ -2542,14 +2716,18 @@ module TestUnixSystemStep =
             |> Launched.processId (ProcessId.parseOrFail "test" 3)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixSystem.processId configured |> ProcessId.toInt32 |> shouldEqual 3
+        UnixSystem.processIds configured
+        |> shouldEqual (Set.singleton (ProcessId.parseOrFail "test" 3))
+
+        UnixSystem.processId (Callers.leader configured) configured
+        |> ProcessId.toInt32
+        |> shouldEqual 3
 
         for system in [ linux ; configured ] do
-            match UnixSystem.tryStep leaderThread Syscall.GetProcessId system |> stepAnswered with
-            | Ok (SyscallAnswer.Completed answer, after) ->
-                answer |> shouldEqual (int64 (ProcessId.toInt32 (UnixSystem.processId system)))
-                after |> shouldEqual system
-            | other -> failwith $"unexpected: %O{other}"
+            UnixSystem.tryStep (Callers.thread leaderThread system) Syscall.GetProcessId system
+            |> Stepped.resultShouldBe (
+                Ok (SteppedCall.GetProcessId (UnixSystem.processId (Callers.leader system) system))
+            )
 
     [<Test>]
     let ``withProcessId refuses the forged default process ID`` () : unit =
@@ -2557,24 +2735,24 @@ module TestUnixSystemStep =
             Launched.processId Unchecked.defaultof<ProcessId> (imageOn SimulatedUnixPlatform.linuxX64)
             |> ignore<UnixBootImage<int, string>>
 
-        let exn = Assert.Throws<System.Exception> (TestDelegate apply)
+        let exn = Assert.Throws<System.ArgumentException> (TestDelegate apply)
 
         exn.Message |> shouldContainText "UnixBootImage.withProcessId"
 
     [<Test>]
     let ``dup of a closed descriptor is EBADF and changes nothing`` () : unit =
-        let answer, after = Answered.dup 7 linux
-        answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+        let answer, after = Answered.dup (Callers.leader linux) 7 linux
+        answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
         after |> shouldEqual linux
 
     [<Test>]
     let ``dup shares the description and takes the lowest free descriptor`` () : unit =
         let fd, system = withOpenFile linux
-        let answer, after = Answered.dup fd system
+        let answer, after = Answered.dup (Callers.leader system) fd system
 
         let duplicated =
             match answer with
-            | SyscallAnswer.Completed newFd -> int newFd
+            | DescriptorAnswer.Returned newFd -> newFd
             | other -> failwith $"expected a descriptor, got %O{other}"
 
         duplicated |> shouldNotEqual fd
@@ -2589,7 +2767,7 @@ module TestUnixSystemStep =
         // that are not portable at all.
         for system in [ linux ; darwin ] do
             for whence in [ 0 ; 1 ; 2 ; 3 ; 4 ; 99 ] do
-                UnixDescriptor.tryLseek 7 0L whence system
+                UnixDescriptor.tryLseek (Callers.leader system) 7 0L whence system
                 |> answered
                 |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
@@ -2603,11 +2781,11 @@ module TestUnixSystemStep =
         // unseekable on both.
         let unseekableFd = 0
 
-        UnixDescriptor.tryLseek unseekableFd 0L 99 linux
+        UnixDescriptor.tryLseek (Callers.leader linux) unseekableFd 0L 99 linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-        UnixDescriptor.tryLseek unseekableFd 0L 99 darwin
+        UnixDescriptor.tryLseek (Callers.leader darwin) unseekableFd 0L 99 darwin
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.ESPIPE)
 
@@ -2616,14 +2794,14 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
 
         let after =
-            match UnixDescriptor.tryLseek fd 3L 0 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd 3L 0 system with
             | Ok (SyscallAnswer.Completed 3L, after) -> after
             | other -> failwith $"expected to land at 3, got %O{other}"
 
         // A failed seek does not move the description — measured.
-        match UnixDescriptor.tryLseek fd -1L 0 after with
+        match UnixDescriptor.tryLseek (Callers.leader after) fd -1L 0 after with
         | Ok (SyscallAnswer.Failed UnixError.EINVAL, unmoved) ->
-            match UnixDescriptor.tryLseek fd 0L 1 unmoved with
+            match UnixDescriptor.tryLseek (Callers.leader unmoved) fd 0L 1 unmoved with
             | Ok (SyscallAnswer.Completed position, _) -> position |> shouldEqual 3L
             | other -> failwith $"expected the offset to be where it was, got %O{other}"
         | other -> failwith $"expected EINVAL, got %O{other}"
@@ -2635,7 +2813,7 @@ module TestUnixSystemStep =
         for system, expected in [ linux, UnixError.EINVAL ; darwin, UnixError.EOVERFLOW ] do
             let fd, seeded = withOpenFile system
 
-            UnixDescriptor.tryLseek fd (System.Int64.MaxValue - 4L) 2 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd (System.Int64.MaxValue - 4L) 2 seeded
             |> answered
             |> shouldEqual (SyscallAnswer.Failed expected)
 
@@ -2650,10 +2828,10 @@ module TestUnixSystemStep =
             ] do
             let fd, seeded = withOpenFile system
 
-            UnixDescriptor.tryLseek fd 0L 3 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd 0L 3 seeded
             |> shouldEqual (Error (LSeekRefusal.Sparseness (3, three)))
 
-            UnixDescriptor.tryLseek fd 0L 4 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd 0L 4 seeded
             |> shouldEqual (Error (LSeekRefusal.Sparseness (4, four)))
 
     [<Test>]
@@ -2673,19 +2851,19 @@ module TestUnixSystemStep =
         // client that catches one still holds the system it passed in.
         let fd, seeded = withOpenFile linux
 
-        UnixSystem.tryStep leaderThread (Syscall.LSeek (fd, 0L, 3)) seeded
-        |> shouldEqual (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
+        UnixSystem.tryStep (Callers.thread leaderThread seeded) (Syscall.LSeek (fd, 0L, 3)) seeded
+        |> Stepped.resultShouldBe (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
 
     [<Test>]
     let ``ftruncate validates the length before the descriptor`` () : unit =
         // Measured on both: the same unknown fd is EBADF at length 0 and EINVAL
         // at length -1, so the length really is checked first rather than the two
         // faults merely sharing an errno. A row per fault alone could not tell.
-        UnixDescriptor.tryFtruncate 99 0L linux
+        UnixDescriptor.tryFtruncate (Callers.leader linux) 99 0L linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
-        UnixDescriptor.tryFtruncate 99 -1L linux
+        UnixDescriptor.tryFtruncate (Callers.leader linux) 99 -1L linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
@@ -2696,7 +2874,7 @@ module TestUnixSystemStep =
         // a directory can only ever be opened read-only.
         let fd, system = withOpenDirectory linux
 
-        UnixDescriptor.tryFtruncate fd 0L system
+        UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
@@ -2705,12 +2883,12 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
 
         let after =
-            match UnixDescriptor.tryFtruncate fd 2L system with
+            match UnixDescriptor.tryFtruncate (Callers.leader system) fd 2L system with
             | Ok (SyscallAnswer.Completed 0L, after) -> after
             | other -> failwith $"expected success, got %O{other}"
 
         // Seeking to the end is how the length is read back without a `stat`.
-        UnixDescriptor.tryLseek fd 0L 2 after
+        UnixDescriptor.tryLseek (Callers.leader after) fd 0L 2 after
         |> answered
         |> shouldEqual (SyscallAnswer.Completed 2L)
 
@@ -2754,6 +2932,9 @@ module TestUnixSystemStep =
 
         let second, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -2768,6 +2949,9 @@ module TestUnixSystemStep =
         | Some (OpenFileTarget.File (inode, _)) ->
             let another, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadWrite
@@ -2789,12 +2973,14 @@ module TestUnixSystemStep =
         // Darwin is laxer *and* answers differently per input, which is why the
         // whole of it is refused rather than one row of it modelled.
         let shAndEx = 1 ||| 2
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
 
-        UnixDescriptor.tryFlock holderThread 0 shAndEx (withThread holderThread linux)
+        UnixDescriptor.tryFlock (Callers.thread holderThread linux) 0 shAndEx linux
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-        UnixDescriptor.tryFlock holderThread 0 shAndEx (withThread holderThread darwin)
+        UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 shAndEx darwin
         |> shouldEqual (Error (FLockRefusal.DarwinMalformedOperation shAndEx))
 
     /// `LOCK_MAND` (bit 32): Linux removed mandatory locking in 5.15 and now
@@ -2803,11 +2989,12 @@ module TestUnixSystemStep =
     /// the lock table changes. Measured (`docs/probes/flock/lock-mand.py`).
     [<Test>]
     let ``a LOCK_MAND request is ignored on Linux, closed descriptors included`` () : unit =
+        let linux = withThread holderThread linux
+
         for operation in [ 32 ; 32 ||| 1 ; 32 ||| 2 ; 32 ||| 8 ; 32 ||| 4 ] do
             for fd in [ 0 ; 99 ] do
-                match UnixDescriptor.tryFlock holderThread fd operation (withThread holderThread linux) with
-                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), after) ->
-                    after |> shouldEqual (withThread holderThread linux)
+                match UnixDescriptor.tryFlock (Callers.thread holderThread linux) fd operation linux with
+                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), after) -> after |> shouldEqual linux
                 | other -> failwith $"flock(%d{fd}, %d{operation}) on Linux: expected 0, got %A{other}"
 
     /// Darwin looks the descriptor up before it screens the operation, so a
@@ -2815,19 +3002,22 @@ module TestUnixSystemStep =
     /// first and answers EINVAL. Measured on both.
     [<Test>]
     let ``a closed descriptor is EBADF on Darwin and EINVAL on Linux for a malformed operation`` () : unit =
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
+
         for operation in [ 0 ; 4 ; 1 ||| 2 ; 16 ; 32 ] do
-            UnixDescriptor.tryFlock holderThread 99 operation (withThread holderThread darwin)
+            UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 99 operation darwin
             |> answeredOutcome
             |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
         for operation in [ 0 ; 4 ; 1 ||| 2 ; 16 ] do
-            UnixDescriptor.tryFlock holderThread 99 operation (withThread holderThread linux)
+            UnixDescriptor.tryFlock (Callers.thread holderThread linux) 99 operation linux
             |> answeredOutcome
             |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
         // ...and a malformed operation on an *open* Darwin descriptor is still
         // refused, since what it leaves the lock table as is unmeasured.
-        UnixDescriptor.tryFlock holderThread 0 (32 ||| 1) (withThread holderThread darwin)
+        UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 (32 ||| 1) darwin
         |> shouldEqual (Error (FLockRefusal.DarwinMalformedOperation (32 ||| 1)))
 
     [<Test>]
@@ -2835,11 +3025,14 @@ module TestUnixSystemStep =
         // The standard streams are pipes. Linux permits `flock` on one and
         // returns 0; Darwin answers ENOTSUP, and what that leaves the lock state
         // as is unmeasured.
-        UnixDescriptor.tryFlock holderThread 0 2 (withThread holderThread linux)
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
+
+        UnixDescriptor.tryFlock (Callers.thread holderThread linux) 0 2 linux
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match UnixDescriptor.tryFlock holderThread 0 2 (withThread holderThread darwin) with
+        match UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 2 darwin with
         | Error (FLockRefusal.DarwinPipe (PipeId 0L)) -> ()
         | other -> failwith $"expected a Darwin pipe refusal, got %O{other}"
 
@@ -2850,13 +3043,17 @@ module TestUnixSystemStep =
         // that would hand a caller an EWOULDBLOCK no kernel would have produced.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
-        UnixDescriptor.tryFlock waiterThread second (2 ||| 4) held
+        UnixDescriptor.tryFlock (Callers.thread waiterThread held) second (2 ||| 4) held
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Failed UnixError.EAGAIN)
 
-        let condition, _ = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let condition, _ =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         // Keyed on the description rather than on the descriptor: a `dup` of
         // `second` waits on the same lock.
@@ -2879,17 +3076,25 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
 
         for holder, requester in [ 1, 2 ; 2, 1 ] do
-            let held = UnixDescriptor.tryFlock holderThread first holder system |> granted
+            let held =
+                UnixDescriptor.tryFlock (Callers.thread holderThread system) first holder system
+                |> granted
 
             let condition, parkedIn =
-                UnixDescriptor.tryFlock waiterThread second requester held |> parked
+                UnixDescriptor.tryFlock (Callers.thread waiterThread held) second requester held
+                |> parked
 
             holds waiterThread condition parkedIn |> shouldEqual false
 
         // ...and shared-on-shared is the control: it is granted, so there is no
         // condition for the predicate to be wrong about.
-        let held = UnixDescriptor.tryFlock holderThread first 1 system |> granted
-        UnixDescriptor.tryFlock waiterThread second 1 held |> granted |> ignore
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 1 system
+            |> granted
+
+        UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 1 held
+        |> granted
+        |> ignore
 
     [<Test>]
     let ``a release satisfies the condition it was blocking`` () : unit =
@@ -2897,12 +3102,17 @@ module TestUnixSystemStep =
         // is simply always false.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         holds waiterThread condition released |> shouldEqual true
 
@@ -2914,17 +3124,25 @@ module TestUnixSystemStep =
         // this one into a lock it cannot have.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         // A third description takes the lock in the window between the release
         // and the wake, which on a real kernel puts the waiter back to sleep.
         let third, opened = withAnotherDescription first released
-        let contended = UnixDescriptor.tryFlock thirdThread third 2 opened |> granted
+
+        let contended =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread opened) third 2 opened
+            |> granted
 
         holds waiterThread condition contended |> shouldEqual false
 
@@ -2936,16 +3154,26 @@ module TestUnixSystemStep =
         let third, system = withAnotherDescription first system
 
         // `first` and `second` both hold shared locks; `third` wants exclusive.
-        let held = UnixDescriptor.tryFlock holderThread first 1 system |> granted
-        let held = UnixDescriptor.tryFlock waiterThread second 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 1 system
+            |> granted
 
-        let condition, parkedIn = UnixDescriptor.tryFlock thirdThread third 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 1 held
+            |> granted
 
-        let oneReleased = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let condition, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread held) third 2 held |> parked
+
+        let oneReleased =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+
         holds thirdThread condition oneReleased |> shouldEqual false
 
         let bothReleased =
-            UnixDescriptor.tryFlock waiterThread second 8 oneReleased |> granted
+            UnixDescriptor.tryFlock (Callers.thread waiterThread oneReleased) second 8 oneReleased
+            |> granted
 
         holds thirdThread condition bothReleased |> shouldEqual true
 
@@ -2960,10 +3188,17 @@ module TestUnixSystemStep =
         // nothing to begin with, so the advanced table is the one that went in.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
 
-        let _, parkedIn = UnixDescriptor.tryFlock holderThread first 2 both |> parked
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> parked
 
         // `None` rather than merely "not what it was": an implementation that
         // established the exclusive lock and *then* reported the contention
@@ -2982,18 +3217,29 @@ module TestUnixSystemStep =
         // the same question asked at two different times.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
+
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock holderThread first 2 both |> parked
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> parked
 
         // The parked description takes a shared lock again while it waits, which
         // a `dup` of its descriptor could do from another thread (the parked thread
         // itself cannot: it is in one syscall). That lock is its own, so it must
         // not stand in the way of the exclusive one it wants.
-        let reacquired = UnixDescriptor.tryFlock thirdThread first 1 parkedIn |> granted
-        let released = UnixDescriptor.tryFlock waiterThread second 8 reacquired |> granted
+        let reacquired =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread parkedIn) first 1 parkedIn
+            |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread reacquired) second 8 reacquired
+            |> granted
 
         holds holderThread condition released |> shouldEqual true
 
@@ -3009,21 +3255,29 @@ module TestUnixSystemStep =
         // A second descriptor onto `second`'s description, so that closing
         // `second` destroys nothing.
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let waitedOn = descriptionOf second parkedIn
 
         let closed =
-            match UnixDescriptor.tryClose second parkedIn with
+            match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
             | Ok (SyscallAnswer.Completed 0L, closed) -> closed
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3045,7 +3299,10 @@ module TestUnixSystemStep =
             )
         )
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 opened |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread opened) first 8 opened
+            |> granted
+
         holds waiterThread condition released |> shouldEqual true
 
     [<Test>]
@@ -3057,10 +3314,13 @@ module TestUnixSystemStep =
         // that says so out loud rather than picking one of two wrong answers.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         // The forgery lets go of the park's hold behind its back as well.
         let secondId =
@@ -3096,21 +3356,27 @@ module TestUnixSystemStep =
         // dispatcher that forwarded the wrong one would be invisible here.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
 
-        UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) both
-        |> shouldEqual (
-            UnixDescriptor.tryFlock holderThread first 2 both
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
+
+        UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both
+        |> Stepped.resultShouldBe (
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> Result.map SteppedCall.FLock
             |> Result.mapError SyscallRefusal.FLock
         )
 
-        match UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) both with
-        | Ok (SyscallOutcome.WouldBlock _, after) ->
+        match UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both with
+        | Ok (SteppedCall.FLock (SyscallOutcome.WouldBlock _, after)) ->
             FileDescriptorRegistry.tryFind first (Lone.fileDescriptors after)
             |> Option.map (fun description -> description.Flock)
             |> shouldEqual (Some None)
-        | other -> failwith $"expected a park through step, got %A{other}"
+        | other -> failwith $"expected a park through step, got %A{Result.map Stepped.view other}"
 
     [<Test>]
     let ``a failing flock still advances the descriptor table`` () : unit =
@@ -3121,11 +3387,16 @@ module TestUnixSystemStep =
 
         // `second` holds a shared lock; `first` takes one too, then tries to
         // convert to exclusive, which cannot be granted while `second` holds its.
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
+
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
 
         let afterFailedConversion =
-            match UnixDescriptor.tryFlock holderThread first (2 ||| 4) both with
+            match UnixDescriptor.tryFlock (Callers.thread holderThread both) first (2 ||| 4) both with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) -> after
             | other -> failwith $"expected EAGAIN, got %A{other}"
 
@@ -3139,17 +3410,26 @@ module TestUnixSystemStep =
         // its wake predicate answers true.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+            |> Lone.waking [ waiterThread ]
 
         holds waiterThread condition released |> shouldEqual true
 
-        let finished = UnixDescriptor.tryFlockAcquire waiterThread released |> granted
+        let finished =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
+            |> granted
 
         FileDescriptorRegistry.tryFind second (Lone.fileDescriptors finished)
         |> Option.map (fun description -> description.Flock)
@@ -3163,18 +3443,29 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let third, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+            |> Lone.waking [ waiterThread ]
 
         // Somebody else takes it in the window between the wake and the resume.
-        let taken = UnixDescriptor.tryFlock thirdThread third 2 released |> granted
+        let taken =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) third 2 released
+            |> granted
 
-        let again, _ = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
+        let again, _ =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread taken) taken
+            |> parked
 
         again |> shouldEqual condition
 
@@ -3186,13 +3477,22 @@ module TestUnixSystemStep =
         // descriptor would have to decide the flavour's rules all over again.
         let first, second, system = withTwoDescriptions darwin
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
 
-        UnixDescriptor.tryFlockAcquire waiterThread released
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+            |> Lone.waking [ waiterThread ]
+
+        UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
         |> granted
         |> ignore<UnixSystem<int, string>>
 
@@ -3206,22 +3506,38 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions darwin
 
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+            |> Lone.waking [ waiterThread ]
 
         // The alias names the same description, so this is a first acquisition on it.
-        let aliased = UnixDescriptor.tryFlock thirdThread alias 1 released |> granted
+        let aliased =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) alias 1 released
+            |> granted
 
-        UnixDescriptor.tryFlockAcquire waiterThread aliased
+        UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread aliased) aliased
         |> shouldEqual (Error FLockRefusal.DarwinConversion)
 
     [<Test>]
@@ -3231,10 +3547,13 @@ module TestUnixSystemStep =
         // and nothing would notice.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         condition
         |> shouldEqual (
@@ -3245,7 +3564,7 @@ module TestUnixSystemStep =
             )
         )
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn)
+        Lone.parkedIn waiterThread parkedIn
         |> shouldEqual (
             Some (
                 ParkedSyscall.Flock
@@ -3257,20 +3576,22 @@ module TestUnixSystemStep =
         )
 
         // ...and the holder, whose call was answered, is not parked.
-        UnixThreadTable.parkedFor holderThread (Lone.threads parkedIn)
-        |> shouldEqual None
+        Lone.parkedIn holderThread parkedIn |> shouldEqual None
 
     [<Test>]
     let ``a granted or failed flock records no park`` () : unit =
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        UnixThreadTable.parkedFor holderThread (Lone.threads held) |> shouldEqual None
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        Lone.parkedIn holderThread held |> shouldEqual None
 
         // A non-blocking contended acquisition fails rather than parks.
-        match UnixDescriptor.tryFlock waiterThread second (2 ||| 4) held with
+        match UnixDescriptor.tryFlock (Callers.thread waiterThread held) second (2 ||| 4) held with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) ->
-            UnixThreadTable.parkedFor waiterThread (Lone.threads after) |> shouldEqual None
+            Lone.parkedIn waiterThread after |> shouldEqual None
         | other -> failwith $"expected EAGAIN, got %A{other}"
 
     [<Test>]
@@ -3280,11 +3601,19 @@ module TestUnixSystemStep =
         // descriptor would be a thread in two syscalls at once.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlock waiterThread second 2 parkedIn |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlock (Callers.thread waiterThread parkedIn) second 2 parkedIn
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "is parked in"
 
@@ -3295,41 +3624,65 @@ module TestUnixSystemStep =
         let first, _, system = withTwoDescriptions linux
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlock 99 first 1 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlock (Callers.thread 99 system) first 1 system |> ignore
+            )
 
         exn.Message |> shouldContainText "names no thread"
 
     [<Test>]
     let ``a parked thread may not issue an open, and nor may a thread the table does not hold`` () : unit =
-        // An open can sleep, so it takes its thread as flock does, and fails loudly for one
-        // that is already parked or is not a thread at all.
+        // An open checks its caller as flock does, and fails loudly for one that is
+        // already parked or is not a thread at all.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
         let root = PathArg.ofText "/"
 
         let opens : (string * (int -> UnixSystem<int, string> -> unit)) list =
             [
-                "openPath", (fun thread system -> UnixNamespace.tryOpenPath thread 0 root 0 system |> ignore)
+                "openPath",
+                (fun thread system ->
+                    UnixNamespace.tryOpenPath (Callers.thread thread system) root 0 0 system
+                    |> ignore
+                )
                 "openat",
                 (fun thread system ->
-                    UnixNamespace.tryOpenat thread (AtDirectory.atFdCwd SimulatedUnixFlavour.Linux) root 0 0 system
+                    UnixNamespace.tryOpenat
+                        (Callers.thread thread system)
+                        (AtDirectory.atFdCwd SimulatedUnixFlavour.Linux)
+                        root
+                        0
+                        0
+                        system
                     |> ignore
                 )
             ]
 
         for name, open' in opens do
-            let parkedExn = Assert.Throws<exn> (fun () -> open' waiterThread parkedIn)
+            let parkedExn =
+                Assert.Throws<System.InvalidOperationException> (fun () -> open' waiterThread parkedIn)
+
             parkedExn.Message |> shouldContainText $"UnixNamespace.%s{name}"
             parkedExn.Message |> shouldContainText "is parked in"
 
-            let unknownExn = Assert.Throws<exn> (fun () -> open' 99 parkedIn)
+            let unknownExn =
+                Assert.Throws<System.InvalidOperationException> (fun () -> open' 99 parkedIn)
+
             unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its open is answered.
-        match OpenOutcomes.answered (UnixNamespace.tryOpenPath holderThread 0 root 0 parkedIn) with
-        | Ok (SyscallAnswer.Completed _, _) -> ()
+        match
+            OpenOutcomes.answered (UnixNamespace.tryOpenPath (Callers.thread holderThread parkedIn) root 0 0 parkedIn)
+        with
+        | Ok (DescriptorAnswer.Returned _, _) -> ()
         | other -> failwith $"the holder's open answered %A{other}"
 
     [<Test>]
@@ -3339,22 +3692,32 @@ module TestUnixSystemStep =
         // it looks at the descriptor.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let connect (thread : int) : unit =
-            UnixConnection.tryConnect thread first UserBuffer.Mapped 0u parkedIn |> ignore
+            UnixConnection.tryConnect (Callers.thread thread parkedIn) first UserBuffer.Mapped 0u parkedIn
+            |> ignore
 
-        let parkedExn = Assert.Throws<exn> (fun () -> connect waiterThread)
+        let parkedExn =
+            Assert.Throws<System.InvalidOperationException> (fun () -> connect waiterThread)
+
         parkedExn.Message |> shouldContainText "UnixConnection.connect"
         parkedExn.Message |> shouldContainText "is parked in"
 
-        let unknownExn = Assert.Throws<exn> (fun () -> connect 99)
+        let unknownExn =
+            Assert.Throws<System.InvalidOperationException> (fun () -> connect 99)
+
         unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its connect is answered: `first` is not a
         // socket.
-        match UnixConnection.tryConnect holderThread first UserBuffer.Mapped 0u parkedIn with
+        match UnixConnection.tryConnect (Callers.thread holderThread parkedIn) first UserBuffer.Mapped 0u parkedIn with
         | Ok (CallProgress.Answered (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ENOTSOCK), _)) -> ()
         | other -> failwith $"the holder's connect answered %A{other}"
 
@@ -3363,25 +3726,44 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let another, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+            |> Lone.waking [ waiterThread ]
 
         // Beaten: the thread is parked on the same record, so it can be woken again later.
-        let taken = UnixDescriptor.tryFlock thirdThread another 2 released |> granted
-        let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
+        let taken =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) another 2 released
+            |> granted
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads beaten)
-        |> shouldEqual (UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn))
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread taken) taken
+            |> parked
+
+        Lone.parkedIn waiterThread beaten
+        |> shouldEqual (Lone.parkedIn waiterThread parkedIn)
 
         // Granted: the record is gone, and the thread may issue an flock again.
-        let freed = UnixDescriptor.tryFlock thirdThread another 8 beaten |> granted
-        let finished = UnixDescriptor.tryFlockAcquire waiterThread freed |> granted
+        let freed =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread beaten) another 8 beaten
+            |> granted
+            |> Lone.waking [ waiterThread ]
 
-        UnixThreadTable.parkedFor waiterThread (Lone.threads finished)
-        |> shouldEqual None
+        let finished =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread freed) freed
+            |> granted
 
-        UnixDescriptor.tryFlock waiterThread second 8 finished
+        Lone.parkedIn waiterThread finished |> shouldEqual None
+
+        UnixDescriptor.tryFlock (Callers.thread waiterThread finished) second 8 finished
         |> granted
         |> ignore<UnixSystem<int, string>>
 
@@ -3392,26 +3774,45 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let another, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
-        let _, parkedIn = UnixDescriptor.tryFlock thirdThread another 2 parkedIn |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread parkedIn) another 2 parkedIn
+            |> parked
 
         let retaken =
-            UnixDescriptor.tryFlock holderThread first 8 parkedIn
-            |> granted
-            |> UnixDescriptor.tryFlock holderThread first 2
+            let released =
+                UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+                |> granted
+                |> Lone.waking [ waiterThread ; thirdThread ]
+
+            UnixDescriptor.tryFlock (Callers.thread holderThread released) first 2 released
             |> granted
 
-        // Resumed in the opposite order to the one they parked in, and both beaten.
-        let _, beaten = UnixDescriptor.tryFlockAcquire thirdThread retaken |> parked
-        let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread beaten |> parked
+        // Woken, and resumed in the opposite order to the one they parked in, and both
+        // beaten.
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread thirdThread retaken) retaken
+            |> parked
 
-        let freed = UnixDescriptor.tryFlock holderThread first 8 beaten |> granted
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread beaten) beaten
+            |> parked
+
+        let freed =
+            UnixDescriptor.tryFlock (Callers.thread holderThread beaten) first 8 beaten
+            |> granted
 
         let firedFor (fd : int) : Set<WakePrimitive> =
             Set.singleton (WakePrimitive.FlockGrantable (descriptionOf fd freed, FlockMode.Exclusive))
 
-        UnixWait.wakes (Set.ofList [ waiterThread ; thirdThread ]) freed
+        Lone.wakes freed
         |> shouldEqual [ thirdThread, firedFor another ; waiterThread, firedFor second ]
 
     [<Test>]
@@ -3419,7 +3820,10 @@ module TestUnixSystemStep =
         let _, _, system = withTwoDescriptions linux
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlockAcquire holderThread system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlockAcquire (Callers.thread holderThread system) system
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 
@@ -3433,19 +3837,19 @@ module TestUnixSystemStep =
             let first, second, system = withTwoDescriptions system
 
             let held =
-                match UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) system with
-                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), held) -> held
-                | other -> failwith $"expected the first lock to be granted, got %A{other}"
+                match UnixSystem.tryStep (Callers.thread holderThread system) (Syscall.FLock (first, 2)) system with
+                | Ok (SteppedCall.FLock (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), held)) -> held
+                | other -> failwith $"expected the first lock to be granted, got %A{Result.map Stepped.view other}"
 
             let condition, parkedIn =
-                match UnixSystem.tryStep waiterThread (Syscall.FLock (second, 2)) held with
-                | Ok (SyscallOutcome.WouldBlock condition, parkedIn) -> condition, parkedIn
-                | other -> failwith $"expected the second lock to park, got %A{other}"
+                match UnixSystem.tryStep (Callers.thread waiterThread held) (Syscall.FLock (second, 2)) held with
+                | Ok (SteppedCall.FLock (SyscallOutcome.WouldBlock condition, parkedIn)) -> condition, parkedIn
+                | other -> failwith $"expected the second lock to park, got %A{Result.map Stepped.view other}"
 
             UnixSystem.checkInvariants parkedIn |> shouldEqual []
 
-            match UnixSystem.tryStep thirdThread (Syscall.Close second) parkedIn with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), closed) when linuxFlavour ->
+            match UnixSystem.tryStep (Callers.thread thirdThread parkedIn) (Syscall.Close second) parkedIn with
+            | Ok (SteppedCall.Close (SyscallAnswer.Completed 0L, closed)) when linuxFlavour ->
                 UnixSystem.checkInvariants closed |> shouldEqual []
                 holds waiterThread condition closed |> shouldEqual false
             | Error (SyscallRefusal.Close (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread))) when
@@ -3454,27 +3858,32 @@ module TestUnixSystemStep =
                 description |> shouldEqual (descriptionOf second parkedIn)
                 thread |> shouldEqual waiterThread
                 holds waiterThread condition parkedIn |> shouldEqual false
-            | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{other}"
+            | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{Result.map Stepped.view other}"
 
     /// One call of each shape `step` dispatches: answered at once whatever the
-    /// state, lifted from its own function's answer, and one that can block.
-    let private callsOfEveryShape : Syscall list =
+    /// state, lifted from its own function's answer, one that can block, one
+    /// that copies a buffer in, and one reserved.
+    let private callsOfEveryShape : Syscall<int, string> list =
         [
             Syscall.GetProcessId
             Syscall.UMask 0o022
             Syscall.Close 2
             Syscall.Dup 0
             Syscall.FLock (0, 2)
+            Syscall.Write (1, CopiedArgument.Readable (ImmutableArray.Create<byte> 0uy), 1UL)
+            Syscall.Nanosleep NanosleepArguments.NanosleepArguments
         ]
 
     [<Test>]
     let ``step by a name that is no thread of the process throws, whatever the call`` () : unit =
         for system in [ linux ; darwin ] do
-            Map.containsKey 99 system.Threads |> shouldEqual false
+            Map.containsKey 99 (Lone.threadMap system) |> shouldEqual false
 
             for call in callsOfEveryShape do
                 let error =
-                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 99 call system |> ignore)
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        UnixSystem.step (Callers.thread 99 system) call system |> ignore
+                    )
 
                 error.Message
                 |> shouldContainText "thread 99 is not one of the process's threads"
@@ -3483,25 +3892,30 @@ module TestUnixSystemStep =
     let ``step by a thread asleep in another call throws, whatever the call`` () : unit =
         for system in [ linux ; darwin ] do
             let paused =
-                match UnixSignal.pause 0 (Threads.ensure 1 system) with
+                let ensured = Threads.ensure 1 system
+
+                match UnixSignal.pause (Callers.thread 0 ensured) ensured with
                 | SigsuspendOutcome.WouldBlock _, paused -> paused
                 | other -> failwith $"expected pause to sleep, got %A{other}"
 
             for call in callsOfEveryShape do
                 let error =
-                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 0 call paused |> ignore)
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        UnixSystem.step (Callers.thread 0 paused) call paused |> ignore
+                    )
 
-                error.Message |> shouldContainText "thread 0 is asleep in SigSuspend"
+                error.Message
+                |> shouldContainText "thread 0 is parked in SigSuspend, and is making another call"
 
             // The thread that is not asleep makes its calls as before.
-            match UnixSystem.step 1 (Syscall.Close 2) paused with
-            | SyscallOutcome.Answered (SyscallAnswer.Completed 0L), _ -> ()
-            | other -> failwith $"expected thread 1's close to complete, got %A{other}"
+            match UnixSystem.step (Callers.thread 1 paused) (Syscall.Close 2) paused with
+            | SteppedCall.Close (SyscallAnswer.Completed 0L, _) -> ()
+            | other -> failwith $"expected thread 1's close to complete, got %A{Stepped.view other}"
 
     /// `operation` by `thread` through `fd`, which must be answered at once: the
     /// answer.
     let private flockAnswer (thread : int) (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-        match UnixDescriptor.tryFlock thread fd operation system with
+        match UnixDescriptor.tryFlock (Callers.thread thread system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"expected flock %d{operation} on fd %d{fd} to be answered, got %A{other}"
 
@@ -3520,21 +3934,24 @@ module TestUnixSystemStep =
 
             let system =
                 if dupKept then
-                    match Answered.dup second system with
-                    | SyscallAnswer.Completed _, system -> system
+                    match Answered.dup (Callers.leader system) second system with
+                    | DescriptorAnswer.Returned _, system -> system
                     | other -> failwith $"%A{other}"
                 else
                     system
 
-            let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+            let held =
+                UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+                |> granted
 
             let condition, parkedIn =
-                UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+                UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+                |> parked
 
             let requester = descriptionOf second parkedIn
 
             let closed =
-                match UnixDescriptor.tryClose second parkedIn with
+                match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
                 | Ok (SyscallAnswer.Completed 0L, closed) -> closed
                 | other -> failwith $"%s{where}: expected the close to succeed, got %A{other}"
 
@@ -3550,9 +3967,11 @@ module TestUnixSystemStep =
                                 Signals =
                                     proc.Signals
                                     |> SignalState.setDisposition
+                                        (Kernel.signalNumbering closed)
                                         Signal.SIGUSR1
                                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                     |> SignalState.enqueue
+                                        (Kernel.signalNumbering closed)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome waiterThread
@@ -3560,16 +3979,26 @@ module TestUnixSystemStep =
                             }
                         )
 
-                    match UnixDescriptor.tryFlockAcquire waiterThread signalled with
-                    | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), ended) ->
-                        flockAnswer holderThread first 8 ended |> snd
+                    match
+                        UnixDescriptor.tryFlockAcquire
+                            (Callers.thread waiterThread signalled)
+                            (Woken.thread waiterThread signalled)
+                    with
+                    | Ok (SyscallOutcome.Interrupted, ended) ->
+                        match Interruptions.handled (Callers.thread waiterThread ended) ended with
+                        | Ok (InterruptedCall.FailsWithEintr, ended) -> flockAnswer holderThread first 8 ended |> snd
+                        | other -> failwith $"%s{where}: expected the return to fail the call with EINTR, got %A{other}"
                     | other -> failwith $"%s{where}: expected EINTR, got %A{other}"
                 else
                     let released = flockAnswer holderThread first 8 closed |> snd
                     holds waiterThread condition released |> shouldEqual true
-                    UnixDescriptor.tryFlockAcquire waiterThread released |> granted
 
-            OpenFileTable.descriptions ended.Machine.OpenFiles
+                    UnixDescriptor.tryFlockAcquire
+                        (Callers.thread waiterThread released)
+                        (Woken.thread waiterThread released)
+                    |> granted
+
+            OpenFileTable.descriptions (UnixSystem.openFiles ended)
             |> Map.containsKey requester
             |> shouldEqual dupKept
 
@@ -3594,16 +4023,22 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions darwin
 
         let alias, system =
-            match Answered.dup second system with
-            | SyscallAnswer.Completed fd, system -> int fd, system
+            match Answered.dup (Callers.leader system) second system with
+            | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"%A{other}"
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
         let requester = descriptionOf second parkedIn
 
         for fd in [ second ; alias ] do
-            match UnixDescriptor.tryClose fd parkedIn with
+            match UnixDescriptor.tryClose (Callers.leader parkedIn) fd parkedIn with
             | Error (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread)) ->
                 description |> shouldEqual requester
                 thread |> shouldEqual waiterThread
@@ -3615,18 +4050,26 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
 
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        match UnixDescriptor.tryClose second parkedIn with
+        match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             holds waiterThread condition closed |> shouldEqual false
 
@@ -3636,21 +4079,22 @@ module TestUnixSystemStep =
     /// The flavour's event queue, an epoll instance or a kqueue, and the
     /// descriptor onto it.
     let private withEventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
-            match UnixPoll.tryEpollCreate1 0 system with
-            | Ok (Ok (fd, system)) -> fd, system
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"expected an epoll instance, got %A{other}"
         | SimulatedUnixFlavour.Darwin ->
-            match UnixKqueue.tryKqueue system with
-            | Ok (fd, system) -> fd, system
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue failed with %O{error}"
             | Error refusal -> failwith $"expected a kqueue, got %A{refusal}"
 
     /// Thread 7 parked in an `epoll_wait` on the epoll instance `fd` names.
     let private parkedInEpollWait (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let system = withThread 7 system
 
-        UnixWait.park
+        Lone.Parking.park
             7
             (ParkedSyscall.EpollWait
                 {
@@ -3673,16 +4117,16 @@ module TestUnixSystemStep =
         let description = descriptionOf fd system
         let parked = parkedInEpollWait fd system
 
-        match UnixDescriptor.tryClose fd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) fd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors closed)
             |> shouldEqual None
 
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.containsKey description
             |> shouldEqual true
 
-            UnixWait.wakes (Set.singleton 7) closed |> shouldEqual []
+            Lone.wakes closed |> shouldEqual []
             UnixSystem.checkInvariants closed |> shouldEqual []
         | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3692,7 +4136,12 @@ module TestUnixSystemStep =
         let fd, system = withEventQueue linux
 
         let alias, registry =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    fd
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -3700,7 +4149,7 @@ module TestUnixSystemStep =
 
         let parked = parkedInEpollWait fd system
 
-        match UnixDescriptor.tryClose fd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) fd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             // The description really did survive, which is what the waiter needs.
             FileDescriptorRegistry.tryFindId alias (Lone.fileDescriptors closed)
@@ -3716,20 +4165,27 @@ module TestUnixSystemStep =
         let fd, system = withEventQueue darwin
 
         let alias, registry =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    fd
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
         let system = withThread 7 (Lone.withFileDescriptors registry system)
 
         let parked =
-            match UnixKqueue.tryKevent 7 fd 0 [] 8 UserBuffer.Mapped KeventTimeout.Null system with
+            match
+                UnixKqueue.tryKevent (Callers.thread 7 system) fd 0 [] 8 UserBuffer.Mapped TimespecArgument.Null system
+            with
             | Ok (KeventOutcome.WouldBlock _, parked) -> parked
             | other -> failwith $"expected the wait to park, got %A{other}"
 
-        match UnixDescriptor.tryClose alias parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) alias parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
-            UnixWait.wakes (Set.singleton 7) closed |> shouldEqual []
+            Lone.wakes closed |> shouldEqual []
             UnixSystem.checkInvariants closed |> shouldEqual []
         | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3740,7 +4196,9 @@ module TestUnixSystemStep =
         for system in [ linux ; darwin ] do
             let fd, system = withEventQueue system
 
-            match UnixDescriptor.tryClose fd (withThread 7 system) with
+            let system = withThread 7 system
+
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, _) -> ()
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3776,7 +4234,7 @@ module TestUnixSystemStep =
     let ``an epoll instance with nothing pending would deliver nothing`` () : unit =
         let fd, system = withEventQueue linux
 
-        EpollReadyList.hasDeliverableEvent (descriptionOf fd system) system
+        Lone.EpollReadyList.hasDeliverableEvent (descriptionOf fd system) system
         |> shouldEqual false
 
     [<Test>]
@@ -3784,13 +4242,13 @@ module TestUnixSystemStep =
         let fd, system = withPendingEpoll linux
         let queueId = descriptionOf fd system
 
-        EpollReadyList.hasDeliverableEvent queueId system |> shouldEqual true
+        Lone.EpollReadyList.hasDeliverableEvent queueId system |> shouldEqual true
 
-        let delivered, drained = EpollReadyList.drain queueId 8 system
+        let delivered, drained = Lone.EpollReadyList.drain queueId 8 system
 
         delivered |> shouldEqual [ 0xBEEFUL, EpollEvents.Hup ]
 
-        EpollReadyList.hasDeliverableEvent queueId drained |> shouldEqual false
+        Lone.EpollReadyList.hasDeliverableEvent queueId drained |> shouldEqual false
 
     [<Test>]
     let ``the predicate and the drain cannot disagree`` () : unit =
@@ -3804,15 +4262,15 @@ module TestUnixSystemStep =
 
         for fd, system in [ empty ; pending ] do
             let queueId = descriptionOf fd system
-            let predicted = EpollReadyList.hasDeliverableEvent queueId system
-            let delivered, drained = EpollReadyList.drain queueId 8 system
+            let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId system
+            let delivered, drained = Lone.EpollReadyList.drain queueId 8 system
 
             List.isEmpty delivered |> shouldEqual (not predicted)
 
             // ...and again in the state the drain produced, which is the state a
             // waiter that found nothing parks in.
-            let predicted = EpollReadyList.hasDeliverableEvent queueId drained
-            let delivered, _ = EpollReadyList.drain queueId 8 drained
+            let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId drained
+            let delivered, _ = Lone.EpollReadyList.drain queueId 8 drained
 
             List.isEmpty delivered |> shouldEqual (not predicted)
 
@@ -3832,7 +4290,7 @@ module TestUnixSystemStep =
             | Error error -> failwith $"expected the close to succeed, got %O{error}"
 
         let exn =
-            Assert.Throws<exn> (fun () -> EpollReadyList.hasDeliverableEvent queueId closed |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.EpollReadyList.hasDeliverableEvent queueId closed |> ignore)
 
         exn.Message |> shouldContainText "a park holds what it waits on"
 
@@ -3841,7 +4299,9 @@ module TestUnixSystemStep =
         // `false` here would be a waiter parked on something that can never
         // deliver, reported as an ordinary "not yet".
         let exn =
-            Assert.Throws<exn> (fun () -> EpollReadyList.hasDeliverableEvent (descriptionOf 0 linux) linux |> ignore)
+            Assert.Throws<exn> (fun () ->
+                Lone.EpollReadyList.hasDeliverableEvent (descriptionOf 0 linux) linux |> ignore
+            )
 
         exn.Message |> shouldContainText "is not an epoll instance"
 
@@ -3856,7 +4316,7 @@ module TestUnixSystemStep =
         let queueId = descriptionOf fd system
 
         let exn =
-            Assert.Throws<exn> (fun () -> EpollReadyList.drain queueId 0 system |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.EpollReadyList.drain queueId 0 system |> ignore)
 
         exn.Message |> shouldContainText "is not positive"
 
@@ -3867,12 +4327,15 @@ module TestUnixSystemStep =
         // between them is a thread waiting for one thing while the sweep watches another.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        match UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn) with
+        match Lone.parkedIn waiterThread parkedIn with
         | Some parked -> WakeCondition.ofPark parked |> shouldEqual condition
         | None -> failwith "expected the park to have been recorded"
 
@@ -3952,7 +4415,7 @@ module TestUnixSystemStep =
         (system, waiters)
         ||> List.fold (fun system thread ->
             withThread thread system
-            |> UnixWait.park
+            |> Lone.Parking.park
                 thread
                 (ParkedSyscall.EpollWait
                     {
@@ -3968,7 +4431,7 @@ module TestUnixSystemStep =
         let ready, system = withPendingEpoll linux
         let parked = parkedInEpollWaitInOrder [ 7 ] ready system
 
-        UnixWait.wakes (Set.singleton 7) parked
+        Lone.wakes parked
         |> shouldEqual (
             [
                 7, Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))
@@ -3985,12 +4448,15 @@ module TestUnixSystemStep =
         let fired =
             Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))
 
-        UnixWait.wakes (Set.ofList [ 7 ; 8 ; 9 ]) parked |> shouldEqual [ 8, fired ]
+        let woken, wokenSystem = Lone.wake parked
+        woken |> shouldEqual [ 8, fired ]
 
-        // Waiters the client has already woken, and which have not finished, hold the event:
-        // one of them will take it, so nobody else on the epoll instance wakes.
-        UnixWait.wakes (Set.ofList [ 7 ; 9 ]) parked |> shouldEqual []
-        UnixWait.wakes (Set.singleton 8) parked |> shouldEqual []
+        // Waiters already woken, and which have not finished, hold the event: one of them
+        // will take it, so nobody else on the epoll instance wakes.
+        Lone.wakes wokenSystem |> shouldEqual []
+
+        Lone.wakes (parked |> ForgedPark.woken 7 |> ForgedPark.woken 9)
+        |> shouldEqual []
 
     [<Test>]
     let ``a waiter that parks again goes to the front of the epoll instance's queue`` () : unit =
@@ -3999,8 +4465,9 @@ module TestUnixSystemStep =
         let ready, system = withPendingEpoll linux
         let parked = parkedInEpollWaitInOrder [ 9 ; 7 ; 8 ] ready system
 
+        // Woken, and then beaten to the event, which a re-park is.
         let reparked =
-            UnixWait.park
+            Lone.Parking.park
                 9
                 (ParkedSyscall.EpollWait
                     {
@@ -4009,9 +4476,9 @@ module TestUnixSystemStep =
                         Buffer = UserBuffer.Mapped
                         Deadline = None
                     })
-                parked
+                (ForgedPark.woken 9 parked)
 
-        UnixWait.wakes (Set.ofList [ 7 ; 8 ; 9 ]) reparked
+        Lone.wakes reparked
         |> shouldEqual
             [
                 9, Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))
@@ -4033,7 +4500,7 @@ module TestUnixSystemStep =
 
         let exn =
             Assert.Throws<exn> (fun () ->
-                UnixDescriptor.truncateAt ReachedThrough.Unnamed inode -1L system
+                Lone.UnixDescriptor.truncateAt ReachedThrough.Unnamed inode -1L system
                 |> ignore<Result<UnixSystem<int, string>, TruncationRefusal>>
             )
 
@@ -4070,13 +4537,23 @@ module TestUnixSystemStep =
         // `/d/inner/t` first: `rmdir` refuses a directory that still has names
         // in it, which is also what keeps an orphan empty for ever after.
         let system =
-            match Answered.unlink (statPath "/d/inner/t") system with
+            match Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system with
             | SyscallAnswer.Completed 0L, system -> system
             | other -> failwith $"could not empty /d/inner: %O{other}"
 
-        match Answered.rmdir (statPath "/d/inner") system with
+        match Answered.rmdir (Callers.leader system) (statPath "/d/inner") system with
         | SyscallAnswer.Completed 0L, system -> system
         | other -> failwith $"could not orphan the current directory: %O{other}"
+
+    /// `getcwd(3)` into `destination`, of room `capacity`, by the leader of the
+    /// only process in `system`.
+    let private getcwdOf
+        (destination : UserBuffer)
+        (capacity : uint64)
+        (system : UnixSystem<int, string>)
+        : Result<GetCwdAnswer, GetCwdRefusal>
+        =
+        UnixPathResolution.tryGetcwd (Callers.leader system) destination capacity system
 
     /// What a successful `getcwd` places: the path and the terminator that makes
     /// nine bytes an exact fit for an eight-byte path.
@@ -4089,16 +4566,16 @@ module TestUnixSystemStep =
         for system in [ atInner linux ; atInner darwin ] do
             // Nine bytes: eight of path and the NUL. A caller sizing its buffer
             // by the path alone is one short, which is the next row.
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 9UL system
             |> shouldEqual (Ok (GetCwdAnswer.Reported cwdBytes))
 
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 1000UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 1000UL system
             |> shouldEqual (Ok (GetCwdAnswer.Reported cwdBytes))
 
     [<Test>]
     let ``getcwd needs room for the terminator as well as the path`` () : unit =
         for system in [ atInner linux ; atInner darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 8UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 8UL system
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4108,7 +4585,7 @@ module TestUnixSystemStep =
         // orphaned system too, which is what says this guard comes first: with
         // the current directory removed, `getcwd(buf, 0)` is still EINVAL.
         for system in [ atInner linux ; atInner darwin ; atOrphan linux ; atOrphan darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 0UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 0UL system
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EINVAL))
 
     [<Test>]
@@ -4117,7 +4594,7 @@ module TestUnixSystemStep =
         // comparison comes first. Only asserted for the flavour that copies from
         // the kernel; the other one may already have stored by here, which the
         // next row is about.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 8UL (atInner linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 8UL (atInner linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4133,13 +4610,13 @@ module TestUnixSystemStep =
         // Three states, because the refusal has to outrank three different
         // answers: a short path that would be ERANGE, a fitting path that would
         // succeed, and a removed directory that would be ENOENT.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 8UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 8UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atOrphan darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
         // Capacity 2 exactly, which is where the refusal starts and therefore
@@ -4147,7 +4624,7 @@ module TestUnixSystemStep =
         // the removed-directory case that establishes it: measured, that flavour
         // stores its first byte at capacity 2 and dies for an unmapped
         // destination, where capacity 1 is a clean ERANGE.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 2UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 2UL (atOrphan darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
     [<Test>]
@@ -4157,13 +4634,13 @@ module TestUnixSystemStep =
         // for a destination it could not have written — for a path of 1015 bytes
         // and for one of 1026 alike, either side of the threshold above. This is
         // what stops the refusal swallowing the whole entry point.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1UL (atInner darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1UL (atOrphan darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 0UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 0UL (atInner darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EINVAL))
 
     [<Test>]
@@ -4175,22 +4652,22 @@ module TestUnixSystemStep =
         // discriminates the two mechanisms where an unmapped address cannot —
         // and `readlink` answers EFAULT on *both* in the same probe, so this is
         // `getcwd`'s own property rather than a general one.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 9UL (atInner linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 9UL (atInner linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EFAULT))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 9UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 9UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
     [<Test>]
     let ``getcwd refuses a destination whose bytes the caller cannot place`` () : unit =
         for system in [ atInner linux ; atInner darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Opaque 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Opaque 9UL system
             |> shouldEqual (Error (GetCwdRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
             // At the transfer rather than at a screen: neither flavour looks at
             // the destination's address before comparing sizes, so there is no
             // screen for an addressless buffer to reach.
-            UnixPathResolution.tryGetcwd UserBuffer.Addressless 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Addressless 9UL system
             |> shouldEqual (Error (GetCwdRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
@@ -4199,10 +4676,10 @@ module TestUnixSystemStep =
         // reaches the length comparison: measured ENOENT at every size from 1
         // up. Darwin's climbs from the root downwards and so needs two bytes
         // before it can start, which makes size 1 ERANGE there.
-        UnixPathResolution.tryGetcwd UserBuffer.Mapped 1UL (atOrphan linux)
+        getcwdOf UserBuffer.Mapped 1UL (atOrphan linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
-        UnixPathResolution.tryGetcwd UserBuffer.Mapped 1UL (atOrphan darwin)
+        getcwdOf UserBuffer.Mapped 1UL (atOrphan darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4215,10 +4692,10 @@ module TestUnixSystemStep =
         // `GetCwdOrphanAnswer.ShortestPathFirst` and
         // https://github.com/Smaug123/WoofWare.PawPrint/blob/6b4aeb4fce455e8c187157ce020d1058fb0821bf/docs/divergences.md
         for capacity in [ 2UL ; 3UL ; 8UL ; 64UL ; 1023UL ; 1024UL ; 1025UL ; 4096UL ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity (atOrphan darwin)
+            getcwdOf UserBuffer.Mapped capacity (atOrphan darwin)
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity (atOrphan linux)
+            getcwdOf UserBuffer.Mapped capacity (atOrphan linux)
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -4227,7 +4704,7 @@ module TestUnixSystemStep =
         // an unmapped destination there is ENOENT and not EFAULT. That is the
         // pairing for the Darwin row above: the same call, the same destination,
         // and the two flavours differ in whether the destination matters at all.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atOrphan linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atOrphan linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
     // ---- `open` ------------------------------------------------------------
@@ -4243,17 +4720,18 @@ module TestUnixSystemStep =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
-    let private openedFd (answer : SyscallAnswer * UnixSystem<int, string>) : int =
+    let private openedFd (answer : DescriptorAnswer * UnixSystem<int, string>) : int =
         match answer with
-        | SyscallAnswer.Completed fd, _ -> int fd
+        | DescriptorAnswer.Returned fd, _ -> fd
         | other -> failwith $"expected a descriptor, got %O{other}"
 
-    let private openFailed (answer : SyscallAnswer * UnixSystem<int, string>) : UnixError =
+    let private openFailed (answer : DescriptorAnswer * UnixSystem<int, string>) : UnixError =
         match answer with
-        | SyscallAnswer.Failed error, _ -> error
+        | DescriptorAnswer.Failed error, _ -> error
         | other -> failwith $"expected a failure, got %O{other}"
 
     [<Test>]
@@ -4275,11 +4753,11 @@ module TestUnixSystemStep =
                     Exclusive = true
                 }
 
-            Answered.openPath exclusiveOnly (statPath "/d/inner/t") 0o666 system
+            Answered.openPath (statPath "/d/inner/t") exclusiveOnly 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
-            Answered.openPath exclusiveOnly (statPath "/d/inner/nope") 0o666 system
+            Answered.openPath (statPath "/d/inner/nope") exclusiveOnly 0o666 system
             |> openFailed
             |> shouldEqual UnixError.ENOENT
 
@@ -4289,17 +4767,17 @@ module TestUnixSystemStep =
             // that read `Exclusive` without `Create` would answer ELOOP here.
             // Measured on both: `open(link, O_RDONLY|O_EXCL)` follows to the
             // file and succeeds, exactly as without the flag.
-            Answered.openPath exclusiveOnly (statPath "/l") 0o666 system
+            Answered.openPath (statPath "/l") exclusiveOnly 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             // And with `Create` it bites, which is what says the field is read
             // at all.
             Answered.openPath
+                (statPath "/d/inner/t")
                 { exclusiveOnly with
                     Create = true
                 }
-                (statPath "/d/inner/t")
                 0o666
                 system
             |> openFailed
@@ -4321,11 +4799,15 @@ module TestUnixSystemStep =
                 }
 
             let answer, after =
-                Answered.openPath creatingExclusive (statPath "/dangling") 0o666 system
+                Answered.openPath (statPath "/dangling") creatingExclusive 0o666 system
 
-            answer |> shouldEqual (SyscallAnswer.Failed UnixError.EEXIST)
+            answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EEXIST)
 
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/gone")) after
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (statPath "/d/inner/gone"))
+                after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -4337,15 +4819,15 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/d/inner") 0o666 system
+            Answered.openPath (statPath "/d/inner") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/d/inner")
                 { plainOpen with
                     Access = FileAccessMode.WriteOnly
                 }
-                (statPath "/d/inner")
                 0o666
                 system
             |> openFailed
@@ -4359,10 +4841,10 @@ module TestUnixSystemStep =
             let _, _, _, system = withTree flavour
 
             Answered.openPath
+                (statPath "/d/inner")
                 { plainOpen with
                     Truncate = true
                 }
-                (statPath "/d/inner")
                 0o666
                 system
             |> openFailed
@@ -4379,14 +4861,14 @@ module TestUnixSystemStep =
 
             let _, after =
                 Answered.openPath
+                    (statPath "/d/inner/t")
                     { plainOpen with
                         Truncate = true
                     }
-                    (statPath "/d/inner/t")
                     0o666
                     system
 
-            match UnixPathResolution.statOf target after with
+            match Lone.UnixPathResolution.statOf target after with
             | Some (Ok status) -> status.Size |> shouldEqual 0L
             | Some (Error refusal) -> failwith $"refused: %A{refusal}"
             | None -> failwith "the file vanished"
@@ -4403,34 +4885,35 @@ module TestUnixSystemStep =
             let vfs =
                 match
                     GraphMutators.createFile
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         (DirectoryEntryName.parseOrFail context "readable")
                         (PermissionBits.parseOrFail context 0o400)
                         (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         epoch
                         (ImmutableArray.CreateRange [ 1uy ])
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok (_, vfs) -> vfs
                 | Error error -> failwith $"could not seed: %O{error}"
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
-            Answered.openPath plainOpen (statPath "/readable") 0o666 system
+            Answered.openPath (statPath "/readable") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/readable")
                 { plainOpen with
                     Truncate = true
                 }
-                (statPath "/readable")
                 0o666
                 system
             |> openFailed
@@ -4462,22 +4945,23 @@ module TestUnixSystemStep =
                 | Error error -> failwith $"could not seed %s{name}: %O{error}"
 
             let vfs =
-                system.Machine.FileSystem |> seed "readable" 0o400 |> seed "writable" 0o200
+                UnixSystem.fileSystem system |> seed "readable" 0o400 |> seed "writable" 0o200
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             let openAs (access : FileAccessMode) (path : string) =
                 Answered.openPath
+                    (statPath path)
                     { plainOpen with
                         Access = access
                     }
-                    (statPath path)
                     0o666
                     system
 
@@ -4501,15 +4985,15 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/l") 0o666 system
+            Answered.openPath (statPath "/l") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
             Answered.openPath
+                (statPath "/l")
                 { plainOpen with
                     NoFollow = true
                 }
-                (statPath "/l")
                 0o666
                 system
             |> openFailed
@@ -4525,17 +5009,17 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            let plain = Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system
+            let plain = Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system
 
             let withBoth =
                 Answered.openPath
+                    (statPath "/d/inner/t")
                     { plainOpen with
                         CloseOnExec = true
                         Synchronous = true
                         DataSynchronous = true
                         Directory = false
                     }
-                    (statPath "/d/inner/t")
                     0o666
                     system
 
@@ -4543,34 +5027,50 @@ module TestUnixSystemStep =
 
             let fd =
                 match fst withBoth with
-                | SyscallAnswer.Completed fd -> int fd
+                | DescriptorAnswer.Returned fd -> fd
                 | other -> failwith $"expected a descriptor, got %A{other}"
 
             let after = snd withBoth
 
             FileDescriptorRegistry.tryFindFlags fd (Lone.fileDescriptors after)
             |> shouldEqual (
-                Some
-                    { DescriptorFlags.none with
-                        CloseOnExec = true
-                    }
+                Some (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour (UnixSystem.platform after)) true)
             )
 
             let takenBack =
                 Lone.withFileDescriptors
                     ((Lone.fileDescriptors after)
-                     |> FileDescriptorRegistry.setFlags fd DescriptorFlags.none
+                     |> FileDescriptorRegistry.setFlags
+                         fd
+                         (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform after)))
                      |> FileDescriptorRegistry.mapOpenFiles (
                          OpenFileTable.mapStatus
                              (FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors after) |> Option.get)
                              (fun status ->
-                                 status.Synchronous |> shouldEqual true
-                                 status.DataSynchronous |> shouldEqual true
+                                 match status with
+                                 | OpenFileStatus.Linux (
+                                     sync = sync ; openedDirectory = openedDirectory ; openedNoFollow = openedNoFollow) ->
+                                     sync |> shouldEqual LinuxSync.FullSync
 
-                                 { status with
-                                     Synchronous = false
-                                     DataSynchronous = false
-                                 }
+                                     OpenFileStatus.Linux (
+                                         sync = LinuxSync.NoSync,
+                                         openedDirectory = openedDirectory,
+                                         openedNoFollow = openedNoFollow
+                                     )
+                                 | OpenFileStatus.Darwin (
+                                     synchronous = synchronous
+                                     dataSynchronous = dataSynchronous
+                                     written = written
+                                     flocked = flocked) ->
+                                     synchronous |> shouldEqual true
+                                     dataSynchronous |> shouldEqual true
+
+                                     OpenFileStatus.Darwin (
+                                         synchronous = false,
+                                         dataSynchronous = false,
+                                         written = written,
+                                         flocked = flocked
+                                     )
                              )
                      ))
                     after
@@ -4589,23 +5089,23 @@ module TestUnixSystemStep =
 
             let _, after =
                 Answered.openPath
+                    (statPath "/made")
                     { plainOpen with
                         Create = true
                         Access = FileAccessMode.WriteOnly
                     }
-                    (statPath "/made")
                     0o777
                     system
 
             match
-                UnixPathResolution.resolvePath
+                Lone.UnixPathResolution.resolvePath
                     AtDirectory.CurrentDirectory
                     SymlinkPolicy.Follow
                     (statPath "/made")
                     after
             with
             | Ok inode ->
-                match UnixPathResolution.statOf inode after with
+                match Lone.UnixPathResolution.statOf inode after with
                 | Some (Ok status) -> status.Mode &&& 0o7777 |> shouldEqual 0o755
                 | Some (Error refusal) -> failwith $"refused: %A{refusal}"
                 | None -> failwith "the created file has no status"
@@ -4618,7 +5118,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system
+            Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
@@ -4640,18 +5140,22 @@ module TestUnixSystemStep =
         for flavour, expected in [ linux, UnixError.EISDIR ; darwin, UnixError.ENOENT ] do
             let _, _, _, system = withTree flavour
 
-            let answer, after = Answered.openPath creating (statPath "/new/") 0o666 system
+            let answer, after = Answered.openPath (statPath "/new/") creating 0o666 system
 
-            answer |> shouldEqual (SyscallAnswer.Failed expected)
+            answer |> shouldEqual (DescriptorAnswer.Failed expected)
 
             // Nothing was created under either rule, which is the half an errno
             // alone does not assert.
-            UnixPathResolution.resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow (statPath "/new") after
+            Lone.UnixPathResolution.resolvePath
+                AtDirectory.CurrentDirectory
+                SymlinkPolicy.Follow
+                (statPath "/new")
+                after
             |> shouldEqual (Error (PathFailure.Errno UnixError.ENOENT))
 
             // The same name *without* the separator creates, so the row above is
             // about the separator rather than about the name being unreachable.
-            Answered.openPath creating (statPath "/new") 0o666 system
+            Answered.openPath (statPath "/new") creating 0o666 system
             |> openedFd
             |> shouldBeGreaterThan 2
 
@@ -4668,14 +5172,14 @@ module TestUnixSystemStep =
             let writeOnlyFd, afterWriteOnly =
                 match
                     Answered.openPath
+                        (statPath "/d/inner/t")
                         { plainOpen with
                             Access = FileAccessMode.WriteOnly
                         }
-                        (statPath "/d/inner/t")
                         0o666
                         system
                 with
-                | SyscallAnswer.Completed fd, after -> int fd, after
+                | DescriptorAnswer.Returned fd, after -> fd, after
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             match ReadOutcomes.read writeOnlyFd UserBuffer.Mapped 8UL afterWriteOnly with
@@ -4683,8 +5187,8 @@ module TestUnixSystemStep =
             | other -> failwith $"a write-only descriptor should refuse read: %O{other}"
 
             let readOnlyFd, afterReadOnly =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system with
-                | SyscallAnswer.Completed fd, after -> int fd, after
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
+                | DescriptorAnswer.Returned fd, after -> fd, after
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             match WriteAdmissions.unchanged readOnlyFd UserBuffer.Mapped 3UL afterReadOnly with
@@ -4778,24 +5282,25 @@ module TestUnixSystemStep =
             let vfs =
                 match
                     GraphMutators.createSymlink
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         (DirectoryEntryName.parseOrFail context "ld")
                         SymlinkModes.linux
                         (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         epoch
                         (SymlinkTarget.parseOrFail context "/d/inner")
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok (_, vfs) -> vfs
                 | Error error -> failwith $"could not seed /ld: %O{error}"
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             let id, system = openedStream system "/ld"
 
@@ -4839,15 +5344,15 @@ module TestUnixSystemStep =
             let _, _, _, system = withTree flavour
 
             let withoutStream =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 system with
-                | SyscallAnswer.Completed fd, _ -> int fd
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 system with
+                | DescriptorAnswer.Returned fd, _ -> fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             let _, afterStream = openedStream system "/d/inner"
 
             let withStream =
-                match Answered.openPath plainOpen (statPath "/d/inner/t") 0o666 afterStream with
-                | SyscallAnswer.Completed fd, _ -> int fd
+                match Answered.openPath (statPath "/d/inner/t") plainOpen 0o666 afterStream with
+                | DescriptorAnswer.Returned fd, _ -> fd
                 | other -> failwith $"expected a descriptor, got %O{other}"
 
             withStream |> shouldEqual (withoutStream + 1)
@@ -4861,21 +5366,21 @@ module TestUnixSystemStep =
             let fd, system = openedStream system "/d/inner"
 
             let system =
-                match Answered.unlink (statPath "/d/inner/t") system with
+                match Answered.unlink (Callers.leader system) (statPath "/d/inner/t") system with
                 | SyscallAnswer.Completed 0L, system -> system
                 | other -> failwith $"could not empty the directory: %O{other}"
 
             let system =
-                match Answered.rmdir (statPath "/d/inner") system with
+                match Answered.rmdir (Callers.leader system) (statPath "/d/inner") system with
                 | SyscallAnswer.Completed 0L, system -> system
                 | other -> failwith $"could not remove the directory: %O{other}"
 
             let expected =
-                match SimulatedUnixPlatform.flavour flavour.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform flavour) with
                 | SimulatedUnixFlavour.Linux -> ReadDirectoryAnswer.Failed UnixError.ENOENT
                 | SimulatedUnixFlavour.Darwin -> ReadDirectoryAnswer.EndOfDirectory
 
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Ok (answer, _) -> answer |> shouldEqual expected
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -4903,11 +5408,21 @@ module TestUnixSystemStep =
             let _, _, _, system = withTree flavour
             let expected = targetOf "/d/inner/t"
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Mapped 4096 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Mapped
+                4096
+                system
             |> readLinkBytes
             |> shouldEqual expected
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Mapped expected.Length system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Mapped
+                expected.Length
+                system
             |> readLinkBytes
             |> shouldEqual expected
 
@@ -4915,7 +5430,12 @@ module TestUnixSystemStep =
             // a capacity of exactly the target's length must not truncate, and a
             // capacity one below it must. Only this pair pins the comparison —
             // either row alone passes for an off-by-one.
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Mapped (expected.Length - 1) system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Mapped
+                (expected.Length - 1)
+                system
             |> readLinkBytes
             |> shouldEqual (List.truncate (expected.Length - 1) expected)
 
@@ -4931,33 +5451,58 @@ module TestUnixSystemStep =
         for capacity in [ 0 ; -1 ; System.Int32.MinValue ] do
             // Linux: EINVAL whatever the path, since the size is checked first.
             for path in [ "/l" ; "/d/inner" ; "/nope" ] do
-                UnixNamespace.tryReadlink (PathArg.ofPath (statPath path)) UserBuffer.Mapped capacity linux
+                UnixNamespace.tryReadlink
+                    (Callers.leader linux)
+                    (PathArg.ofPath (statPath path))
+                    UserBuffer.Mapped
+                    capacity
+                    linux
                 |> readLinkFailed
                 |> shouldEqual UnixError.EINVAL
 
             // ...and the buffer is never consulted.
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) (UserBuffer.Unmapped 8UL) capacity linux
+            UnixNamespace.tryReadlink
+                (Callers.leader linux)
+                (PathArg.ofPath (statPath "/l"))
+                (UserBuffer.Unmapped 8UL)
+                capacity
+                linux
             |> readLinkFailed
             |> shouldEqual UnixError.EINVAL
 
         // Darwin, negative: the same, before resolution.
         for capacity in [ -1 ; System.Int32.MinValue ] do
             for path in [ "/l" ; "/d/inner" ; "/nope" ] do
-                UnixNamespace.tryReadlink (PathArg.ofPath (statPath path)) UserBuffer.Mapped capacity darwin
+                UnixNamespace.tryReadlink
+                    (Callers.leader darwin)
+                    (PathArg.ofPath (statPath path))
+                    UserBuffer.Mapped
+                    capacity
+                    darwin
                 |> readLinkFailed
                 |> shouldEqual UnixError.EINVAL
 
         // Darwin, zero: resolved first, so the path's own answer wins...
-        UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/d/inner")) UserBuffer.Mapped 0 darwin
+        UnixNamespace.tryReadlink
+            (Callers.leader darwin)
+            (PathArg.ofPath (statPath "/d/inner"))
+            UserBuffer.Mapped
+            0
+            darwin
         |> readLinkFailed
         |> shouldEqual UnixError.EINVAL
 
-        UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/nope")) UserBuffer.Mapped 0 darwin
+        UnixNamespace.tryReadlink (Callers.leader darwin) (PathArg.ofPath (statPath "/nope")) UserBuffer.Mapped 0 darwin
         |> readLinkFailed
         |> shouldEqual UnixError.ENOENT
 
         // ...and a link reports nothing, through a buffer nothing could write to.
-        UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) (UserBuffer.Unmapped 8UL) 0 darwin
+        UnixNamespace.tryReadlink
+            (Callers.leader darwin)
+            (PathArg.ofPath (statPath "/l"))
+            (UserBuffer.Unmapped 8UL)
+            0
+            darwin
         |> readLinkBytes
         |> shouldEqual []
 
@@ -4970,11 +5515,21 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Mapped 4 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Mapped
+                4
+                system
             |> readLinkBytes
             |> shouldEqual (targetOf "/d/i")
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Mapped 1 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Mapped
+                1
+                system
             |> readLinkBytes
             |> shouldEqual (targetOf "/")
 
@@ -4989,33 +5544,44 @@ module TestUnixSystemStep =
             let vfs =
                 match
                     GraphMutators.createSymlink
-                        (VirtualFileSystem.root system.Machine.FileSystem)
+                        (VirtualFileSystem.root (UnixSystem.fileSystem system))
                         (DirectoryEntryName.parseOrFail context "wide")
                         SymlinkModes.linux
                         (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         epoch
                         (SymlinkTarget.parseOrFail context "/éé")
-                        system.Machine.FileSystem
+                        (UnixSystem.fileSystem system)
                 with
                 | Ok (_, vfs) -> vfs
                 | Error error -> failwith $"could not seed: %O{error}"
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial vfs
                         }
-                }
+                    )
+                    system
 
             // "/ee" is five bytes but three characters. A capacity of three
             // must yield three *bytes* — the slash and the first é.
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/wide")) UserBuffer.Mapped 4096 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/wide"))
+                UserBuffer.Mapped
+                4096
+                system
             |> readLinkBytes
             |> List.length
             |> shouldEqual 5
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/wide")) UserBuffer.Mapped 3 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/wide"))
+                UserBuffer.Mapped
+                3
+                system
             |> readLinkBytes
             |> shouldEqual (targetOf "/é")
 
@@ -5031,15 +5597,30 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/d/inner/t")) UserBuffer.Mapped 4096 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/d/inner/t"))
+                UserBuffer.Mapped
+                4096
+                system
             |> readLinkFailed
             |> shouldEqual UnixError.EINVAL
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/d/inner/t")) (UserBuffer.Unmapped 8UL) 16 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/d/inner/t"))
+                (UserBuffer.Unmapped 8UL)
+                16
+                system
             |> readLinkFailed
             |> shouldEqual UnixError.EINVAL
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/d/inner")) UserBuffer.Mapped 4096 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/d/inner"))
+                UserBuffer.Mapped
+                4096
+                system
             |> readLinkFailed
             |> shouldEqual UnixError.EINVAL
 
@@ -5053,16 +5634,31 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) (UserBuffer.Unmapped 8UL) 16 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                (UserBuffer.Unmapped 8UL)
+                16
+                system
             |> readLinkFailed
             |> shouldEqual UnixError.EFAULT
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Opaque 16 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Opaque
+                16
+                system
             |> shouldEqual (Error (ReadLinkRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
             // At the transfer rather than at a screen: neither flavour checks
             // the destination's address up front.
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/l")) UserBuffer.Addressless 16 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/l"))
+                UserBuffer.Addressless
+                16
+                system
             |> shouldEqual (Error (ReadLinkRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
@@ -5073,7 +5669,12 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, _, _, system = withTree flavour
 
-            UnixNamespace.tryReadlink (PathArg.ofPath (statPath "/dangling")) UserBuffer.Mapped 4096 system
+            UnixNamespace.tryReadlink
+                (Callers.leader system)
+                (PathArg.ofPath (statPath "/dangling"))
+                UserBuffer.Mapped
+                4096
+                system
             |> readLinkBytes
             |> shouldEqual (targetOf "/d/inner/gone")
 
@@ -5097,12 +5698,13 @@ module TestUnixSystemStep =
             }
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.ofList [ socketZero, bound ]
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = ForgedSocket.table [ socketZero, bound ]
                 }
-        }
+            )
+            system
 
     let private sockNameCopied (answer : Result<GetSockNameAnswer, GetSockNameRefusal>) : ImmutableArray<byte> * int =
         match answer with
@@ -5125,7 +5727,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withSocket flavour
 
-            UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
             |> sockNameReported
             |> shouldEqual (Ipv4Endpoint.ofParts Ipv4Address.any 0us, 16)
 
@@ -5136,7 +5738,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withBoundSocket flavour
 
-            UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
             |> sockNameReported
             |> shouldEqual (Ipv4Endpoint.ofParts Ipv4Address.loopback 8080us, 16)
 
@@ -5150,7 +5752,8 @@ module TestUnixSystemStep =
 
             for declared in [ 1u ; 2u ; 4u ; 8u ; 15u ; 16u ; 17u ; 128u ] do
                 let copiedOut, reportedLength =
-                    UnixSocket.tryGetsockname fd UserBuffer.Mapped declared system |> sockNameCopied
+                    UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped declared system
+                    |> sockNameCopied
 
                 copiedOut.Length |> shouldEqual (int (min declared 16u))
                 reportedLength |> shouldEqual 16
@@ -5163,24 +5766,24 @@ module TestUnixSystemStep =
         // fault, which is what makes this an ordering row rather than a
         // restatement of the two errnos.
         for flavour in [ linux ; darwin ] do
-            UnixSocket.tryGetsockname 7 (UserBuffer.Unmapped 8UL) 16u flavour
+            UnixSocket.tryGetsockname (Callers.leader flavour) 7 (UserBuffer.Unmapped 8UL) 16u flavour
             |> sockNameFailed
             |> shouldEqual (UnixError.EBADF, None)
 
             let fileFd, fileSystem = withOpenFile flavour
 
-            UnixSocket.tryGetsockname fileFd (UserBuffer.Unmapped 8UL) 16u fileSystem
+            UnixSocket.tryGetsockname (Callers.leader fileSystem) fileFd (UserBuffer.Unmapped 8UL) 16u fileSystem
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
             let queueFd, queueSystem = withEpoll flavour
 
-            UnixSocket.tryGetsockname queueFd (UserBuffer.Unmapped 8UL) 16u queueSystem
+            UnixSocket.tryGetsockname (Callers.leader queueSystem) queueFd (UserBuffer.Unmapped 8UL) 16u queueSystem
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
             // Standard input is a pipe end here, and a pipe is ENOTSOCK on both.
-            UnixSocket.tryGetsockname 0 (UserBuffer.Unmapped 8UL) 16u flavour
+            UnixSocket.tryGetsockname (Callers.leader flavour) 0 (UserBuffer.Unmapped 8UL) 16u flavour
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
@@ -5201,7 +5804,8 @@ module TestUnixSystemStep =
                     UserBuffer.Mapped
                 ] do
                 let copiedOut, reportedLength =
-                    UnixSocket.tryGetsockname fd destination 0u system |> sockNameCopied
+                    UnixSocket.tryGetsockname (Callers.leader system) fd destination 0u system
+                    |> sockNameCopied
 
                 copiedOut.IsEmpty |> shouldEqual true
                 reportedLength |> shouldEqual 16
@@ -5214,17 +5818,17 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withBoundSocket flavour
 
-            UnixSocket.tryGetsockname fd (UserBuffer.Unmapped 8UL) 1u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd (UserBuffer.Unmapped 8UL) 1u system
             |> sockNameFailed
             |> fst
             |> shouldEqual UnixError.EFAULT
 
-            UnixSocket.tryGetsockname fd UserBuffer.Opaque 1u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Opaque 1u system
             |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
             // At the transfer rather than at a screen: neither flavour checks
             // the destination's address before deciding it has bytes to move.
-            UnixSocket.tryGetsockname fd UserBuffer.Addressless 1u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Addressless 1u system
             |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
@@ -5238,19 +5842,24 @@ module TestUnixSystemStep =
         let since618Fd, since618System =
             withBoundSocket (systemOn SimulatedUnixPlatform.linuxArm64)
 
-        UnixSocket.tryGetsockname since618Fd (UserBuffer.Unmapped 8UL) 13u since618System
+        UnixSocket.tryGetsockname
+            (Callers.leader since618System)
+            since618Fd
+            (UserBuffer.Unmapped 8UL)
+            13u
+            since618System
         |> sockNameFailed
         |> shouldEqual (UnixError.EFAULT, Some 16)
 
         let linuxFd, linuxSystem = withBoundSocket linux
 
-        UnixSocket.tryGetsockname linuxFd (UserBuffer.Unmapped 8UL) 13u linuxSystem
+        UnixSocket.tryGetsockname (Callers.leader linuxSystem) linuxFd (UserBuffer.Unmapped 8UL) 13u linuxSystem
         |> sockNameFailed
         |> shouldEqual (UnixError.EFAULT, None)
 
         let darwinFd, darwinSystem = withBoundSocket darwin
 
-        UnixSocket.tryGetsockname darwinFd (UserBuffer.Unmapped 8UL) 13u darwinSystem
+        UnixSocket.tryGetsockname (Callers.leader darwinSystem) darwinFd (UserBuffer.Unmapped 8UL) 13u darwinSystem
         |> sockNameFailed
         |> shouldEqual (UnixError.EFAULT, None)
 
@@ -5266,11 +5875,11 @@ module TestUnixSystemStep =
             let fd, system = withSocket linux
 
             let system =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
-                                Map.ofList
+                                ForgedSocket.table
                                     [
                                         socketZero,
                                         { socketDescription with
@@ -5278,9 +5887,10 @@ module TestUnixSystemStep =
                                         }
                                     ]
                         }
-                }
+                    )
+                    system
 
-            UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system
+            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
             |> shouldEqual (Error (GetSockNameRefusal.UnmodelledDomain (socketZero, domain)))
 
     [<Test>]
@@ -5324,7 +5934,7 @@ module TestUnixSystemStep =
                 (InodeOwner.ofProcess (Lone.proc system).Credentials)
                 epoch
                 ImmutableArray.Empty
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
             |> orFail "/f"
 
         let dir, vfs =
@@ -5384,12 +5994,13 @@ module TestUnixSystemStep =
 
         let vfs = vfs |> link "ld" "dir" |> link "lf" "f" |> link "dangling" "nx"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
 
     let private renamed
         (source : PathArgumentBytes)
@@ -5604,18 +6215,19 @@ module TestUnixSystemStep =
                     (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     ImmutableArray.Empty
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok pair -> pair
             | Error error -> failwith $"could not seed /victim: %O{error}"
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-            }
+                )
+                system
 
         let moved =
             match Eager.tryRename (arg "f") (arg "victim") system with
@@ -5623,17 +6235,27 @@ module TestUnixSystemStep =
             | other -> failwith $"expected a success, got %A{other}"
 
         // The source name is gone and the destination now names what moved.
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/f")) moved
+        UnixPathResolution.tryStat
+            (Callers.leader moved)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofPath (statPath "/f"))
+            moved
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/victim")) moved with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader moved)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (statPath "/victim"))
+                moved
+        with
         | Ok (FileStatusAnswer.Reported _) -> ()
         | other -> failwith $"expected /victim to exist, got %A{other}"
 
         // The inode the destination *used* to name lost its last link, and
         // nothing held it — which is the part the entry point adds over
         // `VirtualFileSystem.rename`, whose contract is to free nothing.
-        UnixPathResolution.statOf displaced moved |> shouldEqual None
+        Lone.UnixPathResolution.statOf displaced moved |> shouldEqual None
 
     [<Test>]
     let ``rename over a file a descriptor holds leaves that inode alive`` () : unit =
@@ -5644,7 +6266,7 @@ module TestUnixSystemStep =
 
         let held =
             match
-                UnixPathResolution.resolvePath
+                Lone.UnixPathResolution.resolvePath
                     AtDirectory.CurrentDirectory
                     SymlinkPolicy.NoFollowFinal
                     (statPath "/f")
@@ -5655,6 +6277,9 @@ module TestUnixSystemStep =
 
         let fd, descriptors =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system held)
                 held
                 FileAccessMode.ReadOnly
@@ -5671,16 +6296,16 @@ module TestUnixSystemStep =
             | other -> failwith $"expected a success, got %A{other}"
 
         // The name is gone, and the inode behind it is not.
-        UnixPathResolution.statOf held moved |> shouldNotEqual None
+        Lone.UnixPathResolution.statOf held moved |> shouldNotEqual None
 
         // ...and closing the descriptor is what finally frees it, which is the
         // half a test that only checked survival would leave unpinned.
         let closed =
-            match UnixDescriptor.tryClose fd moved with
+            match UnixDescriptor.tryClose (Callers.leader moved) fd moved with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
-        UnixPathResolution.statOf held closed |> shouldEqual None
+        Lone.UnixPathResolution.statOf held closed |> shouldEqual None
 
     [<Test>]
     let ``renaming a name onto itself changes nothing at all`` () : unit =
@@ -5689,10 +6314,10 @@ module TestUnixSystemStep =
         // through the primitive would have to invent a stamp.
         let system = withRenameTree linux
 
-        let before = system.Machine.FileSystem
+        let before = UnixSystem.fileSystem system
 
         match Eager.tryRename (arg "f") (arg "f") system with
-        | Ok (SyscallAnswer.Completed 0L, after) -> after.Machine.FileSystem |> shouldEqual before
+        | Ok (SyscallAnswer.Completed 0L, after) -> UnixSystem.fileSystem after |> shouldEqual before
         | other -> failwith $"expected a success, got %A{other}"
 
     /// The same tree, with the current directory moved to `/dir/sub` — so that a
@@ -5702,7 +6327,7 @@ module TestUnixSystemStep =
 
         let sub =
             match
-                UnixPathResolution.resolvePath
+                Lone.UnixPathResolution.resolvePath
                     AtDirectory.CurrentDirectory
                     SymlinkPolicy.Follow
                     (statPath "/dir/sub")
@@ -5735,7 +6360,7 @@ module TestUnixSystemStep =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected a success, got %A{other}"
 
-        UnixPathResolution.currentDirectoryPath moved
+        UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved
         |> shouldEqual (Some (AbsoluteUnixPath.parseOrFail context "/moved/sub"))
 
     /// The tree with the current directory `rmdir`'d out from under the process,
@@ -5745,10 +6370,10 @@ module TestUnixSystemStep =
         let system = withRenameTree system
 
         let inode, created =
-            match Answered.mkdir (PathArg.ofPath (statPath "/gone")) 0o755 system with
+            match Answered.mkdir (Callers.leader system) (PathArg.ofPath (statPath "/gone")) 0o755 system with
             | SyscallAnswer.Completed 0L, created ->
                 match
-                    UnixPathResolution.resolvePath
+                    Lone.UnixPathResolution.resolvePath
                         AtDirectory.CurrentDirectory
                         SymlinkPolicy.Follow
                         (statPath "/gone")
@@ -5767,7 +6392,7 @@ module TestUnixSystemStep =
             )
             |> Lone.restand
 
-        match Answered.rmdir (statPath "/gone") inCwd with
+        match Answered.rmdir (Callers.leader inCwd) (statPath "/gone") inCwd with
         | SyscallAnswer.Completed 0L, removed -> removed
         | other -> failwith $"could not remove /gone: %A{other}"
 
@@ -5836,7 +6461,7 @@ module TestUnixSystemStep =
         // one at all. `CallProgress.Answered` is that answer, and a caller
         // holding it has nothing to read.
         let ended (source : PathArgumentBytes) (system : UnixSystem<int, string>) : UnixError =
-            match UnixNamespace.tryRename source system with
+            match UnixNamespace.tryRename (Callers.leader system) source system with
             | Ok (CallProgress.Answered (SyscallAnswer.Failed error, _)) -> error
             | other -> failwith $"expected the source phase to end the call, got %A{other}"
 
@@ -5861,13 +6486,15 @@ module TestUnixSystemStep =
         // And the calls that *do* need one say so, or the rows above would pass
         // for a kernel that never asks for a destination.
         for system in [ withRenameTree linux ; withRenameTree darwin ] do
-            match UnixNamespace.tryRename (arg "f") system with
+            match UnixNamespace.tryRename (Callers.leader system) (arg "f") system with
             | Ok (CallProgress.NeedsCopyIn _) -> ()
             | other -> failwith $"expected the kernel to want a destination, got %A{other}"
 
         // Linux gets that far even for a source whose final name is free, since
         // it has not looked it up yet — where Darwin has, and stopped.
-        match UnixNamespace.tryRename (arg "nope") (withRenameTree linux) with
+        let system = withRenameTree linux
+
+        match UnixNamespace.tryRename (Callers.leader system) (arg "nope") system with
         | Ok (CallProgress.NeedsCopyIn _) -> ()
         | other -> failwith $"expected Linux to want a destination for a free source name, got %A{other}"
 
@@ -5972,7 +6599,7 @@ module TestUnixSystemStep =
                 (mode 0o755)
                 (InodeOwner.ofProcess (Lone.proc system).Credentials)
                 epoch
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
             |> orFail "/d"
 
         let _, vfs =
@@ -6032,21 +6659,22 @@ module TestUnixSystemStep =
 
         let vfs = vfs |> link "ld" "d" |> link "lf" "f" |> link "dang" "nx"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
 
     /// What the probe's rows record: whether the `chdir` succeeded, and what
     /// `getcwd` says afterwards. `Ok None` is a `chdir` that succeeded into a
     /// directory no path reaches, which the probe writes as
     /// `ok, ... getcwd failed ENOENT`.
     let private changedTo (path : string) (system : UnixSystem<int, string>) : Result<string option, UnixError> =
-        match Answered.chdir (PathArg.ofPath (statPath path)) system with
+        match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath path)) system with
         | SyscallAnswer.Completed 0L, moved ->
-            UnixPathResolution.currentDirectoryPath moved
+            UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved
             |> Option.map PathText.ofAbsolute
             |> Ok
         | SyscallAnswer.Failed error, _ -> Error error
@@ -6106,26 +6734,26 @@ module TestUnixSystemStep =
         let system = withChDirTree linux
 
         let moved =
-            match Answered.chdir (PathArg.ofPath (statPath "/d/sub")) system with
+            match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/sub")) system with
             | SyscallAnswer.Completed 0L, moved -> moved
             | other -> failwith $"expected a success, got %A{other}"
 
         let held = (Lone.proc moved).CurrentDirectoryInode
 
         let removed =
-            match Answered.rmdir (statPath "/d/sub") moved with
+            match Answered.rmdir (Callers.leader moved) (statPath "/d/sub") moved with
             | SyscallAnswer.Completed 0L, removed -> removed
             | other -> failwith $"expected the rmdir to succeed, got %A{other}"
 
         // Still there: the process is in it.
-        UnixPathResolution.statOf held removed |> shouldNotEqual None
+        Lone.UnixPathResolution.statOf held removed |> shouldNotEqual None
 
         let left =
-            match Answered.chdir (PathArg.ofPath (statPath "/")) removed with
+            match Answered.chdir (Callers.leader removed) (PathArg.ofPath (statPath "/")) removed with
             | SyscallAnswer.Completed 0L, left -> left
             | other -> failwith $"expected a success, got %A{other}"
 
-        UnixPathResolution.statOf held left |> shouldEqual None
+        Lone.UnixPathResolution.statOf held left |> shouldEqual None
         UnixSystem.checkInvariants left |> shouldEqual []
 
     [<Test>]
@@ -6144,16 +6772,17 @@ module TestUnixSystemStep =
         let system = withChDirTree linux
 
         let inSub =
-            match Answered.chdir (PathArg.ofPath (statPath "/d/sub")) system with
+            match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/sub")) system with
             | SyscallAnswer.Completed 0L, moved -> moved
             | other -> failwith $"expected a success, got %A{other}"
 
         let orphaned =
-            match Answered.rmdir (statPath "/d/sub") inSub with
+            match Answered.rmdir (Callers.leader inSub) (statPath "/d/sub") inSub with
             | SyscallAnswer.Completed 0L, removed -> removed
             | other -> failwith $"expected the rmdir to succeed, got %A{other}"
 
-        UnixPathResolution.currentDirectoryPath orphaned |> shouldEqual None
+        UnixPathResolution.currentDirectoryPath (Lone.pid orphaned) orphaned
+        |> shouldEqual None
 
         changedTo "." orphaned |> shouldEqual (Ok None)
         changedTo ".." orphaned |> shouldEqual (Ok (Some "/d"))

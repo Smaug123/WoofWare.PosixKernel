@@ -1,0 +1,68 @@
+[
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestDarwinReleaseAgainstHost",
+    "test": "the Darwin preset models this Darwin host's major release",
+    "message": "not a Darwin host (Some(Linux))",
+    "why": "CI runs on Linux; the Darwin host this measures is a developer's Mac."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestEntropyAgainstHost",
+    "test": "getentropy agrees with this kernel",
+    "message": "getentropy(2) is a Darwin system call",
+    "why": "CI runs on Linux; the Darwin host this measures is a developer's Mac."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestFileSystemType",
+    "test": "this host's APFS fsid is its st_dev and its type",
+    "message": "no Darwin arm64 kernel to measure",
+    "why": "CI runs on Linux; the Darwin host this measures is a developer's Mac."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestShutdownAgainstHost",
+    "test": "a host scenario whose filled end's receive buffer always grows fails the replay",
+    "message": "a pair is watched for settling on Darwin only",
+    "why": "CI runs on Linux, whose receive buffers this Darwin-only settling rule does not concern."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestShutdownAgainstHost",
+    "test": "a host scenario whose filled end's receive buffer grew is run again",
+    "message": "a pair is watched for settling on Darwin only",
+    "why": "CI runs on Linux, whose receive buffers this Darwin-only settling rule does not concern."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestSocketFuzz",
+    "test": "SocketFuzzLive: generated sequences agree with the real kernel",
+    "message": "differential fuzzing needs the `container` CLI; opt in with POSIXKERNEL_SOCKET_FUZZ=1 (see docs/plans/2026-08-22-socket-epoll-fuzzer.md)",
+    "why": "The live fuzzer runs its harness in a Linux container through Apple's `container` CLI, which CI does not have; the committed corpora it records are replayed on CI."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestUnixWait",
+    "test": "parkWaiting refuses a park whose own condition already holds, a signal aside",
+    "message": "parkWaiting checks a park's condition only in a Debug build.",
+    "why": "CI builds and tests the Release configuration."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestWakeMemo",
+    "test": "a memo counts the answers it has given since its sweep, from none after each sweep",
+    "message": "A memo counts its answers only in a Debug build, which cross-checks some of them.",
+    "why": "CI builds and tests the Release configuration."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestSurface",
+    "test": "Update API surface",
+    "message": "",
+    "why": "[<Explicit>]: it rewrites SurfaceBaseline.txt, and is run by hand after an intended API change."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestMultiProcessFuzz",
+    "test": "Update multi-process oracle",
+    "message": "",
+    "why": "[<Explicit>]: it rewrites a committed oracle, and is run by hand."
+  },
+  {
+    "fixture": "WoofWare.PosixKernel.Test.TestMultiProcessFuzz",
+    "test": "Update process-end oracle",
+    "message": "",
+    "why": "[<Explicit>]: it rewrites a committed oracle, and is run by hand."
+  }
+]

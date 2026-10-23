@@ -72,7 +72,7 @@ module TestListenerTeardown =
         (system : UnixSystem<int, string>)
         : Result<SetSockOptAnswer * UnixSystem<int, string>, SocketOptionRefusal>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
 
         let name =
@@ -83,13 +83,13 @@ module TestListenerTeardown =
         let value = OptionValue.ofLinger onOff seconds
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | Ok SetSockOptAdmission.NoCopy
             | Ok (SetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+        Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
 
     let private lingerZero (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match setLinger fd 1 0 system with
@@ -145,7 +145,7 @@ module TestListenerTeardown =
         match KeventWorld.readSocketError fd system with
         | GetSockOptAnswer.Reported (OptionValue.Int 0), system -> "0", system
         | GetSockOptAnswer.Reported (OptionValue.Int raw), system ->
-            let numbering = SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform
+            let numbering = SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system)
 
             match UnixError.ofRawErrnoUnder numbering raw with
             | Some error -> errnoName error, system
@@ -162,7 +162,7 @@ module TestListenerTeardown =
                 fresh
                 UserBuffer.Mapped
                 16u
-                (CopyIn.inet system.Machine.UnixPlatform (KeventWorld.loopback port))
+                (CopyIn.inet (UnixSystem.platform system) (KeventWorld.loopback port))
                 system
         with
         | Ok (BindAnswer.Bound _, _) -> "bind-ok"
@@ -174,7 +174,7 @@ module TestListenerTeardown =
     /// a fresh kqueue's `EVFILT_READ` and `EVFILT_WRITE` (Darwin); then
     /// `FIONREAD`. What it creates is closed again.
     let private readiness (fd : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
         let events =
             match flavour with
@@ -184,7 +184,7 @@ module TestListenerTeardown =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    1
+                    (Callers.thread 1 system)
                     [
                         {
                             Fd = fd
@@ -201,8 +201,8 @@ module TestListenerTeardown =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
-                    | Ok (Ok created) -> created
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 // The probe's registration is level-triggered, which this
@@ -217,13 +217,19 @@ module TestListenerTeardown =
 
                 let system =
                     match
-                        UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (interest, uint64 fd)) system
+                        UnixPoll.tryEpollCtl
+                            (Callers.leader system)
+                            epoll
+                            1
+                            fd
+                            (EpollEventArgument.Readable (interest, uint64 fd))
+                            system
                     with
                     | Ok (EpollCtlAnswer.Changed, system) -> system
                     | other -> failwith $"epoll_ctl: %A{other}"
 
                 let reported, system =
-                    match UnixPoll.tryEpollWait 1 epoll 1 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.thread 1 system) epoll 1 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered [], system) -> 0u, system
                     | Ok (EpollWaitOutcome.Answered [ _, events ], system) -> events, system
                     | other -> failwith $"epoll_wait: %A{other}"
@@ -263,8 +269,8 @@ module TestListenerTeardown =
                 $"kq-read=%s{read} kq-write=%s{write}", KeventWorld.close kq system
 
         let readable =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
-            | Ok (BytesAvailableAnswer.Reported count) -> count
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
+            | Ok (BytesAvailableAnswer.Reported count, _) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
         $"poll=0x%x{revents} %s{waiters} fionread=%d{readable}", system
@@ -297,7 +303,12 @@ module TestListenerTeardown =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (Kernel.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                            proc.Signals
                 }
             )
 
@@ -305,8 +316,8 @@ module TestListenerTeardown =
         let q0, system = connectTo system
         let q1, system = connectTo system
         let q2, system = connectTo system
-        let _, system = UnixDescriptor.setNonBlocking q0 true system
-        let _, system = UnixDescriptor.setNonBlocking q1 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) q0 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) q1 true system
 
         let system =
             match write q1 100 system with
@@ -317,7 +328,7 @@ module TestListenerTeardown =
         let system = if lingering then lingerZero listener system else system
 
         let closed, system =
-            match UnixDescriptor.tryClose listener system with
+            match UnixDescriptor.tryClose (Callers.leader system) listener system with
             | Ok (SyscallAnswer.Completed 0L, system) -> "0", system
             | Ok (SyscallAnswer.Completed other, _) -> failwith $"closing the listener answered %d{other}"
             | Ok (SyscallAnswer.Failed error, system) -> answer (Error error), system
@@ -373,7 +384,7 @@ module TestListenerTeardown =
             let listener, system = listenerAt system
             let system = lingerZero listener system
 
-            match UnixDescriptor.tryClose listener system with
+            match UnixDescriptor.tryClose (Callers.leader system) listener system with
             | Ok (SyscallAnswer.Completed 0L, system) ->
                 UnixSystem.checkInvariants system |> shouldEqual []
                 bindFree port system |> shouldEqual "bind-ok"
@@ -402,8 +413,8 @@ module TestListenerTeardown =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
-                    | Ok (Ok created) -> created
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+                    | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 let interest =
@@ -417,6 +428,7 @@ module TestListenerTeardown =
                     ||> List.fold (fun system i ->
                         match
                             UnixPoll.tryEpollCtl
+                                (Callers.leader system)
                                 epoll
                                 1
                                 clients.[i]
@@ -428,7 +440,7 @@ module TestListenerTeardown =
                     )
 
                 let wait (system : UnixSystem<int, string>) =
-                    match UnixPoll.tryEpollWait 1 epoll 8 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.thread 1 system) epoll 8 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, system) -> events, system
                     | other -> failwith $"epoll_wait: %A{other}"
 
@@ -510,7 +522,12 @@ module TestListenerTeardown =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (Kernel.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                            proc.Signals
                 }
             )
 
@@ -518,7 +535,7 @@ module TestListenerTeardown =
         let client, system = connectTo system
 
         let clientPort =
-            match (UnixMachineState.socket (socketOf client system) system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith "the connected client is unbound"
 
@@ -535,7 +552,7 @@ module TestListenerTeardown =
                 system
 
         let system =
-            match UnixDescriptor.tryClose client system with
+            match UnixDescriptor.tryClose (Callers.leader system) client system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"%s{row}: the client's close answered %A{other}"
 
@@ -544,7 +561,7 @@ module TestListenerTeardown =
         let listenerPoll, system =
             match
                 UnixPoll.tryPoll
-                    1
+                    (Callers.thread 1 system)
                     [
                         {
                             Fd = listener
@@ -560,17 +577,19 @@ module TestListenerTeardown =
         let bound = bindFree clientPort system
 
         let accepted, system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"%s{row}: the accept answered %A{other}"
 
-        let _, system = UnixDescriptor.setNonBlocking accepted true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) accepted true system
+
         let r1, system = read accepted system
         let r2, system = read accepted system
         let soerr, system = socketError accepted system
 
         let peer =
-            match UnixSocket.tryGetpeername accepted UserBuffer.Mapped 16u system with
+            match UnixSocket.tryGetpeername (Callers.leader system) accepted UserBuffer.Mapped 16u system with
             | Ok (GetSockNameAnswer.Reported _) -> "ok"
             | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
             | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"
@@ -620,7 +639,7 @@ module TestListenerTeardown =
         let listener, system = listenerAt system
         let client, system = KeventWorld.client port system
 
-        match (UnixMachineState.socket (socketOf client system) system.Machine).Phase with
+        match (UnixMachineState.socket (socketOf client system) (Kernel.machine system)).Phase with
         | SocketPhase.EstablishedPendingReport _ -> ()
         | other -> failwith $"expected the connect's report pending, got %A{other}"
 

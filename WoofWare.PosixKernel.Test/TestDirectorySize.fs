@@ -273,6 +273,7 @@ module TestDirectorySize =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -297,8 +298,18 @@ module TestDirectorySize =
         | SyscallAnswer.Failed error ->
             failwith $"%s{what} failed with %O{error}, but the history is valid by construction"
 
+    let private openedFd
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error ->
+            failwith $"%s{what} failed with %O{error}, but the history is valid by construction"
+
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"close %d{fd}: %A{other}"
 
@@ -306,17 +317,22 @@ module TestDirectorySize =
         match op with
         | DirectorySizeOp.Create path ->
             let fd, system =
-                Answered.openPath creating (rooted path) 0o644 system
-                |> completed $"creat %s{path}"
+                Answered.openPath (rooted path) creating 0o644 system
+                |> openedFd $"creat %s{path}"
 
-            closeFd (int fd) system
+            closeFd fd system
         | DirectorySizeOp.MakeDirectory path ->
-            Answered.mkdir (PathArg.ofPath (rooted path)) 0o755 system
+            Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
             |> completed $"mkdir %s{path}"
             |> snd
-        | DirectorySizeOp.Unlink path -> Answered.unlink (rooted path) system |> completed $"unlink %s{path}" |> snd
+        | DirectorySizeOp.Unlink path ->
+            Answered.unlink (Callers.leader system) (rooted path) system
+            |> completed $"unlink %s{path}"
+            |> snd
         | DirectorySizeOp.RemoveDirectory path ->
-            Answered.rmdir (rooted path) system |> completed $"rmdir %s{path}" |> snd
+            Answered.rmdir (Callers.leader system) (rooted path) system
+            |> completed $"rmdir %s{path}"
+            |> snd
         | DirectorySizeOp.Rename (source, destination) ->
             match Eager.tryRename (argument source) (argument destination) system with
             | Ok result -> result |> completed $"rename %s{source} %s{destination}" |> snd
@@ -344,25 +360,27 @@ module TestDirectorySize =
             |> applyToModel (DirectorySizeOp.MakeDirectory "o")
 
         let fd, system =
-            Answered.openPath reading (rooted "d") 0 system |> completed "open d"
+            Answered.openPath (rooted "d") reading 0 system |> openedFd "open d"
 
-        int fd, system
+        fd, system
 
     let private modelSize (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | Ok (FileStatusAnswer.Failed error) -> failwith $"stat d failed with %O{error}"
         | Error refusal -> failwith $"stat d was refused: %s{StatRefusal.describe refusal}"
 
     let private modelFStatSize (fd : int) (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | other -> failwith $"fstat %d{fd}: %A{other}"
 
     /// `lseek(fd, offset, SEEK_END)` as the model answers it: the position, or
     /// the errno.
     let private modelSeekEnd (fd : int) (offset : int64) (system : UnixSystem<int, string>) : Result<int64, UnixError> =
-        match UnixDescriptor.tryLseek fd offset 2 system with
+        match UnixDescriptor.tryLseek (Callers.leader system) fd offset 2 system with
         | Ok (SyscallAnswer.Completed position, _) -> Ok position
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Error refusal ->
@@ -503,11 +521,11 @@ module TestDirectorySize =
             // Away from 0 first, so that a failure which reset the position
             // would be visible.
             let system =
-                match UnixDescriptor.tryLseek fd 7L 0 system with
+                match UnixDescriptor.tryLseek (Callers.leader system) fd 7L 0 system with
                 | Ok (SyscallAnswer.Completed 7L, system) -> system
                 | other -> failwith $"lseek(d, 7, SEEK_SET): %A{other}"
 
-            match UnixDescriptor.tryLseek fd offset 2 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd offset 2 system with
             | Ok (SyscallAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
             | other -> failwith $"lseek(d, %d{offset}, SEEK_END): %A{other}"
 
@@ -524,7 +542,7 @@ module TestDirectorySize =
 
             let inodeOf (relative : string) : InodeNumber =
                 match
-                    UnixPathResolution.resolvePath
+                    Lone.UnixPathResolution.resolvePath
                         AtDirectory.CurrentDirectory
                         SymlinkPolicy.Follow
                         (UnixPath.parseOrFail context relative)
@@ -536,13 +554,17 @@ module TestDirectorySize =
             // The root is a directory on the same mount, so it is refused too.
             for path in [ "/d" ; "/" ; "/o" ] do
                 for policy in [ SymlinkPolicy.Follow ; SymlinkPolicy.NoFollowFinal ] do
-                    UnixPathResolution.tryStat policy (PathArg.ofPath (UnixPath.parseOrFail context path)) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        policy
+                        (PathArg.ofPath (UnixPath.parseOrFail context path))
+                        system
                     |> shouldEqual (Error (StatRefusal.NfsDirectorySize (inodeOf path)))
 
-            UnixPathResolution.tryFstat fd system
+            UnixPathResolution.tryFstat (Callers.leader system) fd system
             |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
 
-            match UnixDescriptor.tryLseek fd 0L 2 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 2 system with
             | Error (LSeekRefusal.DirectoryEnd _) -> ()
             | other -> failwith $"expected SEEK_END on an NFS directory to be refused, got %A{other}"
 
@@ -566,7 +588,13 @@ module TestDirectorySize =
             let _, system = modelWith platform EmulatedFileSystemType.Nfs
             let system = applyToModel (DirectorySizeOp.Create "d/f") system
 
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d/f")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (rooted "d/f"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual 0L
             | other -> failwith $"stat d/f: %A{other}"
 
@@ -574,27 +602,6 @@ module TestDirectorySize =
 
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_Stat", SetLastError = true)>]
     extern int private hostStat(string path, byte[] output)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(string path, uint32 mode)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(string path)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(string path)
-
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(string source, string destination)
 
     let private hostSucceeded (what : string) (result : int) : unit =
         if result <> 0 then
@@ -605,11 +612,11 @@ module TestDirectorySize =
 
         match op with
         | DirectorySizeOp.Create path -> File.Create(under path).Dispose ()
-        | DirectorySizeOp.MakeDirectory path -> hostMkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
-        | DirectorySizeOp.Unlink path -> hostUnlink (under path) |> hostSucceeded $"unlink %s{path}"
-        | DirectorySizeOp.RemoveDirectory path -> hostRmdir (under path) |> hostSucceeded $"rmdir %s{path}"
+        | DirectorySizeOp.MakeDirectory path -> HostCalls.mkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
+        | DirectorySizeOp.Unlink path -> HostCalls.unlink (under path) |> hostSucceeded $"unlink %s{path}"
+        | DirectorySizeOp.RemoveDirectory path -> HostCalls.rmdir (under path) |> hostSucceeded $"rmdir %s{path}"
         | DirectorySizeOp.Rename (source, destination) ->
-            hostRename (under source, under destination)
+            HostCalls.rename (under source, under destination)
             |> hostSucceeded $"rename %s{source} %s{destination}"
 
     /// `st_size` through `stat` in .NET's `System.Native` library, whose output
@@ -622,7 +629,7 @@ module TestDirectorySize =
 
     let private hostSeekEnd (fd : int) : Result<int64, UnixError> =
         Marshal.SetLastPInvokeError 0
-        let position = hostLSeek (fd, 0L, 2)
+        let position = HostCalls.lseek (fd, 0L, 2)
 
         if position >= 0L then
             Ok position
@@ -634,7 +641,9 @@ module TestDirectorySize =
             | None -> failwith $"host lseek failed with errno %d{errno}, which has no portable name"
 
     let private modelLinkCount (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.LinkCount
         | other -> failwith $"stat d: %A{other}"
 
@@ -655,12 +664,12 @@ module TestDirectorySize =
             let property (steps : DirectorySizeStep list) : unit =
                 let unique = Guid.NewGuid().ToString "N"
                 let root = Path.Combine (hostBase, $"posixkernel-dirsize-%s{unique}")
-                hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+                HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
 
                 try
                     applyToHost root (DirectorySizeOp.MakeDirectory "d")
                     applyToHost root (DirectorySizeOp.MakeDirectory "o")
-                    let hostFd = hostOpen (Path.Combine (root, "d"), 0, 0)
+                    let hostFd = HostCalls.openFile (Path.Combine (root, "d"), 0, 0)
 
                     if hostFd < 0 then
                         failwith $"host open d failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -704,7 +713,7 @@ module TestDirectorySize =
                         )
                         |> ignore<UnixSystem<int, string>>
                     finally
-                        hostClose hostFd |> ignore<int>
+                        HostCalls.close hostFd |> ignore<int>
                 finally
                     Directory.Delete (root, true)
 

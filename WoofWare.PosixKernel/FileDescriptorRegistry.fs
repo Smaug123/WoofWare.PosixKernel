@@ -293,15 +293,6 @@ type ListenState =
         /// dequeues from the head. Measured on both flavours: accept returns
         /// connections in the order the connects completed.
         Queue : QueuedConnection list
-        /// Under Darwin, whether a close of the descriptor an `accept(2)` asleep
-        /// on this listener was made through has ended every accept asleep on
-        /// it. Never under Linux.
-        ///
-        /// It stays so for as long as the socket listens, a second `listen(2)`
-        /// included: a later accept that finds a connection queued takes it,
-        /// but one that would sleep answers `ECONNABORTED` as soon as anything
-        /// wakes it, a connection or a signal.
-        Drained : bool
     }
 
 [<RequireQualifiedAccess>]
@@ -446,35 +437,6 @@ module internal ReservedConnecting =
         failwith
             $"%s{call}: a socket has a connect in flight, and what this call does to one is not modelled. Nothing in this version puts a socket in SocketPhase.Connecting, which is reserved until a connect to a full listener is modelled, and UnixSystem.checkInvariants reports a socket in it as ReservedSocketPhase (this is a bug in this library, or in a caller that assembled the state by hand)."
 
-/// What holds an endpoint against a `bind(2)`, as far as the bind's conflict
-/// rule (`SimulatedUnixPlatform.bindConflict`) asks.
-[<RequireQualifiedAccess>]
-type internal EndpointHolder =
-    /// A listening socket.
-    | Listener
-    /// One end of a TCP connection: a connected socket, or an end whose socket
-    /// has closed and which still holds its endpoint.
-    | ConnectionEnd
-    /// A socket bound and doing neither: idle, a refused connect, or a
-    /// datagram socket with or without a default peer.
-    | Unconnected
-
-[<RequireQualifiedAccess>]
-module internal EndpointHolder =
-    /// What a socket in `phase` holds its binding as.
-    let ofPhase (phase : SocketPhase) : EndpointHolder =
-        match phase with
-        | SocketPhase.Listening _ -> EndpointHolder.Listener
-        | SocketPhase.EstablishedPendingReport _
-        | SocketPhase.Established _ -> EndpointHolder.ConnectionEnd
-        | SocketPhase.Idle
-        | SocketPhase.Refused _
-        | SocketPhase.DatagramPeer _ -> EndpointHolder.Unconnected
-        // Linux hashes a connect in flight by its four-tuple, as it does an
-        // established end; how that holds the endpoint against a bind is
-        // unmeasured.
-        | SocketPhase.Connecting _ -> ReservedConnecting.failOfPhase "EndpointHolder.ofPhase"
-
 /// A socket's domain, with its `IPV6_V6ONLY` where it is an IPv6 socket, and
 /// the local address it holds, typed in the domain's own addresses.
 ///
@@ -594,6 +556,35 @@ type SocketDescription =
         /// conflicts with a second bind on both flavours, where a merely-bound
         /// one may not.
         Phase : SocketPhase
+        /// Under Darwin, whether a close has drained the socket: xnu's
+        /// `SS_DRAINING`, which a close of a descriptor sets when an `accept(2)`,
+        /// a read or write of a connection, or a receive on a UDP socket, is
+        /// asleep through it, ending every such call asleep on the socket,
+        /// through whichever descriptor.
+        /// Never under Linux, whose close ends no call.
+        ///
+        /// It lasts for the socket's life. On a listener, a second `listen(2)`
+        /// changing nothing, an accept that finds a connection queued takes
+        /// it, and one that would sleep answers `ECONNABORTED` as soon as
+        /// anything wakes it, a connection or a signal. On an end of a
+        /// connection, a read or a write that would sleep answers `EBADF`
+        /// instead, a write having first taken the room there was, and one
+        /// that finds bytes, a FIN or room for all it writes answers as it
+        /// would have. On a UDP socket, a receive that would sleep answers
+        /// `EBADF` instead, and one that finds a datagram or the error takes
+        /// it.
+        Drained : bool
+        /// The uid the kernel holds this socket to, fixed for its life: XNU's
+        /// `so_cred`, Linux's `sk_uid`. It is the effective uid of the process
+        /// that made the socket with `socket(2)`, whatever that process's
+        /// credentials become later. An accepted socket carries its
+        /// listener's uid on Darwin, and on Linux the effective uid of the
+        /// process that accepted it, as it was then.
+        ///
+        /// Darwin's `bind(2)` consults it: see `UnixSocket.bind`. Linux
+        /// consults it only for `SO_REUSEPORT`, which this kernel does not
+        /// model.
+        Uid : UserId
     }
 
     /// The domain given to `socket(2)`.
@@ -788,7 +779,10 @@ type EpollRegistration =
         /// The event mask the kernel stores for this registration, in Linux's
         /// `<sys/epoll.h>` numbering (`EpollEvents`): the caller's `events`
         /// with `EPOLLERR` and `EPOLLHUP` added, because `epoll_ctl` forces
-        /// those two into every stored mask.
+        /// those two into every stored mask. Once an `EPOLLONESHOT`
+        /// registration has reported, only its mode bits (`EPOLLONESHOT`,
+        /// `EPOLLET` and `EPOLLWAKEUP`, as the caller gave them) are left,
+        /// as Linux leaves them, until an `EPOLL_CTL_MOD` re-arms it.
         ///
         /// What a wait reports for this registration is the target's readiness
         /// masked by this, and a keyed wake queues the registration only when
@@ -806,6 +800,65 @@ type EpollRegistration =
         RegisteredAt : int64
     }
 
+/// What an `epoll_wait` that reports a registration does to it, besides
+/// taking its entry off the ready list. A wait that finds the entry stale
+/// reports nothing and does none of these: the entry leaves the list, and the
+/// registration stays as it was.
+[<RequireQualifiedAccess>]
+type internal EpollReportEffect =
+    /// An `EPOLLONESHOT` registration: disarmed, keeping only its mode bits,
+    /// so that nothing makes it pending again until an `EPOLL_CTL_MOD`.
+    | Disarm
+    /// A level-triggered registration: back on the ready list, behind every
+    /// entry there, so that the next wait polls it again.
+    | Requeue
+    /// An edge-triggered registration: nothing more, so that only its
+    /// target's next wake makes it pending again.
+    | Consume
+
+/// How a registration's mode bits govern its entry on the ready list.
+[<RequireQualifiedAccess>]
+module internal EpollRegistration =
+    /// The bits of a stored mask that choose how the registration behaves
+    /// rather than what it reports (Linux's `EP_PRIVATE_BITS`). No target's
+    /// readiness and no wake's key carries any of them.
+    let modeBits : uint32 =
+        EpollEvents.WakeUp
+        ||| EpollEvents.OneShot
+        ||| EpollEvents.EdgeTriggered
+        ||| EpollEvents.Exclusive
+
+    /// Whether a wake can make the registration pending: false exactly for a
+    /// one-shot registration that has reported and not been re-armed.
+    let isArmed (registration : EpollRegistration) : bool =
+        // `ep_poll_callback` tests this ahead of the wake's key, so no wake
+        // queues a disarmed registration, keyed or not (measured,
+        // `docs/probes/epoll-modes` section I: a FIN after the disarm left
+        // nothing for the re-arming MOD to find pending).
+        registration.Events &&& ~~~modeBits <> 0u
+
+    /// What a wait that reports `registration` does to it.
+    let onReport (registration : EpollRegistration) : EpollReportEffect =
+        // Measured on Linux 6.18.5 (`docs/probes/epoll-modes`): one-shot
+        // registrations, level-triggered or not, report once until a MOD
+        // (sections F, G and J); a level-triggered one reports at every wait
+        // while its target is ready (A to E). `ep_send_events` tests
+        // EPOLLONESHOT first, which is why a one-shot level-triggered
+        // registration is not requeued.
+        if registration.Events &&& EpollEvents.OneShot <> 0u then
+            EpollReportEffect.Disarm
+        elif registration.Events &&& EpollEvents.EdgeTriggered = 0u then
+            EpollReportEffect.Requeue
+        else
+            EpollReportEffect.Consume
+
+    /// `registration` as a wait that reports it leaves it when it is
+    /// `EpollReportEffect.Disarm`: its mask stripped to its mode bits.
+    let disarmed (registration : EpollRegistration) : EpollRegistration =
+        { registration with
+            Events = registration.Events &&& modeBits
+        }
+
 /// Everything one epoll instance holds: its interest table, and the ready list
 /// `epoll_wait` drains.
 type EpollState =
@@ -813,14 +866,16 @@ type EpollState =
         /// The interest table, keyed exactly as epoll keys a registration:
         /// the (fd number, open file description) pair of the target.
         Registrations : Map<int * OpenFileDescriptionId, EpollRegistration>
-        /// The registrations with an edge outstanding, in delivery order.
-        /// A registration enters when the driver signals it and it is not
-        /// already here, or when an ADD/MOD finds its target ready; delivery
-        /// walks the prefix, re-polls each entry against the target's current
-        /// readiness, and removes what it walked — reporting the nonempty
-        /// re-polls and silently dropping the stale ones — leaving only what
-        /// batch truncation spared. Always a subset of `Registrations`, with
-        /// no duplicates (`checkInvariants` states both).
+        /// The pending registrations, in delivery order.
+        /// A registration enters when the driver signals it, it is armed and
+        /// it is not already here, or when an ADD/MOD finds its target ready;
+        /// delivery walks the prefix, re-polls each entry against the target's
+        /// current readiness, and removes what it walked — reporting the
+        /// nonempty re-polls and silently dropping the stale ones — leaving
+        /// what batch truncation spared, followed by the level-triggered
+        /// entries it reported, in the order it reported them. Always a subset
+        /// of `Registrations`, with no duplicates and no disarmed registration
+        /// (`checkInvariants` states all three).
         Ready : (int * OpenFileDescriptionId) list
     }
 
@@ -1046,7 +1101,7 @@ type OpenFileTarget =
     ///
     /// Reserved: nothing in this version makes one, since nothing makes a FIFO
     /// inode to open (`mknodat` of `S_IFIFO` is refused).
-    /// `FileDescriptorRegistry.checkInvariants` reports a description naming
+    /// `UnixSystem.checkInvariants` reports a description naming
     /// one as a defect. The case exists so
     /// that a client's matches already handle it when FIFOs arrive.
     ///
@@ -1083,7 +1138,7 @@ module internal ReservedFifo =
     /// `call` met a description of the FIFO at `inode`.
     let fail (call : string) (inode : InodeNumber) : 'a =
         failwith
-            $"%s{call}: a description names the FIFO at inode %O{inode}, and what this call does through a FIFO is not modelled. Nothing in this version makes one: OpenFileTarget.Fifo is reserved until FIFOs are modelled (under Darwin, until AF_UNIX stream sockets are), and FileDescriptorRegistry.checkInvariants reports a description naming one as ReservedTarget (this is a bug in this library, or in a caller that assembled the state by hand)."
+            $"%s{call}: a description names the FIFO at inode %O{inode}, and what this call does through a FIFO is not modelled. Nothing in this version makes one: OpenFileTarget.Fifo is reserved until FIFOs are modelled (under Darwin, until AF_UNIX stream sockets are), and UnixSystem.checkInvariants reports a description naming one as ReservedTarget (this is a bug in this library, or in a caller that assembled the state by hand)."
 
 /// Which transfers `open(2)`'s access mode permits: `O_RDONLY`, `O_WRONLY` or
 /// `O_RDWR`.
@@ -1126,52 +1181,6 @@ module FileAccessMode =
         | FileAccessMode.WriteOnly
         | FileAccessMode.ReadWrite -> true
         | FileAccessMode.ReadOnly -> false
-
-/// The status an open file description carries besides its access mode,
-/// `O_NONBLOCK` and its `flock`: the rest of what `fcntl(F_GETFL)` reports.
-///
-/// Each field is kept only under the flavour whose `F_GETFL` reports it, and is
-/// `false` under the other, so that two descriptions no syscall could tell
-/// apart are equal: `OpenedDirectory` and `OpenedNoFollow` under Linux,
-/// `Written` and `Flocked` under Darwin. `UnixDescriptor.fcntl` decides which
-/// bit each is reported in.
-///
-/// `O_APPEND`, `O_ASYNC`, Linux's `O_DIRECT` and `O_NOATIME` are absent
-/// because no description this kernel makes carries them: `open(2)` refuses
-/// each of them, and so does `fcntl(F_SETFL)`.
-type OpenFileStatus =
-    {
-        /// `O_SYNC`.
-        Synchronous : bool
-        /// `O_DSYNC`.
-        DataSynchronous : bool
-        /// Whether `open(2)` was given `O_DIRECTORY`. Linux only.
-        OpenedDirectory : bool
-        /// Whether `open(2)` was given `O_NOFOLLOW`. Linux only.
-        OpenedNoFollow : bool
-        /// Whether a `write(2)` or `pwrite(2)` through this description has
-        /// returned having moved bytes, an `ftruncate(2)` through it has
-        /// succeeded, or the `open(2)` that made it truncated a file that
-        /// already existed. Darwin only.
-        Written : bool
-        /// Whether an `flock(2)` lock has ever been granted to this
-        /// description. Releasing the lock does not clear it. Darwin only.
-        Flocked : bool
-    }
-
-[<RequireQualifiedAccess>]
-module OpenFileStatus =
-    /// The status of a description nothing has yet happened to, made by a call
-    /// asking for none of these flags.
-    let none : OpenFileStatus =
-        {
-            Synchronous = false
-            DataSynchronous = false
-            OpenedDirectory = false
-            OpenedNoFollow = false
-            Written = false
-            Flocked = false
-        }
 
 /// The kernel object a file descriptor points at: POSIX's "open file
 /// description". Everything shared between file descriptors that `dup(2)`
@@ -1247,28 +1256,43 @@ module OpenFileDescription =
 
 /// The flags `fcntl(F_GETFD)` reports, which belong to one descriptor rather
 /// than to the open file description it names: `dup(2)` gives the new
-/// descriptor none of them.
+/// descriptor none of them. Each flavour has its own, and a descriptor's flags
+/// are its machine's flavour's.
 ///
 /// Neither changes what any modelled syscall does, since this kernel models
 /// neither `exec` nor `fork`; they are kept so that `F_GETFD` answers what
 /// `F_SETFD`, `O_CLOEXEC` and their kin set.
+[<RequireQualifiedAccess>]
 type DescriptorFlags =
-    {
-        /// `FD_CLOEXEC`.
-        CloseOnExec : bool
-        /// `FD_CLOFORK`, which only Darwin has.
-        CloseOnFork : bool
-    }
+    /// Linux's: `FD_CLOEXEC`.
+    | Linux of closeOnExec : bool
+    /// Darwin's: `FD_CLOEXEC`, and `FD_CLOFORK`, which only Darwin has.
+    | Darwin of closeOnExec : bool * closeOnFork : bool
 
 [<RequireQualifiedAccess>]
 module DescriptorFlags =
-    /// Neither flag, which is what `dup(2)`, `dup2(2)` and every call not
-    /// asked for a flag give a new descriptor.
-    let none : DescriptorFlags =
-        {
-            CloseOnExec = false
-            CloseOnFork = false
-        }
+    /// `FD_CLOEXEC` if `closeOnExec`, and no other flag, under `flavour`: what
+    /// `O_CLOEXEC`, `F_DUPFD_CLOEXEC` and their kin give a new descriptor.
+    let closingOnExec (flavour : SimulatedUnixFlavour) (closeOnExec : bool) : DescriptorFlags =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = closeOnExec)
+        | SimulatedUnixFlavour.Darwin -> DescriptorFlags.Darwin (closeOnExec = closeOnExec, closeOnFork = false)
+
+    /// Neither flag under `flavour`, which is what `dup(2)`, `dup2(2)` and
+    /// every call not asked for a flag give a new descriptor.
+    let none (flavour : SimulatedUnixFlavour) : DescriptorFlags = closingOnExec flavour false
+
+    /// The flavour whose kernel keeps `flags`.
+    let flavour (flags : DescriptorFlags) : SimulatedUnixFlavour =
+        match flags with
+        | DescriptorFlags.Linux _ -> SimulatedUnixFlavour.Linux
+        | DescriptorFlags.Darwin _ -> SimulatedUnixFlavour.Darwin
+
+    /// Whether `flags` hold `FD_CLOEXEC`.
+    let closeOnExec (flags : DescriptorFlags) : bool =
+        match flags with
+        | DescriptorFlags.Linux (closeOnExec = closeOnExec)
+        | DescriptorFlags.Darwin (closeOnExec = closeOnExec) -> closeOnExec
 
 /// One entry of the descriptor table: the open file description the
 /// descriptor names, and the descriptor's own flags.
@@ -1303,9 +1327,10 @@ type private OpenFileEntry =
         Descriptors : int
         /// How many holds syscalls in flight have on this description, in every
         /// process on the machine: one for each time a park names it
-        /// (`ParkedSyscall.descriptions`). Stored rather than derived for the
-        /// reason `Descriptors` is: a process's view cannot see another
-        /// process's parks. `UnixSystem.checkInvariants` holds it to the parks.
+        /// (`ParkedSyscall.descriptions`). Stored rather than derived, as
+        /// `Descriptors` is: a registry holds one process's descriptor table
+        /// and no thread's parks. `UnixSystem.checkInvariants` holds it to the
+        /// parks.
         Holds : int
         /// The name the description was opened through, for one onto an inode
         /// (`OpenFileTable.namesInode`), which only a path's walk makes; `None`
@@ -1316,9 +1341,1003 @@ type private OpenFileEntry =
         /// Which name that is, as Linux's dentry: descriptions opened through
         /// one name while it stayed linked hold one name, and say so by
         /// carrying the identity of the first of them; a name linked again
-        /// after an unlink is another (`OpenFileTable.nameHeldElsewhere`).
+        /// after an unlink is another (`OpenFileTable.nameHeldElsewhere`). A
+        /// directory has one name, which every description of it opened
+        /// through a name holds, before its removal or after.
         NameIdentity : OpenFileDescriptionId
     }
+
+/// An index of registrations: under each key, each member with a
+/// registration filed there, an identity's value, and what tells its
+/// registrations under that key apart. The shape of the open file table's
+/// indexes of epoll and kqueue registrations, of inotify watches, and of the
+/// names descriptions were opened through, and of the sleeping Darwin polls'
+/// kqueues'.
+///
+/// A key with no member has no entry, and a member with nothing filed under a
+/// key no entry under it, so an index is a function of what it files, and two
+/// indexes of the same registrations are equal.
+[<RequireQualifiedAccess>]
+module internal RegistrationIndex =
+
+    /// The key a registration made through the descriptor `fd` of the process
+    /// `owner` is filed under. Packed into one `int64`, since a `Map` boxes a
+    /// struct key at every comparison.
+    let throughDescriptor (owner : ProcessId) (fd : int) : int64 =
+        (int64 (ProcessId.toInt32 owner) <<< 32) ||| int64 (uint32 fd)
+
+    /// Each member with a registration filed under `key`, and what tells its
+    /// registrations there apart.
+    let membersUnder<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+        : Map<int64, Set<'Distinct>>
+        =
+        Map.tryFind key index |> Option.defaultValue Map.empty
+
+    /// `index` with the registration of `memberValue` that `distinct` tells
+    /// apart filed under `key`, in time logarithmic in the index.
+    let file<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
+        (memberValue : int64)
+        (distinct : 'Distinct)
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+        : Map<'Key, Map<int64, Set<'Distinct>>>
+        =
+        let members = membersUnder key index
+        let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
+        Map.add key (Map.add memberValue (Set.add distinct filed) members) index
+
+    /// `index` without the registration of `memberValue` that `distinct` tells
+    /// apart under `key`, in time logarithmic in the index. Loudly partial on
+    /// a registration the index does not hold.
+    let unfile<'Key, 'Distinct when 'Key : comparison and 'Distinct : comparison>
+        (key : 'Key)
+        (memberValue : int64)
+        (distinct : 'Distinct)
+        (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+        : Map<'Key, Map<int64, Set<'Distinct>>>
+        =
+        let members = membersUnder key index
+        let filed = Map.tryFind memberValue members |> Option.defaultValue Set.empty
+
+        if not (Set.contains distinct filed) then
+            failwith
+                $"RegistrationIndex.unfile: member %d{memberValue} has no registration %A{distinct} filed under key %A{key} to remove (this is a bug in this library: something changed a registration without telling its index)."
+
+        let filed = Set.remove distinct filed
+
+        let members =
+            if Set.isEmpty filed then
+                Map.remove memberValue members
+            else
+                Map.add memberValue filed members
+
+        if Map.isEmpty members then
+            Map.remove key index
+        else
+            Map.add key members index
+
+/// The entries of the machine's open file table, and indexes of them. Two
+/// are what a sleeping call's wake condition reads: how many live
+/// descriptions name each end of each pipe, and which descriptions hold a
+/// `flock` on each object. A real kernel keeps both beside the object: a
+/// pipe's count of readers and writers, an inode's list of locks. Two are
+/// what a close reads: which epoll instances register each description, as
+/// Linux keeps on each file the list of epoll items watching it (`f_ep`); and
+/// which kqueues registered through each descriptor of each process, as
+/// Darwin keeps a list per descriptor of the knotes made through it
+/// (`fd_knlist`). The rest are what a change of the filesystem reads: the
+/// inotify watches on each inode, as Linux hangs an inode's marks off the
+/// inode (`i_fsnotify_marks`); the descriptions opened through each name, as
+/// Linux's descriptions share the name's dentry; the inodes the descriptions
+/// hold; and how many inotify instances and watches each user holds, as
+/// Linux counts them per user (`ucounts`). And two are what a wake of a
+/// socket or a pipe reads: the descriptions of each socket and each pipe end,
+/// as Linux reaches a socket's or a pipe's file from the object; and the
+/// kqueues registering each socket, as XNU hangs a socket's knotes off the
+/// socket (`so_rcv.sb_sel`, `so_snd.sb_sel`).
+///
+/// The representation is private to this module, so every change to an
+/// entry goes through `add` or `remove`, or through one of the
+/// functions that change one registration of an epoll instance or a kqueue
+/// (`registerInEpoll` and its kin) or one watch of an inotify instance
+/// (`setInotifyWatch`, `removeInotifyWatch`), which keep the indexes, or
+/// through `signalEpolls`, which changes only ready lists, and nothing else
+/// can change one.
+[<RequireQualifiedAccess>]
+module private OpenFileEntries =
+
+    /// An object a wake is for, under which the descriptions of it are
+    /// filed.
+    [<RequireQualifiedAccess>]
+    type Named =
+        | Socket of socket : int64
+        | PipeEnd of pipe : int64 * pipeEnd : PipeEnd
+
+    /// The object `target` is, if a wake can be for it.
+    let private namedBy (target : OpenFileTarget) : Named option =
+        match target with
+        | OpenFileTarget.Socket (SocketId socket) -> Some (Named.Socket socket)
+        | OpenFileTarget.Pipe (PipeId pipe, pipeEnd) -> Some (Named.PipeEnd (pipe, pipeEnd))
+        | OpenFileTarget.File _
+        | OpenFileTarget.Directory _
+        | OpenFileTarget.CharacterDevice _
+        | OpenFileTarget.Fifo _
+        | OpenFileTarget.Kqueue _
+        | OpenFileTarget.Inotify _
+        | OpenFileTarget.Epoll _ -> None
+
+    /// How many live descriptions name each end of one pipe.
+    [<Struct>]
+    type PipeEndCounts =
+        {
+            Readers : int
+            Writers : int
+        }
+
+    type Entries =
+        private
+            {
+                All : Map<OpenFileDescriptionId, OpenFileEntry>
+                /// Keyed by the `PipeId`'s value, since a `Map` boxes a struct
+                /// key at every comparison. A pipe no live description names
+                /// has no key.
+                PipeEnds : Map<int64, PipeEndCounts>
+                /// The lock each live description holding one holds, by the
+                /// object it holds it on (`OpenFileDescription.object`), keyed
+                /// by the description's identity's value. An object no
+                /// description holds a lock on has no key.
+                Flocks : Map<OpenFileObject, Map<int64, FlockMode>>
+                /// The epoll instances with a registration of each
+                /// description, keyed by the description's identity's value,
+                /// by the value of each instance's identity, and the
+                /// descriptor numbers it registers the description through. A
+                /// description no instance registers has no key, and an
+                /// instance that does not register it no entry.
+                EpollsRegistering : Map<int64, Map<int64, Set<int>>>
+                /// The kqueues with a registration through each descriptor of
+                /// each process, keyed as
+                /// `RegistrationIndex.throughDescriptor` keys the kqueue's
+                /// owner and the descriptor, by the value of each kqueue's
+                /// identity, and the filters it registers through the
+                /// descriptor.
+                KqueuesThrough : Map<int64, Map<int64, Set<KqueueFilter>>>
+                /// The kqueues with a registration attached to each socket
+                /// (`KqueueRegistration.Socket`), keyed by the socket's value,
+                /// by the value of each kqueue's identity, and the keys it
+                /// registers the socket under.
+                KqueuesOnSocket : Map<int64, Map<int64, Set<int * KqueueFilter>>>
+                /// The values of the identities of the live descriptions of
+                /// each socket and each pipe end. An object no live
+                /// description is of has no key.
+                Naming : Map<Named, Set<int64>>
+                /// The inotify instances with a watch on each inode, keyed by
+                /// the inode's value, by the value of each instance's
+                /// identity, and the values of the descriptors of its watches
+                /// on the inode.
+                WatchesOn : Map<int64, Map<int64, Set<int>>>
+                /// How many live inotify instances each user owns, keyed by
+                /// the user's `uid_t`. A user who owns none has no key.
+                InotifyInstancesOf : Map<uint32, int>
+                /// How many watches the inotify instances each user owns
+                /// have, keyed as `InotifyInstancesOf`. A user whose instances
+                /// have none has no key.
+                InotifyWatchesOf : Map<uint32, int>
+                /// The descriptions onto an inode, by the name each was opened
+                /// through (`OpenFileEntry.OpenedThrough`), by the value of
+                /// the identity of that name (`OpenFileEntry.NameIdentity`),
+                /// and the values of their own identities.
+                NamesOpenedThrough : Map<ReachedThrough, Map<int64, Set<int64>>>
+                /// How many references the descriptions hold to each inode,
+                /// keyed by the inode's value: one for each description onto
+                /// it, and one for each description opened through a name in
+                /// it. An inode none holds has no key.
+                HeldInodes : Map<int64, int>
+                /// Of those, how many are to a directory: one for each
+                /// description onto a directory, and one for each opened
+                /// through a name in it.
+                HeldDirectories : Map<int64, int>
+            }
+
+    let empty : Entries =
+        {
+            All = Map.empty
+            PipeEnds = Map.empty
+            Flocks = Map.empty
+            EpollsRegistering = Map.empty
+            KqueuesThrough = Map.empty
+            KqueuesOnSocket = Map.empty
+            Naming = Map.empty
+            WatchesOn = Map.empty
+            InotifyInstancesOf = Map.empty
+            InotifyWatchesOf = Map.empty
+            NamesOpenedThrough = Map.empty
+            HeldInodes = Map.empty
+            HeldDirectories = Map.empty
+        }
+
+    /// Every entry, by its description's identity.
+    let all (entries : Entries) : Map<OpenFileDescriptionId, OpenFileEntry> = entries.All
+
+    let tryFind (id : OpenFileDescriptionId) (entries : Entries) : OpenFileEntry option = Map.tryFind id entries.All
+
+    /// `entries`'s indexes with `entry`, of the description `id`, counted in
+    /// them (`step` 1) or no longer counted (`step` -1).
+    let private count (step : int) (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
+        let pipeEnds =
+            match entry.Description.Target with
+            | OpenFileTarget.Pipe (PipeId pipe, pipeEnd) ->
+                let before =
+                    Map.tryFind pipe entries.PipeEnds
+                    |> Option.defaultValue
+                        {
+                            Readers = 0
+                            Writers = 0
+                        }
+
+                let after =
+                    match pipeEnd with
+                    | PipeEnd.Read ->
+                        { before with
+                            Readers = before.Readers + step
+                        }
+                    | PipeEnd.Write ->
+                        { before with
+                            Writers = before.Writers + step
+                        }
+
+                if after.Readers < 0 || after.Writers < 0 then
+                    failwith
+                        $"OpenFileEntries: pipe %d{pipe} would be named by %d{after.Readers} read ends and %d{after.Writers} write ends, after a description of it that was never counted left the table (this is a bug in this library)."
+
+                if after.Readers = 0 && after.Writers = 0 then
+                    Map.remove pipe entries.PipeEnds
+                else
+                    Map.add pipe after entries.PipeEnds
+            | OpenFileTarget.File _
+            | OpenFileTarget.Directory _
+            | OpenFileTarget.CharacterDevice _
+            | OpenFileTarget.Fifo _
+            | OpenFileTarget.Socket _
+            | OpenFileTarget.Kqueue _
+            | OpenFileTarget.Inotify _
+            | OpenFileTarget.Epoll _ -> entries.PipeEnds
+
+        let flocks =
+            match entry.Description.Flock with
+            | None -> entries.Flocks
+            | Some mode ->
+                let object = OpenFileDescription.object id entry.Description
+                let (OpenFileDescriptionId raw) = id
+                let held = Map.tryFind object entries.Flocks |> Option.defaultValue Map.empty
+
+                let held =
+                    if step > 0 then
+                        Map.add raw mode held
+                    else
+                        Map.remove raw held
+
+                if Map.isEmpty held then
+                    Map.remove object entries.Flocks
+                else
+                    Map.add object held entries.Flocks
+
+        let naming =
+            match namedBy entry.Description.Target with
+            | None -> entries.Naming
+            | Some named ->
+                let (OpenFileDescriptionId raw) = id
+                let filed = Map.tryFind named entries.Naming |> Option.defaultValue Set.empty
+
+                let filed =
+                    if step > 0 then
+                        Set.add raw filed
+                    else
+                        if not (Set.contains raw filed) then
+                            failwith
+                                $"OpenFileEntries: description %d{raw} of %A{named} left the table without having been filed under it (this is a bug in this library)."
+
+                        Set.remove raw filed
+
+                if Set.isEmpty filed then
+                    Map.remove named entries.Naming
+                else
+                    Map.add named filed entries.Naming
+
+        { entries with
+            PipeEnds = pipeEnds
+            Flocks = flocks
+            Naming = naming
+        }
+
+    /// `counts` with `step` added to the count under `key`, and no key for a
+    /// count of zero. Loudly partial on a count that would fall below zero.
+    let private bump<'Key when 'Key : comparison> (step : int) (key : 'Key) (counts : Map<'Key, int>) : Map<'Key, int> =
+        let after = (Map.tryFind key counts |> Option.defaultValue 0) + step
+
+        if after < 0 then
+            failwith
+                $"OpenFileEntries: the count under %A{key} would fall to %d{after}, after something that was never counted left it (this is a bug in this library)."
+
+        if after = 0 then
+            Map.remove key counts
+        else
+            Map.add key after counts
+
+    /// `entries`'s indexes of epoll and kqueue registrations and of inotify
+    /// watches with each registration and watch of `entry`, the description
+    /// `id`'s, filed in them (`step` 1) or no longer filed (`step` -1), if it
+    /// is an epoll instance, a kqueue or an inotify instance.
+    let private fileRegistrations
+        (step : int)
+        (id : OpenFileDescriptionId)
+        (entry : OpenFileEntry)
+        (entries : Entries)
+        : Entries
+        =
+        let (OpenFileDescriptionId raw) = id
+
+        let file
+            (key : 'Key)
+            (distinct : 'Distinct)
+            (index : Map<'Key, Map<int64, Set<'Distinct>>>)
+            : Map<'Key, Map<int64, Set<'Distinct>>>
+            =
+            if step > 0 then
+                RegistrationIndex.file key raw distinct index
+            else
+                RegistrationIndex.unfile key raw distinct index
+
+        match entry.Description.Target with
+        | OpenFileTarget.Epoll state ->
+            let epolls =
+                (entries.EpollsRegistering, state.Registrations)
+                ||> Map.fold (fun epolls (fd, OpenFileDescriptionId target) _ -> file target fd epolls)
+
+            { entries with
+                EpollsRegistering = epolls
+            }
+        | OpenFileTarget.Kqueue state ->
+            let kqueues, onSocket =
+                ((entries.KqueuesThrough, entries.KqueuesOnSocket), state.Registrations)
+                ||> Map.fold (fun (kqueues, onSocket) (fd, filter as key) registration ->
+                    let (SocketId socket) = registration.Socket
+
+                    file (RegistrationIndex.throughDescriptor state.Owner fd) filter kqueues, file socket key onSocket
+                )
+
+            { entries with
+                KqueuesThrough = kqueues
+                KqueuesOnSocket = onSocket
+            }
+        | OpenFileTarget.Inotify state ->
+            let owner = UserId.toUInt32 state.Owner
+
+            let watchesOn, count =
+                ((entries.WatchesOn, 0), state.Watches)
+                ||> Map.fold (fun (watchesOn, count) (WatchDescriptor wd) watch ->
+                    let (InodeNumber inode) = watch.Inode
+                    file inode wd watchesOn, count + 1
+                )
+
+            { entries with
+                WatchesOn = watchesOn
+                InotifyInstancesOf = bump step owner entries.InotifyInstancesOf
+                InotifyWatchesOf =
+                    if count = 0 then
+                        entries.InotifyWatchesOf
+                    else
+                        bump (step * count) owner entries.InotifyWatchesOf
+            }
+        | OpenFileTarget.File _
+        | OpenFileTarget.Directory _
+        | OpenFileTarget.Socket _
+        | OpenFileTarget.CharacterDevice _
+        | OpenFileTarget.Fifo _
+        | OpenFileTarget.Pipe _ -> entries
+
+    /// Whether `before` and `after`, entries of one description, are certainly
+    /// filed alike in the registration and watch indexes: none is an epoll
+    /// instance, a kqueue or an inotify instance, or both are of one kind and
+    /// share their registrations or watches, and two kqueues or two inotify
+    /// instances their owner too. Constant time, and false for some entries
+    /// filed alike.
+    let private registersAlike (before : OpenFileEntry) (after : OpenFileEntry) : bool =
+        match before.Description.Target, after.Description.Target with
+        | OpenFileTarget.Epoll first, OpenFileTarget.Epoll second ->
+            LanguagePrimitives.PhysicalEquality first.Registrations second.Registrations
+        | OpenFileTarget.Kqueue first, OpenFileTarget.Kqueue second ->
+            first.Owner = second.Owner
+            && LanguagePrimitives.PhysicalEquality first.Registrations second.Registrations
+        | OpenFileTarget.Inotify first, OpenFileTarget.Inotify second ->
+            first.Owner = second.Owner
+            && LanguagePrimitives.PhysicalEquality first.Watches second.Watches
+        | OpenFileTarget.Epoll _, _
+        | _, OpenFileTarget.Epoll _
+        | OpenFileTarget.Kqueue _, _
+        | _, OpenFileTarget.Kqueue _
+        | OpenFileTarget.Inotify _, _
+        | _, OpenFileTarget.Inotify _ -> false
+        | _, _ -> true
+
+    /// `entries`'s registration and watch indexes with the description `id`
+    /// filed as `after` says rather than as `before` does, where an absent
+    /// entry is filed under nothing: in time logarithmic in the indexes for
+    /// each registration or watch of either, unless they are certainly filed
+    /// alike (`registersAlike`).
+    let private refileRegistrations
+        (id : OpenFileDescriptionId)
+        (before : OpenFileEntry option)
+        (after : OpenFileEntry option)
+        (entries : Entries)
+        : Entries
+        =
+        let alike =
+            match before, after with
+            | Some before, Some after -> registersAlike before after
+            | None, None -> true
+            | Some _, None
+            | None, Some _ -> false
+
+        if alike then
+            entries
+        else
+            let entries =
+                match before with
+                | Some before -> fileRegistrations -1 id before entries
+                | None -> entries
+
+            match after with
+            | Some after -> fileRegistrations 1 id after entries
+            | None -> entries
+
+    /// What a description of `target` holds of the inode it is onto: 2 and
+    /// the inode's value for a directory, 1 and it for any other inode, and 0
+    /// for a description onto no inode.
+    let private holdOf (target : OpenFileTarget) : struct (int * int64) =
+        match target with
+        | OpenFileTarget.Directory (InodeNumber inode, _) -> struct (2, inode)
+        | OpenFileTarget.File (InodeNumber inode, _)
+        | OpenFileTarget.CharacterDevice (InodeNumber inode, _, _)
+        | OpenFileTarget.Fifo (InodeNumber inode, _) -> struct (1, inode)
+        | OpenFileTarget.Epoll _
+        | OpenFileTarget.Kqueue _
+        | OpenFileTarget.Socket _
+        | OpenFileTarget.Pipe _
+        | OpenFileTarget.Inotify _ -> struct (0, 0L)
+
+    /// `entries`'s indexes of names and of held inodes with `entry`, the
+    /// description `id`'s, filed in them (`step` 1) or no longer filed
+    /// (`step` -1).
+    let private fileNames
+        (step : int)
+        (id : OpenFileDescriptionId)
+        (entry : OpenFileEntry)
+        (entries : Entries)
+        : Entries
+        =
+        let (OpenFileDescriptionId raw) = id
+        let (OpenFileDescriptionId identity) = entry.NameIdentity
+
+        let names =
+            match entry.OpenedThrough with
+            | None -> entries.NamesOpenedThrough
+            | Some through ->
+                if step > 0 then
+                    RegistrationIndex.file through identity raw entries.NamesOpenedThrough
+                else
+                    RegistrationIndex.unfile through identity raw entries.NamesOpenedThrough
+
+        let held, heldDirectories =
+            match holdOf entry.Description.Target with
+            | struct (0, _) -> entries.HeldInodes, entries.HeldDirectories
+            | struct (2, inode) -> bump step inode entries.HeldInodes, bump step inode entries.HeldDirectories
+            | struct (_, inode) -> bump step inode entries.HeldInodes, entries.HeldDirectories
+
+        let held, heldDirectories =
+            match entry.OpenedThrough with
+            | Some (ReachedThrough.Name (dentry, _)) ->
+                let (InodeNumber parent) = dentry.Parent
+                bump step parent held, bump step parent heldDirectories
+            | Some ReachedThrough.Unnamed
+            | None -> held, heldDirectories
+
+        { entries with
+            NamesOpenedThrough = names
+            HeldInodes = held
+            HeldDirectories = heldDirectories
+        }
+
+    /// Whether `before` and `after`, entries of one description, are certainly
+    /// filed alike in the indexes of names and of held inodes: opened through
+    /// one name with one identity, and onto one inode of one kind, or none.
+    let private namedAlike (before : OpenFileEntry) (after : OpenFileEntry) : bool =
+        let struct (beforeKind, beforeInode) = holdOf before.Description.Target
+        let struct (afterKind, afterInode) = holdOf after.Description.Target
+
+        beforeKind = afterKind
+        && beforeInode = afterInode
+        && before.NameIdentity = after.NameIdentity
+        && (LanguagePrimitives.PhysicalEquality before.OpenedThrough after.OpenedThrough
+            || before.OpenedThrough = after.OpenedThrough)
+
+    /// `entries`'s indexes of names and of held inodes with the description
+    /// `id` filed as `after` says rather than as `before` does, where an
+    /// absent entry is filed under nothing: in time logarithmic in the
+    /// indexes, and constant unless they are filed differently
+    /// (`namedAlike`).
+    let private refileNames
+        (id : OpenFileDescriptionId)
+        (before : OpenFileEntry option)
+        (after : OpenFileEntry option)
+        (entries : Entries)
+        : Entries
+        =
+        let alike =
+            match before, after with
+            | Some before, Some after -> namedAlike before after
+            | None, None -> true
+            | Some _, None
+            | None, Some _ -> false
+
+        if alike then
+            entries
+        else
+            let entries =
+                match before with
+                | Some before -> fileNames -1 id before entries
+                | None -> entries
+
+            match after with
+            | Some after -> fileNames 1 id after entries
+            | None -> entries
+
+    /// `entries` with `entry` as the description `id`'s, in place of any it had.
+    let add (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
+        let before = Map.tryFind id entries.All
+
+        let uncounted =
+            match before with
+            | Some before -> count -1 id before entries
+            | None -> entries
+
+        let counted =
+            count 1 id entry uncounted
+            |> refileRegistrations id before (Some entry)
+            |> refileNames id before (Some entry)
+
+        { counted with
+            All = Map.add id entry entries.All
+        }
+
+    /// `entries` without the description `id`'s, if it has one.
+    let remove (id : OpenFileDescriptionId) (entries : Entries) : Entries =
+        match Map.tryFind id entries.All with
+        | None -> entries
+        | Some before ->
+            let uncounted =
+                count -1 id before entries
+                |> refileRegistrations id (Some before) None
+                |> refileNames id (Some before) None
+
+            { uncounted with
+                All = Map.remove id entries.All
+            }
+
+    /// Entries of exactly the descriptions in `all`.
+    let ofMap (all : Map<OpenFileDescriptionId, OpenFileEntry>) : Entries =
+        (empty, all) ||> Map.fold (fun entries id entry -> add id entry entries)
+
+    /// Whether a live description names the `pipeEnd` end of `pipe`.
+    let describesPipeEnd (PipeId pipe) (pipeEnd : PipeEnd) (entries : Entries) : bool =
+        match Map.tryFind pipe entries.PipeEnds with
+        | None -> false
+        | Some counts ->
+            match pipeEnd with
+            | PipeEnd.Read -> counts.Readers > 0
+            | PipeEnd.Write -> counts.Writers > 0
+
+    /// The `flock` each live description holding one on `object` holds, by
+    /// the value of the description's identity.
+    let flocksOn (object : OpenFileObject) (entries : Entries) : Map<int64, FlockMode> =
+        Map.tryFind object entries.Flocks |> Option.defaultValue Map.empty
+
+    /// The epoll instances with a registration of the description `target`,
+    /// by the values of their identities, and the descriptors each registers
+    /// it through.
+    let epollsRegistering (OpenFileDescriptionId target) (entries : Entries) : Map<int64, Set<int>> =
+        RegistrationIndex.membersUnder target entries.EpollsRegistering
+
+    /// The kqueues `owner` owns with a registration through its descriptor
+    /// `fd`, by the values of their identities, and the filters each
+    /// registers through it.
+    let kqueuesThrough (owner : ProcessId) (fd : int) (entries : Entries) : Map<int64, Set<KqueueFilter>> =
+        RegistrationIndex.membersUnder (RegistrationIndex.throughDescriptor owner fd) entries.KqueuesThrough
+
+    /// `entry` describing `target` instead.
+    let private retargeted (target : OpenFileTarget) (entry : OpenFileEntry) : OpenFileEntry =
+        { entry with
+            Description =
+                { entry.Description with
+                    Target = target
+                }
+        }
+
+    /// The entry of the live epoll instance `epoll`, and its state. Loudly
+    /// partial: `operation`, named in the message, resolved it as one.
+    let private epollEntry
+        (operation : string)
+        (epoll : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * EpollState
+        =
+        match Map.tryFind epoll entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Epoll state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{epoll} is %A{other} rather than a live epoll instance, which the caller resolved it as (this is a bug in this library)."
+
+    /// The entry of the live kqueue `kqueue`, and its state. Loudly partial:
+    /// `operation`, named in the message, resolved it as one.
+    let private kqueueEntry
+        (operation : string)
+        (kqueue : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * KqueueState
+        =
+        match Map.tryFind kqueue entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Kqueue state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{kqueue} is %A{other} rather than a live kqueue, which the caller resolved it as (this is a bug in this library)."
+
+    /// `entries` with the live epoll instance `epoll` registering
+    /// `registration` under `key`, in place of any registration it had there:
+    /// in time logarithmic in the table and in the instance's registrations,
+    /// where `add` would take time linear in them.
+    let registerInEpoll
+        (epoll : OpenFileDescriptionId)
+        (fd : int, OpenFileDescriptionId target as key : int * OpenFileDescriptionId)
+        (registration : EpollRegistration)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = epollEntry "registerInEpoll" epoll entries
+        let (OpenFileDescriptionId raw) = epoll
+
+        let state =
+            { state with
+                Registrations = Map.add key registration state.Registrations
+            }
+
+        { entries with
+            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            EpollsRegistering = RegistrationIndex.file target raw fd entries.EpollsRegistering
+        }
+
+    /// `entries` with the live epoll instance `epoll` registering nothing
+    /// under any of `keys`, and holding no ready entry for one: in time
+    /// logarithmic in the table and in the instance's registrations for each
+    /// key, and linear in its ready list once. Loudly partial on a key it does
+    /// not register.
+    let unregisterFromEpoll
+        (epoll : OpenFileDescriptionId)
+        (keys : Set<int * OpenFileDescriptionId>)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = epollEntry "unregisterFromEpoll" epoll entries
+        let (OpenFileDescriptionId raw) = epoll
+
+        let registrations, filed =
+            ((state.Registrations, entries.EpollsRegistering), keys)
+            ||> Set.fold (fun (registrations, filed) (fd, OpenFileDescriptionId target as key) ->
+                if not (Map.containsKey key registrations) then
+                    failwith
+                        $"OpenFileEntries.unregisterFromEpoll: epoll instance %O{epoll} registers nothing under %A{key} (this is a bug in this library)."
+
+                Map.remove key registrations, RegistrationIndex.unfile target raw fd filed
+            )
+
+        let state =
+            {
+                Registrations = registrations
+                Ready = state.Ready |> List.filter (fun ready -> not (Set.contains ready keys))
+            }
+
+        { entries with
+            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            EpollsRegistering = filed
+        }
+
+    /// `entries` with the live kqueue `kqueue` registering `registration`
+    /// under `key`, in place of any registration it had there: in time
+    /// logarithmic in the table and in the kqueue's registrations, where `add`
+    /// would take time linear in them.
+    let registerInKqueue
+        (kqueue : OpenFileDescriptionId)
+        (fd : int, filter : KqueueFilter as key : int * KqueueFilter)
+        (registration : KqueueRegistration)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = kqueueEntry "registerInKqueue" kqueue entries
+        let (OpenFileDescriptionId raw) = kqueue
+
+        let filed =
+            entries.KqueuesThrough
+            |> RegistrationIndex.file (RegistrationIndex.throughDescriptor state.Owner fd) raw filter
+
+        let onSocket =
+            match Map.tryFind key state.Registrations with
+            | Some replaced ->
+                let (SocketId socket) = replaced.Socket
+                RegistrationIndex.unfile socket raw key entries.KqueuesOnSocket
+            | None -> entries.KqueuesOnSocket
+
+        let onSocket =
+            let (SocketId socket) = registration.Socket
+            RegistrationIndex.file socket raw key onSocket
+
+        let state =
+            { state with
+                Registrations = Map.add key registration state.Registrations
+            }
+
+        { entries with
+            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            KqueuesThrough = filed
+            KqueuesOnSocket = onSocket
+        }
+
+    /// `entries` with the live kqueue `kqueue` registering nothing under any
+    /// of `keys`, and holding no active entry for one: in time logarithmic in
+    /// the table and in the kqueue's registrations for each key, and linear in
+    /// its active list once. Loudly partial on a key it does not register.
+    let unregisterFromKqueue
+        (kqueue : OpenFileDescriptionId)
+        (keys : Set<int * KqueueFilter>)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = kqueueEntry "unregisterFromKqueue" kqueue entries
+        let (OpenFileDescriptionId raw) = kqueue
+
+        let registrations, filed, onSocket =
+            ((state.Registrations, entries.KqueuesThrough, entries.KqueuesOnSocket), keys)
+            ||> Set.fold (fun (registrations, filed, onSocket) (fd, filter as key) ->
+                match Map.tryFind key registrations with
+                | None ->
+                    failwith
+                        $"OpenFileEntries.unregisterFromKqueue: kqueue %O{kqueue} registers nothing under %A{key} (this is a bug in this library)."
+                | Some removed ->
+                    let (SocketId socket) = removed.Socket
+
+                    Map.remove key registrations,
+                    RegistrationIndex.unfile (RegistrationIndex.throughDescriptor state.Owner fd) raw filter filed,
+                    RegistrationIndex.unfile socket raw key onSocket
+            )
+
+        let state =
+            { state with
+                Registrations = registrations
+                Active = state.Active |> List.filter (fun active -> not (Set.contains active keys))
+            }
+
+        { entries with
+            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            KqueuesThrough = filed
+            KqueuesOnSocket = onSocket
+        }
+
+    /// The values of the identities of the live descriptions of `named`.
+    let naming (named : Named) (entries : Entries) : Set<int64> =
+        Map.tryFind named entries.Naming |> Option.defaultValue Set.empty
+
+    /// The kqueues with a registration attached to the socket `socket`, by the
+    /// values of their identities, and the keys each registers it under.
+    let kqueuesOnSocket (SocketId socket) (entries : Entries) : Map<int64, Set<int * KqueueFilter>> =
+        RegistrationIndex.membersUnder socket entries.KqueuesOnSocket
+
+    /// `entries` with every registration of a description in `naming` that a
+    /// wake with `wakeKey` makes pending appended to its epoll instance's
+    /// ready list (see `OpenFileTable.signalEpollInstances`): visiting only
+    /// the instances that register one of `naming` (`epollsRegistering`), and
+    /// in each only the registrations of those.
+    let signalEpolls (naming : Set<OpenFileDescriptionId>) (wakeKey : uint32 option) (entries : Entries) : Entries =
+        let keysByEpoll =
+            (Map.empty, naming)
+            ||> Set.fold (fun keysByEpoll (OpenFileDescriptionId raw as target) ->
+                (keysByEpoll, RegistrationIndex.membersUnder raw entries.EpollsRegistering)
+                ||> Map.fold (fun keysByEpoll epoll fds ->
+                    let keys = Map.tryFind epoll keysByEpoll |> Option.defaultValue Set.empty
+                    Map.add epoll (fds |> Set.fold (fun keys fd -> Set.add (fd, target) keys) keys) keysByEpoll
+                )
+            )
+
+        (entries, keysByEpoll)
+        ||> Map.fold (fun entries epoll keys ->
+            let epoll = OpenFileDescriptionId epoll
+            let entry, state = epollEntry "signalEpolls" epoll entries
+
+            // In key order, as the registrations are held, before the sort,
+            // which is stable.
+            let entering =
+                keys
+                |> Set.toList
+                |> List.map (fun key ->
+                    match Map.tryFind key state.Registrations with
+                    | Some registration -> key, registration
+                    | None ->
+                        failwith
+                            $"OpenFileEntries.signalEpolls: the index says epoll instance %O{epoll} registers %A{key}, which it does not (this is a bug in this library)."
+                )
+                |> List.filter (fun (key, registration) ->
+                    EpollRegistration.isArmed registration
+                    && not (List.contains key state.Ready)
+                    && (
+                        match wakeKey with
+                        | None -> true
+                        | Some key -> key &&& registration.Events <> 0u
+                    )
+                )
+                |> List.sortByDescending (fun (_, registration) -> registration.RegisteredAt)
+                |> List.map fst
+
+            match entering with
+            | [] -> entries
+            | entering ->
+                let state =
+                    { state with
+                        Ready = state.Ready @ entering
+                    }
+
+                { entries with
+                    All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+                }
+        )
+
+    /// The inotify instances with a watch on `inode`, by the values of their
+    /// identities, and the values of the descriptors of their watches on it.
+    let watchesOn (InodeNumber inode) (entries : Entries) : Map<int64, Set<int>> =
+        RegistrationIndex.membersUnder inode entries.WatchesOn
+
+    /// How many live inotify instances `owner` owns.
+    let inotifyInstancesOf (owner : UserId) (entries : Entries) : int =
+        Map.tryFind (UserId.toUInt32 owner) entries.InotifyInstancesOf
+        |> Option.defaultValue 0
+
+    /// How many watches the live inotify instances `owner` owns have.
+    let inotifyWatchesOf (owner : UserId) (entries : Entries) : int =
+        Map.tryFind (UserId.toUInt32 owner) entries.InotifyWatchesOf
+        |> Option.defaultValue 0
+
+    /// The descriptions opened through `through`, by the value of the
+    /// identity of the name each holds, and the values of their own
+    /// identities.
+    let openedThrough (through : ReachedThrough) (entries : Entries) : Map<int64, Set<int64>> =
+        RegistrationIndex.membersUnder through entries.NamesOpenedThrough
+
+    /// Whether a live description is onto `inode`, or was opened through a
+    /// name in it.
+    let holds (InodeNumber inode) (entries : Entries) : bool =
+        Map.containsKey inode entries.HeldInodes
+
+    /// Every inode a live description is onto or was opened through a name
+    /// in, by its value, in order.
+    let heldInodes (entries : Entries) : int64 seq =
+        Map.keys entries.HeldInodes :> int64 seq
+
+    /// Every directory a live description is onto or was opened through a
+    /// name in, by its value, in order.
+    let heldDirectories (entries : Entries) : int64 seq =
+        Map.keys entries.HeldDirectories :> int64 seq
+
+    /// The entry of the live inotify instance `instance`, and its state.
+    /// Loudly partial: `operation`, named in the message, resolved it as one.
+    let private inotifyEntry
+        (operation : string)
+        (instance : OpenFileDescriptionId)
+        (entries : Entries)
+        : OpenFileEntry * InotifyState
+        =
+        match Map.tryFind instance entries.All with
+        | Some ({
+                    Description = {
+                                      Target = OpenFileTarget.Inotify state
+                                  }
+                } as entry) -> entry, state
+        | other ->
+            failwith
+                $"OpenFileEntries.%s{operation}: %O{instance} is %A{other} rather than a live inotify instance, which the caller resolved it as (this is a bug in this library)."
+
+    /// `entries` with the live inotify instance `instance` holding `watch`
+    /// under `wd`, in place of any watch it had there: in time logarithmic in
+    /// the table and in the instance's watches, where `add` would take time
+    /// linear in them.
+    let setInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (watch : InotifyWatch)
+        (entries : Entries)
+        : Entries
+        =
+        let entry, state = inotifyEntry "setInotifyWatch" instance entries
+        let (OpenFileDescriptionId raw) = instance
+        let (WatchDescriptor value) = wd
+        let (InodeNumber inode) = watch.Inode
+
+        let watchesOn, added =
+            match Map.tryFind wd state.Watches with
+            | Some held ->
+                let (InodeNumber heldInode) = held.Inode
+                RegistrationIndex.unfile heldInode raw value entries.WatchesOn, 0
+            | None -> entries.WatchesOn, 1
+
+        let state =
+            { state with
+                Watches = Map.add wd watch state.Watches
+            }
+
+        { entries with
+            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            WatchesOn = RegistrationIndex.file inode raw value watchesOn
+            InotifyWatchesOf = bump added (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
+        }
+
+    /// `entries` with the live inotify instance `instance` holding no watch
+    /// under `wd`: in time logarithmic in the table and in the instance's
+    /// watches. Loudly partial on a watch it does not hold.
+    let removeInotifyWatch (instance : OpenFileDescriptionId) (wd : WatchDescriptor) (entries : Entries) : Entries =
+        let entry, state = inotifyEntry "removeInotifyWatch" instance entries
+        let (OpenFileDescriptionId raw) = instance
+        let (WatchDescriptor value) = wd
+
+        match Map.tryFind wd state.Watches with
+        | None ->
+            failwith
+                $"OpenFileEntries.removeInotifyWatch: inotify instance %O{instance} holds no watch %O{wd} (this is a bug in this library)."
+        | Some held ->
+
+        let (InodeNumber inode) = held.Inode
+
+        let state =
+            { state with
+                Watches = Map.remove wd state.Watches
+            }
+
+        { entries with
+            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            WatchesOn = RegistrationIndex.unfile inode raw value entries.WatchesOn
+            InotifyWatchesOf = bump -1 (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
+        }
+
+    /// Whether the indexes are those of the entries, as `ofMap` would build
+    /// them afresh.
+    let indexesFresh (entries : Entries) : bool =
+        let fresh = ofMap entries.All
+
+        fresh.PipeEnds = entries.PipeEnds
+        && fresh.Flocks = entries.Flocks
+        && fresh.EpollsRegistering = entries.EpollsRegistering
+        && fresh.KqueuesThrough = entries.KqueuesThrough
+        && fresh.KqueuesOnSocket = entries.KqueuesOnSocket
+        && fresh.Naming = entries.Naming
+        && fresh.WatchesOn = entries.WatchesOn
+        && fresh.InotifyInstancesOf = entries.InotifyInstancesOf
+        && fresh.InotifyWatchesOf = entries.InotifyWatchesOf
+        && fresh.NamesOpenedThrough = entries.NamesOpenedThrough
+        && fresh.HeldInodes = entries.HeldInodes
+        && fresh.HeldDirectories = entries.HeldDirectories
 
 /// The machine's open file descriptions, POSIX's "open file description" and
 /// Linux's `struct file`: what every descriptor in every process names, by
@@ -1339,7 +2358,7 @@ type private OpenFileEntry =
 type OpenFileTable =
     private
         {
-            Entries : Map<OpenFileDescriptionId, OpenFileEntry>
+            Entries : OpenFileEntries.Entries
             /// The identity the next description will be given. Stored and
             /// monotonic rather than derived as one past the highest live id,
             /// which would reuse the identity of a closed description. Nothing
@@ -1362,19 +2381,6 @@ type internal DestroyedDescription =
         /// Which name that is (`OpenFileTable.nameHeldElsewhere`).
         NameIdentity : OpenFileDescriptionId
     }
-
-/// Which of the machine's descriptors a `FileDescriptorRegistry`'s table
-/// holds, which decides what its own invariants can say about the open file
-/// descriptions: a table that is not every descriptor on the machine cannot
-/// count a description's descriptors, nor read another process's kqueue
-/// registrations.
-[<RequireQualifiedAccess>]
-type internal DescriptorCensus =
-    /// Every descriptor on the machine: the table of the only process on it.
-    | Complete
-    /// The descriptors of the process `owner` alone, on a machine whose other
-    /// processes hold descriptors of their own.
-    | OneProcessOf of owner : ProcessId
 
 /// One process's descriptor table together with the machine's open file
 /// descriptions those descriptors point at: the two halves of a Unix file
@@ -1403,8 +2409,6 @@ type FileDescriptorRegistry =
             /// The machine's open file descriptions, every one the descriptors
             /// name and any others the machine holds.
             OpenFiles : OpenFileTable
-            /// Whether `Descriptors` is every descriptor on the machine.
-            Census : DescriptorCensus
         }
 
 
@@ -1470,15 +2474,10 @@ type internal FlockError =
 /// A way in which a `FileDescriptorRegistry` fails to be a descriptor table any
 /// kernel could produce, or an `OpenFileTable` the open file descriptions of one.
 /// `FileDescriptorRegistry.checkInvariants` returns these, and
-/// `SimulatedMachine.checkInvariants` reports them for every process.
-///
-/// A defect is a bug in this library, and its cases are not public: a client
-/// reports one with `FileDescriptorRegistryDefect.describe`, and has no reason
-/// to branch on which rule broke. Any version may add a rule or remove one, for
-/// instance when the types come to make a state it forbids unrepresentable.
+/// `UnixSystem.checkInvariants` reports them, inside a `UnixSystemDefect`, for
+/// every process.
 [<RequireQualifiedAccess>]
-type FileDescriptorRegistryDefect =
-    internal
+type internal FileDescriptorRegistryDefect =
     /// A live descriptor names a description that is not present. Every lookup
     /// through this descriptor would fail, which no kernel permits.
     | DanglingFd of fd : int * description : OpenFileDescriptionId
@@ -1537,6 +2536,12 @@ type FileDescriptorRegistryDefect =
     /// a re-signal does not move it), so a duplicate would deliver one edge
     /// twice.
     | EpollReadyEntryDuplicated of epoll : OpenFileDescriptionId * key : int * target : OpenFileDescriptionId
+    /// An epoll instance's ready list holds a one-shot registration that has
+    /// reported and not been re-armed. No wake queues one, the wait that
+    /// disarms it takes it off the list, and the MOD that re-arms it is what
+    /// may queue it again, so a survivor would hold a place that MOD should
+    /// have given it.
+    | EpollReadyEntryDisarmed of epoll : OpenFileDescriptionId * key : int * target : OpenFileDescriptionId
     /// A kqueue holds a registration made through a descriptor that is not
     /// open. Closing a descriptor removes every registration made through it,
     /// so the registration has outlived its descriptor.
@@ -1599,13 +2604,22 @@ type FileDescriptorRegistryDefect =
     | OpenedThroughMismatch of description : OpenFileDescriptionId * target : OpenFileTarget
     /// The descriptions `description` and `other` are onto one inode, and
     /// either hold one name (one name identity) and record it differently,
-    /// or record one name still linked and hold two: descriptions opened
-    /// through a name hold one name until it is unlinked, and a rename moves
-    /// every record of it.
+    /// or record one name, still linked or of a directory, and hold two:
+    /// descriptions opened through a name hold one name until it is
+    /// unlinked, and a directory has one name only, and a rename moves every
+    /// record of it.
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
+    /// The table's count of the descriptions naming each end of each pipe,
+    /// its record of the `flock`s held on each object, its record of the
+    /// epoll instances registering each description or of the kqueues
+    /// registering through each descriptor, its record of the inotify
+    /// watches on each inode or of the instances and watches each user owns,
+    /// or its record of the names descriptions were opened through or of the
+    /// inodes they hold, is not what its descriptions say.
+    | StaleIndex
 
 [<RequireQualifiedAccess>]
-module FileDescriptorRegistryDefect =
+module internal FileDescriptorRegistryDefect =
     /// The defect, for a bug report: the rule that does not hold, by the name
     /// this library's source gives it, and the values that break it.
     let describe (defect : FileDescriptorRegistryDefect) : string =
@@ -1616,7 +2630,7 @@ module OpenFileTable =
     /// A machine with no open file description, whose first gets identity 0.
     let internal empty : OpenFileTable =
         {
-            Entries = Map.empty
+            Entries = OpenFileEntries.empty
             NextId = OpenFileDescriptionId 0L
         }
 
@@ -1625,16 +2639,29 @@ module OpenFileTable =
     /// Builds the map afresh, in time and space linear in the number of live
     /// descriptions; a caller that wants one description wants `tryFind`.
     let descriptions (table : OpenFileTable) : Map<OpenFileDescriptionId, OpenFileDescription> =
-        table.Entries |> Map.map (fun _ entry -> entry.Description)
+        OpenFileEntries.all table.Entries |> Map.map (fun _ entry -> entry.Description)
 
     /// The description `id` names, if it is live.
     let tryFind (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescription option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Description)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Description)
+
+    /// The description `id` names and the name it was opened through
+    /// (`openedThrough`), if it is live: one lookup, so the two agree.
+    let internal tryFindOpenedThrough
+        (id : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : (OpenFileDescription * ReachedThrough option) option
+        =
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Description, entry.OpenedThrough)
 
     /// Every live description and its identity, in identity order, for a walk
     /// that would otherwise build `descriptions` only to read it once.
     let internal toSeq (table : OpenFileTable) : (OpenFileDescriptionId * OpenFileDescription) seq =
-        table.Entries |> Map.toSeq |> Seq.map (fun (id, entry) -> id, entry.Description)
+        OpenFileEntries.all table.Entries
+        |> Map.toSeq
+        |> Seq.map (fun (id, entry) -> id, entry.Description)
 
     /// The live description `id` names. Loudly partial: `operation`, named in
     /// the message, holds an identity it resolved moments ago.
@@ -1649,17 +2676,81 @@ module OpenFileTable =
     /// table on the machine, if it is live. Zero for a description only a call
     /// in flight holds.
     let descriptorCount (id : OpenFileDescriptionId) (table : OpenFileTable) : int option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Descriptors)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Descriptors)
 
     /// How many holds syscalls in flight have on the description `id`, in every
     /// process on the machine, if it is live: one for each time a park names it
     /// (`ParkedSyscall.descriptions`).
     let holdCount (id : OpenFileDescriptionId) (table : OpenFileTable) : int option =
-        Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Holds)
+        OpenFileEntries.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Holds)
+
+    /// Whether a live description names the `pipeEnd` end of the pipe
+    /// `pipeId`, in time logarithmic in the number of pipes.
+    let internal describesPipeEnd (pipeId : PipeId) (pipeEnd : PipeEnd) (table : OpenFileTable) : bool =
+        OpenFileEntries.describesPipeEnd pipeId pipeEnd table.Entries
+
+    /// The live epoll instances with a registration of the description
+    /// `target`, in identity order, in time logarithmic in the number of
+    /// descriptions and linear in the number of instances answered.
+    let internal epollsRegistering
+        (target : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : OpenFileDescriptionId list
+        =
+        OpenFileEntries.epollsRegistering target table.Entries
+        |> Seq.map (fun (KeyValue (epoll, _)) -> OpenFileDescriptionId epoll)
+        |> List.ofSeq
+
+    /// The live kqueues `owner` owns with a registration through its
+    /// descriptor `fd`, in identity order, in time logarithmic in the number
+    /// of registrations on the machine and linear in the number of kqueues
+    /// answered.
+    let internal kqueuesRegisteringThrough
+        (owner : ProcessId)
+        (fd : int)
+        (table : OpenFileTable)
+        : OpenFileDescriptionId list
+        =
+        OpenFileEntries.kqueuesThrough owner fd table.Entries
+        |> Seq.map (fun (KeyValue (kqueue, _)) -> OpenFileDescriptionId kqueue)
+        |> List.ofSeq
+
+    /// The live descriptions of the socket `socketId`.
+    let internal descriptionsNamingSocket (socketId : SocketId) (table : OpenFileTable) : Set<OpenFileDescriptionId> =
+        let (SocketId socket) = socketId
+
+        OpenFileEntries.naming (OpenFileEntries.Named.Socket socket) table.Entries
+        |> Set.map OpenFileDescriptionId
+
+    /// The live descriptions of the `pipeEnd` end of `pipeId`.
+    let internal descriptionsNamingPipeEnd
+        (pipeId : PipeId)
+        (pipeEnd : PipeEnd)
+        (table : OpenFileTable)
+        : Set<OpenFileDescriptionId>
+        =
+        let (PipeId pipe) = pipeId
+
+        OpenFileEntries.naming (OpenFileEntries.Named.PipeEnd (pipe, pipeEnd)) table.Entries
+        |> Set.map OpenFileDescriptionId
+
+    /// The kqueues with a registration attached to the socket `socketId`
+    /// (`KqueueRegistration.Socket`), in identity order, each with the keys
+    /// it registers the socket under.
+    let internal kqueuesOnSocket
+        (socketId : SocketId)
+        (table : OpenFileTable)
+        : (OpenFileDescriptionId * Set<int * KqueueFilter>) list
+        =
+        OpenFileEntries.kqueuesOnSocket socketId table.Entries
+        |> Seq.map (fun (KeyValue (kqueue, keys)) -> OpenFileDescriptionId kqueue, keys)
+        |> List.ofSeq
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
-    let private inodeOf (target : OpenFileTarget) : InodeNumber option =
+    let internal inodeOf (target : OpenFileTarget) : InodeNumber option =
         match target with
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
@@ -1681,27 +2772,75 @@ module OpenFileTable =
     /// exactly for a description onto an inode (`namesInode`). Loudly partial
     /// on a description that is not live.
     let internal openedThrough (id : OpenFileDescriptionId) (table : OpenFileTable) : ReachedThrough option =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | Some entry -> entry.OpenedThrough
         | None ->
             failwith
                 $"OpenFileTable.openedThrough: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
 
-    /// Whether a live description holds the name that the destroyed
-    /// description `destroyed` was opened through: one opened through it while
-    /// it was linked, the same name as Linux's dentry. A name linked again
-    /// after an unlink is another, though it has the same directory and the
-    /// same text (measured, `inotify-self-probe.c` row N relinked).
-    let internal nameHeldElsewhere (destroyed : DestroyedDescription) (table : OpenFileTable) : bool =
-        table.Entries
-        |> Map.exists (fun _ entry ->
-            entry.NameIdentity = destroyed.NameIdentity
-            && entry.OpenedThrough = destroyed.OpenedThrough
+    /// Which name the live description `id` holds of the one it was opened
+    /// through (`openedThrough`): the identity of the first description
+    /// opened through it while it was linked, as Linux's dentry. Loudly
+    /// partial on a description that is not live.
+    let internal nameIdentity (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescriptionId =
+        match OpenFileEntries.tryFind id table.Entries with
+        | Some entry -> entry.NameIdentity
+        | None ->
+            failwith
+                $"OpenFileTable.nameIdentity: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
+
+    /// Whether a live description holds the name `through` whose identity
+    /// is `identity` (a destroyed description's `NameIdentity`): one opened
+    /// through it while it was linked, the same name as Linux's dentry. A
+    /// name linked again after an unlink is another, though it has the same
+    /// directory and the same text (measured, `inotify-self-probe.c` row N
+    /// relinked). In time logarithmic in the number of descriptions.
+    let internal nameHeldElsewhere
+        (through : ReachedThrough)
+        (identity : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : bool
+        =
+        let (OpenFileDescriptionId identity) = identity
+        OpenFileEntries.openedThrough through table.Entries |> Map.containsKey identity
+
+    /// The live description `raw` names. Loudly partial: an index of the
+    /// table named it.
+    let private indexed (raw : int64) (table : OpenFileTable) : OpenFileEntry =
+        match OpenFileEntries.tryFind (OpenFileDescriptionId raw) table.Entries with
+        | Some entry -> entry
+        | None ->
+            failwith
+                $"OpenFileTable: an index names open file description %d{raw}, which is not in the table (this is a bug in this library)."
+
+    /// The identity of the name held by the first live description, in
+    /// identity order, onto `inode` whose record of the name it was opened
+    /// through is `through`: in time logarithmic in the number of
+    /// descriptions, and linear in the number of identities that name has
+    /// and in the descriptions opened through it onto other inodes, which
+    /// `FileDescriptorRegistryDefect.OpenedThroughNameNotShared` and
+    /// `FileDescriptorRegistryDefect.OpenedThroughMismatch` rule out.
+    let private holdingName
+        (through : ReachedThrough)
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : OpenFileDescriptionId option
+        =
+        OpenFileEntries.openedThrough through table.Entries
+        |> Seq.choose (fun (KeyValue (identity, ids)) ->
+            ids
+            |> Seq.tryFind (fun raw -> inodeOf (indexed raw table).Description.Target = Some inode)
+            |> Option.map (fun raw -> raw, identity)
         )
+        |> List.ofSeq
+        |> List.sortBy fst
+        |> List.tryHead
+        |> Option.map (fun (_, identity) -> OpenFileDescriptionId identity)
 
     /// Whether a live description onto `inode` was opened through the name
     /// `name` in `directory`, still linked: Linux's dentry, which that
-    /// description holds.
+    /// description holds. In time logarithmic in the number of descriptions,
+    /// and linear in the number opened through that name.
     let internal holdsLinkedName
         (directory : InodeNumber)
         (name : DirectoryEntryName)
@@ -1709,20 +2848,22 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        let through =
-            ReachedThrough.Name (
-                {
-                    Parent = directory
-                    Name = name
-                },
-                false
-            )
+        (holdingName (ReachedThrough.ofEntry directory name) inode table).IsSome
 
-        table.Entries
-        |> Map.exists (fun _ entry ->
-            entry.OpenedThrough = Some through
-            && inodeOf entry.Description.Target = Some inode
-        )
+    /// Whether a live description is onto `inode`, or was opened through a
+    /// name in it, in time logarithmic in the number of inodes they hold.
+    let internal holdsInode (inode : InodeNumber) (table : OpenFileTable) : bool =
+        OpenFileEntries.holds inode table.Entries
+
+    /// Every inode a live description is onto or was opened through a name
+    /// in, in order, in time linear in the number of such inodes.
+    let internal heldInodes (table : OpenFileTable) : InodeNumber seq =
+        OpenFileEntries.heldInodes table.Entries |> Seq.map InodeNumber
+
+    /// Every directory a live description is onto or was opened through a
+    /// name in, in order, in time linear in the number of such directories.
+    let internal heldDirectories (table : OpenFileTable) : InodeNumber seq =
+        OpenFileEntries.heldDirectories table.Entries |> Seq.map InodeNumber
 
     /// Every live description onto an inode, with its identity and the name it
     /// was opened through, in identity order.
@@ -1730,7 +2871,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : (OpenFileDescriptionId * OpenFileDescription * ReachedThrough) seq
         =
-        table.Entries
+        OpenFileEntries.all table.Entries
         |> Map.toSeq
         |> Seq.choose (fun (id, entry) ->
             entry.OpenedThrough
@@ -1756,27 +2897,23 @@ module OpenFileTable =
 
         // A name still linked that a live description was opened through is
         // the name this one is opened through: Linux's dentry, which that
-        // description holds, so the walk found it again.
+        // description holds, so the walk found it again. So is a removed
+        // directory's unlinked name, which a walk reaches by ".": a directory
+        // has one name, which it keeps once that name has gone.
         let nameIdentity =
-            match openedThrough, inodeOf description.Target with
-            | Some (ReachedThrough.Name (_, false) as through), Some inode ->
-                table.Entries
-                |> Map.tryPick (fun _ entry ->
-                    if
-                        entry.OpenedThrough = Some through
-                        && inodeOf entry.Description.Target = Some inode
-                    then
-                        Some entry.NameIdentity
-                    else
-                        None
-                )
-                |> Option.defaultValue id
+            match openedThrough, description.Target with
+            | Some (ReachedThrough.Name (_, false) as through), target ->
+                match inodeOf target with
+                | Some inode -> holdingName through inode table |> Option.defaultValue id
+                | None -> id
+            | Some (ReachedThrough.Name (_, true) as through), OpenFileTarget.Directory (inode, _) ->
+                holdingName through inode table |> Option.defaultValue id
             | _ -> id
 
         id,
         {
             Entries =
-                Map.add
+                OpenFileEntries.add
                     id
                     {
                         Description = description
@@ -1792,42 +2929,69 @@ module OpenFileTable =
     /// `table` after a filesystem change of names: each description's record
     /// of the name it was opened through moved by a rename of that name, or
     /// marked unlinked by the name's going (`ReachedThrough.followChange`), in
-    /// the order of `changes`.
+    /// the order of `changes`. Visits only the descriptions opened through a
+    /// name a change removed or moved, in time logarithmic in the number of
+    /// descriptions for each.
     let internal followChanges (changes : FsChange list) (table : OpenFileTable) : OpenFileTable =
-        let follows =
-            changes
-            |> List.exists (fun change ->
-                match change with
-                | FsChange.EntryRemoved _
-                | FsChange.EntryMoved _ -> true
-                | FsChange.EntryAdded _
-                | FsChange.ContentChanged _
-                | FsChange.AttributesChanged _
-                | FsChange.InodeForgotten _ -> false
-            )
+        let entries =
+            (table.Entries, changes)
+            ||> List.fold (fun entries change ->
+                // `followChange` changes a record only of a name still linked
+                // that `change` removed or moved, at either end.
+                let names =
+                    match change with
+                    | FsChange.EntryRemoved (directory, name, _) -> [ directory, name ]
+                    | FsChange.EntryMoved (source, sourceName, destination, destinationName, _, _) ->
+                        if source = destination && sourceName = destinationName then
+                            [ source, sourceName ]
+                        else
+                            [ source, sourceName ; destination, destinationName ]
+                    | FsChange.EntryAdded _
+                    | FsChange.ContentChanged _
+                    | FsChange.AttributesChanged _
+                    | FsChange.InodeForgotten _ -> []
 
-        if not follows then
-            table
-        else
+                // Gathered before any is followed, so that a record the change
+                // moves onto its other name does not follow it twice.
+                let following =
+                    names
+                    |> List.collect (fun (directory, name) ->
+                        OpenFileEntries.openedThrough (ReachedThrough.ofEntry directory name) entries
+                        |> Seq.collect (fun (KeyValue (_, ids)) -> ids)
+                        |> List.ofSeq
+                    )
 
-        { table with
-            Entries =
-                table.Entries
-                |> Map.map (fun _ entry ->
+                (entries, following)
+                ||> List.fold (fun entries raw ->
+                    let id = OpenFileDescriptionId raw
+
+                    let entry =
+                        match OpenFileEntries.tryFind id entries with
+                        | Some entry -> entry
+                        | None ->
+                            failwith
+                                $"OpenFileTable.followChanges: the index of names names open file description %d{raw}, which is not in the table (this is a bug in this library)."
+
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some through, Some inode ->
-                        { entry with
-                            OpenedThrough =
-                                Some (
-                                    (through, changes)
-                                    ||> List.fold (fun through change ->
-                                        ReachedThrough.followChange inode change through
-                                    )
-                                )
-                        }
-                    | Some _, _
-                    | None, _ -> entry
+                        let followed = ReachedThrough.followChange inode change through
+
+                        if LanguagePrimitives.PhysicalEquality followed through then
+                            entries
+                        else
+                            OpenFileEntries.add
+                                id
+                                { entry with
+                                    OpenedThrough = Some followed
+                                }
+                                entries
+                    | Some _, None
+                    | None, _ -> entries
                 )
+            )
+
+        { table with
+            Entries = entries
         }
 
     /// Rewrite the entry of the live description `id`. `operation` names the
@@ -1839,13 +3003,13 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | None ->
             failwith
                 $"OpenFileTable.%s{operation}: open file description %O{id} is not present in the table (this is a bug in the caller, which resolved it moments ago)."
         | Some entry ->
             { table with
-                Entries = Map.add id (f entry) table.Entries
+                Entries = OpenFileEntries.add id (f entry) table.Entries
             }
 
     /// Rewrite the live description `id`. `operation` names the caller for the
@@ -1961,32 +3125,16 @@ module OpenFileTable =
         // is released, so every registration names an open descriptor, which
         // names a live description, never this one
         // (`KqueueRegistrationThroughClosedDescriptor`).
+        //
+        // Only the instances that register it are visited, as Linux walks the
+        // file's own list of the epoll items watching it.
+        let removed = OpenFileEntries.remove id table.Entries
+
         let entries =
-            Map.remove id table.Entries
-            |> Map.map (fun _ entry ->
-                match entry.Description.Target with
-                | OpenFileTarget.Epoll epollState ->
-                    { entry with
-                        Description =
-                            { entry.Description with
-                                Target =
-                                    OpenFileTarget.Epoll
-                                        {
-                                            Registrations =
-                                                epollState.Registrations
-                                                |> Map.filter (fun (_, target) _ -> target <> id)
-                                            Ready = epollState.Ready |> List.filter (fun (_, target) -> target <> id)
-                                        }
-                            }
-                    }
-                | OpenFileTarget.Kqueue _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> entry
+            (removed, OpenFileEntries.epollsRegistering id removed)
+            ||> Map.fold (fun entries epoll fds ->
+                let keys = fds |> Set.map (fun fd -> fd, id)
+                OpenFileEntries.unregisterFromEpoll (OpenFileDescriptionId epoll) keys entries
             )
 
         { table with
@@ -2007,7 +3155,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable * DestroyedDescription option
         =
-        match Map.tryFind id table.Entries with
+        match OpenFileEntries.tryFind id table.Entries with
         | None -> table, None
         | Some entry ->
             if entry.Descriptors > 0 || entry.Holds > 0 then
@@ -2051,18 +3199,12 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        table.Entries
-        |> Map.exists (fun otherId (other : OpenFileEntry) ->
-            otherId <> requester
-            // Identity, not the whole description: two descriptions on one
-            // file contend however far apart their offsets are.
-            && OpenFileDescription.object otherId other.Description = object
-            && (
-                match other.Description.Flock with
-                | None -> false
-                | Some held -> locksConflict mode held
-            )
-        )
+        // By identity, not the whole description: two descriptions on one
+        // file contend however far apart their offsets are.
+        let (OpenFileDescriptionId requester) = requester
+
+        OpenFileEntries.flocksOn object table.Entries
+        |> Map.exists (fun other held -> other <> requester && locksConflict mode held)
 
     /// `flock(2)` on the open file description directly, for a caller that holds
     /// one rather than a descriptor.
@@ -2171,16 +3313,62 @@ module OpenFileTable =
             failwith
                 $"setKqueueState: %O{kqueue} names %A{other} rather than a live kqueue; the caller resolved it as one moments ago (this is a bug in the caller of OpenFileTable.setKqueueState)."
 
-    /// Rewrite the state of the epoll instance `epollId` names. Loudly partial
-    /// on a dead or non-epoll description: every caller resolved it as an
-    /// epoll instance moments ago, so either means it wrote against a different
-    /// table than the one it read. `operation` names the caller for that message.
-    let private mapEpollState
-        (operation : string)
-        (epollId : OpenFileDescriptionId)
-        (f : EpollState -> EpollState)
+    /// Remove every registration made through the descriptor `fd` from every
+    /// kqueue the process `owner` owns, queued or not: what closing `fd`
+    /// does to them. Visits only the kqueues with such a registration
+    /// (`kqueuesRegisteringThrough`).
+    let internal dropKqueueRegistrationsThrough (owner : ProcessId) (fd : int) (table : OpenFileTable) : OpenFileTable =
+        let entries =
+            (table.Entries, OpenFileEntries.kqueuesThrough owner fd table.Entries)
+            ||> Map.fold (fun entries kqueue filters ->
+                let keys = filters |> Set.map (fun filter -> fd, filter)
+                OpenFileEntries.unregisterFromKqueue (OpenFileDescriptionId kqueue) keys entries
+            )
+
+        { table with
+            Entries = entries
+        }
+
+    /// Record `registration` under `key` in the kqueue the open file
+    /// description `kqueue` names, in place of any registration there: the
+    /// table half of a committed `EV_ADD`. Loudly partial on a dead or
+    /// non-kqueue description: the caller has just resolved it as a kqueue.
+    let internal registerInKqueue
+        (kqueue : OpenFileDescriptionId)
+        (key : int * KqueueFilter)
+        (registration : KqueueRegistration)
         (table : OpenFileTable)
         : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.registerInKqueue kqueue key registration table.Entries
+        }
+
+    /// Remove the registration under `key`, and its active entry if it has
+    /// one, from the kqueue the open file description `kqueue` names: the
+    /// table half of a committed `EV_DELETE`. Loudly partial on a dead or
+    /// non-kqueue description, and on a key it does not register, which
+    /// `kevent` answers `ENOENT` for before it reaches the table.
+    let internal unregisterFromKqueue
+        (kqueue : OpenFileDescriptionId)
+        (key : int * KqueueFilter)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.unregisterFromKqueue kqueue (Set.singleton key) table.Entries
+        }
+
+    /// The state of the epoll instance `epollId` names. Loudly partial on a
+    /// dead or non-epoll description: every caller resolved it as an epoll
+    /// instance moments ago, so either means it wrote against a different
+    /// table than the one it read. `operation` names the caller for that
+    /// message.
+    let private epollStateOf
+        (operation : string)
+        (epollId : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : EpollState
         =
         match tryFind epollId table with
         | None ->
@@ -2199,7 +3387,18 @@ module OpenFileTable =
         | OpenFileTarget.Pipe _ ->
             failwith
                 $"%s{operation}: %O{epollId} is not an epoll instance; the caller resolved it as one moments ago, so this is a bug in the caller of OpenFileTable.%s{operation}."
-        | OpenFileTarget.Epoll epollState ->
+        | OpenFileTarget.Epoll epollState -> epollState
+
+    /// Rewrite the state of the epoll instance `epollId` names. Loudly partial
+    /// as `epollStateOf` is; `operation` names the caller for that message.
+    let private mapEpollState
+        (operation : string)
+        (epollId : OpenFileDescriptionId)
+        (f : EpollState -> EpollState)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        let epollState = epollStateOf operation epollId table
 
         table
         |> mapDescription
@@ -2225,19 +3424,15 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "addEpollRegistration"
-            epollId
-            (fun epollState ->
-                if Map.containsKey key epollState.Registrations then
-                    failwith
-                        $"addEpollRegistration: %A{key} is already registered with epoll instance %O{epollId}, which epoll_ctl answers EEXIST for (this is a bug in the caller of OpenFileTable.addEpollRegistration)."
+        let epollState = epollStateOf "addEpollRegistration" epollId table
 
-                { epollState with
-                    Registrations = Map.add key registration epollState.Registrations
-                }
-            )
+        if Map.containsKey key epollState.Registrations then
+            failwith
+                $"addEpollRegistration: %A{key} is already registered with epoll instance %O{epollId}, which epoll_ctl answers EEXIST for (this is a bug in the caller of OpenFileTable.addEpollRegistration)."
+
+        { table with
+            Entries = OpenFileEntries.registerInEpoll epollId key registration table.Entries
+        }
 
     /// Replace the stored event mask and data of the registration under `key`:
     /// the table half of a committed `EPOLL_CTL_MOD`. The registration keeps
@@ -2254,27 +3449,22 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "modifyEpollRegistration"
-            epollId
-            (fun epollState ->
-                match Map.tryFind key epollState.Registrations with
-                | None ->
-                    failwith
-                        $"modifyEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.modifyEpollRegistration)."
-                | Some existing ->
-                    { epollState with
-                        Registrations =
-                            Map.add
-                                key
-                                { existing with
-                                    Events = events
-                                    Data = data
-                                }
-                                epollState.Registrations
-                    }
-            )
+        let epollState = epollStateOf "modifyEpollRegistration" epollId table
+
+        match Map.tryFind key epollState.Registrations with
+        | None ->
+            failwith
+                $"modifyEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.modifyEpollRegistration)."
+        | Some existing ->
+            let modified =
+                { existing with
+                    Events = events
+                    Data = data
+                }
+
+            { table with
+                Entries = OpenFileEntries.registerInEpoll epollId key modified table.Entries
+            }
 
     /// Remove the registration under `key`, and its pending entry if it has
     /// one: the table half of a committed `EPOLL_CTL_DEL`.
@@ -2287,20 +3477,15 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
-        |> mapEpollState
-            "removeEpollRegistration"
-            epollId
-            (fun epollState ->
-                if not (Map.containsKey key epollState.Registrations) then
-                    failwith
-                        $"removeEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.removeEpollRegistration)."
+        let epollState = epollStateOf "removeEpollRegistration" epollId table
 
-                {
-                    Registrations = Map.remove key epollState.Registrations
-                    Ready = epollState.Ready |> List.filter (fun k -> k <> key)
-                }
-            )
+        if not (Map.containsKey key epollState.Registrations) then
+            failwith
+                $"removeEpollRegistration: %A{key} is not registered with epoll instance %O{epollId}, which epoll_ctl answers ENOENT for (this is a bug in the caller of OpenFileTable.removeEpollRegistration)."
+
+        { table with
+            Entries = OpenFileEntries.unregisterFromEpoll epollId (Set.singleton key) table.Entries
+        }
 
     /// Append `key` to the ready list of the epoll instance `epollId` names. The caller
     /// has decided the entry belongs there (an ADD/MOD found the target ready,
@@ -2332,32 +3517,51 @@ module OpenFileTable =
                 }
             )
 
-    /// Replace the ready list of the epoll instance `epollId` names — delivery's
-    /// write-back once a walk has consumed a prefix. Loudly partial on a
-    /// dead or non-epoll description, on an entry the interest table does not
-    /// register, and on a duplicate: the caller derived `ready` from the
-    /// epoll instance's own state moments ago, so any of those means it wrote against
-    /// a different table than the one it read.
-    let internal setEpollReady
+    /// Replace the ready list of the epoll instance `epollId` names, and
+    /// disarm each registration under `disarming` — delivery's write-back once
+    /// a walk has consumed a prefix. Loudly partial on a dead or non-epoll
+    /// description, on an entry of either list the interest table does not
+    /// register, on a duplicate in `ready`, and on an entry of `disarming`
+    /// that is in `ready`: the caller derived both from the epoll instance's
+    /// own state moments ago, so any of those means it wrote against a
+    /// different table than the one it read.
+    let internal settleEpollWalk
         (epollId : OpenFileDescriptionId)
         (ready : (int * OpenFileDescriptionId) list)
+        (disarming : (int * OpenFileDescriptionId) list)
         (table : OpenFileTable)
         : OpenFileTable
         =
-        table
+        let epollState = epollStateOf "settleEpollWalk" epollId table
+
+        for key in ready @ disarming do
+            if not (Map.containsKey key epollState.Registrations) then
+                failwith
+                    $"settleEpollWalk: %A{key} is not registered with epoll instance %O{epollId} (this is a bug in the caller of OpenFileTable.settleEpollWalk, which derived the lists from a different table)."
+
+        if List.length (List.distinct ready) <> List.length ready then
+            failwith
+                $"settleEpollWalk: the ready list for epoll instance %O{epollId} repeats an entry (this is a bug in the caller of OpenFileTable.settleEpollWalk, which derived the list from a different table)."
+
+        for key in disarming do
+            if List.contains key ready then
+                failwith
+                    $"settleEpollWalk: %A{key} is both disarmed and left pending on epoll instance %O{epollId} (this is a bug in the caller of OpenFileTable.settleEpollWalk)."
+
+        let entries =
+            (table.Entries, disarming)
+            ||> List.fold (fun entries key ->
+                let registration = Map.find key epollState.Registrations
+                OpenFileEntries.registerInEpoll epollId key (EpollRegistration.disarmed registration) entries
+            )
+
+        { table with
+            Entries = entries
+        }
         |> mapEpollState
-            "setEpollReady"
+            "settleEpollWalk"
             epollId
             (fun epollState ->
-                for key in ready do
-                    if not (Map.containsKey key epollState.Registrations) then
-                        failwith
-                            $"setEpollReady: %A{key} is not registered with epoll instance %O{epollId} (this is a bug in the caller of OpenFileTable.setEpollReady, which derived the list from a different table)."
-
-                if List.length (List.distinct ready) <> List.length ready then
-                    failwith
-                        $"setEpollReady: the ready list for epoll instance %O{epollId} repeats an entry (this is a bug in the caller of OpenFileTable.setEpollReady, which derived the list from a different table)."
-
                 { epollState with
                     Ready = ready
                 }
@@ -2365,8 +3569,9 @@ module OpenFileTable =
 
     /// The driver signalled every description in `naming` (all of one
     /// socket's descriptions): on every epoll instance on the machine, each
-    /// registration targeting one of them becomes pending unless it already is.
-    /// `wakeKey` is what the waker carried, in Linux's `<sys/epoll.h>`
+    /// armed registration targeting one of them becomes pending unless it
+    /// already is (a disarmed one-shot registration never does; see
+    /// `EpollRegistration.isArmed`). `wakeKey` is what the waker carried, in Linux's `<sys/epoll.h>`
     /// numbering, and the two kinds are both measured:
     ///
     ///   * a *keyed* wake queues only the registrations whose stored mask
@@ -2390,51 +3595,10 @@ module OpenFileTable =
         (table : OpenFileTable)
         : OpenFileTable
         =
-        let entries =
-            table.Entries
-            |> Map.map (fun _ entry ->
-                match entry.Description.Target with
-                | OpenFileTarget.Kqueue _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> entry
-                | OpenFileTarget.Epoll epollState ->
-                    let entering =
-                        epollState.Registrations
-                        |> Map.toList
-                        |> List.filter (fun ((_, targetId as key), registration) ->
-                            Set.contains targetId naming
-                            && not (List.contains key epollState.Ready)
-                            && (
-                                match wakeKey with
-                                | None -> true
-                                | Some key -> key &&& registration.Events <> 0u
-                            )
-                        )
-                        |> List.sortByDescending (fun (_, registration) -> registration.RegisteredAt)
-                        |> List.map fst
-
-                    match entering with
-                    | [] -> entry
-                    | entering ->
-                        { entry with
-                            Description =
-                                { entry.Description with
-                                    Target =
-                                        OpenFileTarget.Epoll
-                                            { epollState with
-                                                Ready = epollState.Ready @ entering
-                                            }
-                                }
-                        }
-            )
-
+        // Only the instances that register one of `naming` are visited, so a
+        // wake costs time in what watches its object, not in the table.
         { table with
-            Entries = entries
+            Entries = OpenFileEntries.signalEpolls naming wakeKey table.Entries
         }
 
     /// The state of the inotify instance `instance` names. Loudly partial on a
@@ -2464,6 +3628,75 @@ module OpenFileTable =
         | OpenFileTarget.Pipe _ ->
             failwith
                 $"%s{operation}: %O{instance} names %A{description.Target} rather than an inotify instance (this is a bug in this library, or in a caller that assembled the state by hand)."
+
+    /// The live inotify instances with a watch on `inode`, in identity order,
+    /// and the descriptors of each one's watches on it, in order: in time
+    /// logarithmic in the number of watches on the machine and linear in the
+    /// number answered.
+    let internal inotifyWatchesOn
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : (OpenFileDescriptionId * WatchDescriptor list) list
+        =
+        OpenFileEntries.watchesOn inode table.Entries
+        |> Seq.map (fun (KeyValue (instance, watches)) ->
+            OpenFileDescriptionId instance, watches |> Seq.map WatchDescriptor |> List.ofSeq
+        )
+        |> List.ofSeq
+
+    /// The descriptors of the watches the live inotify instance `instance`
+    /// holds on `inode`, in order: in time logarithmic in the number of
+    /// watches on the machine and linear in the number answered.
+    let internal inotifyWatchesOfInstanceOn
+        (instance : OpenFileDescriptionId)
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : WatchDescriptor list
+        =
+        let (OpenFileDescriptionId raw) = instance
+
+        match Map.tryFind raw (OpenFileEntries.watchesOn inode table.Entries) with
+        | Some watches -> watches |> Seq.map WatchDescriptor |> List.ofSeq
+        | None -> []
+
+    /// How many live inotify instances `owner` owns, in every process, in
+    /// time logarithmic in the number of users owning one.
+    let internal inotifyInstancesOwnedBy (owner : UserId) (table : OpenFileTable) : int =
+        OpenFileEntries.inotifyInstancesOf owner table.Entries
+
+    /// How many watches the live inotify instances `owner` owns have, in
+    /// every process, in time logarithmic in the number of users owning one.
+    let internal inotifyWatchesOwnedBy (owner : UserId) (table : OpenFileTable) : int =
+        OpenFileEntries.inotifyWatchesOf owner table.Entries
+
+    /// Record `watch` under `wd` in the inotify instance `instance` names, in
+    /// place of any watch there, in time logarithmic in the table and in the
+    /// instance's watches. Loudly partial on a dead or non-inotify
+    /// description: the caller has just resolved it as an inotify instance.
+    let internal setInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (watch : InotifyWatch)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.setInotifyWatch instance wd watch table.Entries
+        }
+
+    /// Remove the watch `wd` from the inotify instance `instance` names, in
+    /// time logarithmic in the table and in the instance's watches. Loudly
+    /// partial on a dead or non-inotify description, and on a watch it does
+    /// not hold.
+    let internal removeInotifyWatch
+        (instance : OpenFileDescriptionId)
+        (wd : WatchDescriptor)
+        (table : OpenFileTable)
+        : OpenFileTable
+        =
+        { table with
+            Entries = OpenFileEntries.removeInotifyWatch instance wd table.Entries
+        }
 
     /// Replace the state of the inotify instance `instance` names with
     /// `state`. Loudly partial, as `inotifyState` is.
@@ -2617,12 +3850,14 @@ module OpenFileTable =
 
         readOnly @ freshness @ unmodelled @ overflows @ recordDefects @ watchedTwice
 
-    /// `checkInvariants`, with each description's count of the descriptors
-    /// naming it held to `descriptorTables` exactly when `complete` (they are
-    /// every table on the machine), and otherwise only to be at least what
-    /// they name, since other tables may name it too.
-    let internal defects
-        (complete : bool)
+    /// Every way in which `table` fails to be the open file descriptions of a
+    /// machine whose descriptor tables are `descriptorTables`, all of them:
+    /// its own rules, and each description's count of the descriptors naming
+    /// it against those tables.
+    ///
+    /// The rules that relate a descriptor *number* to a description are one
+    /// process's, so they are `FileDescriptorRegistry.checkInvariants`'s.
+    let internal checkInvariants
         (descriptorTables : DescriptorTable list)
         (table : OpenFileTable)
         : FileDescriptorRegistryDefect list
@@ -2638,12 +3873,12 @@ module OpenFileTable =
             |> Map.ofList
 
         let counts =
-            table.Entries
+            OpenFileEntries.all table.Entries
             |> Map.toList
             |> List.choose (fun (id, entry) ->
                 let actual = Map.tryFind id naming |> Option.defaultValue 0
 
-                if actual = entry.Descriptors || (not complete && actual < entry.Descriptors) then
+                if actual = entry.Descriptors then
                     None
                 else
                     Some (FileDescriptorRegistryDefect.DescriptorCountMismatch (id, entry.Descriptors, actual))
@@ -2815,7 +4050,18 @@ module OpenFileTable =
                                 None
                         )
 
-                    unregistered @ duplicated
+                    let disarmed =
+                        epollState.Ready
+                        |> List.distinct
+                        |> List.choose (fun (fd, targetId as key) ->
+                            match Map.tryFind key epollState.Registrations with
+                            | Some registration when not (EpollRegistration.isArmed registration) ->
+                                Some (FileDescriptorRegistryDefect.EpollReadyEntryDisarmed (epollId, fd, targetId))
+                            | Some _
+                            | None -> None
+                        )
+
+                    unregistered @ duplicated @ disarmed
             )
 
         let kqueueEntries =
@@ -2871,7 +4117,7 @@ module OpenFileTable =
             )
 
         let openedThrough =
-            table.Entries
+            OpenFileEntries.all table.Entries
             |> Map.toList
             |> List.choose (fun (id, entry) ->
                 if namesInode entry.Description.Target = entry.OpenedThrough.IsSome then
@@ -2882,24 +4128,38 @@ module OpenFileTable =
 
         let namesShared =
             let named =
-                table.Entries
+                OpenFileEntries.all table.Entries
                 |> Map.toList
                 |> List.choose (fun (id, entry) ->
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some (ReachedThrough.Name (_, unlinked) as through), Some inode ->
-                        Some (id, inode, through, unlinked, entry.NameIdentity)
+                        let isDirectory =
+                            match entry.Description.Target with
+                            | OpenFileTarget.Directory _ -> true
+                            | OpenFileTarget.File _
+                            | OpenFileTarget.CharacterDevice _
+                            | OpenFileTarget.Epoll _
+                            | OpenFileTarget.Kqueue _
+                            | OpenFileTarget.Inotify _
+                            | OpenFileTarget.Socket _
+                            | OpenFileTarget.Fifo _
+                            | OpenFileTarget.Pipe _ -> false
+
+                        Some (id, inode, through, unlinked, isDirectory, entry.NameIdentity)
                     | _ -> None
                 )
 
             [
-                for id, inode, through, unlinked, identity in named do
-                    for other, otherInode, otherThrough, _, otherIdentity in named do
+                for id, inode, through, unlinked, isDirectory, identity in named do
+                    for other, otherInode, otherThrough, _, _, otherIdentity in named do
                         if id < other && inode = otherInode then
                             let sameName = identity = otherIdentity
 
+                            // A directory has one name, which every
+                            // description of it opened through a name holds.
                             if
                                 sameName && through <> otherThrough
-                                || not sameName && not unlinked && through = otherThrough
+                                || not sameName && (not unlinked || isDirectory) && through = otherThrough
                             then
                                 FileDescriptorRegistryDefect.OpenedThroughNameNotShared (id, other)
             ]
@@ -2920,7 +4180,14 @@ module OpenFileTable =
                 | OpenFileTarget.Inotify state -> inotifyDefects instance description.AccessMode state
             )
 
+        let staleIndex =
+            if OpenFileEntries.indexesFresh table.Entries then
+                []
+            else
+                [ FileDescriptorRegistryDefect.StaleIndex ]
+
         counts
+        @ staleIndex
         @ freshness
         @ negativeOffsets
         @ writableDirectories
@@ -2934,27 +4201,39 @@ module OpenFileTable =
         @ namesShared
         @ inotifyInstances
 
-    /// Every way in which `table` fails to be the open file descriptions of a
-    /// machine whose descriptor tables are `descriptorTables`, all of them:
-    /// its own rules, and each description's count of the descriptors naming
-    /// it against those tables.
-    ///
-    /// The rules that relate a descriptor *number* to a description are one
-    /// process's, so they are `FileDescriptorRegistry.checkInvariants`'s.
-    let internal checkInvariants
-        (descriptorTables : DescriptorTable list)
-        (table : OpenFileTable)
-        : FileDescriptorRegistryDefect list
-        =
-        defects true descriptorTables table
+/// What a live descriptor names, as one lookup finds it: its open file
+/// description, the description's identity, and the name it was opened
+/// through.
+type internal ReachedDescription =
+    {
+        /// The description's identity.
+        Id : OpenFileDescriptionId
+        /// The description.
+        Description : OpenFileDescription
+        /// The name the description was opened through: `Some` exactly for
+        /// one onto an inode (`OpenFileTable.namesInode`).
+        OpenedThrough : ReachedThrough option
+    }
+
+[<RequireQualifiedAccess>]
+module internal ReachedDescription =
+    /// The name `reached` was opened through, which `operation`, named in the
+    /// failure, has found onto an inode. Loudly partial: a description onto an
+    /// inode always records one.
+    let through (operation : string) (reached : ReachedDescription) : ReachedThrough =
+        match reached.OpenedThrough with
+        | Some through -> through
+        | None ->
+            failwith
+                $"%s{operation}: open file description %O{reached.Id} records no name it was opened through, though it is onto an inode (this is a bug in this library)."
 
 [<RequireQualifiedAccess>]
 module FileDescriptorRegistry =
-    /// A table entry naming `id`, with neither descriptor flag.
-    let private unflagged (id : OpenFileDescriptionId) : DescriptorEntry =
+    /// A table entry naming `id`, with `flags`.
+    let private entry (flags : DescriptorFlags) (id : OpenFileDescriptionId) : DescriptorEntry =
         {
             Description = id
-            Flags = DescriptorFlags.none
+            Flags = flags
         }
 
     /// Which description `fd` names in `fds`, if `fd` is live.
@@ -2962,18 +4241,11 @@ module FileDescriptorRegistry =
         Map.tryFind fd fds |> Option.map (fun entry -> entry.Description)
 
     /// The process's descriptor table `descriptors`, read against the machine's
-    /// open file descriptions `openFiles`; `census` says whether it is every
-    /// descriptor on the machine.
-    let internal ofTables
-        (census : DescriptorCensus)
-        (descriptors : DescriptorTable)
-        (openFiles : OpenFileTable)
-        : FileDescriptorRegistry
-        =
+    /// open file descriptions `openFiles`.
+    let internal ofTables (descriptors : DescriptorTable) (openFiles : OpenFileTable) : FileDescriptorRegistry =
         {
             Descriptors = descriptors
             OpenFiles = openFiles
-            Census = census
         }
 
     /// The process's descriptor table.
@@ -3042,19 +4314,24 @@ module FileDescriptorRegistry =
         tryFindWithId fd registry
         |> Option.map (fun (id, description) -> OpenFileDescription.object id description)
 
-    /// The name the description `fd` names was opened through
-    /// (`OpenFileTable.openedThrough`). Loudly partial: `operation`, named in
-    /// the message, has just found `fd` naming a description onto an inode.
-    let internal openedThrough (operation : string) (fd : int) (registry : FileDescriptorRegistry) : ReachedThrough =
-        let recorded =
-            named fd registry.Descriptors.Fds
-            |> Option.bind (fun id -> OpenFileTable.openedThrough id registry.OpenFiles)
-
-        match recorded with
-        | Some through -> through
-        | None ->
-            failwith
-                $"%s{operation}: fd %d{fd} names no description onto an inode, though the caller found it naming one moments ago (this is a bug in this library)."
+    /// What `fd` names, if `fd` is live: its description, the description's
+    /// identity, and the name it was opened through, from one lookup, for a
+    /// caller that needs more than one of them.
+    let internal tryFindReached (fd : int) (registry : FileDescriptorRegistry) : ReachedDescription option =
+        named fd registry.Descriptors.Fds
+        |> Option.map (fun id ->
+            match OpenFileTable.tryFindOpenedThrough id registry.OpenFiles with
+            | Some (description, through) ->
+                ({
+                    Id = id
+                    Description = description
+                    OpenedThrough = through
+                }
+                : ReachedDescription)
+            | None ->
+                failwith
+                    $"file descriptor %d{fd} names open file description %O{id}, which is not present in the table (this is a bug in this library: every descriptor names a description in the table)"
+        )
 
     /// What `fd` refers to and where in it, if `fd` is live. For the callers
     /// that move or consume the file offset.
@@ -3152,8 +4429,9 @@ module FileDescriptorRegistry =
 
     /// A fresh open file description, `description`, opened through
     /// `openedThrough` (`OpenFileTable.create`), and the lowest non-negative
-    /// descriptor not in use to point at it, with neither descriptor flag.
+    /// descriptor not in use to point at it, with `flags`.
     let private createDescription
+        (flags : DescriptorFlags)
         (description : OpenFileDescription)
         (openedThrough : ReachedThrough option)
         (registry : FileDescriptorRegistry)
@@ -3168,7 +4446,7 @@ module FileDescriptorRegistry =
         { registry with
             Descriptors =
                 {
-                    Fds = Map.add fd (unflagged id) registry.Descriptors.Fds
+                    Fds = Map.add fd (entry flags id) registry.Descriptors.Fds
                 }
             OpenFiles = openFiles
         }
@@ -3181,10 +4459,10 @@ module FileDescriptorRegistry =
     /// This is the table a process inherits from a launcher that gave it each
     /// of those descriptors onto a pipe of its own; `ProcessLaunch` is the
     /// caller, and mints the pipes. It is the only way to build a table with
-    /// descriptors at chosen numbers, which no syscall can do. `census` says
-    /// whether the process is alone on the machine.
+    /// descriptors at chosen numbers, which no syscall can do. `flavour` is the
+    /// machine's.
     let internal ofLaunchedPipes
-        (census : DescriptorCensus)
+        (flavour : SimulatedUnixFlavour)
         (ends : Map<int, PipeId * PipeEnd>)
         (openFiles : OpenFileTable)
         : FileDescriptorRegistry
@@ -3196,7 +4474,6 @@ module FileDescriptorRegistry =
                         Fds = Map.empty
                     }
                 OpenFiles = openFiles
-                Census = census
             }
 
         ends
@@ -3218,7 +4495,7 @@ module FileDescriptorRegistry =
                             AccessMode = accessMode
                             NonBlocking = false
                             Flock = None
-                            Status = OpenFileStatus.none
+                            Status = OpenFileStatus.none flavour
                         }
                         None
                         registry.OpenFiles
@@ -3226,7 +4503,7 @@ module FileDescriptorRegistry =
                 { registry with
                     Descriptors =
                         {
-                            Fds = Map.add fd (unflagged id) registry.Descriptors.Fds
+                            Fds = Map.add fd (entry (DescriptorFlags.none flavour) id) registry.Descriptors.Fds
                         }
                     OpenFiles = openFiles
                 }
@@ -3237,8 +4514,10 @@ module FileDescriptorRegistry =
     /// the *same* open file description as `oldFd`. No new description is
     /// created, so the description's state is shared with `oldFd` rather than
     /// copied. When `oldFd` is not a live entry, returns `Error BadFd`,
-    /// matching the `EBADF` behaviour of `dup(2)`.
+    /// matching the `EBADF` behaviour of `dup(2)`. The new descriptor has
+    /// neither of `flavour`'s descriptor flags.
     let internal dup
+        (flavour : SimulatedUnixFlavour)
         (oldFd : int)
         (registry : FileDescriptorRegistry)
         : Result<int * FileDescriptorRegistry, FileDescriptorDupError>
@@ -3247,7 +4526,7 @@ module FileDescriptorRegistry =
         | None -> Error FileDescriptorDupError.BadFd
         | Some id ->
             let newFd = lowestFree registry.Descriptors.Fds
-            Ok (newFd, install newFd id DescriptorFlags.none registry)
+            Ok (newFd, install newFd id (DescriptorFlags.none flavour) registry)
 
     /// The `fcntl(F_DUPFD)` half of the table: a new descriptor naming the
     /// description `oldFd` names, the lowest not in use at or above `minimum`,
@@ -3364,32 +4643,7 @@ module FileDescriptorRegistry =
             // registers nothing through this descriptor, whatever numbers it
             // holds.
             let openFiles =
-                (registry.OpenFiles, OpenFileTable.toSeq registry.OpenFiles)
-                ||> Seq.fold (fun openFiles (kqueue, description) ->
-                    match description.Target with
-                    | OpenFileTarget.Kqueue state when
-                        state.Owner = owner
-                        && state.Registrations |> Map.exists (fun (registeredFd, _) _ -> registeredFd = fd)
-                        ->
-                        OpenFileTable.setKqueueState
-                            kqueue
-                            { state with
-                                Registrations =
-                                    state.Registrations
-                                    |> Map.filter (fun (registeredFd, _) _ -> registeredFd <> fd)
-                                Active = state.Active |> List.filter (fun (activeFd, _) -> activeFd <> fd)
-                            }
-                            openFiles
-                    | OpenFileTarget.Kqueue _
-                    | OpenFileTarget.Epoll _
-                    | OpenFileTarget.File _
-                    | OpenFileTarget.Directory _
-                    | OpenFileTarget.Socket _
-                    | OpenFileTarget.CharacterDevice _
-                    | OpenFileTarget.Fifo _
-                    | OpenFileTarget.Inotify _
-                    | OpenFileTarget.Pipe _ -> openFiles
-                )
+                OpenFileTable.dropKqueueRegistrationsThrough owner fd registry.OpenFiles
 
             // Present by `DanglingFd`: a live descriptor names a live
             // description.
@@ -3431,8 +4685,13 @@ module FileDescriptorRegistry =
     /// process may open the file at all are decided before this is reached, and
     /// so is whether a descriptor below the bound is free
     /// (`SimulatedUnixPlatform.descriptorBound`), which `UnixSystem.checkInvariants`
-    /// holds every descriptor to.
+    /// holds every descriptor to. So are the descriptor's `flags`, and the
+    /// description's `status` and whether it is non-blocking (`nonBlocking`),
+    /// which the flag word decides.
     let internal openFile
+        (flags : DescriptorFlags)
+        (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (accessMode : FileAccessMode)
@@ -3440,15 +4699,14 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.File (inode, 0L)
                 AccessMode = accessMode
-                // `UnixNamespace.openPath` refuses `O_NONBLOCK`, so
-                // every modelled open starts blocking.
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 // `open(2)` never takes a lock.
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = status
             }
             (Some openedThrough)
             registry
@@ -3459,8 +4717,12 @@ module FileDescriptorRegistry =
     /// descriptor not in use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether the process may open the
-    /// node is decided before this is reached.
+    /// node is decided before this is reached, and so are `flags`, `status`
+    /// and `nonBlocking`.
     let internal openCharacterDevice
+        (flags : DescriptorFlags)
+        (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (device : CharacterDevice)
@@ -3469,12 +4731,13 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.CharacterDevice (inode, device, CharacterDeviceState.Positionless)
                 AccessMode = accessMode
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = status
             }
             (Some openedThrough)
             registry
@@ -3485,38 +4748,46 @@ module FileDescriptorRegistry =
     /// use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether `inode` is a directory the
-    /// process may read is decided before this is reached.
+    /// process may read is decided before this is reached, and so are
+    /// `flags`, `status` and `nonBlocking`.
     let internal openDirectory
+        (flags : DescriptorFlags)
+        (status : OpenFileStatus)
+        (nonBlocking : bool)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
         (registry : FileDescriptorRegistry)
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.Directory (inode, DirectoryPosition.Cursor DirectoryCursor.Start)
                 AccessMode = FileAccessMode.ReadOnly
-                NonBlocking = false
+                NonBlocking = nonBlocking
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = status
             }
             (Some openedThrough)
             registry
 
     /// A fresh, blocking, read-write open file description naming `target`,
-    /// and the lowest non-negative descriptor not in use to point at it.
+    /// with `flavour`'s status of nothing, and the lowest non-negative
+    /// descriptor not in use to point at it, with neither descriptor flag.
     let private createAnonymous
+        (flavour : SimulatedUnixFlavour)
         (target : OpenFileTarget)
         (registry : FileDescriptorRegistry)
         : int * FileDescriptorRegistry
         =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target = target
                 AccessMode = FileAccessMode.ReadWrite
                 NonBlocking = false
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none flavour
             }
             None
             registry
@@ -3534,9 +4805,15 @@ module FileDescriptorRegistry =
     /// real instance answers `EINVAL` — measured. Linux opens the underlying
     /// anonymous file `O_RDWR`.
     ///
-    /// Total, like `openFile` and for the same reason.
-    let internal createEpoll (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
+    /// Total, like `openFile` and for the same reason. `flavour` is the
+    /// machine's.
+    let internal createEpoll
+        (flavour : SimulatedUnixFlavour)
+        (registry : FileDescriptorRegistry)
+        : int * FileDescriptorRegistry
+        =
         createAnonymous
+            flavour
             (OpenFileTarget.Epoll
                 {
                     Registrations = Map.empty
@@ -3553,14 +4830,16 @@ module FileDescriptorRegistry =
     /// `F_GETFL` reports access mode 0, and `write(2)` of a byte is `EBADF`
     /// (`inotify-probe.c` section I).
     ///
-    /// Total, like `createEpoll`.
+    /// Total, like `createEpoll`. `flavour` is the machine's.
     let internal createInotify
+        (flavour : SimulatedUnixFlavour)
         (owner : UserId)
         (nonBlocking : bool)
         (registry : FileDescriptorRegistry)
         : int * FileDescriptorRegistry
         =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target =
                     OpenFileTarget.Inotify
@@ -3573,7 +4852,7 @@ module FileDescriptorRegistry =
                 AccessMode = FileAccessMode.ReadOnly
                 NonBlocking = nonBlocking
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none flavour
             }
             None
             registry
@@ -3587,9 +4866,15 @@ module FileDescriptorRegistry =
     /// (measured). Measured, Darwin's kqueue is `O_RDWR`, not `O_NONBLOCK`. Its
     /// descriptor flags are `UnixKqueue.kqueue`'s to set.
     ///
-    /// Total, like `createEpoll`.
-    let internal createKqueue (owner : ProcessId) (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
+    /// Total, like `createEpoll`. `flavour` is the machine's.
+    let internal createKqueue
+        (flavour : SimulatedUnixFlavour)
+        (owner : ProcessId)
+        (registry : FileDescriptorRegistry)
+        : int * FileDescriptorRegistry
+        =
         createAnonymous
+            flavour
             (OpenFileTarget.Kqueue
                 {
                     Owner = owner
@@ -3619,9 +4904,16 @@ module FileDescriptorRegistry =
     /// ENOTCONN, EINVAL, EPIPE, EDESTADDRREQ, EAGAIN or a block, never EBADF).
     ///
     /// Total, like `openFile` and `createEpoll`: there is no resource a socket
-    /// could exhaust, and the bound is the caller's to check.
-    let internal createSocket (socketId : SocketId) (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
+    /// could exhaust, and the bound is the caller's to check. `flavour` is the
+    /// machine's.
+    let internal createSocket
+        (flavour : SimulatedUnixFlavour)
+        (socketId : SocketId)
+        (registry : FileDescriptorRegistry)
+        : int * FileDescriptorRegistry
+        =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target = OpenFileTarget.Socket socketId
                 AccessMode = FileAccessMode.ReadWrite
@@ -3631,7 +4923,7 @@ module FileDescriptorRegistry =
                 NonBlocking = false
                 // `socket(2)` takes no lock, exactly as `open(2)` does not.
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none flavour
             }
             None
             registry
@@ -3649,8 +4941,9 @@ module FileDescriptorRegistry =
     /// pipe table rather than here; `UnixPipe.pipe2` is the one caller.
     ///
     /// Total, like `openFile`; the caller checks that both descriptors lie
-    /// below the bound.
+    /// below the bound. `flavour` is the machine's.
     let internal createPipe
+        (flavour : SimulatedUnixFlavour)
         (pipeId : PipeId)
         (nonBlocking : bool)
         (registry : FileDescriptorRegistry)
@@ -3658,13 +4951,14 @@ module FileDescriptorRegistry =
         =
         let add (pipeEnd : PipeEnd) (accessMode : FileAccessMode) (registry : FileDescriptorRegistry) =
             createDescription
+                (DescriptorFlags.none flavour)
                 {
                     Target = OpenFileTarget.Pipe (pipeId, pipeEnd)
                     AccessMode = accessMode
                     NonBlocking = nonBlocking
                     // `pipe(2)` takes no lock.
                     Flock = None
-                    Status = OpenFileStatus.none
+                    Status = OpenFileStatus.none flavour
                 }
                 None
                 registry
@@ -3945,36 +5239,30 @@ module FileDescriptorRegistry =
 
         dangling, kqueueRegistrations
 
-    /// Every way in which `registry` fails to be a descriptor table a kernel
-    /// could produce, with the open file descriptions it names. Empty for any
-    /// registry built out of `ofLaunchedPipes`, `dup` and `close`; the property
-    /// tests assert exactly that.
+    /// Every way in which `registry`, taken as the only descriptor table on its
+    /// machine, fails to be one a kernel could produce, with the open file
+    /// descriptions it names. Empty for any registry built out of
+    /// `ofLaunchedPipes`, `dup` and `close`; the property tests assert exactly
+    /// that.
     ///
-    /// Includes the open file table's own rules, read against this process's
-    /// descriptor table. On a machine running this one process the table
-    /// holds every descriptor, and each description's count of the
-    /// descriptors naming it must be exactly what the table names. On a
-    /// machine holding other processes besides (a registry of a view a
-    /// `SimulatedMachine` focused), only what one table can tell is checked:
-    /// that no description counts fewer descriptors than this table alone
-    /// names, and that every registration of a kqueue this process owns is made
-    /// through one of its descriptors onto a socket. The rest is
-    /// `SimulatedMachine.checkInvariants`'s, which sees every table.
+    /// Includes the open file table's own rules, read against this table
+    /// alone: each description's count of the descriptors naming it must be
+    /// exactly what this table names, and every kqueue's registrations are
+    /// read in this table. A process on a machine holding others is not
+    /// alone, since their tables name descriptions and own kqueues too, so its
+    /// table is checked by `UnixSystem.checkInvariants`, which reads every
+    /// table.
     ///
     /// Whether a description is still referenced, and whether its holds are
     /// those the parks name, are not among them: the parks are the threads',
     /// which a registry does not hold, so those are `UnixSystem.checkInvariants`'s
     /// `UnreferencedDescription` and `HoldCountMismatch`.
-    let checkInvariants (registry : FileDescriptorRegistry) : FileDescriptorRegistryDefect list =
-        let complete, ownsKqueue =
-            match registry.Census with
-            | DescriptorCensus.Complete -> true, (fun (_ : KqueueState) -> true)
-            | DescriptorCensus.OneProcessOf owner -> false, (fun (state : KqueueState) -> state.Owner = owner)
-
-        let dangling, kqueueRegistrations = tableDefects ownsKqueue registry
+    let internal checkInvariants (registry : FileDescriptorRegistry) : FileDescriptorRegistryDefect list =
+        let dangling, kqueueRegistrations =
+            tableDefects (fun (_ : KqueueState) -> true) registry
 
         dangling
-        @ OpenFileTable.defects complete [ registry.Descriptors ] registry.OpenFiles
+        @ OpenFileTable.checkInvariants [ registry.Descriptors ] registry.OpenFiles
         @ kqueueRegistrations
 
     /// Every way in which `registry`'s descriptor table, the table of the
@@ -3983,10 +5271,9 @@ module FileDescriptorRegistry =
     /// and a registration of a kqueue `owner` owns made through a descriptor of
     /// its table that is closed or names no socket.
     ///
-    /// `checkInvariants` without the open file table's own rules, for a caller
-    /// that checks those once against every process's table, as
-    /// `SimulatedMachine.checkInvariants` does.
-    let checkDescriptorTableInvariants
+    /// For a caller that checks the open file table's own rules once against
+    /// every process's table, as `UnixSystem.checkInvariants` does.
+    let internal checkDescriptorTableInvariants
         (owner : ProcessId)
         (registry : FileDescriptorRegistry)
         : FileDescriptorRegistryDefect list
@@ -4011,12 +5298,14 @@ module FileDescriptorRegistry =
     /// nothing outside tests should use it.
     [<RequireQualifiedAccess>]
     module internal Unchecked =
-        /// A registry whose descriptor table is `fds` and whose open file
+        /// A registry whose descriptor table is `fds`, each descriptor with
+        /// neither of `flavour`'s descriptor flags, and whose open file
         /// descriptions are `descriptions`, each counting the descriptors in
         /// `fds` that name it and no holds, each onto an inode recorded as
         /// opened through no name (`ReachedThrough.Unnamed`), with `nextId`
         /// the identity the next one gets.
         let ofParts
+            (flavour : SimulatedUnixFlavour)
             (fds : Map<int, OpenFileDescriptionId>)
             (descriptions : Map<OpenFileDescriptionId, OpenFileDescription>)
             (nextId : OpenFileDescriptionId)
@@ -4027,7 +5316,7 @@ module FileDescriptorRegistry =
             {
                 Descriptors =
                     {
-                        Fds = fds |> Map.map (fun _ id -> unflagged id)
+                        Fds = fds |> Map.map (fun _ id -> entry (DescriptorFlags.none flavour) id)
                     }
                 OpenFiles =
                     {
@@ -4046,9 +5335,9 @@ module FileDescriptorRegistry =
                                     NameIdentity = id
                                 }
                             )
+                            |> OpenFileEntries.ofMap
                         NextId = nextId
                     }
-                Census = DescriptorCensus.Complete
             }
 
         /// Rewrite one description in place, however unsoundly. Partial: the
@@ -4074,9 +5363,9 @@ module FileDescriptorRegistry =
                 OpenFiles =
                     { registry.OpenFiles with
                         Entries =
-                            Map.add
+                            OpenFileEntries.add
                                 id
-                                { Map.find id registry.OpenFiles.Entries with
+                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
                                     OpenedThrough = through
                                 }
                                 registry.OpenFiles.Entries
@@ -4095,9 +5384,9 @@ module FileDescriptorRegistry =
                 OpenFiles =
                     { registry.OpenFiles with
                         Entries =
-                            Map.add
+                            OpenFileEntries.add
                                 id
-                                { Map.find id registry.OpenFiles.Entries with
+                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
                                     Descriptors = count
                                 }
                                 registry.OpenFiles.Entries

@@ -1,0 +1,56 @@
+Linux 6.18.5 aarch64
+A. one LT listener
+  first wait                                                   -> 1: 1
+  second wait                                                  -> 1: 1
+  third wait                                                   -> 1: 1
+  fourth wait                                                  -> 1: 1
+  after accept                                                 -> 0:
+  again                                                        -> 0:
+B. three LT listeners, maxevents 1 then 8
+  maxevents 1                                                  -> 1: 1
+  maxevents 8                                                  -> 3: 2 3 1
+  maxevents 8 again                                            -> 3: 2 3 1
+  maxevents 2                                                  -> 2: 2 3
+  maxevents 8 after that                                       -> 3: 1 2 3
+C. l1 LT, l2 ET, l3 LT
+  first wait                                                   -> 3: 1 2 3
+  second wait                                                  -> 2: 1 3
+D. an edge on a re-queued LT entry
+  first wait                                                   -> 2: 1 2
+  after a second connect to l1                                 -> 2: 1 2
+E. a re-queued LT entry drained
+  first wait                                                   -> 1: 1
+  after accept on l1, edge on l2                               -> 1: 2
+  after edges l1 l2                                            -> 2: 1 2
+F. one-shot, LT
+  first wait                                                   -> 1: 1/0x1
+  second wait                                                  -> 0:
+  after a second connect                                       -> 0:
+  after MOD to the same mask                                   -> 1: 1/0x1
+  again                                                        -> 0:
+  after MOD without ONESHOT                                    -> 1: 1/0x1
+  again                                                        -> 1: 1/0x1
+F. one-shot, ET
+  first wait                                                   -> 1: 1/0x1
+  second wait                                                  -> 0:
+  after a second connect                                       -> 0:
+  after MOD to the same mask                                   -> 1: 1/0x1
+  again                                                        -> 0:
+  after MOD without ONESHOT                                    -> 1: 1/0x1
+  again                                                        -> 0:
+G. one-shot with maxevents 1
+  maxevents 1                                                  -> 1: 1
+  maxevents 1 again                                            -> 1: 2
+  maxevents 8                                                  -> 0:
+H. a one-shot entry stale when walked
+  after edge and accept                                        -> 0:
+  after a second connect                                       -> 1: 1
+I. a disarmed entry and an unkeyed wake
+  fresh                                                        -> 0:
+  after the peer's byte                                        -> 1: 1/0x1
+  after FIN, l2's edge, MOD of c                               -> 2: 2/0x1 1/0x2001
+J. ONESHOT cleared by MOD on a disarmed, idle entry
+  first wait                                                   -> 1: 1
+  after accept and MOD to IN                                   -> 0:
+  after a second connect                                       -> 1: 1
+  again                                                        -> 1: 1

@@ -78,12 +78,17 @@ module UnixTimestamp =
     /// <remarks>
     /// This is <c>create</c> except it throws (naming <c>context</c>) instead of returning <c>None</c>.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentOutOfRangeException"><c>nanoseconds</c> is not in <c>[0, 1e9)</c>.</exception>
     let createOrFail (context : string) (seconds : int64) (nanoseconds : int) : UnixTimestamp =
         match create seconds nanoseconds with
         | Some timestamp -> timestamp
         | None ->
-            failwith
-                $"%s{context}: %d{nanoseconds} is not a nanosecond part; it must lie in [0, %d{nanosecondsPerSecond}). A whole-second count belongs in the seconds field."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.OutOfRange "nanoseconds")
+                    $"%d{nanoseconds} is not a nanosecond part; it must lie in [0, %d{nanosecondsPerSecond}). A whole-second count belongs in the seconds field."
+            )
 
     /// <summary>
     /// A timestamp formed from "integer number of seconds since the epoch".
@@ -124,3 +129,9 @@ module UnixTimestamp =
     /// reads before any time has passed.
     /// </remarks>
     let epoch : UnixTimestamp = UnixTimestamp (0L, 0)
+
+    /// The latest whole microsecond not after `timestamp`, which is what a
+    /// filesystem keeping its times to the microsecond stores for it.
+    let internal truncateToMicroseconds (timestamp : UnixTimestamp) : UnixTimestamp =
+        match timestamp with
+        | UnixTimestamp (seconds, nanoseconds) -> UnixTimestamp (seconds, nanoseconds - nanoseconds % 1000)

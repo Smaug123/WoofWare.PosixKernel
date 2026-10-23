@@ -1,0 +1,31 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, gcc:14 container, run by setpriv --reuid=1000 --regid=1000 --clear-groups
+# Linux 6.18.5 aarch64, uid 1000
+# NSIG=65 sigqueue=present SIGRTMIN=34 SIGRTMAX=64 RLIMIT_SIGPENDING=4505/4505
+section=send limit=4 method=kill sig=RTMIN+0 answers: 0 0 0 0 0 0 0 0 sigq=4/4 drained: RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own count=4
+section=send limit=4 method=kill sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=1/4 drained: USR1/SI_USER/pid=own count=1
+section=send limit=4 method=sigqueue sig=RTMIN+0 answers: 0 0 0 0 EAGAIN EAGAIN EAGAIN EAGAIN sigq=4/4 drained: RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=4
+section=send limit=4 method=sigqueue sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=1/4 drained: USR1/SI_QUEUE/pid=own count=1
+section=send limit=4 method=pthread_kill sig=RTMIN+0 answers: 0 0 0 0 EAGAIN EAGAIN EAGAIN EAGAIN sigq=4/4 drained: RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own RTMIN+0/SI_USER/pid=own count=4
+section=send limit=4 method=pthread_kill sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=1/4 drained: USR1/SI_USER/pid=own count=1
+section=send limit=0 method=kill sig=RTMIN+0 answers: 0 0 0 0 0 0 0 0 sigq=0/0 drained: RTMIN+0/SI_USER/pid=0 count=1
+section=send limit=0 method=kill sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=1/0 drained: USR1/SI_USER/pid=own count=1
+section=send limit=0 method=sigqueue sig=RTMIN+0 answers: EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN sigq=0/0 drained: count=0
+section=send limit=0 method=sigqueue sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=0/0 drained: USR1/SI_USER/pid=0 count=1
+section=send limit=0 method=pthread_kill sig=RTMIN+0 answers: EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN EAGAIN sigq=0/0 drained: count=0
+section=send limit=0 method=pthread_kill sig=USR1 answers: 0 0 0 0 0 0 0 0 sigq=0/0 drained: USR1/SI_USER/pid=0 count=1
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=kill sig=USR1 fill-answers: 0 0 0 0 answer=0 sigq=5/4 drained: USR1/SI_USER/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=5
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=kill sig=RTMIN+1 fill-answers: 0 0 0 0 answer=0 sigq=4/4 drained: RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+1/SI_USER/pid=0 count=5
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=sigqueue sig=USR1 fill-answers: 0 0 0 0 answer=0 sigq=4/4 drained: USR1/SI_USER/pid=0 RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=5
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=sigqueue sig=RTMIN+1 fill-answers: 0 0 0 0 answer=EAGAIN sigq=4/4 drained: RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=4
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=pthread_kill sig=USR1 fill-answers: 0 0 0 0 answer=0 sigq=4/4 drained: USR1/SI_USER/pid=0 RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=5
+section=mixed limit=4 fill=sigqueue(RTMIN)x4 then method=pthread_kill sig=RTMIN+1 fill-answers: 0 0 0 0 answer=EAGAIN sigq=4/4 drained: RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own RTMIN+0/SI_QUEUE/pid=own count=4
+section=user limit=4 sibling-holds=4 method=kill sig=RTMIN answer=0 sigq=4/4 drained: RTMIN+0/SI_USER/pid=0 count=1
+section=user limit=4 sibling-holds=4 method=sigqueue sig=RTMIN answer=EAGAIN sigq=4/4 drained: count=0
+section=user limit=4 sibling-holds=4 method=pthread_kill sig=RTMIN answer=EAGAIN sigq=4/4 drained: count=0
+section=bare row=rt-bare-then-allocated limit=1 sigqueue(RTMIN)=0 kill(RTMIN+1)=0 sigq=1/1 took-RTMIN+0:SI_QUEUE/pid=own sigq=0/1 sigqueue(RTMIN+1)=0 sigq=1/1 drained: RTMIN+1/SI_QUEUE/pid=own count=1
+section=bare row=rt-allocated-then-bare limit=1 sigqueue(RTMIN+1)=0 kill(RTMIN+1)=0 sigq=1/1 drained: RTMIN+1/SI_QUEUE/pid=own count=1
+section=bare row=standard-bare-counts limit=1 sigqueue(RTMIN)=0 pthread_kill(USR1)=0 sigq=1/1 took-RTMIN+0:SI_QUEUE/pid=own sigq=0/1 sigqueue(RTMIN+1)=0 sigq=1/1 drained: USR1/SI_USER/pid=0 RTMIN+1/SI_QUEUE/pid=own count=2
+section=bare row=standard-bare-twice-then-kill limit=0 pthread_kill(USR1)=0 pthread_kill(USR1)=0 kill(USR1)=0 sigq=1/0 drained: USR1/SI_USER/pid=0 USR1/SI_USER/pid=own count=2
+section=ignored limit=0 sig=RTMIN(SIG_IGN) unblocked pthread_kill=0 kill=0 sigq=0/0 pending=0 drained: count=0
+section=ignored limit=0 sig=RTMIN(SIG_IGN) blocked pthread_kill=EAGAIN kill=0 sigq=0/0 pending=1 drained: RTMIN+0/SI_USER/pid=0 count=1
+# not root: section other skipped

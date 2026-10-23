@@ -20,53 +20,13 @@ open WoofWare.PosixKernel
 /// The two sides allocate ephemeral ports independently, so an address is
 /// compared by which of the scenario's endpoints it names, never by its bytes.
 [<TestFixture>]
+[<NonParallelizable>]
+// Takes a port that a socket it closed has just freed as one nothing listens
+// on, which a host test beside it could bind in the meantime.
 module TestPeerNameAgainstHost =
-
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
 
     [<DllImport("libc", EntryPoint = "getpeername", SetLastError = true)>]
     extern int private hostGetPeerName(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, byte[] value, uint32& optionLength)
-
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
-    // arm64 ABI passes variadic arguments on the stack), so this goes through
-    // the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
 
     [<Literal>]
     let private AF_UNIX = 1
@@ -95,7 +55,7 @@ module TestPeerNameAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestPeerNameAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
+                let page = HostCalls.mmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestPeerNameAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -184,18 +144,18 @@ module TestPeerNameAgainstHost =
             failwith $"the host's %s{what} failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
     let private hostNew (domain : int) (kind : int) : int =
-        let fd = hostSocket (domain, kind, 0)
+        let fd = HostCalls.socket (domain, kind, 0)
         check "socket" fd
         fd
 
     let private hostBindTo (platform : SimulatedUnixPlatform) (fd : int) (endpoint : Ipv4Endpoint) : unit =
         let address = SimulatedUnixPlatform.encodeInternetSockaddr platform endpoint
-        check "bind" (hostBind (fd, address, uint32 address.Length))
+        check "bind" (HostCalls.bind (fd, address, uint32 address.Length))
 
     let private hostName (fd : int) : Ipv4Endpoint =
         let name = Array.zeroCreate<byte> 16
         let mutable length = 16u
-        check "getsockname" (hostGetSockName (fd, name, &length))
+        check "getsockname" (HostCalls.getSockName (fd, name, &length))
 
         Ipv4Endpoint.ofParts
             (Ipv4Address (Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian (ReadOnlySpan (name, 4, 4))))
@@ -206,7 +166,7 @@ module TestPeerNameAgainstHost =
         let address = SimulatedUnixPlatform.encodeInternetSockaddr platform endpoint
         Marshal.SetLastPInvokeError 0
 
-        if hostConnect (fd, address, uint32 address.Length) = 0 then
+        if HostCalls.connect (fd, address, uint32 address.Length) = 0 then
             0
         else
             Marshal.GetLastPInvokeError ()
@@ -217,20 +177,20 @@ module TestPeerNameAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 POLLOUT <<< 32) |]
 
-        if hostPoll (entry, 1un, 5000) <> 1 then
+        if HostCalls.pollPacked (entry, 1un, 5000) <> 1 then
             failwith $"the host's connect on fd %d{fd} had no outcome after five seconds"
 
     let private hostListener (platform : SimulatedUnixPlatform) (address : Ipv4Endpoint) : int * uint16 =
         let fd = hostNew AF_INET SOCK_STREAM
         hostBindTo platform fd address
-        check "listen" (hostListen (fd, 16))
+        check "listen" (HostCalls.listen (fd, 16))
         fd, (hostName fd).Port
 
     let private hostDeadPort (platform : SimulatedUnixPlatform) : uint16 =
         let fd = hostNew AF_INET SOCK_STREAM
         hostBindTo platform fd (loopback 0us)
         let port = (hostName fd).Port
-        hostClose fd |> ignore<int>
+        HostCalls.close fd |> ignore<int>
         port
 
     let private hostTakeError (platform : SimulatedUnixPlatform) (fd : int) : unit =
@@ -239,7 +199,7 @@ module TestPeerNameAgainstHost =
 
         check
             "getsockopt(SO_ERROR)"
-            (hostGetSockOpt (
+            (HostCalls.getSockOptBytes (
                 fd,
                 SimulatedUnixPlatform.socketOptionLevel platform,
                 SimulatedUnixPlatform.socketErrorOption platform,
@@ -263,7 +223,7 @@ module TestPeerNameAgainstHost =
             listener, client, roles
 
         let accept (listener : int) : int =
-            let fd = hostAccept (listener, 0n, 0n)
+            let fd = HostCalls.accept (listener, 0n, 0n)
             check "accept" fd
             fd
 
@@ -291,19 +251,19 @@ module TestPeerNameAgainstHost =
             server, roles, [ client ; server ; listener ]
         | Scenario.ClientPeerClosed ->
             let listener, client, roles = connected (loopback 0us) loopback
-            hostClose (accept listener) |> ignore<int>
+            HostCalls.close (accept listener) |> ignore<int>
             Thread.Sleep 50
             client, roles, [ client ; listener ]
         | Scenario.AcceptedPeerClosed ->
             let listener, client, roles = connected (loopback 0us) loopback
             let server = accept listener
-            hostClose client |> ignore<int>
+            HostCalls.close client |> ignore<int>
             Thread.Sleep 50
             server, roles, [ server ; listener ]
         | Scenario.NonBlockingClient ->
             let listener, port = hostListener platform (loopback 0us)
             let client = hostNew AF_INET SOCK_STREAM
-            check "O_NONBLOCK" (hostSetNonBlocking (nativeint client, 1))
+            check "O_NONBLOCK" (HostCalls.setNonBlocking (nativeint client, 1))
             hostConnectTo platform client (loopback port) |> ignore<int>
             settle client
 
@@ -315,7 +275,7 @@ module TestPeerNameAgainstHost =
         | Scenario.RefusedTaken ->
             let port = hostDeadPort platform
             let client = hostNew AF_INET SOCK_STREAM
-            check "O_NONBLOCK" (hostSetNonBlocking (nativeint client, 1))
+            check "O_NONBLOCK" (HostCalls.setNonBlocking (nativeint client, 1))
             hostConnectTo platform client (loopback port) |> ignore<int>
             settle client
 
@@ -347,7 +307,7 @@ module TestPeerNameAgainstHost =
 
             if scenario = Scenario.DatagramDissolved then
                 let unspecified = CopyIn.blob platform 0 (wildcard 0us)
-                hostConnect (fd, unspecified, 16u) |> ignore<int>
+                HostCalls.connect (fd, unspecified, 16u) |> ignore<int>
 
             fd, Map.ofList [ "receiver", loopback port ], [ fd ; receiver ]
         | Scenario.FreshInet6Stream ->
@@ -371,7 +331,7 @@ module TestPeerNameAgainstHost =
     let private modelName (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint
             | None -> failwith $"the model's fd %d{fd} is not bound"
         | other -> failwith $"the model's fd %d{fd} names %A{other}, not a socket"
@@ -404,22 +364,17 @@ module TestPeerNameAgainstHost =
 
             let system = bindTo fd address system
 
-            match UnixSocket.tryListen fd 16 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 16 system with
             | Ok (ListenAnswer.Listening _, system) -> fd, (modelName fd system).Port, system
             | other -> failwith $"the model's listen answered %A{other}"
 
-        let nonBlocking (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.setNonBlocking fd true system with
-            | SetNonBlockingAnswer.Set, system -> system
-            | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
-
         let accept (listener : int) (system : UnixSystem<int, string>) =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
-            | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"the model's accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | Ok (SyscallAnswer.Failed error, _) -> failwith $"the model's close answered %O{error}"
             | Error refusal -> failwith $"the model refused a close: %s{CloseRefusal.describe refusal}"
@@ -485,7 +440,7 @@ module TestPeerNameAgainstHost =
             let client, system =
                 create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-            let system = nonBlocking client system
+            let system = NonBlocking.set client system
             let system = connectTo client (CopyIn.inet platform (loopback port)) system
 
             client, Map.ofList [ "listener", loopback port ; "client", modelName client system ], system
@@ -499,7 +454,7 @@ module TestPeerNameAgainstHost =
             let client, system =
                 create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-            let system = nonBlocking client system
+            let system = NonBlocking.set client system
             let system = connectTo client (CopyIn.inet platform (loopback port)) system
 
             let system =
@@ -508,7 +463,7 @@ module TestPeerNameAgainstHost =
                     let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
                     match
-                        UnixSocket.tryGetsockoptLength
+                        Lone.UnixSocket.tryGetsockoptLength
                             client
                             level
                             optionName
@@ -739,7 +694,7 @@ module TestPeerNameAgainstHost =
         (system : UnixSystem<int, string>)
         : Observed
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let userBuffer =
             match destination with
@@ -756,7 +711,7 @@ module TestPeerNameAgainstHost =
             | Destination.Null
             | Destination.Faulting -> None
 
-        match UnixSocket.tryGetpeername fd userBuffer declared system with
+        match UnixSocket.tryGetpeername (Callers.leader system) fd userBuffer declared system with
         | Error refusal -> failwith $"the model refused: %s{GetSockNameRefusal.describe refusal}"
         | Ok (GetSockNameAnswer.Reported (copied, reported)) ->
             {
@@ -803,5 +758,5 @@ module TestPeerNameAgainstHost =
                     failwith (String.Join ("\n", disagreements))
             finally
                 for fd in owned do
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
         )

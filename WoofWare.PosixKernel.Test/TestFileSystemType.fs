@@ -24,34 +24,8 @@ open WoofWare.PosixKernel
 /// be whatever mount its client configures, where this host's mounts have
 /// sizes, identities and options of their own.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestFileSystemType =
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private pipe(int[] fds)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private socket(int domain, int kind, int protocol)
-
-    /// Darwin's anonymous-inode object. Declared unconditionally: a `DllImport`
-    /// binds on first call, so naming a symbol this host lacks costs nothing
-    /// until something calls it.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private kqueue()
-
-    /// Linux's.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private epoll_create1(int flags)
-
-    [<DllImport("libc")>]
-    extern int private close(int fd)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    /// Darwin arm64's `fstat`, whose `struct stat` begins with a 4-byte
-    /// `st_dev`.
-    [<DllImport("libc", EntryPoint = "fstat", SetLastError = true)>]
-    extern int private darwinFstat(int fd, byte[] buffer)
 
     let private context : string = "TestFileSystemType"
 
@@ -68,8 +42,8 @@ module TestFileSystemType =
         (UnixSystem.initial<int, string> (HostPlatform.platformOf flavour)
          |> UnixBootImage.tryWithMount mount
          |> Configured.expectOk MountRefusal.describe
-         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-            .Machine
+         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+         |> Kernel.machine)
 
     let private everyFlavour : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
@@ -135,9 +109,10 @@ module TestFileSystemType =
             }
 
     /// Every APFS field measured on Darwin, with the fields the mount was
-    /// configured with. The flags are local, root, volfs, journaled,
-    /// multilabel and no-atime; the `f_fsid` is `{ st_dev, f_type }` for the
-    /// `st_dev` every inode here reports.
+    /// configured with. The flags are local, root, volfs, journaled and
+    /// multilabel, with neither no-atime nor strict-atime, as a Mac's data
+    /// volume reports; the `f_fsid` is `{ st_dev, f_type }` for the `st_dev`
+    /// every inode here reports.
     let private measuredApfs (apfs : ApfsMount) : FileSystemStatistics =
         FileSystemStatistics.Darwin
             {
@@ -160,7 +135,7 @@ module TestFileSystemType =
                     Ok
                         {
                             Owner = apfs.Owner
-                            Flags = 0x1480D000u
+                            Flags = 0x0480D000u
                             ExtendedFlags = 0u
                             SubType = 0u
                             MountedOn = utf8 "/"
@@ -277,13 +252,14 @@ module TestFileSystemType =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private openPath (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath reading (UnixPath.parseOrFail context path) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"test bug: open %s{path} failed with %O{error}"
+        match Answered.openPath (UnixPath.parseOrFail context path) reading 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
+        | DescriptorAnswer.Failed error, _ -> failwith $"test bug: open %s{path} failed with %O{error}"
 
     /// `fstatfs` on the file, the directory and the root, and `statfs` on each
     /// of their paths and through the link: every one of them is on the one
@@ -294,14 +270,14 @@ module TestFileSystemType =
         let rootFd, system = openPath "/" system
 
         [
-            UnixPathResolution.fstatfs fileFd system
-            UnixPathResolution.fstatfs dirFd system
-            UnixPathResolution.fstatfs rootFd system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/f")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/d")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "ld")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "d/")) system
+            UnixPathResolution.fstatfs (Callers.leader system) fileFd system
+            UnixPathResolution.fstatfs (Callers.leader system) dirFd system
+            UnixPathResolution.fstatfs (Callers.leader system) rootFd system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/f")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/d")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "ld")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "d/")) system
         ]
 
     // ----------------------------------------------------------- type fields
@@ -339,8 +315,56 @@ module TestFileSystemType =
     [<Test>]
     let ``type fields for a pair that describes no machine are refused`` () : unit =
         for flavour, fsType in everyIncoherentPair do
-            Assert.Throws (fun () -> EmulatedFileSystemType.fieldsFor flavour fsType |> ignore<FileSystemTypeFields>)
-            |> ignore<exn>
+            (Assert.Throws<ArgumentException> (fun () ->
+                EmulatedFileSystemType.fieldsFor flavour fsType |> ignore<FileSystemTypeFields>
+            ))
+                .ParamName
+            |> shouldEqual "fsType"
+
+    [<Test>]
+    let ``statistics for a platform and mount that describe no machine are the caller's mistake`` () : unit =
+        for platform in everyPlatform do
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            for fsType in everyIncoherentPair |> List.filter (fst >> (=) flavour) |> List.map snd do
+                let mount = EmulatedMount.defaultOf fsType
+
+                (Assert.Throws<ArgumentException> (fun () ->
+                    FileSystemStatistics.ofMount platform mount |> ignore<FileSystemStatistics>
+                ))
+                    .ParamName
+                |> shouldEqual "mount"
+
+                for target in
+                    [
+                        OpenFileObject.File (InodeNumber 7L)
+                        OpenFileObject.Pipe (PipeId 0L)
+                        OpenFileObject.Socket (SocketId 1L)
+                        OpenFileObject.AnonymousInode
+                        OpenFileObject.Kqueue (OpenFileDescriptionId 2L)
+                    ] do
+                    (Assert.Throws<ArgumentException> (fun () ->
+                        FileSystemStatistics.ofObject platform mount target
+                        |> ignore<FileSystemStatisticsAnswer>
+                    ))
+                        .ParamName
+                    |> shouldEqual "mount"
+
+    [<Test>]
+    let ``a kqueue on a Linux machine is the caller's mistake`` () : unit =
+        for platform in everyPlatform do
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Linux ->
+                (Assert.Throws<ArgumentException> (fun () ->
+                    FileSystemStatistics.ofObject
+                        platform
+                        (EmulatedMount.defaultFor SimulatedUnixFlavour.Linux)
+                        (OpenFileObject.Kqueue (OpenFileDescriptionId 2L))
+                    |> ignore<FileSystemStatisticsAnswer>
+                ))
+                    .ParamName
+                |> shouldEqual "target"
 
     // ------------------------------------------------ mount and flavour agree
 
@@ -540,7 +564,7 @@ module TestFileSystemType =
                 let system = systemWith platform mount
 
                 for fd in [ 0 ; 1 ; 2 ] do
-                    UnixPathResolution.fstatfs fd system
+                    UnixPathResolution.fstatfs (Callers.leader system) fd system
                     |> shouldEqual (measuredNotOnAMount flavour PseudoFileSystem.Pipe)
 
                 FileSystemStatistics.ofObject platform mount (OpenFileObject.Socket (SocketId 3L))
@@ -556,7 +580,7 @@ module TestFileSystemType =
                 systemWith platform (EmulatedMount.defaultFor (SimulatedUnixPlatform.flavour platform))
 
             for fd in [ -1 ; 3 ; 4242 ; Int32.MaxValue ; Int32.MinValue ] do
-                UnixPathResolution.fstatfs fd system
+                UnixPathResolution.fstatfs (Callers.leader system) fd system
                 |> shouldEqual (FileSystemStatisticsAnswer.Failed UnixError.EBADF)
 
     [<Test>]
@@ -570,11 +594,11 @@ module TestFileSystemType =
         let fd, system = openPath "/f" system
 
         let device =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) -> status.DeviceId
             | other -> failwith $"fstat: %A{other}"
 
-        match UnixPathResolution.fstatfs fd system with
+        match UnixPathResolution.fstatfs (Callers.leader system) fd system with
         | FileSystemStatisticsAnswer.Reported (FileSystemStatistics.Darwin darwin) ->
             darwin.FileSystemIdResult
             |> shouldEqual (
@@ -612,7 +636,10 @@ module TestFileSystemType =
 
                 for path, expected in measuredPathRows do
                     let answer =
-                        Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context path)) system
+                        Answered.statfs
+                            (Callers.leader system)
+                            (PathArg.ofPath (UnixPath.parseOrFail context path))
+                            system
 
                     match expected, answer with
                     | Some error, FileSystemStatisticsAnswer.Failed actual when actual = error -> ()
@@ -650,13 +677,19 @@ module TestFileSystemType =
                 let parsed = UnixPath.parseOrFail context path
 
                 let viaStat =
-                    match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath parsed) system with
+                    match
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.Follow
+                            (PathArg.ofPath parsed)
+                            system
+                    with
                     | Ok (FileStatusAnswer.Failed error) -> Some error
                     | Ok (FileStatusAnswer.Reported _) -> None
                     | Error refusal -> failwith $"test bug: stat refused: %s{StatRefusal.describe refusal}"
 
                 let viaStatfs =
-                    match Answered.statfs (PathArg.ofPath parsed) system with
+                    match Answered.statfs (Callers.leader system) (PathArg.ofPath parsed) system with
                     | FileSystemStatisticsAnswer.Failed error -> Some error
                     | FileSystemStatisticsAnswer.Reported _ -> None
 
@@ -669,8 +702,8 @@ module TestFileSystemType =
 
     [<Test>]
     let ``answering for a machine that is no machine is refused, whatever is asked`` () : unit =
-        // `UnixMachineState` is a public record, so `{ machine with Mount =
-        // ... }` bypasses the setter that keeps the platform and the mount
+        // `{ machine with Mount = ... }`, which this library's own code could
+        // write, bypasses the setter that keeps the platform and the mount
         // together. This is what stops such a kernel producing a *quietly*
         // wrong answer — one machine's files with another's pipes — rather
         // than a loud one. Every kind of question, including ones that fail
@@ -681,15 +714,19 @@ module TestFileSystemType =
                 systemWith (HostPlatform.platformOf flavour) (EmulatedMount.defaultFor flavour)
 
             let incoherent =
-                { coherent with
-                    Machine =
-                        { coherent.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Mount = EmulatedMount.defaultOf fsType
                         }
-                }
+                    )
+                    coherent
 
             for fd in [ 0 ; 4242 ] do
-                Assert.Throws (fun () -> UnixPathResolution.fstatfs fd incoherent |> ignore<FileSystemStatisticsAnswer>)
+                Assert.Throws (fun () ->
+                    UnixPathResolution.fstatfs (Callers.leader incoherent) fd incoherent
+                    |> ignore<FileSystemStatisticsAnswer>
+                )
                 |> ignore<exn>
 
             // Including arguments the kernel cannot copy in, which fail before
@@ -701,21 +738,12 @@ module TestFileSystemType =
                     PathArgumentBytes.Unreadable
                     PathArg.ofText (String.replicate 5000 "a")
                 ] do
-                Assert.Throws (fun () -> Answered.statfs path incoherent |> ignore<FileSystemStatisticsAnswer>)
-                |> ignore<exn>
-
-            for target in
-                [
-                    OpenFileObject.File (InodeNumber 7L)
-                    OpenFileObject.Pipe (PipeId 0L)
-                    OpenFileObject.Socket (SocketId 1L)
-                    OpenFileObject.AnonymousInode
-                ] do
                 Assert.Throws (fun () ->
-                    FileSystemStatistics.ofObject incoherent.Machine.UnixPlatform incoherent.Machine.Mount target
+                    Answered.statfs (Callers.leader incoherent) path incoherent
                     |> ignore<FileSystemStatisticsAnswer>
                 )
                 |> ignore<exn>
+
 
     // ------------------------------------------------------------- the host
 
@@ -762,21 +790,22 @@ module TestFileSystemType =
             let platform = HostPlatform.platformOf flavour
             let mount = EmulatedMount.defaultFor flavour
 
+            // Each flavour's anonymous-inode object.
             let anonymousInode () : int =
                 match flavour with
-                | SimulatedUnixFlavour.Darwin -> kqueue ()
-                | SimulatedUnixFlavour.Linux -> epoll_create1 0
+                | SimulatedUnixFlavour.Darwin -> HostCalls.kqueue ()
+                | SimulatedUnixFlavour.Linux -> HostCalls.epollCreate1 0
 
             let ends : int[] = Array.zeroCreate 2
 
-            if pipe ends <> 0 then
+            if HostCalls.pipe ends <> 0 then
                 failwith $"pipe(2) failed: errno %d{Marshal.GetLastWin32Error ()}"
 
             // AF_INET, AF_UNIX, SOCK_STREAM and SOCK_DGRAM are 2, 1, 1 and 2 on
             // both of the Unixes modelled.
-            let inet = socket (2, 1, 0)
-            let datagram = socket (2, 2, 0)
-            let local = socket (1, 1, 0)
+            let inet = HostCalls.socket (2, 1, 0)
+            let datagram = HostCalls.socket (2, 2, 0)
+            let local = HostCalls.socket (1, 1, 0)
 
             for s in [ inet ; datagram ; local ] do
                 if s < 0 then
@@ -812,12 +841,12 @@ module TestFileSystemType =
 
                     agreeOnStatedGroups $"a %s{label} on this %O{flavour} host" hostSaid modelSaid
             finally
-                close ends.[0] |> ignore<int>
-                close ends.[1] |> ignore<int>
-                close inet |> ignore<int>
-                close datagram |> ignore<int>
-                close local |> ignore<int>
-                close eventQueue |> ignore<int>
+                HostCalls.close ends.[0] |> ignore<int>
+                HostCalls.close ends.[1] |> ignore<int>
+                HostCalls.close inet |> ignore<int>
+                HostCalls.close datagram |> ignore<int>
+                HostCalls.close local |> ignore<int>
+                HostCalls.close eventQueue |> ignore<int>
         )
 
     [<Test>]
@@ -829,7 +858,7 @@ module TestFileSystemType =
                 systemWith (HostPlatform.platformOf flavour) (EmulatedMount.defaultFor flavour)
 
             HostFileSystemType.statisticsFor flavour 4242
-            |> shouldEqual (UnixPathResolution.fstatfs 4242 system)
+            |> shouldEqual (UnixPathResolution.fstatfs (Callers.leader system) 4242 system)
         )
 
     /// A read-only descriptor onto this host's directory of the filesystem the
@@ -845,7 +874,7 @@ module TestFileSystemType =
             | SimulatedUnixFlavour.Linux -> "/dev/shm"
             | SimulatedUnixFlavour.Darwin -> Path.GetTempPath ()
 
-        let fd = hostOpen (path, 0, 0)
+        let fd = HostCalls.openFile (path, 0, 0)
 
         if fd < 0 then
             Assert.Ignore $"cannot open %s{path}: errno %d{Marshal.GetLastWin32Error ()}"
@@ -859,7 +888,7 @@ module TestFileSystemType =
                 action fd host
             | other -> Assert.Ignore $"%s{path} is not the flavour's default filesystem: fstatfs answers %A{other}"
         finally
-            close fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``a directory on this host's own filesystem reports the model's type and geometry`` () : unit =
@@ -920,9 +949,10 @@ module TestFileSystemType =
                 (fun fd host ->
                     let buffer = Array.zeroCreate<byte> 4096
 
-                    if darwinFstat (fd, buffer) <> 0 then
+                    if HostCalls.fstat (fd, buffer) <> 0 then
                         failwith $"fstat failed: errno %d{Marshal.GetLastWin32Error ()}"
 
+                    // Darwin arm64's `struct stat` begins with a 4-byte `st_dev`.
                     let device = BitConverter.ToInt32 (buffer, 0)
 
                     match host with

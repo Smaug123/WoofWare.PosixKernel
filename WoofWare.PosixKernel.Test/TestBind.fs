@@ -60,6 +60,8 @@ module TestBind =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
+            Uid = UserId.root
         }
 
     let private withSocket
@@ -69,19 +71,24 @@ module TestBind =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketId
+                (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     /// A fresh unbound TCP socket, and the descriptor onto it, in a process
@@ -114,7 +121,7 @@ module TestBind =
         | answer, _ -> failwith $"expected an IPv4 bind to succeed, got %A{answer}"
 
     let private bindingOf (socketId : SocketId) (system : UnixSystem<int, string>) : Ipv4Binding option =
-        (UnixMachineState.socket socketId system.Machine).Ipv4Binding
+        (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding
 
     // ------------------------------------------------------------------
     // The happy path
@@ -147,7 +154,7 @@ module TestBind =
         let fd, system = stream platform
         let where, system = bound fd (loopback 0us) system
 
-        let low, high = system.Machine.EphemeralPortRange
+        let low, high = UnixSystem.ephemeralPortRange system
         (where.Port >= low && where.Port <= high) |> shouldEqual true
         where.Address |> shouldEqual Ipv4Address.loopback
 
@@ -220,6 +227,35 @@ module TestBind =
         bindOrFail rootFd (loopback 1023us) asRoot
         |> fst
         |> shouldEqual (BindAnswer.Bound (SocketAddress.Inet (loopback 1023us)))
+
+    /// Darwin asks for root only when the address is not the wildcard; Linux
+    /// asks whatever the address. Measured, stream and datagram alike, at
+    /// ports 1, 80 and 1023 (`docs/probes/privileged-port`).
+    [<Test>]
+    let ``only Darwin lets an unprivileged process bind the wildcard at a privileged port`` () : unit =
+        let rows =
+            [
+                SimulatedUnixPlatform.linuxX64, SocketKind.Stream, false
+                SimulatedUnixPlatform.linuxX64, SocketKind.Datagram, false
+                SimulatedUnixPlatform.macOsArm64, SocketKind.Stream, true
+                SimulatedUnixPlatform.macOsArm64, SocketKind.Datagram, true
+            ]
+
+        for platform, kind, binds in rows do
+            for port in [ 1us ; 80us ; 1023us ] do
+                let fd, system =
+                    withSocket (SocketId 0L) (socketOfKind kind SocketPhase.Idle) (systemOn platform)
+
+                let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any port
+
+                match bindOrFail fd wildcard system |> fst, binds with
+                | BindAnswer.Bound (SocketAddress.Inet where), true -> where |> shouldEqual wildcard
+                | BindAnswer.Failed UnixError.EACCES, false -> ()
+                | answer, _ -> failwith $"platform %O{platform}, %O{kind}, port %d{port}: got %A{answer}"
+
+                bindOrFail fd (loopback port) system
+                |> fst
+                |> shouldEqual (BindAnswer.Failed UnixError.EACCES)
 
     /// Whether a port below the ceiling may be bound is decided by the effective
     /// user ID alone, measured on Linux (`credentials.c`): a real or saved uid of
@@ -409,7 +445,7 @@ module TestBind =
                      | BindAnswer.Failed _ -> false)
                     |> shouldEqual succeeds
 
-                    (UnixMachineState.socket (SocketId 0L) after.Machine).ReuseAddress
+                    (UnixMachineState.socket (SocketId 0L) (Kernel.machine after)).ReuseAddress
                     |> shouldEqual reuse
                 | Error refusal -> failwith $"expected an answer, got a refusal: %s{BindRefusal.describe refusal}"
 
@@ -466,8 +502,8 @@ module TestBind =
             if blocking then
                 system
             else
-                UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+                Lone.withFileDescriptors
+                    (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                     system
 
         let expected =
@@ -538,13 +574,14 @@ module TestBind =
 
         // One port in the range, and a socket already holding it.
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         EphemeralPortRange = (40000us, 40000us)
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                system
 
         let holder, system =
             withSocket (SocketId 1L) (socketOfKind SocketKind.Stream SocketPhase.Idle) system
@@ -570,7 +607,7 @@ module TestBind =
 
         let e =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixSocket.tryBindBytes fd UserBuffer.Mapped exactLength ImmutableArray.Empty system
+                Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped exactLength ImmutableArray.Empty system
                 |> ignore<_>
             )
 

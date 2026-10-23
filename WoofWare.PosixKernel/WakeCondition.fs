@@ -1,199 +1,5 @@
 namespace WoofWare.PosixKernel
 
-/// One thing a thread parked in a syscall can be waiting for, which holds or does
-/// not of a given system.
-///
-/// A primitive names live kernel objects rather than a snapshot of them, and
-/// stays true to what a real kernel waits on rather than to what is convenient
-/// to evaluate. The park a primitive comes from holds the open file
-/// descriptions it names (`ParkedSyscall.descriptions`), so they stay alive
-/// while something waits on them.
-[<RequireQualifiedAccess>]
-type WakePrimitive =
-    /// An `flock` acquisition of `mode` by the open file description
-    /// `requester`, parked because another description naming the same object
-    /// holds a conflicting lock.
-    ///
-    /// Note what this does *not* say: nothing about which description obstructs
-    /// it. A waiter waits for its lock to become available, not for a particular
-    /// holder to go away — a new acquirer between the release and the wake puts
-    /// it back to sleep, as it does on a real kernel.
-    ///
-    /// `requester` is the open file description rather than the descriptor the
-    /// call was made through, because the lock belongs to the description: a
-    /// `dup` of that descriptor waits on the same lock, and the number itself is
-    /// reusable while the description lives on.
-    | FlockGrantable of requester : OpenFileDescriptionId * mode : FlockMode
-    /// A wait for events on the epoll instance the open file description
-    /// `epoll` names, parked because the instance had nothing to deliver.
-    ///
-    /// Carries no event count, unlike the record a client parks with: how many
-    /// events the caller asked for decides what the *finishing* call copies out,
-    /// and says nothing about whether it can finish at all. A single deliverable
-    /// event satisfies a wait for any number of them.
-    ///
-    /// `epoll` is the open file description rather than the descriptor, for the
-    /// reason `FlockGrantable`'s requester is: the number can be closed and
-    /// reused while the wait sleeps, and a `dup` of it waits on the same epoll instance.
-    | EpollEventDeliverable of epoll : OpenFileDescriptionId
-    /// The kqueue the open file description `kqueue` names has been drained:
-    /// a `close(2)` of a descriptor a `kevent` wait on it was entered through
-    /// has ended every wait on it (see `UnixDescriptor.close`).
-    | KqueueDrained of kqueue : OpenFileDescriptionId
-    /// A wait for events on the kqueue the open file description `kqueue`
-    /// names would report at least one now.
-    ///
-    /// Every waiter on one kqueue wakes for it, and the first to finish takes
-    /// what it reports; the rest wait again.
-    | KqueueEventDeliverable of kqueue : OpenFileDescriptionId
-    /// The open file description `description` presents at least one of
-    /// `conditions`, in the numbering `<poll.h>` and `<sys/epoll.h>` share.
-    ///
-    /// What a `poll(2)` entry waits for, with `conditions` its request plus the
-    /// `POLLERR` and `POLLHUP` a poll reports unasked. It never waits on a
-    /// epoll instance, whose level is not modelled.
-    | DescriptorReady of description : OpenFileDescriptionId * conditions : uint32
-    /// The Darwin `poll` the waiting thread is asleep in would report something
-    /// were it to scan the kqueue it made for itself now.
-    ///
-    /// Names no kernel object, as `SignalDeliverable` names none: the kqueue
-    /// is the waiter's own, named by its park (`ParkedKqueuePoll.Queue`). Holds only
-    /// once a scan would add something to some entry's `revents`: a filter
-    /// activated whose report would add nothing does not wake the waiter here,
-    /// where a real kernel wakes it to find nothing and sleep again, having
-    /// consumed the registration. Answering when the waiter next scans is the
-    /// schedule in which it had not yet run.
-    | KqueuePollReportable
-    /// The listening socket the open file description `listener` names holds a
-    /// completed connection in its accept queue.
-    ///
-    /// What a blocking `accept(2)` waits for. `listener` is the description
-    /// rather than the socket, as for the other primitives: it is what the call
-    /// holds.
-    | AcceptQueueNonEmpty of listener : OpenFileDescriptionId
-    /// The pipe whose read end the open file description `reader` names holds
-    /// bytes.
-    ///
-    /// What a blocking `read(2)` of an empty pipe waits for, beside
-    /// `PipeWriteEndClosed`. Two primitives rather than one because a kernel
-    /// wakes its sleeping readers differently for the two: bytes arriving wake
-    /// one of them on Linux, and the last writer closing wakes them all.
-    | PipeHasBytes of reader : OpenFileDescriptionId
-    /// The pipe whose read end the open file description `reader` names has no
-    /// write end open, so a read of it answers end of file.
-    | PipeWriteEndClosed of reader : OpenFileDescriptionId
-    /// The pipe whose write end the open file description `writer` names has
-    /// room for a sleeping write of `count` bytes, the first `written` of them
-    /// already in, to put more in.
-    ///
-    /// What a blocking `write(2)` into a pipe with no room for the rest of it
-    /// waits for, beside `PipeReadEndClosed`. Carries the write's progress
-    /// because whether a write of at most `PIPE_BUF` bytes can resume depends on
-    /// how many it has to put in, which it takes whole or not at all.
-    | PipeHasRoom of writer : OpenFileDescriptionId * count : int * written : int
-    /// The pipe whose write end the open file description `writer` names has
-    /// no read end open, so a write into it answers `EPIPE`.
-    | PipeReadEndClosed of writer : OpenFileDescriptionId
-    /// Under Darwin, the open file description `writer` carries `O_NONBLOCK`,
-    /// and a read has taken bytes from the pipe whose write end it names since
-    /// it had seen `reads` of them (`PipeState.Reads`). Never under Linux.
-    ///
-    /// Darwin wakes every writer asleep on a pipe at each read, room or not,
-    /// and one that still cannot write, through a description that has become
-    /// non-blocking, gives up; Linux wakes a writer only once it can write.
-    /// What a write of at most `PIPE_BUF` bytes waits for besides room for all
-    /// of it, which `PipeHasRoom` is.
-    | PipeReadWhileNonBlocking of writer : OpenFileDescriptionId * reads : int64
-    /// The connected stream socket the open file description `reader` names
-    /// has an answer for a read: bytes, a FIN or a reset.
-    ///
-    /// What a blocking `read(2)` of a connected socket with nothing to answer
-    /// waits for. One primitive, unlike a pipe's two, because every reader
-    /// asleep on a socket wakes for each of them, under either flavour.
-    | ConnectionReadable of reader : OpenFileDescriptionId
-    /// The connected stream socket the open file description `writer` names
-    /// wakes a write asleep with `remaining` of its bytes not yet taken: room,
-    /// by the flavour's rule, or a reset.
-    ///
-    /// What a blocking `write(2)` to a connected socket with no room for the
-    /// rest of it waits for. Carries what is left because Darwin's rule
-    /// depends on it: room for all of a short remainder wakes the writer, and
-    /// otherwise only room of the send buffer's low-water mark does.
-    | ConnectionWritable of writer : OpenFileDescriptionId * remaining : int
-    /// Under Darwin, a close has ended the blocking `accept`, or the blocking
-    /// `read` or `write` of a pipe or a connected socket, the waiting thread is
-    /// asleep in (`SleepTarget.EndedByClose`).
-    ///
-    /// Names no kernel object, as `SignalDeliverable` names none: the call
-    /// holds none any more, and what it answers is in the waiter's own park.
-    /// Every wait of those calls waits for it, so that a condition handed
-    /// out as the call went to sleep still says when the close ends it. Never
-    /// holds under Linux, whose close leaves such a call asleep.
-    | EndedByClose
-    /// The machine's monotonic clock (`UnixSystem.nanosecondsSinceBoot`)
-    /// has reached `nanosecondsSinceBoot`.
-    ///
-    /// Absolute rather than relative, so that it means the same instant however
-    /// often it is asked: a syscall's relative timeout becomes one of these when
-    /// the call parks.
-    | DeadlinePassed of nanosecondsSinceBoot : int64
-    /// A signal with a handler is deliverable to the thread that waits: were it to
-    /// return to user mode now, it would run that handler. For a thread in
-    /// `sigsuspend`, any signal its temporary mask lets through that its
-    /// finishing call would act on.
-    ///
-    /// Names no kernel object, because what it asks about is the waiter itself:
-    /// a condition is always some thread's, and `satisfied` is told whose. Every
-    /// park waits for it, since every sleep this library models is one a signal
-    /// interrupts; `SyscallInterruption.ruleOf` says how the interrupted call
-    /// then ends.
-    | SignalDeliverable
-    /// The FIFO whose end the open file description `opener` names has seen
-    /// more than `opens` opens of the other end: of the write end for an
-    /// `opener` opened for reading, and of the read end for one opened for
-    /// writing. One opened for both never sleeps.
-    ///
-    /// What a blocking open of one end of a FIFO waits for. A count rather
-    /// than "a partner is open" because a partner that opens and closes again
-    /// before the sleeper runs still completes its open, on both flavours.
-    /// `opener` is the description the sleeping call made and holds
-    /// (`ParkedFifoOpen.Opener`).
-    ///
-    /// Reserved: nothing parks a thread in a FIFO open yet, so no condition this
-    /// library hands out contains it.
-    | FifoPartnerOpened of opener : OpenFileDescriptionId * opens : int64
-    /// The inotify instance the open file description `reader` names holds a
-    /// record.
-    ///
-    /// What a blocking `read(2)` of an instance that held none waits for.
-    /// Every reader asleep on the instance wakes for it, and the first to run
-    /// takes the record, which a change to what the instance watches queues,
-    /// in any process, or `inotify_rm_watch(2)`.
-    | InotifyRecordQueued of reader : OpenFileDescriptionId
-    /// A signal in `awaited` is pending to the thread that waits.
-    ///
-    /// What a signal wait (`sigwait(3)`, `sigwaitinfo(2)`, `sigtimedwait(2)`)
-    /// waits for. `awaited` is the call's set (`ParkedSignalWait.Awaited`).
-    /// Not `SignalDeliverable`: an awaited signal is taken by the call rather
-    /// than delivered, and is commonly blocked, or at its default action.
-    ///
-    /// Reserved: nothing parks a thread in a signal wait yet, so no condition
-    /// this library hands out contains it.
-    | AwaitedSignalPending of awaited : SignalMask
-    /// The listening socket `listener` has room in its accept queue for one
-    /// more connection, or can no longer take one: it has been closed or shut
-    /// down, so that a connect asleep on it wakes to be refused.
-    ///
-    /// What a blocking Linux Unix-domain stream `connect(2)` to a full listener
-    /// waits for. Names the listener by the machine's identity for the socket,
-    /// since the sleeping call holds the socket and no description of it. A
-    /// TCP connect to a full listener waits for its SYN retransmit instead
-    /// (`DeadlinePassed`), and looks for room only then.
-    ///
-    /// Reserved: nothing parks a thread in a connect yet, so no condition this
-    /// library hands out contains it.
-    | AcceptQueueHasRoom of listener : SocketId
-
 /// What a thread parked in a syscall is waiting for: one primitive, or the first
 /// of several.
 ///
@@ -221,7 +27,7 @@ module WakeCondition =
     /// has one: what `WakePrimitive.DeadlinePassed` waits for.
     let internal deadlinePassed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (deadline : int64 option)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match deadline with
@@ -235,7 +41,7 @@ module WakeCondition =
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : PipeId * PipeState
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -257,7 +63,7 @@ module WakeCondition =
     let private connectionOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ConnectionEnd * TcpTransfer
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -287,11 +93,11 @@ module WakeCondition =
     /// Whether a close has ended the call `thread` is asleep in.
     let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match
-            Map.tryFind thread system.Threads
+            UnixThreadTable.tryFind thread system.Threads
             |> Option.bind UnixThreadState.park
             |> Option.map (fun park -> park.Syscall)
         with
@@ -308,6 +114,9 @@ module WakeCondition =
                                                  Socket = SleepTarget.EndedByClose _
                                              })
         | Some (ParkedSyscall.ConnectionWrite {
+                                                  Socket = SleepTarget.EndedByClose _
+                                              })
+        | Some (ParkedSyscall.DatagramReceive {
                                                   Socket = SleepTarget.EndedByClose _
                                               }) -> true
         | Some (ParkedSyscall.Accept _)
@@ -330,6 +139,8 @@ module WakeCondition =
         | Some (ParkedSyscall.DatagramReceive _)
         | Some (ParkedSyscall.DatagramSend _)
         | Some (ParkedSyscall.Connect _)
+        // Only Linux has futex, and nothing a close does reaches one.
+        | Some (ParkedSyscall.Futex _)
         | None -> false
 
     /// Every primitive `condition` waits for, in order, repeats and all.
@@ -343,7 +154,7 @@ module WakeCondition =
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (primitive : WakePrimitive)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match primitive with
@@ -453,6 +264,48 @@ module WakeCondition =
         | WakePrimitive.AwaitedSignalPending _ ->
             failwith
                 $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but nothing parks a thread in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
+        | WakePrimitive.FutexWakeTaken ->
+            match
+                UnixThreadTable.tryFind thread system.Threads
+                |> Option.bind UnixThreadState.parkedIn
+            with
+            | Some (ParkedSyscall.Futex wait) -> wait.TakenByWake
+            | parked ->
+                failwith
+                    $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, which only a futex wait waits for, but it is parked in %A{parked} (this is a bug in the caller that recorded the park)."
+        | WakePrimitive.DatagramReceivable reader ->
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux ->
+                match
+                    UnixThreadTable.tryFind thread system.Threads
+                    |> Option.bind UnixThreadState.parkedIn
+                with
+                | Some (ParkedSyscall.DatagramReceive receive) -> receive.Chosen
+                | parked ->
+                    failwith
+                        $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, which only a datagram receive waits for, but it is parked in %A{parked} (this is a bug in the caller that recorded the park)."
+            | SimulatedUnixFlavour.Darwin ->
+                match OpenFileTable.tryFind reader system.Machine.OpenFiles with
+                | None ->
+                    failwith
+                        $"WakeCondition.satisfied: open file description %O{reader} is not in the table, but a thread is parked in a receive on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                | Some description ->
+                    match description.Target with
+                    | OpenFileTarget.Socket socketId ->
+                        let receiver = UnixMachineState.datagramReceiver socketId system.Machine
+
+                        not (DatagramReceiver.isEmpty receiver)
+                        || DatagramReceiver.errorPending receiver
+                    | OpenFileTarget.File _
+                    | OpenFileTarget.Directory _
+                    | OpenFileTarget.CharacterDevice _
+                    | OpenFileTarget.Fifo _
+                    | OpenFileTarget.Pipe _
+                    | OpenFileTarget.Kqueue _
+                    | OpenFileTarget.Inotify _
+                    | OpenFileTarget.Epoll _ ->
+                        failwith
+                            $"WakeCondition.satisfied: a thread is parked in a receive on open file description %O{reader}, which names %A{description.Target} rather than a socket (this is a bug in the caller that recorded it)."
 
     /// The primitives of `condition`, the wake condition of `thread`, which hold of
     /// `system`: empty exactly when the syscall that parked on it would get no
@@ -487,7 +340,7 @@ module WakeCondition =
     let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (condition : WakeCondition)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =
@@ -539,7 +392,9 @@ module WakeCondition =
         | WakeCondition.Primitive (WakePrimitive.FifoPartnerOpened _)
         | WakeCondition.Primitive (WakePrimitive.InotifyRecordQueued _)
         | WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending _)
-        | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _) -> []
+        | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _)
+        | WakeCondition.Primitive WakePrimitive.FutexWakeTaken
+        | WakeCondition.Primitive (WakePrimitive.DatagramReceivable _) -> []
         | WakeCondition.AnyOf (first, rest) -> deadlines first @ List.collect deadlines rest
 
     /// What the thread holding `parked` is waiting for: what its syscall waits
@@ -694,14 +549,27 @@ module WakeCondition =
 
                 WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending wait.Awaited)
                 :: deadline
-            // A signal alone, while they are reserved: what a datagram transfer
-            // waits for joins this when something parks a thread in one.
-            | ParkedSyscall.DatagramReceive _
+            | ParkedSyscall.DatagramReceive receive ->
+                match receive.Socket with
+                | SleepTarget.EndedByClose _ -> [ ended ]
+                | SleepTarget.Waiting (reader, _) ->
+                    // No deadline: `setsockopt` refuses to set `SO_RCVTIMEO`.
+                    [ WakeCondition.Primitive (WakePrimitive.DatagramReceivable reader) ; ended ]
+            // A signal alone, while it is reserved: what a datagram send waits
+            // for joins this when something parks a thread in one.
             | ParkedSyscall.DatagramSend _ -> []
             // A signal alone, while it is reserved: a retransmit deadline, or
             // room in the listener's queue, joins this when something parks a
             // thread in it.
             | ParkedSyscall.Connect _ -> []
+            // A wake that takes it, its deadline, or a signal.
+            | ParkedSyscall.Futex wait ->
+                let deadline =
+                    FutexTimeout.deadline wait.FutexTimeout
+                    |> Option.map (WakePrimitive.DeadlinePassed >> WakeCondition.Primitive)
+                    |> Option.toList
+
+                WakeCondition.Primitive WakePrimitive.FutexWakeTaken :: deadline
 
         let signal = WakeCondition.Primitive WakePrimitive.SignalDeliverable
 
@@ -716,7 +584,7 @@ type SyscallOutcome =
     /// The entry point returned.
     | Answered of SyscallAnswer
     /// The entry point did not return. The calling thread sleeps until
-    /// `UnixWait.wakes` wakes it, and then
+    /// `UnixWait.wake` wakes it, and then
     /// finishes the call; what sleeping means, and when to re-ask, are the client's
     /// scheduler's business, which is why this library has no opinion on either.
     ///
@@ -735,11 +603,23 @@ type SyscallOutcome =
     /// nothing. That advance is the whole reason blocking is an outcome here
     /// rather than a refusal, which by design carries no system at all.
     | WouldBlock of WakeCondition
-    /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The thread is
-    /// no longer parked. Once the handlers have run, the client issues the call
-    /// again with the arguments it was first made with, descriptor numbers
-    /// included, as a real kernel re-executes it.
+    /// The call was asleep, and a signal interrupted it. The thread is no longer
+    /// parked, and owes a return to user mode (`UnixSignal.onReturnToUser`),
+    /// which it makes before any other call: that return says whether the call
+    /// fails with `EINTR` or restarts, from the signals as they are then.
     ///
     /// Only a finishing call answers this, never the call as first made.
-    | Restarts
+    | Interrupted
+
+/// What became of an `open(2)` or `openat(2)` this kernel could answer.
+[<RequireQualifiedAccess>]
+type OpenOutcome =
+    /// The entry point returned.
+    | Answered of DescriptorAnswer
+    /// The entry point did not return: a blocking open of one end of a FIFO
+    /// waits until the other end is opened. The calling thread sleeps as
+    /// `SyscallOutcome.WouldBlock` describes, and `UnixWait.finish` finishes
+    /// the call (`FinishedCall.FifoOpen`).
+    ///
+    /// Reserved: nothing in this version makes a FIFO, so no open answers it.
+    | WouldBlock of WakeCondition

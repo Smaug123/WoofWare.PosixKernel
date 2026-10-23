@@ -1,17 +1,5 @@
 namespace WoofWare.PosixKernel
 
-/// A `struct timespec` as the caller's memory held it: `tv_sec` and
-/// `tv_nsec`, both raw, before this kernel decides what they say.
-[<Struct>]
-type TimespecFields =
-    {
-        /// `tv_sec`.
-        Seconds : int64
-        /// `tv_nsec`, which may be any value the caller stored, the flavour's
-        /// `UTIME_NOW` and `UTIME_OMIT` among them.
-        Nanoseconds : int64
-    }
-
 /// The `times` argument of `utimensat(2)`, as the caller found it.
 [<RequireQualifiedAccess>]
 type TimesArgument =
@@ -69,11 +57,6 @@ type internal TimestampChangePermission =
     | Permitted
     /// It may not, and the call fails with this errno, changing nothing.
     | Denied of error : UnixError
-    /// Darwin, a privileged caller, and an object it does not own: unmeasured.
-    | UnmeasuredPrivilegedCaller
-    /// Darwin, a symbolic link the caller does not own but may write, and
-    /// both times now: unmeasured.
-    | UnmeasuredSymlinkWrite
 
 [<RequireQualifiedAccess>]
 module TimestampChangeRules =
@@ -190,15 +173,14 @@ module TimestampChangeRules =
 
     /// Whether a caller standing as `standing` towards an object with
     /// permission bits `bits` may set its times as `access` and
-    /// `modification` ask, under `flavour`. `isSymlink` says the object is a
-    /// symbolic link the call did not follow.
+    /// `modification` ask, under `flavour`.
     ///
-    /// On both flavours the owner may set any times, and a caller who may
-    /// write the object may set both to now. Linux lets a privileged caller
-    /// do anything, and answers EACCES where only both times now were asked
-    /// and EPERM otherwise. Darwin answers EACCES, or EPERM for a symbolic
-    /// link, and asks for no permission at all when both times are
-    /// `UTIME_OMIT`.
+    /// On both flavours the owner and a privileged caller may set any times,
+    /// and a caller who may write the object may set both to now. Linux
+    /// answers EACCES where only both times now were asked and EPERM
+    /// otherwise. Darwin answers EACCES, for a symbolic link the call did not
+    /// follow as for anything else, and asks for no permission at all when
+    /// both times are `UTIME_OMIT`.
     ///
     /// Neither time may be `TimestampRequest.Invalid`, which the call answers
     /// before it asks this.
@@ -206,7 +188,6 @@ module TimestampChangeRules =
         (flavour : SimulatedUnixFlavour)
         (standing : Standing)
         (bits : PermissionBits)
-        (isSymlink : bool)
         (access : TimestampRequest)
         (modification : TimestampRequest)
         : TimestampChangePermission
@@ -222,6 +203,12 @@ module TimestampChangeRules =
         // EPERM for root's link /tmp (0755) with AT_SYMLINK_NOFOLLOW; and
         // with both times omitted, success on each of those, changing
         // nothing. The owner's own 0444 file takes any times on both.
+        // `/tmp`'s EPERM is its `restricted` file flag, which this library
+        // does not model: Darwin 27.0 as root (`docs/probes/darwin-root/root-files.c`,
+        // UTIMENS) answers uid 501 on uid 502's links exactly as on its
+        // files, both times now on a writable one and EACCES otherwise, and
+        // lets root set any times on files, directories and links of every
+        // mode it does not own.
         match access, modification with
         | TimestampRequest.Invalid _, _
         | _, TimestampRequest.Invalid _ ->
@@ -248,15 +235,8 @@ module TimestampChangeRules =
             | TimestampRequest.Omit, TimestampRequest.Omit -> TimestampChangePermission.Permitted
             | _ ->
 
-            if standing.Owns then
+            if standing.Owns || privileged then
                 TimestampChangePermission.Permitted
-            elif privileged then
-                TimestampChangePermission.UnmeasuredPrivilegedCaller
-            elif isSymlink then
-                if bothNow access modification && mayWrite then
-                    TimestampChangePermission.UnmeasuredSymlinkWrite
-                else
-                    TimestampChangePermission.Denied UnixError.EPERM
             elif bothNow access modification && mayWrite then
                 TimestampChangePermission.Permitted
             else

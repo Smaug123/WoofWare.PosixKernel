@@ -17,6 +17,7 @@ open WoofWare.PosixKernel
 /// it, so that a setter added later on a booted system, or a way back from a
 /// system to an image, fails here.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestBootImage =
 
     let private library : Assembly = typeof<UnixBootImage<int, string>>.Assembly
@@ -94,6 +95,7 @@ module TestBootImage =
             <| List.sort
                 [
                     "withBootTime"
+                    "withDeviceFileSystem"
                     "withEntropySeed"
                     "withEphemeralPortRange"
                     "withFileSystem"
@@ -110,6 +112,8 @@ module TestBootImage =
                     "withTcpReceiveSpace"
                     "withTcpSendSpace"
                     "withTcpSendSpaceMax"
+                    "withUdpReceiveSpace"
+                    "withUnprivilegedPortStart"
                     "withUserAddressLimit"
                 ]
         )
@@ -124,6 +128,7 @@ module TestBootImage =
                     "withCredentials"
                     "withCurrentDirectory"
                     "withEnvironment"
+                    "withPendingSignalLimit"
                     "withProcessPath"
                     "withUmask"
                 ]
@@ -157,7 +162,7 @@ module TestBootImage =
         |> shouldEqual []
 
     [<Test>]
-    let ``a process starts only from a launch, by boot or by SimulatedMachine.tryLaunch`` () : unit =
+    let ``a process starts only from a launch, by boot or by UnixSystem.launch`` () : unit =
         let takes (definition : Type) (m : MethodInfo) : bool =
             m.GetParameters ()
             |> Array.exists (fun p -> isGenericOf definition p.ParameterType)
@@ -176,8 +181,8 @@ module TestBootImage =
             [
                 "WoofWare.PosixKernel.ProcessLaunch.leader"
                 "WoofWare.PosixKernel.ProcessLaunch.platform"
-                "WoofWare.PosixKernel.SimulatedMachine.launch"
                 "WoofWare.PosixKernel.UnixBootImage.boot"
+                "WoofWare.PosixKernel.UnixSystem.launch"
             ]
 
     [<Test>]
@@ -200,8 +205,10 @@ module TestBootImage =
         let records : Type list =
             [
                 typeof<UnixSystem<int, string>>
-                typeof<SimulatedMachine<int, string>>
+                typeof<UnixSchedulingState>
+                typeof<ProcessTable<int, string>>
                 typeof<ProcessSlot<int, string>>
+                typeof<ThreadTable<int>>
                 typeof<ProcessLaunch<int>>
                 typeof<UnixMachineState>
                 typeof<UnixProcessState<int, string>>
@@ -242,7 +249,7 @@ module TestBootImage =
 
         for declaring, name in
             [
-                "WoofWare.PosixKernel.UnixWait", "park"
+                "WoofWare.PosixKernel.Parking", "park"
                 "WoofWare.PosixKernel.UnixThreadTable", "unpark"
             ] do
             match named declaring name with

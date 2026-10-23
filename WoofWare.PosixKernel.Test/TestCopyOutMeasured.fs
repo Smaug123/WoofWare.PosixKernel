@@ -49,7 +49,7 @@ module TestCopyOutMeasured =
             | other -> failwith $"bind answered %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen answered %A{other}"
 
@@ -72,14 +72,16 @@ module TestCopyOutMeasured =
 
         match call with
         | "getsockname" ->
-            match UnixSocket.tryGetsockname client UserBuffer.Mapped declared system with
+            match UnixSocket.tryGetsockname (Callers.leader system) client UserBuffer.Mapped declared system with
             | Ok (GetSockNameAnswer.Reported (copiedOut, reported)) ->
                 Some (copiedOut, reported, local (socketOf client system))
             | Ok (GetSockNameAnswer.Failed _) -> None
             | Error refusal -> failwith $"getsockname refused: %O{refusal}"
         | "accept" ->
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped declared system with
-            | Ok (AcceptOutcome.Accepted (_, copiedOut, reported), _) ->
+            match
+                UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some declared) 0 system
+            with
+            | Ok (AcceptOutcome.Accepted (_, PeerAddressCopy.Written (copiedOut, reported)), _) ->
                 Some (copiedOut, reported, local (socketOf client system))
             | Ok _ -> None
             | Error refusal -> failwith $"accept refused: %O{refusal}"
