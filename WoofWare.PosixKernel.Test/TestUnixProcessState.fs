@@ -34,6 +34,7 @@ module TestUnixProcessState =
             ProcessId = ProcessId.parseOrFail context 4242
             Signals = SignalState.initial SignalNumbering.Linux Set.empty
             CoreDumps = CoreDumps.Suppressed
+            PendingSignalLimit = ValueSome UnixSystem.defaultPendingSignalLimit
         }
 
     /// A freshly made process, for the setters, which configure one before it
@@ -50,7 +51,13 @@ module TestUnixProcessState =
             { empty with
                 Signals =
                     empty.Signals
-                    |> HandlerFrames.enter "h" 7 (Set.ofList [ 7 ; 8 ]) 7 (Set.singleton Signal.SIGTERM)
+                    |> HandlerFrames.enter
+                        SignalNumbering.Linux
+                        "h"
+                        7
+                        (Set.ofList [ 7 ; 8 ])
+                        7
+                        (Set.singleton Signal.SIGTERM)
             }
 
         SignalState.maskOf 7 proc.Signals
@@ -131,7 +138,7 @@ module TestUnixProcessState =
         // to fix one of these knows the table by whatever its own configuration
         // calls it.
         let exn =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.ArgumentException> (fun () ->
                 ProcessLaunch.withEnvironment
                     "whatever the client calls it"
                     [ UnixByteString.empty ; Unchecked.defaultof<UnixByteString> ]
@@ -146,7 +153,7 @@ module TestUnixProcessState =
         // `AbsoluteUnixPath` hides its case, so the only invalid value a client
         // can produce is a defaulted one; this setter is where it stops.
         let exn =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.ArgumentException> (fun () ->
                 ProcessLaunch.withProcessPath
                     "the client's name for the path"
                     (Some Unchecked.defaultof<AbsoluteUnixPath>)

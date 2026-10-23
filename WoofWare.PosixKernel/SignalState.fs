@@ -131,6 +131,52 @@ type internal SignalMaskChange =
     /// `SIG_SETMASK`: the mask becomes the set.
     | SetMask
 
+/// What a pending instance of a signal holds against Linux's
+/// `RLIMIT_SIGPENDING`, the bound on the signals queued for one user.
+[<RequireQualifiedAccess>]
+type internal PendingCharge =
+    /// No bound applies to it: an instance under Darwin, which has no such
+    /// bound, or one `SignalState.enqueue` placed.
+    | Unbounded
+    /// Linux allocated it a queue entry, which counts against `user`: the
+    /// receiving process's real user when the signal was sent.
+    | Charged of user : UserId
+    /// Linux could allocate it no queue entry, so it is the pending bit alone:
+    /// it counts against no user, and an allocated instance of its signal
+    /// arriving in its set replaces it rather than queueing behind it.
+    | Bare
+
+/// A pending instance of a signal, and what it holds against
+/// `RLIMIT_SIGPENDING`.
+type internal QueuedSignal<'Thread> =
+    {
+        Entry : PendingSignal<'Thread>
+        Charge : PendingCharge
+    }
+
+/// How a signal was sent, which decides whether Linux queues it past
+/// `RLIMIT_SIGPENDING`.
+[<RequireQualifiedAccess>]
+type internal SignalSender =
+    /// `kill(2)`: a standard signal is queued past the limit, and a real-time
+    /// one past it is lost, or kept as the bare bit.
+    | Kill
+    /// `tgkill(2)`, as `pthread_kill(3)` makes it: a standard signal past the
+    /// limit is kept as the bare bit, and a real-time one fails with `EAGAIN`.
+    | ThreadKill
+    /// The kernel itself, as for a write's `SIGPIPE`: queued past the limit.
+    | Kernel
+
+/// What generating a signal counts against, as `SignalState.generate` is told.
+[<RequireQualifiedAccess>]
+type internal QueueAccount =
+    /// No bound applies: Darwin.
+    | Unbounded
+    /// Linux: the receiving process's real `user`, how many signals are queued
+    /// for that user in every other process on the machine, the receiving
+    /// process's `RLIMIT_SIGPENDING`, and how the signal was sent.
+    | Limited of user : UserId * queuedElsewhere : int * limit : uint64 * sender : SignalSender
+
 /// Pure, deterministic model of the simulator's signal-handling state.
 ///
 /// The shape is deliberately small:
@@ -153,7 +199,10 @@ type internal SignalMaskChange =
 /// the data shape is exercised by property tests against a
 /// structurally-different reference oracle.
 ///
-/// Every `Signal` stored here is one `Numbering` has, and every operation
+/// The state's signals are read under its machine's numbering
+/// (`SimulatedUnixPlatform.signalNumbering`), which the state does not hold:
+/// every operation that reads a signal is handed it as `numbering`. Every
+/// `Signal` stored here is one that numbering has, and every operation
 /// checks the signal it is handed before touching the state. The operations
 /// are the only route in (the representation is private), so the tables and
 /// queue never hold SIGKILL or SIGSTOP in a mask, a disposition for SIGKILL
@@ -161,11 +210,6 @@ type internal SignalMaskChange =
 type SignalState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            /// Whose `<signal.h>` this process's signals are read under. Fixed
-            /// at construction, like the platform it is derived from: 17 is
-            /// SIGCHLD on Linux and SIGSTOP on Darwin, so no operation on this
-            /// state is meaningful without it.
-            Numbering : SignalNumbering
             /// Never holds `SignalDisposition.Default`: an absent key is the
             /// default, and a stored one would make two states that behave
             /// identically compare unequal.
@@ -193,8 +237,11 @@ type SignalState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
             /// generation order because no kernel delivers in generation order,
             /// so two states holding the same signals would otherwise compare
             /// unequal while behaving identically. Pending sets are tiny in
-            /// practice, so a sorted list does.
-            Pending : PendingSignal<'Thread> list
+            /// practice, so a sorted list does. Each instance carries what it
+            /// holds against `RLIMIT_SIGPENDING`; under Linux a `Bare`
+            /// real-time instance is the only instance of its signal in its
+            /// set.
+            Pending : QueuedSignal<'Thread> list
         }
 
 /// What generating a signal does to the process at once, as decided by
@@ -215,6 +262,10 @@ type internal SignalGeneration<'Thread, 'Handler when 'Thread : comparison and '
     /// disposition is the default, which is to stop, and some thread could
     /// receive it.
     | ProcessStopped of signal : Signal * SignalState<'Thread, 'Handler>
+    /// Nothing happened: the signal is a real-time one sent by `tgkill(2)`,
+    /// and the receiving user's queue is at its `RLIMIT_SIGPENDING`, so the
+    /// call fails with `EAGAIN`.
+    | QueueFull
 
 /// Why this library will not say what a process's signal does: a case it does
 /// not model, rather than one a kernel refuses.
@@ -242,6 +293,15 @@ type internal SignalReceiverRefusal =
     /// library answers. This library keeps the process's set apart from each
     /// thread's.
     | PendingForProcessAndLeader of signal : Signal
+    /// Under Linux's numbering, `signal`, caught, is sent to the process as a
+    /// whole while its leader, which does not block it, is not running and
+    /// already has a signal to take, and another thread does not block it.
+    /// Linux then wakes that other thread, and whichever of the two returns to
+    /// user mode first takes the process's signals, lowest first: the other
+    /// thread may run every handler and the leader's call restart, or each may
+    /// take some. Which returns first is scheduling, and this library delivers
+    /// a process's own signals to its leader only.
+    | LeaderAlreadySignalled of signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal SignalReceiverRefusal =
@@ -256,6 +316,8 @@ module internal SignalReceiverRefusal =
             $"returning to user mode, a thread would take %O{signal}, whose default stops or continues the process, after handler frames were pushed for other signals at the same return. What a stopped process does with frames already pushed has not been measured."
         | SignalReceiverRefusal.PendingForProcessAndLeader signal ->
             $"under Darwin, %O{signal} would be left pending on the process as a whole while an instance of it is pending on the leader alone, or the other way round. Darwin holds the two as one instance, and this kernel keeps the process's pending set apart from each thread's."
+        | SignalReceiverRefusal.LeaderAlreadySignalled signal ->
+            $"under Linux, %O{signal} is sent to the process as a whole while its leader, which does not block it, is not running and already has a signal to take, and another thread does not block it. Linux then wakes that other thread, and whichever of the two returns to user mode first takes the process's signals, lowest first, so the other thread may run every handler and the leader's call restart, or each may take some. Which returns first is scheduling, and this kernel delivers a process's own signals to its leader only."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SignalReceiverRefusal) : RefusalKind =
@@ -263,6 +325,7 @@ module internal SignalReceiverRefusal =
         | SignalReceiverRefusal.LeaderBlocks _ -> RefusalKind.Unmodelled
         | SignalReceiverRefusal.DefaultBehindHandlers _ -> RefusalKind.Unmodelled
         | SignalReceiverRefusal.PendingForProcessAndLeader _ -> RefusalKind.Unmodelled
+        | SignalReceiverRefusal.LeaderAlreadySignalled _ -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
 module SignalState =
@@ -279,9 +342,6 @@ module SignalState =
         else
             failwith
                 $"SignalState.%s{operation}: %O{signal} is not a signal under the %O{numbering} numbering; a raw signo should have been refused at the caller's own boundary, via Signal.ofRawSignoUnder."
-
-    let private parse (operation : string) (state : SignalState<'Thread, 'Handler>) (signal : Signal) : Signal =
-        parseUnder operation state.Numbering signal
 
     /// SIGKILL and SIGSTOP, for which the kernel holds no disposition but the
     /// default. Narrower than `Signal.isUncatchableUnder`, which adds the two
@@ -335,8 +395,9 @@ module SignalState =
 
     /// `mask` as a kernel holds it: without SIGKILL and SIGSTOP, which it drops
     /// silently, and with every other bit, one that names no signal included.
-    /// Fails loudly on a mask made under another numbering, whose bits name
-    /// other signals.
+    /// Throws `ArgumentException`, naming `parameter`, the argument the client
+    /// passed the mask in, on a mask made under another numbering, whose bits
+    /// name other signals.
     ///
     /// Measured by the signal fuzzer's harness
     /// (`WoofWare.PosixKernel.Test/signalFuzz/harness.c`) on Linux 6.18.5 and
@@ -346,11 +407,21 @@ module SignalState =
     /// the same two: an `sa_mask` of every bit was stored and held while the
     /// handler ran less exactly those two, so with Darwin's bit 31 and Linux's
     /// 32 and 33, through glibc and the raw `rt_sigaction` alike.
-    let private maskable (operation : string) (numbering : SignalNumbering) (mask : SignalMask) : SignalMask =
+    let private maskable
+        (operation : string)
+        (parameter : string)
+        (numbering : SignalNumbering)
+        (mask : SignalMask)
+        : SignalMask
+        =
         match SignalMask.numbering mask with
         | ValueSome other when other <> numbering ->
-            failwith
-                $"SignalState.%s{operation}: the mask %O{mask} was made under the %O{other} numbering, and this process reads signals under %O{numbering}."
+            raise (
+                Refusal.exceptionOf
+                    $"SignalState.%s{operation}"
+                    (RefusalKind.Contradictory parameter)
+                    $"the mask %O{mask} was made under the %O{other} numbering, and this process reads signals under %O{numbering}."
+            )
         | _ -> SignalMask.without (Set.ofList [ Signal.SIGKILL ; Signal.SIGSTOP ]) mask
 
     let private withDisposition
@@ -370,10 +441,8 @@ module SignalState =
     /// signal to its default but keeps ignored ones ignored, so a launcher
     /// can start a process with signals already ignored (as `nohup` does).
     ///
-    /// `numbering` is the platform's — see
-    /// `SimulatedUnixPlatform.signalNumbering` — and is fixed for the state's
-    /// life; `UnixSystem.checkInvariants` refuses a system whose process reads
-    /// signals under a numbering other than its machine's.
+    /// `numbering` is the platform's (`SimulatedUnixPlatform.signalNumbering`),
+    /// as for every operation on the state.
     ///
     /// Fails loud on a signal the numbering does not have, and on SIGKILL or
     /// SIGSTOP, which no process can have ignored.
@@ -395,7 +464,6 @@ module SignalState =
             )
 
         {
-            Numbering = numbering
             Dispositions = dispositions
             Blocked = Map.empty
             MasksToRestore = Map.empty
@@ -404,14 +472,29 @@ module SignalState =
             Pending = []
         }
 
-    /// The numbering every signal in this state is read under: the platform's
-    /// (`SimulatedUnixPlatform.signalNumbering`), fixed for the process's life.
-    let numbering (state : SignalState<'Thread, 'Handler>) : SignalNumbering = state.Numbering
+    /// What a delivery of `signal` would do now, in the process whose signal state is `state`
+    /// (`UnixSystem.signals`): the disposition `UnixSignal.sigaction` reports for it, read without
+    /// a call, so that no thread of the process need be one that may make one. SIGKILL and
+    /// SIGSTOP, which nothing can catch, read as `SignalDisposition.Default`, on Darwin too,
+    /// whose `sigaction` refuses to report them. `numbering` is the machine's
+    /// (`SimulatedUnixPlatform.signalNumbering`).
+    ///
+    /// Throws `ArgumentException` on a signal that `numbering` lacks.
+    let disposition
+        (numbering : SignalNumbering)
+        (signal : Signal)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalDisposition<'Handler>
+        =
+        if not (Signal.existsUnder numbering signal) then
+            raise (
+                Refusal.exceptionOf
+                    "SignalState.disposition"
+                    (RefusalKind.Contradictory (nameof signal))
+                    $"%O{signal} is not a signal under the %O{numbering} numbering."
+            )
 
-    /// What a delivery of `signal` would do now. A client asks
-    /// `UnixSignal.sigaction`.
-    let internal disposition (signal : Signal) (state : SignalState<'Thread, 'Handler>) : SignalDisposition<'Handler> =
-        match Map.tryFind (parse "disposition" state signal) state.Dispositions with
+        match Map.tryFind signal state.Dispositions with
         | Some disposition -> disposition
         | None -> SignalDisposition.Default
 
@@ -433,16 +516,17 @@ module SignalState =
     /// Fails loud on SIGKILL and SIGSTOP, for which the kernel refuses any
     /// disposition, and `UnixSignal.sigaction` answers EINVAL.
     let internal setDisposition
+        (numbering : SignalNumbering)
         (signal : Signal)
         (disposition : SignalDisposition<'Handler>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        let signal = parse "setDisposition" state signal
+        let signal = parseUnder "setDisposition" numbering signal
 
         if kernelHoldsOnlyDefault signal then
             failwith
-                $"SignalState.setDisposition: no kernel disposition but the default can exist for %O{signal} under the %O{state.Numbering} numbering; UnixSignal.sigaction refuses it with EINVAL before it reaches here."
+                $"SignalState.setDisposition: no kernel disposition but the default can exist for %O{signal} under the %O{numbering} numbering; UnixSignal.sigaction refuses it with EINVAL before it reaches here."
 
         let disposition =
             match disposition with
@@ -451,7 +535,7 @@ module SignalState =
             | SignalDisposition.Catch action ->
                 SignalDisposition.Catch
                     { action with
-                        Mask = maskable "setDisposition" state.Numbering action.Mask
+                        Mask = maskable "setDisposition" "newAction" numbering action.Mask
                     }
 
         // Measured on Linux 6.18.5 and Darwin 25.6.0 (2026-09-23), and swept
@@ -464,8 +548,8 @@ module SignalState =
         // emptied sigpending, whatever the disposition before, and the rest
         // were delivered once unblocked.
         let pending =
-            if ignores state.Numbering disposition signal then
-                state.Pending |> List.filter (fun entry -> entry.Signal <> signal)
+            if ignores numbering disposition signal then
+                state.Pending |> List.filter (fun queued -> queued.Entry.Signal <> signal)
             else
                 state.Pending
 
@@ -518,15 +602,16 @@ module SignalState =
     /// client calls `UnixSignal.pthreadSigmask` or its neighbours, which decode
     /// `how` and screen what the C library screens first.
     ///
-    /// Fails loudly on a set made under another numbering.
+    /// Throws `ArgumentException` on a set made under another numbering.
     let internal changeMask
+        (numbering : SignalNumbering)
         (change : SignalMaskChange)
         (set : SignalMask)
         (thread : 'Thread)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        let set = maskable "changeMask" state.Numbering set
+        let set = maskable "changeMask" "set" numbering set
         let current = maskOf thread state
 
         let changed =
@@ -566,8 +651,9 @@ module SignalState =
     ///
     /// Fails loudly if `thread` already has a mask to restore (a client that
     /// made a second call without returning to user mode from the first), and
-    /// on a mask made under another numbering.
+    /// throws `ArgumentException` on a mask made under another numbering.
     let internal suspend
+        (numbering : SignalNumbering)
         (thread : 'Thread)
         (temporary : SignalMask)
         (state : SignalState<'Thread, 'Handler>)
@@ -577,7 +663,7 @@ module SignalState =
             failwith
                 $"SignalState.suspend: thread %O{thread} already has a mask to restore from an earlier sigsuspend, so it has not returned to user mode since, and cannot be making another call (this is a bug in the client)."
 
-        let temporary = maskable "suspend" state.Numbering temporary
+        let temporary = maskable "suspend" "mask" numbering temporary
 
         { state with
             MasksToRestore = Map.add thread (maskOf thread state) state.MasksToRestore
@@ -604,7 +690,9 @@ module SignalState =
             Blocked = Map.remove thread state.Blocked
             MasksToRestore = Map.remove thread state.MasksToRestore
             Frames = Map.remove thread state.Frames
-            Pending = state.Pending |> List.filter (fun entry -> entry.Target <> ValueSome thread)
+            Pending =
+                state.Pending
+                |> List.filter (fun queued -> queued.Entry.Target <> ValueSome thread)
         }
 
     /// The first half of generating `signal` (checked), common to `enqueue`
@@ -622,6 +710,7 @@ module SignalState =
     /// and SIGCONT discards every pending stop signal, whatever the
     /// dispositions of either.
     let private beginGeneration
+        (numbering : SignalNumbering)
         (signal : Signal)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler> option
@@ -643,14 +732,14 @@ module SignalState =
             | None -> SignalDisposition.Default
 
         if
-            ignores state.Numbering disposition signal
-            && not (Signal.blockedIgnoredSignalStaysPendingUnder state.Numbering signal)
+            ignores numbering disposition signal
+            && not (Signal.blockedIgnoredSignalStaysPendingUnder numbering signal)
         then
             None
         else
 
         let opposite : DefaultDisposition option =
-            match Signal.defaultDispositionUnder state.Numbering signal with
+            match Signal.defaultDispositionUnder numbering signal with
             | DefaultDisposition.Stop -> Some DefaultDisposition.Continue
             | DefaultDisposition.Continue -> Some DefaultDisposition.Stop
             | DefaultDisposition.Terminate
@@ -661,7 +750,7 @@ module SignalState =
         | Some opposite ->
             let pending =
                 state.Pending
-                |> List.filter (fun entry -> Signal.defaultDispositionUnder state.Numbering entry.Signal <> opposite)
+                |> List.filter (fun queued -> Signal.defaultDispositionUnder numbering queued.Entry.Signal <> opposite)
 
             if List.length pending = List.length state.Pending then
                 Some state
@@ -698,33 +787,68 @@ module SignalState =
         | SignalNumbering.Darwin -> 0, signo
 
     /// The queueing half of generation, on an entry `beginGeneration` let
-    /// through: coalesce a standard signal already pending in its set, and
-    /// otherwise add it to its set in its place in the pick order, after any
-    /// instance of the same real-time signal already there.
+    /// through, holding `charge`: coalesce a standard signal already pending in
+    /// its set, and otherwise add it to its set in its place in the pick order,
+    /// after any instance of the same real-time signal already there. A `Bare`
+    /// real-time instance is dropped where its signal is pending in its set
+    /// already, and an allocated one replaces a `Bare` one of its signal.
     let private admit
+        (numbering : SignalNumbering)
         (entry : PendingSignal<'Thread>)
+        (charge : PendingCharge)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        let coalesced =
-            not (Signal.isRealTimeUnder state.Numbering entry.Signal)
-            && state.Pending
-               |> List.exists (fun pending -> pending.Signal = entry.Signal && pending.Target = entry.Target)
+        let sameSet (queued : QueuedSignal<'Thread>) : bool =
+            queued.Entry.Signal = entry.Signal && queued.Entry.Target = entry.Target
 
-        if coalesced then
+        let realTime = Signal.isRealTimeUnder numbering entry.Signal
+
+        let queued =
+            {
+                Entry = entry
+                Charge = charge
+            }
+
+        // Measured by `docs/probes/rt-queue-limit` (section `bare`) on Linux
+        // 6.18.5: a real-time kill with no room, beside an allocated instance of
+        // its signal, was lost; an allocated instance sent beside a bare one was
+        // delivered once, with its own information, the bare one gone.
+        if not realTime && List.exists sameSet state.Pending then
             state
         else
+
+        match charge with
+        | PendingCharge.Bare when List.exists sameSet state.Pending -> state
+        | PendingCharge.Charged _ when
+            state.Pending
+            |> List.exists (fun pending -> sameSet pending && pending.Charge = PendingCharge.Bare)
+            ->
+            { state with
+                Pending =
+                    state.Pending
+                    |> List.map (fun pending ->
+                        if sameSet pending && pending.Charge = PendingCharge.Bare then
+                            queued
+                        else
+                            pending
+                    )
+            }
+        | PendingCharge.Bare
+        | PendingCharge.Charged _
+        | PendingCharge.Unbounded ->
             let key (pending : PendingSignal<'Thread>) : 'Thread voption * (int * int) =
-                pending.Target, pickRank state.Numbering pending.Signal
+                pending.Target, pickRank numbering pending.Signal
 
             let entryKey = key entry
 
-            let precedes (pending : PendingSignal<'Thread>) : bool = compare (key pending) entryKey <= 0
+            let precedes (pending : QueuedSignal<'Thread>) : bool =
+                compare (key pending.Entry) entryKey <= 0
 
             { state with
                 Pending =
                     List.takeWhile precedes state.Pending
-                    @ (entry :: List.skipWhile precedes state.Pending)
+                    @ (queued :: List.skipWhile precedes state.Pending)
             }
 
     /// Add a generated signal to its pending set, checking it first, without
@@ -762,18 +886,30 @@ module SignalState =
     /// (`SignalReceiverRefusal.PendingForProcessAndLeader`); this function,
     /// which is not told the leader, holds them apart.
     let internal enqueue
+        (numbering : SignalNumbering)
         (entry : PendingSignal<'Thread>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
         let entry =
             { entry with
-                Signal = parse "enqueue" state entry.Signal
+                Signal = parseUnder "enqueue" numbering entry.Signal
             }
 
-        match beginGeneration entry.Signal state with
+        match beginGeneration numbering entry.Signal state with
         | None -> state
-        | Some state -> admit entry state
+        | Some state -> admit numbering entry PendingCharge.Unbounded state
+
+    /// How many pending instances hold a queue entry charged to `user`.
+    let internal chargedTo (user : UserId) (state : SignalState<'Thread, 'Handler>) : int =
+        state.Pending
+        |> List.sumBy (fun queued ->
+            match queued.Charge with
+            | PendingCharge.Charged charged when charged = user -> 1
+            | PendingCharge.Charged _
+            | PendingCharge.Unbounded
+            | PendingCharge.Bare -> 0
+        )
 
     /// Which thread could take a pending signal now.
     [<RequireQualifiedAccess>]
@@ -838,6 +974,49 @@ module SignalState =
         | CoreDumps.Suppressed -> false
         | CoreDumps.Written -> Signal.dumpsCoreUnder numbering signal
 
+    /// A pending signal that is deliverable to `thread`: one its mask lets
+    /// through, in a set it takes from as it returns to user mode. That is its
+    /// own set; the process's, if it is the process's `leader`; and, under
+    /// Linux's numbering, the process's where the leader blocks the signal,
+    /// since any of Linux's threads takes from the process's set. The first
+    /// such in `pending`'s order, or `ValueNone` where there is none.
+    ///
+    /// Reads no disposition: the thread takes such a signal as it returns,
+    /// whether that runs a handler, applies a default or discards it, and
+    /// whether or not `takeOnReturn` refuses to say which.
+    let internal deliverable
+        (numbering : SignalNumbering)
+        (leader : 'Thread)
+        (thread : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : Signal voption
+        =
+        // Every call that may make a signal deliverable asks this of a
+        // thread, so nothing pending answers without reading a mask.
+        if List.isEmpty state.Pending then
+            ValueNone
+        else
+
+        let mask = maskOf thread state
+
+        let takesFrom (entry : PendingSignal<'Thread>) : bool =
+            match entry.Target with
+            | ValueSome target -> target = thread
+            | ValueNone ->
+                thread = leader
+                || (
+                    match numbering with
+                    | SignalNumbering.Linux -> SignalMask.contains entry.Signal (maskOf leader state)
+                    | SignalNumbering.Darwin -> false
+                )
+
+        match
+            state.Pending
+            |> List.tryFind (fun queued -> takesFrom queued.Entry && not (SignalMask.contains queued.Entry.Signal mask))
+        with
+        | Some queued -> ValueSome queued.Entry.Signal
+        | None -> ValueNone
+
     /// Generate `entry`: decide what it does to the process at once, and queue
     /// it (see `enqueue`) if its effect, if any, comes later.
     ///
@@ -847,13 +1026,21 @@ module SignalState =
     /// leader does not block it.
     ///
     /// What the signal does, and what is refused, are as `UnixSignal.kill`
-    /// states; a termination's core flag is as `coreDumps` decides.
+    /// states; a termination's core flag is as `coreDumps` decides. What a
+    /// signal left pending holds against `RLIMIT_SIGPENDING` is as `queue`
+    /// says, and a real-time signal sent by `tgkill(2)` past that limit is
+    /// `QueueFull`. `leaderRunning` says whether the leader is running on a
+    /// processor, out of any sleep, as Linux's `task_curr` does.
     ///
-    /// Fails loudly unless `leader` is among `threads`, and on a signal aimed at a
-    /// thread that is not.
+    /// Fails loudly unless `leader` is among `threads`, on a signal aimed at a
+    /// thread that is not, and on a `QueueAccount.Limited` under Darwin's
+    /// numbering.
     let internal generate
+        (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
+        (queue : QueueAccount)
         (leader : 'Thread)
+        (leaderRunning : bool)
         (threads : Set<'Thread>)
         (entry : PendingSignal<'Thread>)
         (state : SignalState<'Thread, 'Handler>)
@@ -863,12 +1050,75 @@ module SignalState =
 
         let entry =
             { entry with
-                Signal = parse "generate" state entry.Signal
+                Signal = parseUnder "generate" numbering entry.Signal
             }
 
-        match beginGeneration entry.Signal state with
+        match beginGeneration numbering entry.Signal state with
         | None -> Ok (SignalGeneration.ProcessContinues state)
         | Some state ->
+
+        // Measured by `docs/probes/rt-queue-limit` on Linux 6.18.5, as root and
+        // as uid 1000 alike: the limit counts the instances queued for the
+        // receiving process's real user, in every process of that user, and a
+        // send needs the count below the limit. Past it, kill queued a standard
+        // signal anyway, and kept a real-time one as the bare pending bit (or
+        // lost it, beside an instance of its signal); tgkill kept a standard
+        // signal as the bare bit and failed a real-time one with EAGAIN; a bare
+        // instance counted against nothing. A discarded or coalesced signal is
+        // never allocated, so the count is read once `beginGeneration` has run;
+        // and an ignored signal its receiver does not block is discarded
+        // before the allocation (section `ignored`: at a limit of 0, tgkill of
+        // an ignored real-time signal answered 0 unblocked and EAGAIN blocked).
+        let charge : PendingCharge voption =
+            match queue with
+            | QueueAccount.Unbounded -> ValueSome PendingCharge.Unbounded
+            | QueueAccount.Limited (user, queuedElsewhere, limit, sender) ->
+                match numbering with
+                | SignalNumbering.Darwin ->
+                    failwith
+                        $"SignalState.generate: %O{entry.Signal} is counted against RLIMIT_SIGPENDING under Darwin's numbering, which has no such limit (this is a bug in this library)."
+                | SignalNumbering.Linux ->
+
+                let realTime = Signal.isRealTimeUnder numbering entry.Signal
+                let queued = queuedElsewhere + chargedTo user state
+                let room = uint64 queued < limit
+
+                let overrides =
+                    not realTime
+                    && (
+                        match sender with
+                        | SignalSender.Kill
+                        | SignalSender.Kernel -> true
+                        | SignalSender.ThreadKill -> false
+                    )
+
+                if room || overrides then
+                    ValueSome (PendingCharge.Charged user)
+                else
+                    match sender with
+                    | SignalSender.ThreadKill when realTime -> ValueNone
+                    | SignalSender.ThreadKill
+                    | SignalSender.Kill
+                    | SignalSender.Kernel -> ValueSome PendingCharge.Bare
+
+        let receiver = receiverFor leader threads entry state
+
+        let effect =
+            effectOf numbering (disposition numbering entry.Signal state) entry.Signal
+
+        let discardedAsIgnored =
+            match receiver, effect with
+            | Receiver.Thread _, Effect.Ignored -> true
+            | _, _ -> false
+
+        match charge with
+        | ValueNone when not discardedAsIgnored -> Ok SignalGeneration.QueueFull
+        | ValueNone
+        | ValueSome _ ->
+
+        // Reached with no charge only for a signal discarded as ignored, which
+        // is never admitted.
+        let charge = charge |> ValueOption.defaultValue PendingCharge.Bare
 
         // Linux decides this at generation (`complete_signal` takes the whole
         // thread group down for a fatal signal as soon as it has found a thread
@@ -889,7 +1139,7 @@ module SignalState =
         // Linux 6.18.5 delivered the first pair twice.
         let leftPending () : Result<SignalGeneration<'Thread, 'Handler>, SignalReceiverRefusal> =
             let mergesOnDarwin =
-                match state.Numbering with
+                match numbering with
                 | SignalNumbering.Linux -> false
                 | SignalNumbering.Darwin ->
                     let partner =
@@ -902,18 +1152,58 @@ module SignalState =
                     | ValueNone -> false
                     | ValueSome partner ->
                         state.Pending
-                        |> List.exists (fun pending -> pending.Signal = entry.Signal && pending.Target = partner)
+                        |> List.exists (fun pending ->
+                            pending.Entry.Signal = entry.Signal && pending.Entry.Target = partner
+                        )
 
             if mergesOnDarwin then
                 Error (SignalReceiverRefusal.PendingForProcessAndLeader entry.Signal)
             else
-                Ok (SignalGeneration.ProcessContinues (admit entry state))
+                Ok (SignalGeneration.ProcessContinues (admit numbering entry charge state))
 
-        let receiver = receiverFor leader threads entry state
+        // Linux's `complete_signal` hands a signal sent to the process to the
+        // leader only while the leader wants it (`wants_signal`): it is running,
+        // or it has no signal to take already (`TIF_SIGPENDING`). Otherwise it
+        // wakes the next thread that wants it, and the threads it has woken take
+        // from the process's set, lowest first, in whichever order they return
+        // to user mode. Measured by `docs/probes/process-signal-pair` on Linux
+        // 6.18.5: with the leader asleep in poll and two signals sent by a second
+        // thread, the sender, or a third thread where the sender blocked both,
+        // ran both handlers and the leader's poll restarted, or the leader ran
+        // both, or each ran one; a running leader took both, and a standard
+        // signal already pending was coalesced and woke nobody. Darwin gave both
+        // to the leader.
+        // Beside `RLIMIT_SIGPENDING`: Linux allocates before it chooses a thread,
+        // so `QueueFull` above is answered first; it is only ever a thread's own
+        // signal, which this rule never meets. A real-time kill past the limit,
+        // kept bare or lost beside an instance, still goes on to choose and wake
+        // a thread (`complete_signal` runs after `out_set`), so the rule applies
+        // to it as to any other.
+        let wokenBeyondLeader () : bool =
+            match numbering, entry.Target with
+            | SignalNumbering.Darwin, _
+            | SignalNumbering.Linux, ValueSome _ -> false
+            | SignalNumbering.Linux, ValueNone ->
+                let coalesced =
+                    not (Signal.isRealTimeUnder numbering entry.Signal)
+                    && state.Pending
+                       |> List.exists (fun pending ->
+                           pending.Entry.Signal = entry.Signal && pending.Entry.Target.IsNone
+                       )
 
-        match receiver, effectOf state.Numbering (disposition entry.Signal state) entry.Signal with
+                not leaderRunning
+                && not coalesced
+                && (deliverable numbering leader leader state).IsSome
+                && threads
+                   |> Set.exists (fun thread ->
+                       thread <> leader && not (SignalMask.contains entry.Signal (maskOf thread state))
+                   )
+
+        match receiver, effect with
         | Receiver.Nobody, _ -> leftPending ()
         | Receiver.BeyondLeader, Effect.Caught -> Error (SignalReceiverRefusal.LeaderBlocks entry.Signal)
+        | Receiver.Thread _, Effect.Caught when wokenBeyondLeader () ->
+            Error (SignalReceiverRefusal.LeaderAlreadySignalled entry.Signal)
         | Receiver.Thread _, Effect.Caught -> leftPending ()
         // Discarded without ever being pending, on both kernels, SIGCONT at
         // its default included: Linux decides by the mask of the thread the
@@ -929,7 +1219,7 @@ module SignalState =
         // signal that was ignored when it was sent.
         | Receiver.Thread _, Effect.Ignored -> Ok (SignalGeneration.ProcessContinues state)
         | Receiver.BeyondLeader, Effect.Ignored ->
-            match state.Numbering with
+            match numbering with
             // Measured by the same probe, with SIGCONT under SIG_IGN and at its
             // default, SIGUSR1 under SIG_IGN and SIGURG at its default: Linux
             // queued each on the process (the leader saw it through sigpending
@@ -940,12 +1230,17 @@ module SignalState =
             // having been discarded by `beginGeneration`.
             | SignalNumbering.Darwin -> Ok (SignalGeneration.ProcessContinues state)
         | _, Effect.Terminates ->
-            Ok (SignalGeneration.ProcessTerminated (entry.Signal, dumpsCore coreDumps state.Numbering entry.Signal))
+            Ok (SignalGeneration.ProcessTerminated (entry.Signal, dumpsCore coreDumps numbering entry.Signal))
         | _, Effect.Stops -> Ok (SignalGeneration.ProcessStopped (entry.Signal, state))
 
     /// Every pending entry: the process's own set first, then each thread's, each set in the order a thread
     /// takes its signals (see `pendingFor`).
-    let pending (state : SignalState<'Thread, 'Handler>) : PendingSignal<'Thread> list = state.Pending
+    let pending (state : SignalState<'Thread, 'Handler>) : PendingSignal<'Thread> list =
+        state.Pending |> List.map (fun queued -> queued.Entry)
+
+    /// Every pending instance, in `pending`'s order, with what it holds against
+    /// `RLIMIT_SIGPENDING`.
+    let internal queued (state : SignalState<'Thread, 'Handler>) : QueuedSignal<'Thread> list = state.Pending
 
     /// The pending signals `thread` could take, in the order it would take them
     /// were it to block none: its own, and if it is the process's `leader`, the
@@ -956,22 +1251,25 @@ module SignalState =
     /// the lowest-numbered; several instances of one real-time signal come in
     /// the order they were generated. Linux takes every signal of the thread's own
     /// set before any of the process's; Darwin takes the two as one set.
+    /// `numbering` says which: it is the machine's
+    /// (`SimulatedUnixPlatform.signalNumbering`).
     let pendingFor
+        (numbering : SignalNumbering)
         (leader : 'Thread)
         (thread : 'Thread)
         (state : SignalState<'Thread, 'Handler>)
         : PendingSignal<'Thread> list
         =
         let own =
-            state.Pending |> List.filter (fun entry -> entry.Target = ValueSome thread)
+            pending state |> List.filter (fun entry -> entry.Target = ValueSome thread)
 
         let shared =
             if thread = leader then
-                state.Pending |> List.filter (fun entry -> entry.Target.IsNone)
+                pending state |> List.filter (fun entry -> entry.Target.IsNone)
             else
                 []
 
-        match state.Numbering with
+        match numbering with
         // Measured by the pair sweep of `signal-pick-order.c` (see `pickRank`):
         // every ordered pair of distinct standard signals, the first directed at
         // the main thread and the second at the process, both blocked by it.
@@ -981,12 +1279,13 @@ module SignalState =
         // A stable sort, so the thread's own instance of a signal comes before the
         // process's; nothing measured decides between the two, and no other
         // signal can fall between them.
-        | SignalNumbering.Darwin -> own @ shared |> List.sortBy (fun entry -> pickRank state.Numbering entry.Signal)
+        | SignalNumbering.Darwin -> own @ shared |> List.sortBy (fun entry -> pickRank numbering entry.Signal)
 
     /// What `sigpending(2)` answers for `thread`: the signals pending that it
     /// would see and that its mask blocks. It sees its own set, and the
     /// process's: on Linux whichever thread asks, and on Darwin only if it is the
-    /// process's `leader`.
+    /// process's `leader`. `numbering` says which: it is the machine's
+    /// (`SimulatedUnixPlatform.signalNumbering`).
     ///
     /// Measured on Linux 6.18.5 and Darwin 27.0.0 by
     /// `docs/plans/2026-08-23-posix-kernel-extraction/sigpending-scope.c`: with
@@ -999,22 +1298,28 @@ module SignalState =
     /// A pending signal the thread does not block is left out, as Linux's
     /// `do_sigpending` leaves it out. No thread can see one: it takes such a
     /// signal as it returns to user mode, before it can ask.
-    let pendingBlocked (leader : 'Thread) (thread : 'Thread) (state : SignalState<'Thread, 'Handler>) : SignalMask =
+    let pendingBlocked
+        (numbering : SignalNumbering)
+        (leader : 'Thread)
+        (thread : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalMask
+        =
         let sees (entry : PendingSignal<'Thread>) : bool =
             match entry.Target with
             | ValueSome target -> target = thread
             | ValueNone ->
-                match state.Numbering with
+                match numbering with
                 | SignalNumbering.Linux -> true
                 | SignalNumbering.Darwin -> thread = leader
 
         let mask = maskOf thread state
 
-        state.Pending
+        pending state
         |> List.filter (fun entry -> sees entry && SignalMask.contains entry.Signal mask)
         |> List.map (fun entry -> entry.Signal)
         |> Set.ofList
-        |> SignalMask.ofSignals state.Numbering
+        |> SignalMask.ofSignals numbering
 
     /// Where a thread's mask stands once a handler for `signal` is delivered to it
     /// under `action`, from `mask`.
@@ -1038,7 +1343,10 @@ module SignalState =
             else
                 SignalMask.union mask action.Mask |> SignalMask.add numbering signal
 
-        maskable "onReturnToUser" numbering blocked
+        // Both masks were screened as they were set, by `changeMask`,
+        // `suspend` and `setDisposition`; the last took the handler's mask as
+        // `UnixSignal.sigaction`'s `newAction`.
+        maskable "onReturnToUser" "newAction" numbering blocked
 
     /// Whether delivering `signal` under `SA_RESETHAND` resets its disposition.
     let private resetsHand (numbering : SignalNumbering) (signal : Signal) : bool =
@@ -1061,6 +1369,7 @@ module SignalState =
     /// return would do, and keeps the walk's discards, without the thread
     /// returning yet.
     let internal takeOnReturn
+        (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
         (leader : 'Thread)
         (threads : Set<'Thread>)
@@ -1085,7 +1394,7 @@ module SignalState =
         // apart from the process's; so under Darwin, as for a caught or ignored
         // signal, it is refused.
         let takenBeyondLeader (entry : PendingSignal<'Thread>) : bool =
-            match state.Numbering, effectOf state.Numbering (disposition entry.Signal state) entry.Signal with
+            match numbering, effectOf numbering (disposition numbering entry.Signal state) entry.Signal with
             | SignalNumbering.Linux, Effect.Terminates
             | SignalNumbering.Linux, Effect.Stops -> true
             | SignalNumbering.Linux, Effect.Caught
@@ -1093,7 +1402,7 @@ module SignalState =
             | SignalNumbering.Darwin, _ -> false
 
         let beyondLeader, refused =
-            state.Pending
+            pending state
             |> List.filter (fun entry ->
                 match receiverFor leader threads entry state with
                 | Receiver.BeyondLeader -> true
@@ -1111,12 +1420,12 @@ module SignalState =
         // the instance the walk reached.
         let rec without
             (entry : PendingSignal<'Thread>)
-            (pending : PendingSignal<'Thread> list)
-            : PendingSignal<'Thread> list
+            (pending : QueuedSignal<'Thread> list)
+            : QueuedSignal<'Thread> list
             =
             match pending with
             | [] -> failwith $"SignalState.onReturnToUser: walked to %O{entry}, which is not pending."
-            | head :: tail when head = entry -> tail
+            | head :: tail when head.Entry = entry -> tail
             | head :: tail -> head :: without entry tail
 
         let taken (entry : PendingSignal<'Thread>) (state : SignalState<'Thread, 'Handler>) =
@@ -1156,7 +1465,7 @@ module SignalState =
                 walk pushed state rest
             else
 
-            match disposition entry.Signal state with
+            match disposition numbering entry.Signal state with
             | SignalDisposition.Catch action ->
                 let current = maskOf thread state
 
@@ -1176,7 +1485,7 @@ module SignalState =
                     }
 
                 let dispositions =
-                    if action.ResetHand && resetsHand state.Numbering entry.Signal then
+                    if action.ResetHand && resetsHand numbering entry.Signal then
                         Map.remove entry.Signal state.Dispositions
                     else
                         state.Dispositions
@@ -1187,14 +1496,14 @@ module SignalState =
                         Frames = Map.add thread (frame :: framesOf thread state) state.Frames
                         NextFrame = state.NextFrame + 1L
                     }
-                    |> withMask thread (maskDuring state.Numbering current entry.Signal action)
+                    |> withMask thread (maskDuring numbering current entry.Signal action)
 
                 walk (frame :: pushed) state rest
             // Discarded with no action: drop the entry and keep walking — a
             // later entry may still deliver now.
             | SignalDisposition.Ignore -> walk pushed (taken entry state) rest
             | SignalDisposition.Default ->
-                match Signal.defaultDispositionUnder state.Numbering entry.Signal with
+                match Signal.defaultDispositionUnder numbering entry.Signal with
                 | DefaultDisposition.Ignore -> walk pushed (taken entry state) rest
                 | DefaultDisposition.Terminate ->
                     // Fatal whatever frames were pushed before it: measured by
@@ -1202,10 +1511,7 @@ module SignalState =
                     // fatal one at the same return and sees no handler run.
                     Ok (
                         Some (
-                            SignalDelivery.DefaultTerminate (
-                                entry.Signal,
-                                dumpsCore coreDumps state.Numbering entry.Signal
-                            )
+                            SignalDelivery.DefaultTerminate (entry.Signal, dumpsCore coreDumps numbering entry.Signal)
                         ),
                         taken entry state
                     )
@@ -1217,9 +1523,9 @@ module SignalState =
         // Linux has. Its mask decides each as the walk reaches it.
         let candidates =
             if thread = leader then
-                pendingFor leader thread state
+                pendingFor numbering leader thread state
             else
-                pendingFor leader thread state @ beyondLeader
+                pendingFor numbering leader thread state @ beyondLeader
 
         walk [] state candidates
 
@@ -1238,6 +1544,7 @@ module SignalState =
     /// Fails loudly unless `leader` and `thread` are among `threads`, and on a
     /// signal pending on a thread that is not.
     let internal onReturnToUser
+        (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
         (leader : 'Thread)
         (threads : Set<'Thread>)
@@ -1245,7 +1552,7 @@ module SignalState =
         (state : SignalState<'Thread, 'Handler>)
         : Result<SignalDelivery<'Thread, 'Handler> option * SignalState<'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        takeOnReturn coreDumps leader threads thread state
+        takeOnReturn numbering coreDumps leader threads thread state
         |> Result.map (fun (delivery, after) ->
             match Map.tryFind thread after.MasksToRestore with
             | None -> delivery, after
@@ -1279,8 +1586,8 @@ module SignalState =
     /// `sigreturn(2)`: pop `thread`'s innermost frame, `frame`, as
     /// `UnixSignal.sigreturn` states.
     ///
-    /// Fails loudly unless `frame` is `thread`'s innermost frame: handlers return
-    /// innermost first, so anything else is a bug in the client.
+    /// Throws `ArgumentException` unless `frame` is `thread`'s innermost frame:
+    /// handlers return innermost first, so anything else is a bug in the client.
     let internal sigreturn
         (thread : 'Thread)
         (frame : HandlerFrameId)
@@ -1300,5 +1607,9 @@ module SignalState =
             }
             |> withMask thread innermost.SavedMask
         | frames ->
-            failwith
-                $"SignalState.sigreturn: %O{frame} is not thread %O{thread}'s innermost handler frame (its frames, innermost first, are %O{frames |> List.map (fun f -> f.Id)})."
+            raise (
+                Refusal.exceptionOf
+                    "UnixSignal.sigreturn"
+                    (RefusalKind.Contradictory "frame")
+                    $"%O{frame} is not thread %O{thread}'s innermost handler frame (its frames, innermost first, are %O{frames |> List.map (fun f -> f.Id)})."
+            )

@@ -70,7 +70,7 @@ module internal InotifyAddWatchRefusal =
             $"this kernel is %O{flavour}-flavoured, and inotify exists on Linux only, so no kernel of this flavour has the call."
         | InotifyAddWatchRefusal.UnmodelledEvents events ->
             let names = events |> List.map (sprintf "%O") |> String.concat ", "
-            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open, read or release of a file to a watch, and unmounts nothing. Ask for the other events only."
+            $"the watch would ask for %s{names}, which this kernel never raises: it reports no open or read of a file to a watch, and unmounts nothing. Ask for the other events only."
         | InotifyAddWatchRefusal.OneShot ->
             "the watch would carry IN_ONESHOT, which removes the watch after its first event, and that removal is not modelled."
         | InotifyAddWatchRefusal.Path refusal -> PathRefusal.describe refusal
@@ -94,7 +94,7 @@ module internal InotifyAddWatchRefusal =
 type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
             Instance : OpenFileDescriptionId
             State : InotifyState
             Word : InotifyMaskWord
@@ -109,49 +109,19 @@ type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Hand
 /// readable while it holds one, and `ioctl(FIONREAD)` reports their bytes.
 ///
 /// A change to the filesystem, by any process, queues records on the instances
-/// watching it; a watched inode's own deletion and rename are not reported.
-/// A change made through a descriptor, or through "." to a directory `rmdir`
-/// removed, throws `UnmodelledException` where a watch could hear of it:
-/// Linux reports it through a name this kernel does not keep.
+/// watching it.
 [<RequireQualifiedAccess>]
 module UnixInotify =
 
     /// How many inotify instances `user` holds on the machine, in every
     /// process.
     let private instancesOf (user : UserId) (machine : UnixMachineState) : int =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.filter (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state -> state.Owner = user
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> false
-        )
-        |> Seq.length
+        OpenFileTable.inotifyInstancesOwnedBy user machine.OpenFiles
 
     /// How many watches the inotify instances `user` holds have, on the
     /// machine, in every process.
     let private watchesOf (user : UserId) (machine : UnixMachineState) : int =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.map (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.Inotify state when state.Owner = user -> Map.count state.Watches
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.File _
-            | OpenFileTarget.Directory _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.CharacterDevice _
-            | OpenFileTarget.Fifo _
-            | OpenFileTarget.Pipe _ -> 0
-        )
-        |> Seq.fold (+) 0
+        OpenFileTable.inotifyWatchesOwnedBy user machine.OpenFiles
 
     /// The inotify instance `fd` names and its state: `EBADF` for a descriptor
     /// that is not open, and `EINVAL` for one that names anything else
@@ -159,7 +129,7 @@ module UnixInotify =
     /// `inotify-instance-probe.c` section G).
     let private instanceOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<OpenFileDescriptionId * InotifyState, UnixError>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
@@ -176,18 +146,18 @@ module UnixInotify =
             | OpenFileTarget.Fifo _
             | OpenFileTarget.Pipe _ -> Error UnixError.EINVAL
 
-    /// `inotifyInit1`, with a refusal answered as the `Error` rather than raised.
-    let internal tryInotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryInotifyInit1` once `Entry` has admitted its caller.
+    let private tryInotifyInit1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
         if flags &&& ~~~(InotifyInitFlags.CloseOnExec ||| InotifyInitFlags.NonBlock) <> 0 then
-            Ok (Error UnixError.EINVAL)
+            Ok (DescriptorAnswer.Failed UnixError.EINVAL, system)
         else
 
         let owner = system.Process.Credentials.EffectiveUser
@@ -198,7 +168,7 @@ module UnixInotify =
             instancesOf owner system.Machine
             >= system.Machine.InotifyLimits.MaxUserInstances
         then
-            Ok (Error UnixError.EMFILE)
+            Ok (DescriptorAnswer.Failed UnixError.EMFILE, system)
         else
 
         match
@@ -213,6 +183,7 @@ module UnixInotify =
 
         let fd, registry =
             FileDescriptorRegistry.createInotify
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
                 owner
                 (flags &&& InotifyInitFlags.NonBlock <> 0)
                 (UnixSystemState.fileDescriptors system)
@@ -220,12 +191,27 @@ module UnixInotify =
         let registry =
             FileDescriptorRegistry.setFlags
                 fd
-                { DescriptorFlags.none with
-                    CloseOnExec = flags &&& InotifyInitFlags.CloseOnExec <> 0
-                }
+                (DescriptorFlags.closingOnExec
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (flags &&& InotifyInitFlags.CloseOnExec <> 0))
                 registry
 
-        Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+        Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
+
+    /// `inotifyInit1`, with a refusal answered as the `Error` rather than raised.
+    let internal tryInotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
+        =
+        Entry.call
+            "UnixInotify.inotifyInit1"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryInotifyInit1In flags)
+            system
 
     /// <summary>
     /// `inotify_init1(2)`: create an inotify instance with no watches, owned by
@@ -243,20 +229,21 @@ module UnixInotify =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let inotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryInotifyInit1 flags system
+        tryInotifyInit1 caller flags system
         |> Refusal.orRaise "UnixInotify.inotifyInit1" InotifyRefusal.kind InotifyRefusal.describe
 
-    /// `inotifyAddWatch`, with a refusal answered as the `Error` rather than raised.
-    let internal tryInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryInotifyAddWatch` once `Entry` has admitted its caller.
+    let private tryInotifyAddWatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (mask : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * ProcessView<'Thread, 'Handler>>,
               InotifyAddWatchRefusal
            >
         =
@@ -292,6 +279,25 @@ module UnixInotify =
                     Word = word
                 }
         )
+
+    /// `inotifyAddWatch`, with a refusal answered as the `Error` rather than raised.
+    let internal tryInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (mask : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              InotifyAddWatchRefusal
+           >
+        =
+        Entry.call
+            "UnixInotify.inotifyAddWatch"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryInotifyAddWatchIn fd mask)
+            system
 
     /// <summary>
     /// `inotify_add_watch(2)`: watch the inode a path names, through the
@@ -334,20 +340,20 @@ module UnixInotify =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify.</exception>
     let inotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (mask : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
-        tryInotifyAddWatch fd mask system
+        tryInotifyAddWatch caller fd mask system
         |> Refusal.orRaise "UnixInotify.inotifyAddWatch" InotifyAddWatchRefusal.kind InotifyAddWatchRefusal.describe
 
-
-    /// `inotifyAddWatchWithPath`, with a refusal answered as the `Error` rather than raised.
-    let internal tryInotifyAddWatchWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryInotifyAddWatchWithPath`, before `Entry.resume` hands its answer back.
+    let private tryInotifyAddWatchWithPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (paused : PausedInotifyAddWatch<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
         CallProgress.requirePaused "UnixInotify.inotifyAddWatchWithPath" "UnixInotify.inotifyAddWatch" paused
 
@@ -373,11 +379,7 @@ module UnixInotify =
         | Ok inode ->
 
         let found =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some found -> found
-            | None ->
-                failwith
-                    $"UnixInotify.inotifyAddWatch: resolving %O{path} returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixInotify.inotifyAddWatch" inode system.Machine.FileSystem
 
         let isDirectory =
             match found.Content with
@@ -412,15 +414,15 @@ module UnixInotify =
 
         let modelledEvents = word.Events |> Set.filter InotifyEvent.modelled
 
-        let commit (state : InotifyState) : UnixSystem<'Thread, 'Handler> =
+        let commit (state : InotifyState) : ProcessView<'Thread, 'Handler> =
             UnixSystemState.mapOpenFiles
                 (OpenFileTable.setInotifyState "UnixInotify.inotifyAddWatch" instance state)
                 system
 
         let existing =
-            state.Watches
-            |> Map.toSeq
-            |> Seq.tryFind (fun (_, watch) -> watch.Inode = inode)
+            match OpenFileTable.inotifyWatchesOfInstanceOn instance inode system.Machine.OpenFiles with
+            | watch :: _ -> Some (watch, Map.find watch state.Watches)
+            | [] -> None
 
         match existing with
         | Some _ when word.MaskCreate -> failed UnixError.EEXIST
@@ -441,18 +443,17 @@ module UnixInotify =
                         ExcludeUnlinked = word.ExcludeUnlinked
                     }
 
-            let state =
-                { state with
-                    Watches =
-                        Map.add
-                            watch
-                            { held with
-                                Mask = mask
-                            }
-                            state.Watches
-                }
+            let changed =
+                UnixSystemState.mapOpenFiles
+                    (OpenFileTable.setInotifyWatch
+                        instance
+                        watch
+                        { held with
+                            Mask = mask
+                        })
+                    system
 
-            Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), commit state)
+            Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), changed)
         | None ->
 
         if state.NextWatchDescriptor = System.Int32.MaxValue then
@@ -480,23 +481,30 @@ module UnixInotify =
         | Some refusal -> Error refusal
         | None ->
 
-        let state =
-            { state with
-                Watches =
-                    Map.add
-                        watch
-                        {
-                            Inode = inode
-                            Mask =
-                                {
-                                    Events = modelledEvents
-                                    ExcludeUnlinked = word.ExcludeUnlinked
-                                }
-                        }
-                        state.Watches
-            }
+        let added =
+            UnixSystemState.mapOpenFiles
+                (OpenFileTable.setInotifyWatch
+                    instance
+                    watch
+                    {
+                        Inode = inode
+                        Mask =
+                            {
+                                Events = modelledEvents
+                                ExcludeUnlinked = word.ExcludeUnlinked
+                            }
+                    })
+                (commit state)
 
-        Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), commit state)
+        Ok (SyscallAnswer.Completed (int64 (WatchDescriptor.toInt watch)), added)
+
+    /// `inotifyAddWatchWithPath`, with a refusal answered as the `Error` rather than raised.
+    let internal tryInotifyAddWatchWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (path : PathArgumentBytes)
+        (paused : PausedInotifyAddWatch<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (tryInotifyAddWatchWithPathIn path paused)
 
     /// <summary>
     /// The second half of `inotify_add_watch(2)`: copy in `path`, the
@@ -516,12 +524,12 @@ module UnixInotify =
             InotifyAddWatchRefusal.kind
             InotifyAddWatchRefusal.describe
 
-    /// `inotifyRmWatch`, with a refusal answered as the `Error` rather than raised.
-    let internal tryInotifyRmWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryInotifyRmWatch` once `Entry` has admitted its caller.
+    let private tryInotifyRmWatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (wd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)
@@ -539,12 +547,7 @@ module UnixInotify =
 
         let removed =
             UnixSystemState.mapOpenFiles
-                (OpenFileTable.setInotifyState
-                    "UnixInotify.inotifyRmWatch"
-                    instance
-                    { state with
-                        Watches = Map.remove watch state.Watches
-                    }
+                (OpenFileTable.removeInotifyWatch instance watch
                  >> OpenFileTable.enqueueInotify
                      system.Machine.InotifyLimits.MaxQueuedEvents
                      instance
@@ -552,6 +555,22 @@ module UnixInotify =
                 system
 
         Ok (SyscallAnswer.Completed 0L, removed)
+
+    /// `inotifyRmWatch`, with a refusal answered as the `Error` rather than raised.
+    let internal tryInotifyRmWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (wd : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
+        =
+        Entry.call
+            "UnixInotify.inotifyRmWatch"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryInotifyRmWatchIn fd wd)
+            system
 
     /// <summary>
     /// `inotify_rm_watch(2)`: remove the watch `wd` names from the inotify
@@ -569,10 +588,11 @@ module UnixInotify =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let inotifyRmWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (wd : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryInotifyRmWatch fd wd system
+        tryInotifyRmWatch caller fd wd system
         |> Refusal.orRaise "UnixInotify.inotifyRmWatch" InotifyRefusal.kind InotifyRefusal.describe

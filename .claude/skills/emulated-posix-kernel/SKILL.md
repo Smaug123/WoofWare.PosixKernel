@@ -13,8 +13,9 @@ follows.
 
 First ask whether it is the kernel's at all. `WoofWare.PosixKernel/README.md`,
 "What the kernel leaves to the client", lists what the library deliberately does
-not do — user memory and `mmap`, blocks inside the process (`futex`,
-`__psynch`), choosing which thread runs, when time passes, running a signal
+not do — user memory and `mmap`, blocks inside the process (`__psynch`,
+`__ulock`, and every `futex` operation but a private wait and wake and their
+bitset forms, which are the kernel's), choosing which thread runs, when time passes, running a signal
 handler, `sigaltstack`, process creation — with why each is the client's and how
 the two meet. Change that section when you move the line.
 
@@ -25,7 +26,7 @@ The table's third row looks like them too, and is not the kernel's at all.
 | home | the fact is… | examples |
 | --- | --- | --- |
 | `SimulatedUnixPlatform` | true of *this kernel's source*, the same on every machine running it | the architecture and page size the image was built for, `sa_family_t` width, `AF_INET6`'s number, `sizeof(struct sockaddr_storage)`, `reportsBirthTime`, `setIdBitsOnTruncation`, `creatingOpenRules` |
-| configuration: `UnixBootImage` for the machine, `ProcessLaunch` for a process | true of *this machine or mount or process*, and a different admin could change it | `withMount`, `withUserAddressLimit`, `withProcessorCount`, `withBootTime`, `withProtectedFiles` on the boot image; `withCredentials`, `withUmask` on a launch |
+| configuration: `UnixBootImage` for the machine, `ProcessLaunch` for a process | true of *this machine or mount or process*, and a different admin could change it | `withMount`, `withUserAddressLimit`, `withProcessorCount`, `withBootTime`, `withProtectedFiles`, `withUnprivilegedPortStart` on the boot image; `withCredentials`, `withUmask` on a launch |
 | the client | an artefact of how the client runs the process, which no real kernel has | a limit that comes from how the client represents memory; which code path the process's own C library or runtime takes on each platform |
 
 The test that separates the first two: **could two machines running the same
@@ -65,10 +66,12 @@ Two rules for adding a configuration knob:
   a current directory is an inode of *this* filesystem, and a new filesystem
   invalidates every inode number the previous one handed out, so `ProcessLaunch`
   holds the directory as a path and the launch resolves it against the machine
-  it starts on.
+  it starts on. Likewise Linux keeps its ephemeral range at or above its
+  unprivileged port start, so `UnixBootImage.boot`, not either setter, refuses
+  a range below the start.
 - **How a process starts is a `ProcessLaunch`, not a boot-image setter.** The
   first process (`UnixBootImage.boot`) and every later one
-  (`SimulatedMachine.launch`) start from one, so a per-process knob goes on
+  (`UnixSystem.launch`) start from one, so a per-process knob goes on
   `ProcessLaunch` and a machine knob on `UnixBootImage`. The kernel chooses a
   later process's ID; only the first one's is configuration.
 
@@ -90,7 +93,7 @@ on the *machine*, because an idle processor is a truthful reading of an absent
 key, and because a machine's processes share its processors. Keying it by
 processor makes two threads on one processor unrepresentable, and "is T running" is
 derived from it (`UnixScheduling.runningOn`), never stored beside it. Every way a
-thread stops running (a dispatch elsewhere, a park in `UnixWait.park`, an exit, a
+thread stops running (a dispatch elsewhere, a park in `Parking.park`, an exit, a
 process ending) must take it out of the map; `TestUnixScheduling` holds that to a
 reference that reads it off the event history.
 
@@ -193,6 +196,16 @@ reports one. Only a forged value (`Unchecked.defaultof`) still fails with
 `failwith`, and a setter keeps a `context` parameter only to name the knob in
 that throw.
 
+An errno is not a refusal, and is never a `Result`'s `Error` either: it is the
+`Failed` case of the call's own answer, beside the system wherever the call can
+change it, so that every call says its errno the same way. The answer is
+`SyscallAnswer` where the call returns one number, `DescriptorAnswer` (an `int`)
+where it makes a descriptor, and otherwise a union of the call's own whose other
+cases say what it returned or wrote (`Pipe2Answer`, `SigactionAnswer`, …). A
+call that can never fail answers its value alone; a call that cannot succeed
+*yet* still answers a type with room for success, its success case reserved,
+since from 1.0 adding a case is a major version.
+
 ## 6. Establish the fact by measuring, not by reading source
 
 For any kernel-behaviour constant, write the measure-the-host test *first* and
@@ -209,10 +222,31 @@ No fact follows from the release string. A fact that changed between Linux
 versions follows the platform's `LinuxKernelVersion` (`SimulatedUnixKernel.Linux`),
 which each preset states for itself (`linuxX64` 6.17.0, `linuxArm64` 6.18.5):
 `getSockNameFaultLength` is the first, after Linux 6.18 moved the length's store
-ahead of the copy, which CI's 6.17 caught where 6.18.5 had been measured. A
+ahead of the copy, which CI's 6.17 caught where 6.18.5 had been measured.
+`renameRules`' `RefusalOrder` is the second: Linux 6.19 moved the ENOTEMPTY for a
+destination that is the source's ancestor ahead of the trailing-separator
+ENOTDIR, which CI caught when GitHub's runners moved from 6.17 to 7.0.
+`datagramReceiveRules`' admission is the third: from 6.18 a UDP receiver no
+longer lets the last datagram take its charge past `SO_RCVBUF`. A
 host-equality test of such a fact models the host's *own* version
 (`HostPlatform.onUnixHostKernel`), so it holds on whichever kernel runs it, and
 its rows should come from kernels on both sides of the change.
+
+A fact can also follow how the kernel was **built**, which neither the version
+nor the architecture says: the Linux case's `LinuxKernelBuild`. A UDP
+datagram's charge (its `truesize`) is the first such fact. It is 960 bytes for
+the smallest buffer on every Azure kernel GitHub's runners ran (6.17 and 7.0,
+x86-64 and arm64) and 832 on Apple's container kernel 6.18.5.
+`HostPlatform.runningHostKernel` measures the host's build, as it reads the
+host's version.
+
+GitHub's runners also configure what a stock kernel defaults: their
+`net.core.rmem_default` is 1048576, not 212992. Such a setting is boot
+configuration (`UnixBootImage.withUdpReceiveSpace`), and a host-equality test
+reads it from the host rather than assuming the default. Darwin's suppression
+of a repeated ICMP port-unreachable error is configuration too
+(`net.inet.udp.port_unreach_rlc_bucket_ms`), which the machine holds at its
+measured default (`PortUnreachableReplies`).
 
 See `reference/probing.md` for the probe technique, including the two ways a
 set-ID measurement reads as "unsupported" when it is not.

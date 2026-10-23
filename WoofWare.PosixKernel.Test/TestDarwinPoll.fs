@@ -80,7 +80,7 @@ module TestDarwinPoll =
         | other -> failwith $"reading %d{count} bytes from fd %d{fd}: %A{other}"
 
     let private pipe (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe did not make a pipe: %A{other}"
 
@@ -98,6 +98,7 @@ module TestDarwinPoll =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = directory
         }
 
@@ -107,8 +108,8 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match Answered.openPath (openFlags directory) (UnixPath.parseOrFail "TestDarwinPoll" path) 0o644 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail "TestDarwinPoll" path) (openFlags directory) 0o644 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other, _ -> failwith $"opening %s{path}: %A{other}"
 
     /// What one filter of a descriptor reports, as `poll-darwin.c` observed it
@@ -363,7 +364,7 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>
         =
-        UnixPoll.tryPoll poller entries milliseconds system
+        UnixPoll.tryPoll (Callers.thread poller system) entries milliseconds system
 
     let private answered (entries : PollEntry list) (system : UnixSystem<int, string>) : int16 list * int =
         match pollNow entries 0 system with
@@ -601,25 +602,28 @@ module TestDarwinPoll =
         | other -> failwith $"poll of %A{entries} did not park: %A{other}"
 
     let private wakes (condition : WakeCondition) (system : UnixSystem<int, string>) : bool =
-        not (Set.isEmpty (WakeCondition.satisfied poller condition system))
+        not (Set.isEmpty (Lone.WakeCondition.satisfied poller condition system))
 
+    /// The poller's poll, woken (`Woken.thread`), finished.
     let private finish (system : UnixSystem<int, string>) : Result<PollOutcome * UnixSystem<int, string>, PollRefusal> =
-        UnixPoll.tryFinishPoll poller system
+        let system = Woken.thread poller system
+        UnixPoll.tryFinishPoll (Callers.thread poller system) system
 
     let private finishAnswer (system : UnixSystem<int, string>) : int16 list * int =
         match finish system with
         | Ok (PollOutcome.Answered (revents, count), after) ->
-            UnixThreadTable.parkedFor poller (Lone.threads after) |> shouldEqual None
+            Lone.parkedIn poller after |> shouldEqual None
             revents, count
         | other -> failwith $"the finish did not answer: %A{other}"
 
     let private advanceTo (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling =
-                { system.Scheduling with
+        Kernel.mapScheduling
+            (fun scheduling ->
+                { scheduling with
                     NanosecondsSinceBoot = nanoseconds
                 }
-        }
+            )
+            system
 
     let private deadlineOf (condition : WakeCondition) : int64 =
         match WakeCondition.deadlines condition with
@@ -682,7 +686,7 @@ module TestDarwinPoll =
         finishAnswer both |> shouldEqual ([ pollIn ||| pollOut ||| pollHup ], 1)
 
         // A poll made in that final state.
-        let fresh = UnixParkState.unpark poller both
+        let fresh = Lone.UnixParkState.unpark poller both
 
         answered [ entry socket (pollIn ||| pollOut) ] fresh
         |> shouldEqual ([ pollIn ||| pollHup ], 1)
@@ -755,9 +759,9 @@ module TestDarwinPoll =
         let closed = KeventWorld.close listener parked
         sound closed
 
-        match UnixThreadTable.parkedFor poller (Lone.threads closed) with
+        match Lone.parkedIn poller closed with
         | Some (ParkedSyscall.KqueuePoll poll) ->
-            (UnixMachineState.pollQueue poll.Queue closed.Machine).Registrations
+            (UnixMachineState.pollQueue poll.Queue (Kernel.machine closed)).Registrations
             |> shouldEqual Map.empty
         | other -> failwith $"expected a Darwin poll, got %A{other}"
 
@@ -784,11 +788,11 @@ module TestDarwinPoll =
         let closed = KeventWorld.close accepted parked
         sound closed
 
-        OpenFileTable.descriptions closed.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles closed)
         |> Map.containsKey acceptedId
         |> shouldEqual false
 
-        let fresh = UnixParkState.unpark poller closed
+        let fresh = Lone.UnixParkState.unpark poller closed
 
         answered [ entry client pollIn ] fresh
         |> shouldEqual ([ pollIn ||| pollHup ], 1)
@@ -811,23 +815,24 @@ module TestDarwinPoll =
     [<Test>]
     let ``a deadline is milliseconds from now, and a signal ends the sleep with EINTR`` () : unit =
         let listener, system = KeventWorld.listenerAt 5106us KeventWorld.darwin
-        let now = system.Scheduling.NanosecondsSinceBoot
+        let now = UnixSystem.nanosecondsSinceBoot system
         let condition, parked = parks [ entry listener pollIn ] 7 system
         deadlineOf condition |> shouldEqual (now + 7_000_000L)
         let early = advanceTo (now + 6_999_999L) parked
         wakes condition early |> shouldEqual false
 
-        // Woken with nothing to report and no deadline passed, the poll sleeps
-        // again.
-        match finish early with
-        | Ok (PollOutcome.WouldBlock _, again) ->
-            UnixThreadTable.parkedFor poller (Lone.threads again)
-            |> Option.isSome
-            |> shouldEqual true
-        | other -> failwith $"expected a re-park, got %A{other}"
+        // With nothing to report and no deadline passed, nothing wakes the poll,
+        // so there is no call to finish.
+        Lone.wakes early |> shouldEqual []
 
-        // Something to report and an expired deadline at once: Darwin answers
-        // whichever reached the sleeper first.
+        Assert.Throws<System.InvalidOperationException> (fun () ->
+            UnixPoll.tryFinishPoll (Callers.thread poller early) early |> ignore
+        )
+        |> ignore<System.InvalidOperationException>
+
+        // Something to report and an expired deadline at once, before the
+        // wake: Darwin answers whichever reached the sleeper first, which the
+        // wake does not say.
         let _, connected = KeventWorld.client 5106us (advanceTo (now + 7_000_000L) parked)
         finish connected |> shouldEqual (Error PollRefusal.EventsBesideDeadline)
 
@@ -882,11 +887,11 @@ module TestDarwinPoll =
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Failed UnixError.EINVAL))
 
-        for n in [ 1025 ; 10240 ] do
+        for n in [ 257 ; 1024 ; 1025 ; 10240 ] do
             pollNow (entries n) 0 system
-            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount n))
+            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, n, 256)))
 
-        answered (entries 1024) system |> shouldEqual (List.replicate 1024 0s, 0)
+        answered (entries 256) system |> shouldEqual (List.replicate 256 0s, 0)
 
     [<Test>]
     let ``a sleeping poll whose socket filter is ready but not activated breaks the invariants`` () : unit =
@@ -897,23 +902,23 @@ module TestDarwinPoll =
 
         // Undo the activation the connection made.
         let machine =
-            { connected.Machine with
+            { (Kernel.machine connected) with
                 PollQueues =
-                    connected.Machine.PollQueues
-                    |> Map.map (fun _ queue ->
+                    (Kernel.machine connected).PollQueues
+                    |> PollQueueTable.map (fun queue ->
                         { queue with
                             Active = []
                         }
                     )
             }
 
-        UnixSystem.checkInvariants
-            { connected with
-                Machine = machine
-            }
+        UnixSystem.checkInvariants (Kernel.withMachine machine connected)
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedKqueuePollActivationMissed (poller, (listener, KqueueFilter.Read))
+                UnixSystemDefect.ParkedKqueuePollActivationMissed (
+                    Callers.ofDefault poller,
+                    (listener, KqueueFilter.Read)
+                )
             ]
 
     [<Test>]
@@ -923,8 +928,9 @@ module TestDarwinPoll =
         sound parked
 
         let queueId, queue =
-            match UnixThreadTable.parkedFor poller (Lone.threads parked) with
-            | Some (ParkedSyscall.KqueuePoll poll) -> poll.Queue, UnixMachineState.pollQueue poll.Queue parked.Machine
+            match Lone.parkedIn poller parked with
+            | Some (ParkedSyscall.KqueuePoll poll) ->
+                poll.Queue, UnixMachineState.pollQueue poll.Queue (Kernel.machine parked)
             | other -> failwith $"expected a Darwin poll, got %A{other}"
 
         let socket =
@@ -937,29 +943,32 @@ module TestDarwinPoll =
         |> List.map (fun (key, registration) -> key, registration.Socket)
         |> shouldEqual [ (listener, KqueueFilter.Read), Some socket ]
 
-        let withQueues (queues : Map<PollQueueId, PollQueue>) (next : PollQueueId) =
-            { parked with
-                Machine =
-                    { parked.Machine with
+        let withQueues (queues : PollQueueTable) (next : PollQueueId) =
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         PollQueues = queues
                         NextPollQueueId = next
                     }
-            }
+                )
+                parked
 
-        let next = parked.Machine.NextPollQueueId
+        let next = (Kernel.machine parked).NextPollQueueId
 
         // Gone from the machine while the park names it.
-        UnixSystem.checkInvariants (withQueues Map.empty next)
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentPollQueue (poller, queueId) ]
+        UnixSystem.checkInvariants (withQueues PollQueueTable.empty next)
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentPollQueue (Callers.ofDefault poller, queueId) ]
 
         // A second one no park names.
         let (PollQueueId n) = next
 
-        UnixSystem.checkInvariants (withQueues (Map.add next queue parked.Machine.PollQueues) (PollQueueId (n + 1L)))
+        UnixSystem.checkInvariants (
+            withQueues (PollQueueTable.add next queue (Kernel.machine parked).PollQueues) (PollQueueId (n + 1L))
+        )
         |> shouldEqual [ UnixSystemDefect.PollQueueNotHeldOnce (next, 0) ]
 
         // Not below the counter.
-        UnixSystem.checkInvariants (withQueues parked.Machine.PollQueues queueId)
+        UnixSystem.checkInvariants (withQueues (Kernel.machine parked).PollQueues queueId)
         |> shouldEqual [ UnixSystemDefect.PollQueueIdNotFresh (queueId, queueId) ]
 
         // Another process's.
@@ -967,15 +976,18 @@ module TestDarwinPoll =
 
         UnixSystem.checkInvariants (
             withQueues
-                (Map.add
+                (PollQueueTable.set
                     queueId
                     { queue with
                         Owner = other
                     }
-                    parked.Machine.PollQueues)
+                    (Kernel.machine parked).PollQueues)
                 next
         )
-        |> shouldEqual [ UnixSystemDefect.PollQueueOfAnotherProcess (poller, queueId, other) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.PollQueueOfAnotherProcess (Callers.ofDefault poller, queueId, other)
+            ]
 
         // A socket's filter attached to no socket.
         let detached =
@@ -989,11 +1001,13 @@ module TestDarwinPoll =
                     )
             }
 
-        UnixSystem.checkInvariants (withQueues (Map.add queueId detached parked.Machine.PollQueues) next)
+        UnixSystem.checkInvariants (
+            withQueues (PollQueueTable.set queueId detached (Kernel.machine parked).PollQueues) next
+        )
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
-                    poller,
+                    Callers.ofDefault poller,
                     (listener, KqueueFilter.Read),
                     None,
                     Some socket
@@ -1001,6 +1015,6 @@ module TestDarwinPoll =
             ]
 
         // ...and the park's end lets it go.
-        let finished = UnixParkState.unpark poller parked
-        finished.Machine.PollQueues |> shouldEqual Map.empty
+        let finished = Lone.UnixParkState.unpark poller parked
+        PollQueueTable.all (Kernel.machine finished).PollQueues |> shouldEqual Map.empty
         sound finished

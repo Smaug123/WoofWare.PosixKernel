@@ -55,7 +55,7 @@ module TestBlockingAccept =
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"binding the listener at port %d{port}: %A{other}"
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | other -> failwith $"listening at port %d{port}: %A{other}"
 
@@ -84,33 +84,39 @@ module TestBlockingAccept =
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Listening listenState -> listenState.Queue |> List.map (fun queued -> queued.Connection)
             | phase -> failwith $"fd %d{fd} is %A{phase}, not listening"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.dup fd system with
-        | SyscallAnswer.Completed newFd, system -> int newFd, system
+        match Answered.dup (Callers.leader system) fd system with
+        | DescriptorAnswer.Returned newFd, system -> newFd, system
         | other, _ -> failwith $"dup of %d{fd} answered %A{other}"
 
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixDescriptor.setNonBlocking fd value system |> snd
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd value system |> snd
 
     /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
-    /// `thread` finishes its accept, which must hand a connection over.
+    /// `thread`, woken (`Woken.thread`), finishes its accept, which must hand a
+    /// connection over.
     let private finishWithConnection (thread : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryFinishAccept thread system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        let system = Woken.thread thread system
+
+        match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"expected thread %d{thread}'s accept to finish with a connection, got %A{other}"
 
-    let private awake (threads : int list) (system : UnixSystem<int, string>) : int list =
-        UnixWait.wakes (Set.ofList threads) system |> List.map fst
+    /// The threads `UnixWait.wake` wakes in `system`.
+    let private awake (system : UnixSystem<int, string>) : int list = Lone.wakes system |> List.map fst
+
+    let private waking (expected : int list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        Lone.waking expected system
 
     let private userBuffers : Gen<UserBuffer> =
         Gen.oneof
@@ -118,8 +124,21 @@ module TestBlockingAccept =
                 Gen.constant UserBuffer.Mapped
                 Gen.constant UserBuffer.Opaque
                 Gen.constant UserBuffer.Addressless
-                Gen.choose (0, 0x10000) |> Gen.map (uint64 >> UserBuffer.Unmapped)
+                Gen.constant (UserBuffer.Unmapped 0UL)
+                Gen.choose (1, 0x10000) |> Gen.map (uint64 >> UserBuffer.Unmapped)
             ]
+
+    /// A destination, and the length its call declares: none for NULL, whose
+    /// length cell no kernel reads.
+    let private destinations : Gen<UserBuffer * uint32 option> =
+        gen {
+            let! destination = userBuffers
+            let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+
+            match destination with
+            | UserBuffer.Unmapped 0UL -> return destination, None
+            | _ -> return destination, Some declaredLength
+        }
 
     let private platformGen : Gen<SimulatedUnixPlatform> = Gen.elements platforms
 
@@ -136,8 +155,7 @@ module TestBlockingAccept =
         let gen =
             gen {
                 let! platform = platformGen
-                let! destination = userBuffers
-                let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+                let! destination, declaredLength = destinations
                 let! throughDup = ArbMap.defaults |> ArbMap.generate<bool>
                 let! thread = Gen.choose (1, 6)
                 return platform, destination, declaredLength, throughDup, thread
@@ -147,7 +165,7 @@ module TestBlockingAccept =
             (
                 platform : SimulatedUnixPlatform,
                 destination : UserBuffer,
-                declaredLength : uint32,
+                declaredLength : uint32 option,
                 throughDup : bool,
                 thread : int
             )
@@ -159,14 +177,14 @@ module TestBlockingAccept =
 
             let listener = idOf fd system
 
-            match UnixConnection.tryAccept thread fd destination declaredLength system with
+            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength 0 system with
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
                     Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                 )
 
-                UnixThreadTable.parkOf thread (Lone.threads parked)
+                Lone.parkOf thread parked
                 |> shouldEqual (
                     Some
                         {
@@ -176,24 +194,28 @@ module TestBlockingAccept =
                                         Listener = SleepTarget.Waiting (listener, fd)
                                         Destination = destination
                                         DeclaredLength = declaredLength
+                                        NewSocketNonBlocking = false
+                                        NewSocketCloseOnExec = false
                                     }
-                            Ordinal = system.Machine.NextParkOrdinal
+                            Ordinal = (Kernel.machine system).NextParkOrdinal
+                            State = ParkState.Asleep
                         }
                 )
 
                 // The park holds the listener, and with that hold let go of,
                 // nothing else has changed.
-                OpenFileTable.holdCount listener parked.Machine.OpenFiles
+                OpenFileTable.holdCount listener (UnixSystem.openFiles parked)
                 |> shouldEqual (Some 1)
 
-                { parked with
-                    Machine =
-                        { parked.Machine with
-                            NextParkOrdinal = system.Machine.NextParkOrdinal
-                            OpenFiles = OpenFileTable.releaseHold listener parked.Machine.OpenFiles
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            NextParkOrdinal = (Kernel.machine system).NextParkOrdinal
+                            OpenFiles = OpenFileTable.releaseHold listener machine.OpenFiles
                         }
-                }
-                |> Lone.mapThreads (fun _ -> Lone.threads system)
+                    )
+                    parked
+                |> ForgedThread.threadsAsIn (Lone.pid system) system
                 |> shouldEqual system
 
                 UnixSystem.checkInvariants parked |> shouldEqual []
@@ -210,18 +232,18 @@ module TestBlockingAccept =
         let condition = WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener)
         let system = parkIn 1 fd system
 
-        WakeCondition.satisfied 1 condition system |> shouldEqual Set.empty
-        UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+        Lone.WakeCondition.satisfied 1 condition system |> shouldEqual Set.empty
+        Lone.wakes system |> shouldEqual []
 
         let system = connectTo 5000us system
 
-        WakeCondition.satisfied 1 condition system
+        Lone.WakeCondition.satisfied 1 condition system
         |> shouldEqual (Set.singleton (WakePrimitive.AcceptQueueNonEmpty listener))
 
-        UnixWait.wakes (Set.singleton 1) system
+        Lone.wakes system
         |> shouldEqual [ 1, Set.singleton (WakePrimitive.AcceptQueueNonEmpty listener) ]
 
-        UnixWait.deadlines (Set.singleton 1) system |> shouldEqual []
+        Lone.deadlines system |> shouldEqual []
 
     [<TestCaseSource(nameof platforms)>]
     let ``a parked thread cannot accept again, and an unparked one cannot finish``
@@ -231,11 +253,16 @@ module TestBlockingAccept =
         let fd, system = world platform
         let parked = parkIn 1 fd system
 
-        Assert.Throws<exn> (fun () -> UnixConnection.tryAccept 1 fd UserBuffer.Mapped 16u parked |> ignore<_>)
-        |> ignore<exn>
+        Assert.Throws<System.InvalidOperationException> (fun () ->
+            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped (Some 16u) 0 parked
+            |> ignore<_>
+        )
+        |> ignore<System.InvalidOperationException>
 
-        Assert.Throws<exn> (fun () -> UnixConnection.tryFinishAccept 2 parked |> ignore<_>)
-        |> ignore<exn>
+        Assert.Throws<System.InvalidOperationException> (fun () ->
+            UnixConnection.tryFinishAccept (Callers.thread 2 parked) parked |> ignore<_>
+        )
+        |> ignore<System.InvalidOperationException>
 
     // ------------------------------------------------------------------
     // The finish
@@ -250,13 +277,18 @@ module TestBlockingAccept =
         | SetNonBlocking of bool
         /// Another thread takes the oldest queued connection, if there is one.
         | Steal
+        /// The client asks `UnixWait.wake`, which wakes the accept if a
+        /// connection is queued.
+        | Wake
 
-    /// The reference: a parked accept that finds a connection answers exactly
-    /// what an accept made at that moment through the same description, with
-    /// the parked call's destination and length, would -- the listening
-    /// description's `O_NONBLOCK` included, as it stands then. One that finds
-    /// the queue empty parks again on the same record, behind every other park,
-    /// whatever the description's flag says.
+    /// The reference: a parked accept, once woken, that finds a connection
+    /// answers exactly what an accept made at that moment through the same
+    /// description, with the parked call's destination and length, would --
+    /// the listening description's `O_NONBLOCK` included, as it stands then.
+    /// One woken that finds the queue empty, another thread having taken the
+    /// connection that woke it, parks again on the same record, asleep, behind
+    /// every other park, whatever the description's flag says. One nothing
+    /// has woken cannot be finished.
     [<Test>]
     let ``finishing a parked accept answers what an accept made at that moment would`` () : unit =
         let midWait : Gen<MidWait> =
@@ -265,30 +297,35 @@ module TestBlockingAccept =
                     Gen.constant MidWait.Connect
                     ArbMap.defaults |> ArbMap.generate<bool> |> Gen.map MidWait.SetNonBlocking
                     Gen.constant MidWait.Steal
+                    Gen.constant MidWait.Wake
                 ]
 
         let gen =
             gen {
                 let! platform = platformGen
-                let! destination = userBuffers
-                let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
+                let! destination, declaredLength = destinations
                 let! actions = Gen.listOf midWait |> Gen.map (List.truncate 6)
                 return platform, destination, declaredLength, actions
             }
 
         let property
-            (platform : SimulatedUnixPlatform, destination : UserBuffer, declaredLength : uint32, actions : MidWait list)
+            (
+                platform : SimulatedUnixPlatform,
+                destination : UserBuffer,
+                declaredLength : uint32 option,
+                actions : MidWait list
+            )
             : unit
             =
             let fd, system = world platform
             let listener = idOf fd system
 
             let system =
-                match UnixConnection.tryAccept 1 fd destination declaredLength system with
+                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength 0 system with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
-            let parkedRecord = UnixThreadTable.parkedFor 1 (Lone.threads system)
+            let parkedRecord = Lone.parkedIn 1 system
 
             let system =
                 (system, actions)
@@ -300,12 +337,36 @@ module TestBlockingAccept =
                         if List.isEmpty (queueOf fd system) then
                             system
                         else
-                            match UnixConnection.tryAccept 2 fd UserBuffer.Mapped 16u system with
+                            match
+                                UnixConnection.tryAccept
+                                    (Callers.thread 2 system)
+                                    fd
+                                    UserBuffer.Mapped
+                                    (Some 16u)
+                                    0
+                                    system
+                            with
                             | Ok (AcceptOutcome.Accepted _, system) -> system
                             | other -> failwith $"expected the steal to succeed, got %A{other}"
+                    | MidWait.Wake -> Lone.wake system |> snd
                 )
 
-            let finished = UnixConnection.tryFinishAccept 1 system
+            // The client asks again before it finishes.
+            let system = Lone.wake system |> snd
+
+            match Lone.parkOf 1 system with
+            | Some {
+                       State = ParkState.Asleep
+                   } ->
+                // Nothing has woken the accept: no connection was queued at any
+                // wake.
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixConnection.tryFinishAccept (Callers.thread 1 system) system |> ignore<_>
+                )
+                |> ignore<System.InvalidOperationException>
+            | _ ->
+
+            let finished = UnixConnection.tryFinishAccept (Callers.thread 1 system) system
 
             if List.isEmpty (queueOf fd system) then
                 match finished with
@@ -315,13 +376,14 @@ module TestBlockingAccept =
                         Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                     )
 
-                    UnixThreadTable.parkOf 1 (Lone.threads parkedAgain)
+                    Lone.parkOf 1 parkedAgain
                     |> shouldEqual (
                         parkedRecord
                         |> Option.map (fun syscall ->
                             {
                                 Syscall = syscall
-                                Ordinal = system.Machine.NextParkOrdinal
+                                Ordinal = (Kernel.machine system).NextParkOrdinal
+                                State = ParkState.Asleep
                             }
                         )
                     )
@@ -330,7 +392,8 @@ module TestBlockingAccept =
                 | other -> failwith $"expected the accept to park again, got %A{other}"
             else
                 let oracle =
-                    UnixConnection.tryAccept 1 fd destination declaredLength (UnixParkState.unpark 1 system)
+                    let unparked = Lone.UnixParkState.unpark 1 system
+                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength 0 unparked
 
                 finished |> shouldEqual oracle
 
@@ -352,7 +415,7 @@ module TestBlockingAccept =
         let fd, system = world platform
         let system = parkIn 1 fd system |> setNonBlocking fd true
 
-        UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+        Lone.wakes system |> shouldEqual []
 
         let accepted, system = connectTo 5000us system |> finishWithConnection 1
 
@@ -361,7 +424,8 @@ module TestBlockingAccept =
             | SimulatedUnixFlavour.Linux -> false
             | SimulatedUnixFlavour.Darwin -> true
 
-        UnixDescriptor.isNonBlocking accepted system |> shouldEqual (Some expected)
+        UnixDescriptor.isNonBlocking (Callers.leader system) accepted system
+        |> shouldEqual (Some expected)
 
     // ------------------------------------------------------------------
     // Several accepters
@@ -375,19 +439,17 @@ module TestBlockingAccept =
         let system = system |> parkIn 3 fd |> parkIn 1 fd |> parkIn 2 fd
         let system = connectTo 5000us system
 
-        awake [ 1 ; 2 ; 3 ] system |> shouldEqual [ 3 ]
+        let system = waking [ 3 ] system
         // Woken and not yet finished, 3 stands for the connection: nobody else wakes.
-        awake [ 1 ; 2 ] system |> shouldEqual []
+        awake system |> shouldEqual []
 
         let _, system = finishWithConnection 3 system
-        awake [ 1 ; 2 ] system |> shouldEqual []
+        awake system |> shouldEqual []
 
-        let system = connectTo 5000us system
-        awake [ 1 ; 2 ] system |> shouldEqual [ 1 ]
+        let system = connectTo 5000us system |> waking [ 1 ]
         let _, system = finishWithConnection 1 system
 
-        let system = connectTo 5000us system
-        awake [ 2 ] system |> shouldEqual [ 2 ]
+        connectTo 5000us system |> waking [ 2 ] |> ignore<UnixSystem<int, string>>
 
     /// Measured (`blocking-accept.c`, section B2): of two threads that each
     /// accept again as soon as they return, the returns alternate, so an
@@ -395,14 +457,14 @@ module TestBlockingAccept =
     [<TestCaseSource(nameof platforms)>]
     let ``an accepter that accepts again waits behind the others`` (platform : SimulatedUnixPlatform) : unit =
         let fd, system = world platform
-        let system = system |> parkIn 1 fd |> parkIn 2 fd |> connectTo 5000us
 
-        awake [ 1 ; 2 ] system |> shouldEqual [ 1 ]
+        let system =
+            system |> parkIn 1 fd |> parkIn 2 fd |> connectTo 5000us |> waking [ 1 ]
 
         let _, system = finishWithConnection 1 system
         let system = system |> parkIn 1 fd |> connectTo 5000us
 
-        awake [ 1 ; 2 ] system |> shouldEqual [ 2 ]
+        awake system |> shouldEqual [ 2 ]
 
     /// A woken accepter that finds the connection gone -- another caller took
     /// it through a non-blocking accept -- parks again, and so goes behind the
@@ -413,24 +475,24 @@ module TestBlockingAccept =
         : unit
         =
         let fd, system = world platform
-        let system = system |> parkIn 1 fd |> parkIn 2 fd |> connectTo 5000us
 
-        awake [ 1 ; 2 ] system |> shouldEqual [ 1 ]
+        let system =
+            system |> parkIn 1 fd |> parkIn 2 fd |> connectTo 5000us |> waking [ 1 ]
 
         let system = setNonBlocking fd true system
 
         let system =
-            match UnixConnection.tryAccept 3 fd UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted _, system) -> system
             | other -> failwith $"expected thread 3 to take the connection, got %A{other}"
 
         let system =
-            match UnixConnection.tryFinishAccept 1 system with
+            match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
             | Ok (AcceptOutcome.WouldBlock _, system) -> system
             | other -> failwith $"expected thread 1 to park again, got %A{other}"
 
         let system = connectTo 5000us system
-        awake [ 1 ; 2 ] system |> shouldEqual [ 2 ]
+        awake system |> shouldEqual [ 2 ]
 
     /// Measured (`blocking-accept.c`, section B4): a connection to a listener
     /// one thread accepts on and another polls wakes both, since a poll waits
@@ -443,7 +505,7 @@ module TestBlockingAccept =
         let system =
             match
                 UnixPoll.tryPoll
-                    2
+                    (Callers.thread 2 system)
                     [
                         {
                             Fd = fd
@@ -457,7 +519,7 @@ module TestBlockingAccept =
             | other -> failwith $"expected the poll to park, got %A{other}"
 
         let system = connectTo 5000us system
-        awake [ 1 ; 2 ] system |> shouldEqual [ 1 ; 2 ]
+        awake system |> shouldEqual [ 1 ; 2 ]
 
     /// One park the property below makes: `waiter` accepts on listener number
     /// `listener` of the generated set.
@@ -468,14 +530,17 @@ module TestBlockingAccept =
         }
 
     [<Test>]
-    let ``a connection wakes the accepter that parked first, unless a woken accepter of its listener has yet to finish``
+    let ``a connection wakes the accepter that parked first, unless an accepter of its listener a connection woke has yet to finish``
         ()
         : unit
         =
         // Up to three listeners, each with or without a queued connection; threads parking on
-        // them in a generated order, some more than once; and which parked threads the client
-        // holds asleep. The oracle states the rule per thread, where `UnixWait.wakes` groups by
-        // listener.
+        // them in a generated order, some more than once, each re-park a woken thread's; and
+        // which parked threads are asleep, the rest having been woken and not yet finished,
+        // each by a connection or by a signal alone. Measured (`docs/probes/first-wake`, the
+        // two-sleeper accept rows): an accepter a signal woke does not stand in the queue for
+        // the next connection. The oracle states the rule per thread, where `UnixWait.wake`
+        // groups by listener.
         let gen =
             gen {
                 let! platform = platformGen
@@ -496,11 +561,18 @@ module TestBlockingAccept =
 
                 let! parks = Gen.listOf park |> Gen.map (List.truncate 12)
                 let! asleepMask = Gen.listOfLength 6 (ArbMap.defaults |> ArbMap.generate<bool>)
-                return platform, queued, parks, asleepMask
+                let! byConnectionMask = Gen.listOfLength 6 (ArbMap.defaults |> ArbMap.generate<bool>)
+                return platform, queued, parks, asleepMask, byConnectionMask
             }
 
         let property
-            (platform : SimulatedUnixPlatform, queued : bool list, parks : GeneratedPark list, asleepMask : bool list)
+            (
+                platform : SimulatedUnixPlatform,
+                queued : bool list,
+                parks : GeneratedPark list,
+                asleepMask : bool list,
+                byConnectionMask : bool list
+            )
             : unit
             =
             let _, system = world platform
@@ -520,19 +592,26 @@ module TestBlockingAccept =
             let system =
                 (system, parks)
                 ||> List.fold (fun system park ->
-                    UnixWait.park
+                    let system =
+                        match Lone.parkOf park.Waiter system with
+                        | Some _ -> ForgedPark.woken park.Waiter system
+                        | None -> system
+
+                    Lone.Parking.park
                         park.Waiter
                         (ParkedSyscall.Accept
                             {
                                 Listener = SleepTarget.Waiting listeners.[park.Listener]
                                 Destination = UserBuffer.Mapped
-                                DeclaredLength = 16u
+                                DeclaredLength = (Some 16u)
+                                NewSocketNonBlocking = false
+                                NewSocketCloseOnExec = false
                             })
                         system
                 )
 
             let parkedThreads =
-                (Lone.threads system)
+                (Lone.threadMap system)
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
                     match state.Parked with
@@ -549,12 +628,31 @@ module TestBlockingAccept =
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
 
+            let byConnection (name : int) : bool = byConnectionMask.[name - 1]
+
+            let system =
+                (system, parkedThreads)
+                ||> List.fold (fun system (name, listener, _) ->
+                    if Set.contains name asleep then
+                        system
+                    else
+                        let fired =
+                            if byConnection name then
+                                WakePrimitive.AcceptQueueNonEmpty listener
+                            else
+                                WakePrimitive.SignalDeliverable
+
+                        system |> ForgedThread.woken (Callers.thread name system) (Set.singleton fired)
+                )
+
             let isQueued (listener : OpenFileDescriptionId) : bool =
                 queued.[List.findIndex (fst >> (=) listener) listeners]
 
             let finishingOn (listener : OpenFileDescriptionId) : bool =
                 parkedThreads
-                |> List.exists (fun (name, on, _) -> not (Set.contains name asleep) && on = listener)
+                |> List.exists (fun (name, on, _) ->
+                    not (Set.contains name asleep) && byConnection name && on = listener
+                )
 
             let firstAsleepOn (listener : OpenFileDescriptionId) : int =
                 parkedThreads
@@ -573,7 +671,7 @@ module TestBlockingAccept =
                         None
                 )
 
-            UnixWait.wakes asleep system |> shouldEqual expected
+            Lone.wakes system |> shouldEqual expected
             UnixSystem.checkInvariants system |> shouldEqual []
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 1000, Prop.forAll (Arb.fromGen gen) property)
@@ -608,22 +706,21 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
-        awake [ 1 ] system |> shouldEqual []
+        awake system |> shouldEqual []
         UnixSystem.checkInvariants system |> shouldEqual []
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
-        let system = connectTo 5000us system
-        awake [ 1 ] system |> shouldEqual [ 1 ]
+        let system = connectTo 5000us system |> waking [ 1 ]
         let accepted, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual false
 
@@ -647,14 +744,14 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
         let system = connectTo 5000us system
         let _, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
@@ -669,7 +766,7 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -678,7 +775,7 @@ module TestBlockingAccept =
         // No descriptor names the listener any more, so it is found by its
         // phase.
         let taken, left =
-            system.Machine.Sockets
+            SocketTable.all (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.pick (fun (_, socket) ->
                 match socket.Phase with
@@ -695,7 +792,7 @@ module TestBlockingAccept =
         let resetAt (connection : ConnectionId) : bool =
             TcpTransfer.hasBeenReset
                 ConnectionEnd.Client
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
         resetAt taken |> shouldEqual false
         resetAt left |> shouldEqual true
@@ -715,15 +812,14 @@ module TestBlockingAccept =
             let system = parkIn 1 fd system
 
             let system =
-                match UnixDescriptor.tryClose (if closeEntered then fd else other) system with
+                match UnixDescriptor.tryClose (Callers.leader system) (if closeEntered then fd else other) system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"expected the close to succeed, got %A{other}"
 
-            UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+            Lone.wakes system |> shouldEqual []
             UnixSystem.checkInvariants system |> shouldEqual []
 
-            let system = connectTo 5000us system
-            awake [ 1 ] system |> shouldEqual [ 1 ]
+            let system = connectTo 5000us system |> waking [ 1 ]
             finishWithConnection 1 system |> ignore<_>
 
     /// `system` with a caught `SIGUSR1` pending for `thread`.
@@ -733,8 +829,12 @@ module TestBlockingAccept =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -743,17 +843,21 @@ module TestBlockingAccept =
         )
 
     let private closed (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 
+    /// `thread`, woken (`Woken.thread`), finishes its accept, which must answer
+    /// `ECONNABORTED`.
     let private finishAborted (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryFinishAccept thread system with
+        let system = Woken.thread thread system
+
+        match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
         | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, system) -> system
         | other -> failwith $"expected thread %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
-        UnixConnection.tryAccept 6 fd UserBuffer.Mapped 16u system
+        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped (Some 16u) 0 system
 
     /// Measured (`close-ends-call.c`, sections A1-A4, and `blocking-accept.c`
     /// section C): on Darwin, closing the descriptor an accept was made
@@ -775,9 +879,9 @@ module TestBlockingAccept =
             let system = closed fd system
 
             UnixSystem.checkInvariants system |> shouldEqual []
-            awake parked system |> shouldEqual parked
+            let system = waking parked system
 
-            OpenFileTable.descriptions system.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles system)
             |> Map.containsKey listener
             |> shouldEqual keepDup
 
@@ -806,11 +910,10 @@ module TestBlockingAccept =
         let other, system = dupOf fd system
         let system = parkIn 1 fd system |> closed other
 
-        awake [ 1 ] system |> shouldEqual []
+        awake system |> shouldEqual []
         UnixSystem.checkInvariants system |> shouldEqual []
 
-        let system = connectTo 5000us system
-        awake [ 1 ] system |> shouldEqual [ 1 ]
+        let system = connectTo 5000us system |> waking [ 1 ]
         finishWithConnection 1 system |> ignore<_>
 
     /// Measured (`close-ends-call.c`, section A7): a listener a close has
@@ -845,7 +948,7 @@ module TestBlockingAccept =
 
         // A second `listen` leaves it drained (section A7h).
         let relistened =
-            match UnixSocket.tryListen other 16 system with
+            match UnixSocket.tryListen (Callers.leader system) other 16 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening again: %A{other}"
 
@@ -863,8 +966,7 @@ module TestBlockingAccept =
         // A connection queued, which woke the accept before the close.
         let fd, system = world SimulatedUnixPlatform.macOsArm64
         let other, system = dupOf fd system
-        let system = parkIn 1 fd system |> connectTo 5000us
-        awake [ 1 ] system |> shouldEqual [ 1 ]
+        let system = parkIn 1 fd system |> connectTo 5000us |> waking [ 1 ]
         let system = closed fd system |> finishAborted 1
         queueOf other system |> List.length |> shouldEqual 1
         UnixSystem.checkInvariants system |> shouldEqual []
@@ -876,8 +978,11 @@ module TestBlockingAccept =
             let system = if before then signalled 1 system else system
             let system = closed fd system
             let system = if before then system else signalled 1 system
-            awake [ 1 ] system |> shouldEqual [ 1 ]
-            finishAborted 1 system |> UnixSystem.checkInvariants |> shouldEqual []
+
+            waking [ 1 ] system
+            |> finishAborted 1
+            |> UnixSystem.checkInvariants
+            |> shouldEqual []
 
     /// The close records its answer in the park, which forgets the descriptor
     /// number: a later descriptor under the same number, onto another
@@ -890,11 +995,10 @@ module TestBlockingAccept =
 
         let second, system = listenerAt 5001us system
         second |> shouldEqual fd
-        let system = parkIn 2 second system
-        awake [ 2 ] system |> shouldEqual []
+        let system = parkIn 2 second system |> waking [ 1 ]
+        awake system |> shouldEqual []
 
-        let system = closed second system
-        awake [ 1 ; 2 ] system |> shouldEqual [ 1 ; 2 ]
+        let system = closed second system |> waking [ 2 ]
         let system = finishAborted 1 system |> finishAborted 2
         UnixSystem.checkInvariants system |> shouldEqual []
 
@@ -1014,6 +1118,8 @@ module TestBlockingAccept =
             Ordinal : int
             /// The client has woken it, and not yet finished it.
             Woken : bool
+            /// A connection was queued as the client woke it.
+            WokenByConnection : bool
         }
 
     /// What has become of a client's connect.
@@ -1079,7 +1185,7 @@ module TestBlockingAccept =
     let private clientFate (fd : int) (system : UnixSystem<int, string>) : ClientFate =
         let socket =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
+            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
             | other -> failwith $"client fd %d{fd} names %A{other}"
 
         match SocketPhase.connectionEnd socket.Phase with
@@ -1088,7 +1194,7 @@ module TestBlockingAccept =
             let towardsClient =
                 TcpTransfer.towards
                     ConnectionEnd.Client
-                    (UnixMachineState.connection connection system.Machine).Transfer
+                    (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
             match towardsClient.Receiver, towardsClient.Fin with
             | TcpEndState.Open _, TcpFin.NotSent -> ClientFate.Queued
@@ -1100,7 +1206,7 @@ module TestBlockingAccept =
     /// The clients of the connections `queue` holds, in its order.
     let private queuedClients (queue : QueuedConnection list) (system : UnixSystem<int, string>) : int list =
         let clientOf (connection : ConnectionId) : int =
-            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client system.Machine with
+            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client (Kernel.machine system) with
             | None -> failwith $"queued connection %O{connection} has no client"
             | Some socket ->
                 FileDescriptorRegistry.fds (Lone.fileDescriptors system)
@@ -1116,11 +1222,11 @@ module TestBlockingAccept =
     let private acceptThreads : int list = [ 1 ; 2 ; 3 ; 4 ]
 
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -1191,6 +1297,7 @@ module TestBlockingAccept =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1248,23 +1355,23 @@ module TestBlockingAccept =
 
                 let supplied =
                     match
-                        UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
+                        Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
                     with
                     | Ok (SetSockOptAdmission.Transfer count) ->
                         Some (System.Collections.Immutable.ImmutableArray.Create (value, 0, count))
                     | other -> failwith $"setsockopt of %A{change} through fd %d{fd} was admitted as %A{other}"
 
-                UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+                Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
 
             // The accepted socket must hold what its client's connection
             // completed with, and is then closed at once, its linger turned off
             // first so that the close is a FIN: the reference follows the
             // listener's descriptors and the clients', and nothing else.
-            let dropAccepted (where : string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
+            let dropAccepted (where : unit -> string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
-                    | other -> failwith $"%s{where}: the accepted fd %d{fd} names %A{other}"
+                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
+                    | other -> failwith $"%s{where ()}: the accepted fd %d{fd} names %A{other}"
 
                 let held =
                     {
@@ -1276,7 +1383,7 @@ module TestBlockingAccept =
 
                 if held <> expected then
                     failwith
-                        $"%s{where}: the socket accepted for client fd %d{client} holds %A{held}, expected %A{expected}"
+                        $"%s{where ()}: the socket accepted for client fd %d{client} holds %A{held}, expected %A{expected}"
 
                 if expected <> completedUnder linux reference.ListenerOptions then
                     cover $"%s{flavourName} accept: an option changed since the connection completed"
@@ -1287,11 +1394,11 @@ module TestBlockingAccept =
                 let system =
                     match setOption fd (OptionChange.Linger (false, 0)) system with
                     | Ok (SetSockOptAnswer.Set, system) -> system
-                    | other -> failwith $"%s{where}: turning the accepted fd %d{fd}'s linger off: %A{other}"
+                    | other -> failwith $"%s{where ()}: turning the accepted fd %d{fd}'s linger off: %A{other}"
 
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
-                | other -> failwith $"%s{where}: closing the accepted fd %d{fd}: %A{other}"
+                | other -> failwith $"%s{where ()}: closing the accepted fd %d{fd}: %A{other}"
 
             /// `r` with its oldest queued client's connection accepted.
             let acceptedHead (r : AcceptReference) : AcceptReference =
@@ -1340,15 +1447,17 @@ module TestBlockingAccept =
                 | None -> ()
                 | Some op ->
 
-                let where = $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
+                let where () : string =
+                    $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
 
                 match op with
                 | AcceptOp.Accept (thread, fd) ->
-                    let answer = UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u system
+                    let answer =
+                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system
 
                     match Map.tryFind fd reference.Fds, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> cover $"%s{flavourName} accept: EBADF"
-                    | Some _, Ok (AcceptOutcome.Accepted (accepted, _, _), after) when not reference.Queue.IsEmpty ->
+                    | Some _, Ok (AcceptOutcome.Accepted (accepted, _), after) when not reference.Queue.IsEmpty ->
                         cover $"%s{flavourName} accept: a queued connection"
                         system <- dropAccepted where (List.head reference.Queue) accepted after
                         reference <- acceptedHead reference
@@ -1371,11 +1480,12 @@ module TestBlockingAccept =
                                             Through = Some fd
                                             Ordinal = reference.NextOrdinal
                                             Woken = false
+                                            WokenByConnection = false
                                         }
                                         reference.Parks
                                 NextOrdinal = reference.NextOrdinal + 1
                             }
-                    | _, other -> failwith $"%s{where}: %A{other}"
+                    | _, other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.Connect ->
                     let client, created =
                         NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
@@ -1410,13 +1520,13 @@ module TestBlockingAccept =
                                 Fds = Map.add client false reference.Fds
                                 Clients = Map.add client ClientFate.Refused reference.Clients
                             }
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.Close fd ->
                     match Map.tryFind fd reference.Fds with
                     | None ->
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
                         | Ok (SyscallAnswer.Failed UnixError.EBADF, _) -> ()
-                        | other -> failwith $"%s{where}: %A{other}"
+                        | other -> failwith $"%s{where ()}: %A{other}"
                     | Some _ ->
 
                     let drains =
@@ -1441,7 +1551,7 @@ module TestBlockingAccept =
 
                     let dies = reference.Alive && not (listenerHeld after)
 
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (SyscallAnswer.Completed 0L, closed) ->
                         if dies && not reference.Queue.IsEmpty then
                             cover $"%s{flavourName} close: resets the queued clients"
@@ -1465,15 +1575,15 @@ module TestBlockingAccept =
 
                         system <- closed
                         reference <- releasedIfUnheld after
-                    | other -> failwith $"%s{where}: dies %b{dies}, %A{other}"
+                    | other -> failwith $"%s{where ()}: dies %b{dies}, %A{other}"
                 | AcceptOp.Dup fd ->
-                    let answer, after = Answered.dup fd system
+                    let answer, after = Answered.dup (Callers.leader system) fd system
 
                     match Map.tryFind fd reference.Fds with
-                    | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
+                    | None -> answer |> shouldEqual (DescriptorAnswer.Failed UnixError.EBADF)
                     | Some named ->
                         let lowest = lowestFree reference
-                        answer |> shouldEqual (SyscallAnswer.Completed (int64 lowest))
+                        answer |> shouldEqual (DescriptorAnswer.Returned lowest)
 
                         if reference.Parks |> Map.exists (fun _ park -> park.Through.IsNone) then
                             cover $"%s{flavourName} dup: a number an ended accept was made through"
@@ -1491,6 +1601,7 @@ module TestBlockingAccept =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (Kernel.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1507,8 +1618,11 @@ module TestBlockingAccept =
                     let asleep =
                         reference.Parks |> Map.filter (fun _ park -> not park.Woken) |> Map.toList
 
+                    // A woken accepter holds the listener's queue only if a
+                    // connection woke it (`docs/probes/first-wake`).
                     let finishing =
-                        reference.Parks |> Map.exists (fun _ park -> park.Woken && park.Through.IsSome)
+                        reference.Parks
+                        |> Map.exists (fun _ park -> park.Woken && park.WokenByConnection)
 
                     let first =
                         if reference.Queue.IsEmpty || finishing then
@@ -1530,11 +1644,13 @@ module TestBlockingAccept =
                         |> List.sortBy (fun (_, park) -> park.Ordinal)
                         |> List.map fst
 
-                    let woken =
-                        UnixWait.wakes (asleep |> List.map fst |> Set.ofList) system |> List.map fst
+                    let woken, after = Lone.wake system
+                    let woken = woken |> List.map fst
 
                     if woken <> expected then
-                        failwith $"%s{where}: woke %A{woken}, expected %A{expected}"
+                        failwith $"%s{where ()}: woke %A{woken}, expected %A{expected}"
+
+                    system <- after
 
                     reference <-
                         { reference with
@@ -1545,6 +1661,8 @@ module TestBlockingAccept =
                                         thread
                                         { parks.[thread] with
                                             Woken = true
+                                            WokenByConnection =
+                                                parks.[thread].Through.IsSome && not reference.Queue.IsEmpty
                                         }
                                         parks
                                 )
@@ -1552,7 +1670,9 @@ module TestBlockingAccept =
                 | AcceptOp.Finish thread ->
                     let park = reference.Parks.[thread]
                     let signalled = Set.contains thread reference.Signalled
-                    let answer = UnixConnection.tryFinishAccept thread system
+                    // `UnixWait.finish` answers as `finishAccept` does.
+                    FinishOracle.agree (Callers.thread thread system) system |> ignore<string>
+                    let answer = UnixConnection.tryFinishAccept (Callers.thread thread system) system
 
                     let settle (r : AcceptReference) (after : UnixSystem<int, string>) =
                         let r = answered thread r
@@ -1562,6 +1682,19 @@ module TestBlockingAccept =
 
                         system <- returnToUser thread after
                         reference <- releasedIfUnheld r
+
+                    // A pending signal beats a queued connection on Darwin
+                    // (`docs/probes/first-wake`), and the connection whose wake
+                    // the accepter took stays queued without waking another
+                    // accepter asleep, which is refused.
+                    let consumedWake =
+                        park.Through.IsSome
+                        && not reference.Queue.IsEmpty
+                        && signalled
+                        && not linux
+                        && park.WokenByConnection
+                        && reference.Parks
+                           |> Map.exists (fun _ other -> not other.Woken && other.Through.IsSome)
 
                     match park.Through, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, after) ->
@@ -1574,20 +1707,37 @@ module TestBlockingAccept =
                             cover "Darwin finish: ECONNABORTED with a signal pending"
 
                         settle reference after
-                    | Some _, _ when not reference.Queue.IsEmpty ->
+                    | Some _, Error (AcceptRefusal.SignalBesideConsumedWake _) when consumedWake ->
+                        cover "Darwin finish: refused, a signal beside a connection's wake, another accepter asleep"
+                    | Some _, _ when not reference.Queue.IsEmpty && not (signalled && not linux) ->
                         match answer with
-                        | Error (AcceptRefusal.Interruption _) when signalled && not linux ->
-                            cover "Darwin finish: refused, a connection and a signal"
-                        | Ok (AcceptOutcome.Accepted (accepted, _, _), after) ->
+                        | Ok (AcceptOutcome.Accepted (accepted, _), after) ->
                             cover $"%s{flavourName} finish: a connection"
 
                             settle
                                 (acceptedHead reference)
                                 (dropAccepted where (List.head reference.Queue) accepted after)
-                        | other -> failwith $"%s{where}: %A{other}"
-                    | Some _, Ok (AcceptOutcome.Failed UnixError.EINTR, after) when signalled && not restart ->
-                        settle reference after
-                    | Some _, Ok (AcceptOutcome.Restarts, after) when signalled && restart -> settle reference after
+                        | other -> failwith $"%s{where ()}: %A{other}"
+                    | Some _, Ok (AcceptOutcome.Interrupted, after) when signalled && not consumedWake ->
+                        if not reference.Queue.IsEmpty then
+                            cover $"%s{flavourName} finish: EINTR beside a connection"
+
+                        // The return to user mode ends the call as the
+                        // handler's SA_RESTART says, and runs the handler;
+                        // `settle` returns the thread again, taking nothing
+                        // more.
+                        match Interruptions.handled (Callers.thread thread after) after with
+                        | Ok (call, after) ->
+                            call
+                            |> shouldEqual (
+                                if restart then
+                                    InterruptedCall.Restarts
+                                else
+                                    InterruptedCall.FailsWithEintr
+                            )
+
+                            settle reference after
+                        | Error refusal -> failwith $"%s{where ()}: the return refused %A{refusal}"
                     | Some _, Ok (AcceptOutcome.WouldBlock _, after) when not signalled ->
                         system <- after
 
@@ -1603,7 +1753,7 @@ module TestBlockingAccept =
                                         reference.Parks
                                 NextOrdinal = reference.NextOrdinal + 1
                             }
-                    | _, other -> failwith $"%s{where}: %A{other}"
+                    | _, other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.SetOption (fd, change) ->
                     match setOption fd change system with
                     | Ok (SetSockOptAnswer.Set, after) ->
@@ -1616,11 +1766,11 @@ module TestBlockingAccept =
                             { reference with
                                 ListenerOptions = changed linux change reference.ListenerOptions
                             }
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
 
                 match UnixSystem.checkInvariants system with
                 | [] -> ()
-                | defects -> failwith $"%s{where}: %A{defects}"
+                | defects -> failwith $"%s{where ()}: %A{defects}"
 
                 // Every park agrees with the reference's.
                 for thread in acceptThreads do
@@ -1628,7 +1778,7 @@ module TestBlockingAccept =
                         Map.tryFind thread reference.Parks |> Option.map (fun park -> park.Through)
 
                     let actual =
-                        UnixThreadTable.parkedFor thread (Lone.threads system)
+                        Lone.parkedIn thread system
                         |> Option.map (fun parked ->
                             match parked with
                             | ParkedSyscall.Accept {
@@ -1637,33 +1787,33 @@ module TestBlockingAccept =
                             | ParkedSyscall.Accept {
                                                        Listener = SleepTarget.EndedByClose _
                                                    } -> None
-                            | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
+                            | other -> failwith $"%s{where ()}: thread %d{thread} parked in %A{other}"
                         )
 
                     if expected <> actual then
-                        failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
+                        failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
-                    system.Machine.Sockets
+                    SocketTable.all (Kernel.machine system).Sockets
                     |> Map.tryPick (fun _ socket ->
                         match socket.Phase with
-                        | SocketPhase.Listening listenState -> Some listenState
+                        | SocketPhase.Listening listenState -> Some (listenState, socket.Drained)
                         | _ -> None
                     )
 
                 match socket with
-                | Some listenState when reference.Alive ->
-                    (queuedClients listenState.Queue system, listenState.Drained)
+                | Some (listenState, drained) when reference.Alive ->
+                    (queuedClients listenState.Queue system, drained)
                     |> shouldEqual (reference.Queue, reference.Drained)
                 | None when not reference.Alive -> ()
-                | other -> failwith $"%s{where}: the listener is %A{other}, alive %b{reference.Alive}"
+                | other -> failwith $"%s{where ()}: the listener is %A{other}, alive %b{reference.Alive}"
 
                 // Every client's connect has come to what the reference says.
                 for KeyValue (client, fate) in reference.Clients do
                     let actual = clientFate client system
 
                     if actual <> fate then
-                        failwith $"%s{where}: client fd %d{client} is %A{actual}, expected %A{fate}"
+                        failwith $"%s{where ()}: client fd %d{client} is %A{actual}, expected %A{fate}"
 
         // An accept asleep on the listener's only descriptor, which closes;
         // two connects; and the accept finished. Under Linux the finish takes
@@ -1725,7 +1875,8 @@ module TestBlockingAccept =
                 "Darwin finish: ECONNABORTED"
                 "Darwin finish: ECONNABORTED with a connection queued"
                 "Darwin finish: ECONNABORTED with a signal pending"
-                "Darwin finish: refused, a connection and a signal"
+                "Darwin finish: refused, a signal beside a connection's wake, another accepter asleep"
+                "Darwin finish: EINTR beside a connection"
                 "Darwin finish: a connection"
                 "Darwin set: an option changed with connections queued"
                 "Darwin accept: an option changed since the connection completed"
@@ -1753,13 +1904,15 @@ module TestBlockingAccept =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
         let parkedOn (listener : OpenFileDescriptionId) (fd : int) : UnixSystem<int, string> =
-            UnixWait.park
+            Lone.Parking.park
                 1
                 (ParkedSyscall.Accept
                     {
                         Listener = SleepTarget.Waiting (listener, fd)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = 16u
+                        DeclaredLength = (Some 16u)
+                        NewSocketNonBlocking = false
+                        NewSocketCloseOnExec = false
                     })
                 system
 
@@ -1767,7 +1920,10 @@ module TestBlockingAccept =
             let description = idOf fd system
 
             UnixSystem.checkInvariants (parkedOn description fd)
-            |> shouldEqual [ UnixSystemDefect.ParkedAcceptOnNonListener (1, description) ]
+            |> shouldEqual
+                [
+                    UnixSystemDefect.ParkedAcceptOnNonListener (Callers.ofDefault 1, description)
+                ]
 
         let absent = OpenFileDescriptionId 1_000_000L
 
@@ -1778,10 +1934,12 @@ module TestBlockingAccept =
                 {
                     Listener = SleepTarget.Waiting (absent, 1_000)
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = 16u
+                    DeclaredLength = (Some 16u)
+                    NewSocketNonBlocking = false
+                    NewSocketCloseOnExec = false
                 })
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (1, absent) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault 1, absent) ]
 
     /// `system` with the park of `thread` passed through `rewrite`.
     let private reparked
@@ -1790,13 +1948,13 @@ module TestBlockingAccept =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let state = UnixThreadTable.get thread (Lone.threads system)
+        let state = Lone.thread thread system
 
         match state.Parked with
         | Some ({
                     Syscall = ParkedSyscall.Accept accept
                 } as park) ->
-            UnixParkState.setPark
+            Lone.UnixParkState.setPark
                 thread
                 { park with
                     Syscall = ParkedSyscall.Accept (rewrite accept)
@@ -1809,27 +1967,24 @@ module TestBlockingAccept =
     let private drainedByHand (fd : int) (system : UnixSystem<int, string>) : SocketId * UnixSystem<int, string> =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            let socket = UnixMachineState.socket socketId system.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Phase with
-            | SocketPhase.Listening listenState ->
+            | SocketPhase.Listening _ ->
                 socketId,
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
-                                        Phase =
-                                            SocketPhase.Listening
-                                                { listenState with
-                                                    Drained = true
-                                                }
+                                        Drained = true
                                     }
-                                    system.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    system
             | phase -> failwith $"fd %d{fd} is %A{phase}"
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -1860,7 +2015,12 @@ module TestBlockingAccept =
             | SimulatedUnixFlavour.Linux -> []
             | SimulatedUnixFlavour.Darwin ->
                 [
-                    UnixSystemDefect.ParkedCallDescriptorRebound (1, 0, listener, Some (idOf 0 system))
+                    UnixSystemDefect.ParkedCallDescriptorRebound (
+                        Callers.ofDefault 1,
+                        0,
+                        listener,
+                        Some (idOf 0 system)
+                    )
                 ]
         )
 
@@ -1875,7 +2035,7 @@ module TestBlockingAccept =
         let socketId, drained = drainedByHand fd system
 
         UnixSystem.checkInvariants drained
-        |> shouldEqual [ UnixSystemDefect.ListenerDrainedUnderLinux socketId ]
+        |> shouldEqual [ UnixSystemDefect.SocketDrainedUnderLinux socketId ]
 
         let ended =
             parkIn 1 fd system
@@ -1888,14 +2048,14 @@ module TestBlockingAccept =
                 )
 
         UnixSystem.checkInvariants ended
-        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux 1 ]
+        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux (Callers.ofDefault 1) ]
 
         let fd, system = world SimulatedUnixPlatform.macOsArm64
         let listener = idOf fd system
         let _, asleepOnDrained = parkIn 1 fd system |> drainedByHand fd
 
         UnixSystem.checkInvariants asleepOnDrained
-        |> shouldEqual [ UnixSystemDefect.ParkedAcceptOnDrainedListener (1, listener) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnDrainedSocket (Callers.ofDefault 1, listener) ]
 
     /// `SO_RCVTIMEO` bounds a blocking accept on Linux, answering EAGAIN at the
     /// timeout (`blocking-accept.c`, section E1; Darwin's accept ignores it).
@@ -1916,5 +2076,5 @@ module TestBlockingAccept =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"expected a socket, got %A{other}"
 
-            UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
+            Lone.UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
             |> shouldEqual (Error (SocketOptionRefusal.UnmodelledOption (socketId, level, option)))

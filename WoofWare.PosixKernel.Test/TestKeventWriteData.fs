@@ -164,7 +164,7 @@ module TestKeventWriteData =
 
         match FileDescriptorRegistry.tryFindTarget refused (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Refused _ -> ()
             | other -> failwith $"expected the connect to port 5001 to be refused, got %A{other}"
         | other -> failwith $"fd %d{refused} names %A{other}, not a socket"
@@ -181,6 +181,8 @@ module TestKeventWriteData =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
+            Uid = UserId.root
         }
 
     /// The machine of `darwinWithSendSpace`, holding connection 0, which the
@@ -189,8 +191,8 @@ module TestKeventWriteData =
     /// transport.
     let private darwinMachine (sendSpace : int option) : UnixMachineState =
         (darwinWithSendSpace sendSpace
-         |> ForgedConnection.add (ConnectionId 0L) SocketDomain.Inet [])
-            .Machine
+         |> ForgedConnection.add (ConnectionId 0L) SocketDomain.Inet []
+         |> Kernel.machine)
 
     // ------------------------------------------------------------------
     // The measured rows
@@ -362,17 +364,18 @@ module TestKeventWriteData =
 
     [<Test>]
     let ``each flavour starts with its measured send space`` () : unit =
-        KeventWorld.darwin.Machine.TcpSendSpace |> shouldEqual 131072
+        (Kernel.machine KeventWorld.darwin).TcpSendSpace |> shouldEqual 131072
 
         let linux = UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
 
-        (Launched.boot Map.empty 0 (CpuId 0) linux).Machine.TcpSendSpace
+        (Kernel.machine (Launched.boot Map.empty 0 (CpuId 0) linux)).TcpSendSpace
         |> shouldEqual 16384
 
         (UnixBootImage.tryWithTcpSendSpace None linux
          |> Configured.expectOk TcpSendSpaceRefusal.describe
-         |> Launched.boot Map.empty 0 (CpuId 0))
-            .Machine.TcpSendSpace
+         |> Launched.boot Map.empty 0 (CpuId 0)
+         |> Kernel.machine)
+            .TcpSendSpace
         |> shouldEqual 16384
 
         (darwinMachine None).TcpSendSpace |> shouldEqual 131072
@@ -412,7 +415,7 @@ module TestKeventWriteData =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                (Launched.boot Map.empty 0 (CpuId 0) image).Machine.TcpSendSpace
+                (Kernel.machine (Launched.boot Map.empty 0 (CpuId 0) image)).TcpSendSpace
                 |> shouldEqual size
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -440,8 +443,8 @@ module TestKeventWriteData =
 
         let linux =
             (UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
-             |> (Launched.boot Map.empty 0 (CpuId 0)))
-                .Machine
+             |> (Launched.boot Map.empty 0 (CpuId 0))
+             |> Kernel.machine)
 
         let refusals =
             [
@@ -454,7 +457,6 @@ module TestKeventWriteData =
                         {
                             Backlog = 1
                             Queue = []
-                            Drained = false
                         }),
                 darwinMachine None
                 "does not model",

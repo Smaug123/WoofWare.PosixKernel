@@ -76,8 +76,8 @@ module TestTcpBufferSizing =
 
     let private machine (platform : SimulatedUnixPlatform) : UnixMachineState =
         (UnixSystem.initial<int, string> platform
-         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-            .Machine
+         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+         |> Kernel.machine)
 
     [<Test>]
     let ``Darwin's handshake leaves the accepted end the receive buffer XNU's rule derives, in every configuration measured``
@@ -163,7 +163,7 @@ module TestTcpBufferSizing =
         let admitted (value : int) : bool =
             match darwin |> UnixBootImage.tryWithTcpReceiveSpace (Some value) with
             | Ok image ->
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.TcpReceiveSpace
+                (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).TcpReceiveSpace
                 |> shouldEqual value
 
                 true
@@ -194,27 +194,29 @@ module TestTcpBufferSizing =
         let linux = image SimulatedUnixPlatform.linuxX64
         let darwin = image SimulatedUnixPlatform.macOsArm64
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) linux).Machine.TcpReceiveSpace
+        (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) linux)).TcpReceiveSpace
         |> shouldEqual 131072
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) linux).Machine.TcpSendSpaceMax
+        (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) linux)).TcpSendSpaceMax
         |> shouldEqual 4194304
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) darwin).Machine.TcpReceiveSpace
+        (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) darwin)).TcpReceiveSpace
         |> shouldEqual 131072
 
         (linux
          |> UnixBootImage.tryWithTcpReceiveSpace (Some 1)
          |> Configured.expectOk TcpReceiveSpaceRefusal.describe
-         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-            .Machine.TcpReceiveSpace
+         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+         |> Kernel.machine)
+            .TcpReceiveSpace
         |> shouldEqual 1
 
         (linux
          |> UnixBootImage.tryWithTcpSendSpaceMax (Some 65536)
          |> Configured.expectOk TcpSendSpaceMaxRefusal.describe
-         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-            .Machine.TcpSendSpaceMax
+         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+         |> Kernel.machine)
+            .TcpSendSpaceMax
         |> shouldEqual 65536
 
         (linux
@@ -222,8 +224,9 @@ module TestTcpBufferSizing =
          |> Configured.expectOk TcpSendSpaceMaxRefusal.describe
          |> UnixBootImage.tryWithTcpSendSpaceMax None
          |> Configured.expectOk TcpSendSpaceMaxRefusal.describe
-         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-            .Machine.TcpSendSpaceMax
+         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+         |> Kernel.machine)
+            .TcpSendSpaceMax
         |> shouldEqual 4194304
 
         match UnixBootImage.tryWithTcpReceiveSpace (Some 0) linux with

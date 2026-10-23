@@ -100,12 +100,12 @@ module internal SortedEntryNames =
 /// A filesystem mounted over a directory of the root filesystem.
 [<RequireQualifiedAccess>]
 type MountedFileSystem =
-    /// Linux's devtmpfs, which holds a node for each device the kernel has a
-    /// driver for. This kernel's holds a node for each `CharacterDevice`, and
-    /// nothing else: no name can be created in it, and none removed.
+    /// Linux's devtmpfs, which holds what the machine's configuration says it
+    /// holds (`UnixBootImage.withDeviceFileSystem`): no name can be created in
+    /// it, and none removed.
     | Devtmpfs
-    /// Darwin's devfs, which this kernel does not model. A path that reaches it
-    /// is refused.
+    /// Darwin's devfs, which likewise holds what the machine's configuration
+    /// says it holds: no name can be created in it, and none removed.
     | Devfs
 
 /// One mounted filesystem.
@@ -174,6 +174,13 @@ type VirtualFileSystem =
             /// Which entry a name looked up in one of this filesystem's
             /// directories reaches. Fixed when the filesystem is made.
             NameMatching : EntryNameMatching
+            /// The name each directory whose last name has gone had when it
+            /// went, in the directory its `Parent` records (Linux's dentry,
+            /// which keeps its name once unhashed), holding exactly the
+            /// directories `isOrphanedDirectory` answers true of; a directory
+            /// absent from the map is named in its parent, or is the root.
+            /// `checkInvariants` holds it to the graph.
+            RemovedDirectoryNames : Map<InodeNumber, DirectoryEntryName>
         }
 
 /// A way in which a `VirtualFileSystem` fails to describe a filesystem any
@@ -252,14 +259,13 @@ type VirtualFileSystemDefect =
     /// A mounted filesystem's root is absent, or is not a directory.
     | MountRootNotDirectory of root : InodeNumber
     /// The inodes recorded as being on the filesystem mounted at `root` are not
-    /// that root and the entries it binds.
+    /// that root and everything below it.
     | MountMembershipMismatch of root : InodeNumber * recorded : Set<InodeNumber> * actual : Set<InodeNumber>
     /// The inode number a mount keeps for the directory it covers is also the
     /// number of an inode in the graph.
     | CoveredInodeInUse of root : InodeNumber * covered : InodeNumber
-    /// An inode holds a kind of content that nothing in this version makes,
-    /// such as `InodeContent.Socket` or `InodeContent.Fifo`, or the node of a
-    /// device that `CharacterDevice.all` does not list.
+    /// An inode holds a kind of content that nothing in this version makes:
+    /// `InodeContent.Socket` or `InodeContent.Fifo`.
     | ReservedContent of inode : InodeNumber
     /// `directory`, on a filesystem that matches names by canonical
     /// equivalence, binds both `first` and `second`, which might be two
@@ -267,6 +273,10 @@ type VirtualFileSystemDefect =
     /// name in one directory, and this library cannot tell whether these are
     /// two.
     | PossiblyEquivalentNames of directory : InodeNumber * first : DirectoryEntryName * second : DirectoryEntryName
+    /// The graph records a name its last name had for `directory`
+    /// (`recorded`) where the directory is still named, or is not a directory
+    /// whose last name has gone; or records none where it is one.
+    | RemovedDirectoryNameMismatch of directory : InodeNumber * recorded : DirectoryEntryName option
 
 [<RequireQualifiedAccess>]
 module VirtualFileSystemDefect =
@@ -378,9 +388,6 @@ type internal SeekWhence =
 
 /// Why a write to a regular file has no answer this library can give.
 ///
-/// `UnmeasuredSetIdChange` is a row no one has measured rather than a limit of
-/// the model; the rest of what follows is about `WouldExceedMaxLength`.
-///
 /// Not a `UnixError`, and deliberately: this is a limit of the model rather than
 /// anything a kernel does, so a caller must fail loudly rather than translate it
 /// into an errno a process could catch and interpret. Measured on ext4 and APFS
@@ -392,9 +399,40 @@ type internal FileWriteRefusal =
     /// Carries the write rather than the resulting length, which need not be a
     /// number: `offset + count` can leave `int64` entirely.
     | WouldExceedMaxLength of offset : int64 * count : int
-    /// What the write would do to the file's set-ID bits has not been measured
-    /// for this writer; see `SetIdChangeRefusal`.
-    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
+
+/// What a write to a regular file whose copy from the caller's buffer faults
+/// at its first byte has already done to the file's timestamps. Either way,
+/// the write has stripped the set-ID bits a successful write strips, and made
+/// the file at least as long as the write's offset, before it answers EFAULT.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteRule =
+    /// `mtime` and `ctime` move wherever the write was aimed, for every
+    /// writer.
+    | TimesAlwaysMove
+    /// `mtime` and `ctime` move only when the write reaches past the end of
+    /// the file, for every writer.
+    | TimesMoveWhenReachingPastEnd
+
+/// What a write to a regular file whose copy from the caller's buffer faults
+/// at its first byte leaves allocated, which only `st_blocks` shows.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteAllocation =
+    /// The page holding the write's offset, zeroed, even when it starts at
+    /// the end of the file and so holds none of its bytes.
+    | PageAtOffset
+    /// Nothing the file's contents record. The filesystem allocates as it
+    /// does, which the model does not follow.
+    | Untracked
+
+/// Why a write whose copy from the caller's buffer faults has no answer.
+///
+/// Separate from `FileWriteRefusal` for the reason `FileTruncationRefusal`
+/// is: such a write names a length to reach but copies nothing.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteRefusal =
+    /// The write's offset is past `VirtualFileSystem.maxFileLength`, which the
+    /// file would have to reach.
+    | WouldExceedMaxLength of offset : int64
 
 /// Why a truncation has no answer.
 ///
@@ -412,9 +450,6 @@ type internal FileTruncationRefusal =
     /// The requested length is more than `VirtualFileSystem.maxFileLength`.
     /// Carries the length as asked for, which need not fit in an `int`.
     | WouldExceedMaxLength of length : int64
-    /// What the truncation would do to the file's set-ID bits has not been
-    /// measured for this process; see `SetIdChangeRefusal`.
-    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
 
 /// Why a seek computation has no answer.
 ///
@@ -432,45 +467,6 @@ type internal SeekFault =
     /// reachable through `SEEK_CUR` and `SEEK_END`, whose arithmetic adds two
     /// values the caller does not jointly control.
     | Overflow
-
-/// A name a directory stream can hand back. Neither "." nor ".." is a
-/// `FileName` — `FileNameError.Reserved` rejects both, because a directory
-/// binds neither and this library derives both from the graph — so a stream that
-/// must produce all three needs a type that can say which it produced.
-[<RequireQualifiedAccess>]
-type DirectoryStreamName =
-    /// The directory being enumerated.
-    | Dot
-    /// `DirectoryContent.Parent`, which is the *physical* parent and so is
-    /// still right after a walk crossed a symlink to get here.
-    | DotDot
-    /// A name the directory actually binds.
-    | Entry of name : DirectoryEntryName
-
-    /// The name rendered for a diagnostic; `DirectoryStreamName.toByteString`
-    /// is what `readdir(3)` puts in `d_name`.
-    override this.ToString () : string =
-        match this with
-        | DirectoryStreamName.Dot -> "."
-        | DirectoryStreamName.DotDot -> ".."
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toEscaped name
-
-[<RequireQualifiedAccess>]
-module DirectoryStreamName =
-    let private ofLiteral (name : string) : UnixByteString =
-        match UnixByteString.ofString name with
-        | Ok bytes -> bytes
-        | Error defect -> failwith $"DirectoryStreamName: %s{UnixPathText.describe defect}"
-
-    let private dot : UnixByteString = ofLiteral "."
-    let private dotDot : UnixByteString = ofLiteral ".."
-
-    /// The bytes `readdir(3)` would put in `d_name`.
-    let toByteString (name : DirectoryStreamName) : UnixByteString =
-        match name with
-        | DirectoryStreamName.Dot -> dot
-        | DirectoryStreamName.DotDot -> dotDot
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toByteString name
 
 /// How far through a directory an open stream has read.
 ///
@@ -582,6 +578,7 @@ module VirtualFileSystem =
             Mounts = Map.empty
             MountMembers = Map.empty
             NameMatching = nameMatching
+            RemovedDirectoryNames = Map.empty
         }
 
     let root (vfs : VirtualFileSystem) : InodeNumber = vfs.Root
@@ -590,10 +587,23 @@ module VirtualFileSystem =
     /// a mounted filesystem.
     let mountOf (inode : InodeNumber) (vfs : VirtualFileSystem) : Mount option = Map.tryFind inode vfs.Mounts
 
+    /// Every filesystem mounted in this one, by the inode of its root.
+    let internal mounts (vfs : VirtualFileSystem) : Map<InodeNumber, Mount> = vfs.Mounts
+
     /// The root of the mounted filesystem `inode` is on, or `None` if it is on
     /// the root filesystem (or is not in the graph at all).
     let mountedRootOf (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeNumber option =
         Map.tryFind inode vfs.MountMembers
+
+    /// The mounted filesystem `inode` is on, or `None` if it is on the root
+    /// filesystem (or is not in the graph at all).
+    let internal mountedFileSystemOf (inode : InodeNumber) (vfs : VirtualFileSystem) : MountedFileSystem option =
+        Map.tryFind inode vfs.MountMembers
+        |> Option.map (fun root -> vfs.Mounts.[root].FileSystem)
+
+    /// Whether `inode` is on Darwin's devfs.
+    let internal isOnDevfs (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
+        mountedFileSystemOf inode vfs = Some MountedFileSystem.Devfs
 
     /// Fail unless `inode` is on the root filesystem. Every mounted filesystem
     /// this module holds is closed — nothing can be created in it or removed
@@ -626,6 +636,17 @@ module VirtualFileSystem =
     let tryGetContent (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeContent option =
         Map.tryFind inode vfs.Inodes |> Option.map (fun inode -> inode.Content)
 
+    /// The inode at `inode`, which the caller, `operation`, has just reached
+    /// in this filesystem by a walk, an entry or a descriptor. Loudly partial:
+    /// an inode it does not hold is a broken graph, and `operation` is named
+    /// in the failure.
+    let internal get (operation : string) (inode : InodeNumber) (vfs : VirtualFileSystem) : Inode =
+        match Map.tryFind inode vfs.Inodes with
+        | Some found -> found
+        | None ->
+            failwith
+                $"%s{operation}: inode %O{inode} is not in the filesystem, though the caller had just reached it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+
     /// How many bytes a read of `count` bytes starting at `offset` transfers,
     /// from a file whose contents are `length` bytes long.
     ///
@@ -643,28 +664,30 @@ module VirtualFileSystem =
     /// Reading at or past the end is 0 rather than an error — measured, and the
     /// same on Linux and Darwin. So is a zero-length request, which is why
     /// callers must not treat 0 as EOF-specific.
-    let internal readTransferCount (offset : int64) (count : int) (length : int) : int =
+    let internal readTransferCount (offset : int64) (count : int) (length : int64) : int =
         // The caller is responsible for rejecting a negative offset (EINVAL)
         // and refusing a negative size, so both are established before here.
         System.Diagnostics.Debug.Assert (offset >= 0L, "readTransferCount: offset must not be negative")
         System.Diagnostics.Debug.Assert (count >= 0, "readTransferCount: count must not be negative")
-        System.Diagnostics.Debug.Assert (length >= 0, "readTransferCount: length must not be negative")
+        System.Diagnostics.Debug.Assert (length >= 0L, "readTransferCount: length must not be negative")
 
-        if offset >= int64 length then
+        if offset >= length then
             // Includes an offset beyond `int` range, which no seeded file can
             // reach but a process can certainly ask for.
             0
         else
             // `length - offset` is in `(0, length]` here, so the `int` conversion
             // cannot overflow however large `offset` was.
-            min (int64 count) (int64 length - offset) |> int
+            min (int64 count) (length - offset) |> int
 
-    /// The most bytes a regular file in this model can hold: `Array.MaxLength`,
-    /// contents being an `ImmutableArray<byte>`.
+    /// The most bytes a regular file in this model can hold.
     ///
     /// Not any real filesystem's ceiling — ext4's is about 16 TiB and APFS's is
     /// vastly larger — so a write that would pass it is refused rather than
     /// answered with an errno.
+    // `Array.MaxLength`, so that `FileContents.toImmutableArray` can return any
+    // file whole. Raising it waits on measuring the length past which each
+    // filesystem answers EFBIG.
     let maxFileLength : int64 = int64 System.Array.MaxLength
 
     /// How long a regular file becomes when `count` bytes are written at
@@ -676,12 +699,12 @@ module VirtualFileSystem =
     /// on a four-byte file leaves it four bytes long. So a caller must not infer
     /// a file's new length from `offset` and the count alone.
     ///
-    /// Separate from `writtenContents` so that both sides of the ceiling can be
-    /// checked without allocating two gigabytes to do it.
-    let internal writtenLength (offset : int64) (count : int) (length : int) : Result<int, FileWriteRefusal> =
+    /// Separate from `writtenContents` so that the ceiling's arithmetic can be
+    /// checked as a function of three integers.
+    let internal writtenLength (offset : int64) (count : int) (length : int64) : Result<int64, FileWriteRefusal> =
         System.Diagnostics.Debug.Assert (offset >= 0L, "writtenLength: offset must not be negative")
         System.Diagnostics.Debug.Assert (count >= 0, "writtenLength: count must not be negative")
-        System.Diagnostics.Debug.Assert (length >= 0, "writtenLength: length must not be negative")
+        System.Diagnostics.Debug.Assert (length >= 0L, "writtenLength: length must not be negative")
 
         if count = 0 then
             Ok length
@@ -695,9 +718,7 @@ module VirtualFileSystem =
         then
             Error (FileWriteRefusal.WouldExceedMaxLength (offset, count))
         else
-            // Bounded by `maxFileLength` just above, so the `int` conversion is
-            // exact however large `offset` was.
-            Ok (max (int64 length) (offset + int64 count) |> int)
+            Ok (max length (offset + int64 count))
 
     /// The contents a regular file holds after `bytes` are written at `offset`.
     ///
@@ -707,24 +728,20 @@ module VirtualFileSystem =
     /// in place, and never truncates what follows it.
     ///
     /// Separated from `writeFile` for the reason `readTransferCount` is
-    /// separated from the syscalls that use it: as a function of a byte array, an
+    /// separated from the syscalls that use it: as a function of the contents, an
     /// offset and a byte array it is property-testable against naive splicing,
     /// where the same arithmetic inlined into a syscall is reachable only
     /// through a whole simulated system.
     let internal writtenContents
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (offset : int64)
         (bytes : ImmutableArray<byte>)
-        : Result<ImmutableArray<byte>, FileWriteRefusal>
+        : Result<FileContents, FileWriteRefusal>
         =
-        // Both are `ImmutableArray`, a struct wrapping an array, so `default`
-        // carries a null one: it would throw on the first `Length` read rather
-        // than at the point the mistake was made. Rejected rather than treated as
-        // empty for the reason `createFile` gives.
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.writtenContents: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file; pass ImmutableArray<byte>.Empty."
-
+        // `ImmutableArray` is a struct wrapping an array, so `default` carries a
+        // null one: it would throw on the first `Length` read rather than at the
+        // point the mistake was made. Rejected rather than treated as empty for
+        // the reason `FileContents.ofImmutableArray` gives.
         if bytes.IsDefault then
             failwith
                 "VirtualFileSystem.writtenContents: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
@@ -735,42 +752,29 @@ module VirtualFileSystem =
 
         if bytes.IsEmpty then
             // Not merely an optimisation: the contents must come back untouched
-            // rather than zero-extended to `offset`. See `writtenLength`.
+            // rather than extended to `offset`. See `writtenLength`.
             Ok contents
         else
 
-        match writtenLength offset bytes.Length contents.Length with
+        match writtenLength offset bytes.Length (FileContents.length contents) with
         | Error refusal -> Error refusal
-        | Ok length ->
-
-        // Zero-initialised, which is what fills the hole between the old end of
-        // the file and `offset` when there is one; where there is not, every byte
-        // is overwritten by one of the two copies below.
-        let result = Array.zeroCreate<byte> length
-        contents.CopyTo result
-        bytes.CopyTo (0, result, int offset, bytes.Length)
-
-        // Wrapped rather than copied: nothing else holds `result`, and a file can
-        // be two gigabytes long.
-        Ok (System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray result)
+        | Ok _ -> Ok (FileContents.write offset bytes contents)
 
     /// The length a regular file becomes when truncated to `length`, or the
     /// refusal if that is more than this model can hold.
     ///
     /// Separate from `truncatedContents` for the reason `writtenLength` is
-    /// separate from `writtenContents`: it is the only way to check both sides of
-    /// the ceiling without allocating two gigabytes to do it.
+    /// separate from `writtenContents`.
     ///
     /// A negative length is the caller's to reject (EINVAL), so it is
     /// established before here.
-    let internal truncatedLength (length : int64) : Result<int, FileTruncationRefusal> =
+    let internal truncatedLength (length : int64) : Result<int64, FileTruncationRefusal> =
         System.Diagnostics.Debug.Assert (length >= 0L, "truncatedLength: length must not be negative")
 
         if length > maxFileLength then
             Error (FileTruncationRefusal.WouldExceedMaxLength length)
         else
-            // Bounded by `maxFileLength` just above, so this conversion is exact.
-            Ok (int length)
+            Ok length
 
     /// The contents a regular file holds after being truncated to `length`.
     ///
@@ -781,32 +785,17 @@ module VirtualFileSystem =
     /// timestamps and set-ID bits move regardless; see `truncateFile`.
     ///
     /// Separated from `truncateFile` for the reason `writtenContents` is
-    /// separated from `writeFile`: as a function of a byte array and a length it
+    /// separated from `writeFile`: as a function of the contents and a length it
     /// is property-testable against naive take/pad, where the same arithmetic
     /// inlined into a syscall is reachable only through a whole simulated system.
     let internal truncatedContents
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (length : int64)
-        : Result<ImmutableArray<byte>, FileTruncationRefusal>
+        : Result<FileContents, FileTruncationRefusal>
         =
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.truncatedContents: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file; pass ImmutableArray<byte>.Empty."
-
         match truncatedLength length with
         | Error refusal -> Error refusal
-        | Ok length ->
-
-        if length = contents.Length then
-            Ok contents
-        elif length < contents.Length then
-            Ok (ImmutableArray.CreateRange (Seq.truncate length contents))
-        else
-
-        // Zero-initialised, which is exactly what the extension reads as.
-        let result = Array.zeroCreate<byte> length
-        contents.CopyTo result
-        Ok (ImmutableArray.CreateRange result)
+        | Ok length -> Ok (FileContents.truncate length contents)
 
     /// Where `lseek(2)` would land, given where it is measuring from.
     ///
@@ -1172,21 +1161,10 @@ module VirtualFileSystem =
         (permissions : PermissionBits)
         (owner : InodeOwner)
         (now : UnixTimestamp)
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (vfs : VirtualFileSystem)
         : Result<InodeNumber * VfsMutation, UnixError>
         =
-        // `ImmutableArray` is a struct wrapping an array, so `default` carries a
-        // null one: it stores happily, passes `checkInvariants`, and throws only
-        // when some later read touches `Length`. Rejected here for the same
-        // reason as a forged `FileName` or `SymlinkTarget`, and deliberately
-        // rejected rather than normalised to `Empty` — a caller who wrote
-        // `default` meant something, and quietly turning it into an empty file
-        // would hide the bug rather than surface it.
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.createFile: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file — it is an uninitialised value that would pass checkInvariants and then throw on the first read. Pass ImmutableArray<byte>.Empty for an empty file."
-
         match ensureBindable directory name vfs with
         | Error error -> Error error
         | Ok () ->
@@ -1473,6 +1451,12 @@ module VirtualFileSystem =
                         adjustSubdirectoryCount directory -1 vfs.SubdirectoryCounts
                     else
                         vfs.SubdirectoryCounts
+                // A directory has one name, so this was its last.
+                RemovedDirectoryNames =
+                    if targetIsDirectory then
+                        Map.add target name vfs.RemovedDirectoryNames
+                    else
+                        vfs.RemovedDirectoryNames
             }
 
         // A non-directory losing a name has lost a hard link, whatever
@@ -1563,6 +1547,14 @@ module VirtualFileSystem =
                    Content = InodeContent.Symlink _
                }
         | None -> false
+
+    /// The name the directory `inode` had when its last name went, in the
+    /// directory its `DirectoryContent.Parent` records: the name it was
+    /// removed under by `rmdir`, or displaced from by `rename`, whatever it was
+    /// called before. `None` for anything that is not a directory whose last
+    /// name has gone (`isOrphanedDirectory`).
+    let internal removedDirectoryName (inode : InodeNumber) (vfs : VirtualFileSystem) : DirectoryEntryName option =
+        Map.tryFind inode vfs.RemovedDirectoryNames
 
     /// Whether `candidate` is `root` itself, or a directory somewhere beneath
     /// it, by climbing `DirectoryContent.Parent`.
@@ -1862,6 +1854,14 @@ module VirtualFileSystem =
             | Some _
             | None -> afterMove
 
+        // A displaced directory has lost its one name, which it keeps.
+        let removedDirectoryNames =
+            match displaced with
+            | Some displaced when isDirectoryIn inodes displaced ->
+                Map.add displaced destinationName vfs.RemovedDirectoryNames
+            | Some _
+            | None -> vfs.RemovedDirectoryNames
+
         Ok (
             {
                 Displaced = displaced
@@ -1873,6 +1873,7 @@ module VirtualFileSystem =
                     BindingCounts = counts
                     SortedNames = sortedNames
                     SubdirectoryCounts = subdirectoryCounts
+                    RemovedDirectoryNames = removedDirectoryNames
                 }
                 [
                     FsChange.EntryMoved (
@@ -1921,7 +1922,7 @@ module VirtualFileSystem =
         (directory : InodeNumber)
         (cursor : DirectoryCursor)
         (vfs : VirtualFileSystem)
-        : (DirectoryStreamName * InodeNumber * DirectoryCursor) option
+        : (PathComponent * InodeNumber * DirectoryCursor) option
         =
         let content =
             match Map.tryFind directory vfs.Inodes with
@@ -1960,13 +1961,13 @@ module VirtualFileSystem =
         /// where this model puts the dots.
         let fromEntries (lower : DirectoryEntryName option) =
             match leastAbove lower with
-            | Some (name, inode) -> Some (DirectoryStreamName.Entry name, inode, DirectoryCursor.After name)
-            | None -> Some (DirectoryStreamName.DotDot, content.Parent, DirectoryCursor.ReturnedDotDot)
+            | Some (name, inode) -> Some (PathComponent.Name name, inode, DirectoryCursor.After name)
+            | None -> Some (PathComponent.Parent, content.Parent, DirectoryCursor.ReturnedDotDot)
 
         match cursor with
         | DirectoryCursor.Start -> fromEntries None
         | DirectoryCursor.After name -> fromEntries (Some name)
-        | DirectoryCursor.ReturnedDotDot -> Some (DirectoryStreamName.Dot, directory, DirectoryCursor.ReturnedDot)
+        | DirectoryCursor.ReturnedDotDot -> Some (PathComponent.Current, directory, DirectoryCursor.ReturnedDot)
         | DirectoryCursor.ReturnedDot -> None
 
     /// Remove an inode from the graph, which is what a kernel does when the last
@@ -2009,15 +2010,107 @@ module VirtualFileSystem =
                 vfs
                 { vfs with
                     Inodes = Map.remove inode vfs.Inodes
+                    RemovedDirectoryNames = Map.remove inode vfs.RemovedDirectoryNames
                 }
                 [ FsChange.InodeForgotten inode ]
         | count ->
             failwith
                 $"VirtualFileSystem.forget: inode %O{inode} is still named by %d{count} directory entry/entries, so forgetting it would leave the graph with a dangling entry (this is a bug in the caller of VirtualFileSystem.forget)."
 
+    /// Realise the seed `entries` in `directory`, as `ofFileSystemSeed` does at
+    /// the root: every inode made at `createdAt`, owned by its entry's owner
+    /// or else by `defaultOwner`, each symbolic link with `symlinkPermissions`.
+    let rec private installSeed
+        (createdAt : UnixTimestamp)
+        (defaultOwner : InodeOwner)
+        (symlinkPermissions : PermissionBits)
+        (directory : InodeNumber)
+        (entries : Map<DirectoryEntryName, SeedEntry>)
+        (vfs : VirtualFileSystem)
+        : VirtualFileSystem
+        =
+        // `Map` iterates in key order, so the inode numbers a seed produces
+        // are a function of the seed alone rather than of how the host
+        // happened to build the map. Inode numbers are visible to a process
+        // through `st_ino`, so this is part of the replay contract.
+        entries
+        |> Map.fold
+            (fun vfs name entry ->
+                let collision (kind : string) (error : UnixError) : VirtualFileSystem =
+                    failwith
+                        $"VirtualFileSystem.installSeed: could not create the %s{kind} %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
+
+                match entry with
+                | SeedEntry.File (contents, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match
+                        createFile
+                            directory
+                            name
+                            permissions
+                            owner
+                            createdAt
+                            (FileContents.ofImmutableArray contents)
+                            vfs
+                    with
+                    | Ok (_, created) -> created.After
+                    | Error error -> collision "file" error
+                | SeedEntry.Symlink (target, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match createSymlink directory name symlinkPermissions owner createdAt target vfs with
+                    | Ok (_, created) -> created.After
+                    | Error error -> collision "symlink" error
+                | SeedEntry.Directory (children, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    match createDirectory directory name permissions owner createdAt vfs with
+                    | Ok (inode, created) ->
+                        installSeed createdAt defaultOwner symlinkPermissions inode children created.After
+                    | Error error -> collision "directory" error
+                | SeedEntry.CharacterDevice (number, permissions, owner) ->
+                    let owner = owner |> Option.defaultValue defaultOwner
+
+                    let created =
+                        match ensureBindable directory name vfs with
+                        | Error error -> Error error
+                        | Ok () ->
+                            let inode, allocated =
+                                allocate (InodeContent.CharacterDevice (number, permissions)) owner createdAt vfs
+
+                            bind directory name inode createdAt allocated
+
+                    match created with
+                    | Ok vfs -> vfs
+                    | Error error -> collision "character device" error
+            )
+            vfs
+
+    /// `root` and every inode below it: what its directories bind, and what
+    /// theirs do, down to the leaves.
+    let private subtreeOf (root : InodeNumber) (vfs : VirtualFileSystem) : Set<InodeNumber> =
+        // A graph forged with a directory cycle is its own defect; `found`
+        // keeps one from looping here.
+        let rec gather (inode : InodeNumber) (found : Set<InodeNumber>) : Set<InodeNumber> =
+            if Set.contains inode found then
+                found
+            else
+
+            let found = Set.add inode found
+
+            match tryGetDirectory inode vfs with
+            | Some content -> content.Entries |> Map.fold (fun found _ child -> gather child found) found
+            | None -> found
+
+        gather root Set.empty
+
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
-    /// `permissions` owned by `owner`, holding one node for each of `devices`
-    /// owned by `owner` too, all created at `now`.
+    /// `permissions` owned by `owner`, holding the seed `contents` realised
+    /// as `ofFileSystemSeed` realises one, with `owner` as its default owner
+    /// and `symlinkPermissions` as its links' bits, every inode on it with
+    /// `times`. The root directory's own times do not move: a mount changes
+    /// no directory of the filesystem it covers.
     ///
     /// The root may already bind `name` to an empty directory, which the mount
     /// then covers; otherwise the mount covers a directory that held nothing,
@@ -2028,12 +2121,16 @@ module VirtualFileSystem =
         (name : DirectoryEntryName)
         (permissions : PermissionBits)
         (owner : InodeOwner)
-        (devices : (DirectoryEntryName * CharacterDevice * PermissionBits) list)
-        (now : UnixTimestamp)
+        (symlinkPermissions : PermissionBits)
+        (contents : Map<DirectoryEntryName, SeedEntry>)
+        (times : InodeTimes)
         (vfs : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
         =
         let name = DirectoryEntryName.assertValid "VirtualFileSystem.mountAtRoot" name
+        // What the builders below stamp; every inode the mount holds is given
+        // `times` once they are done.
+        let now = times.Modification
 
         let rootContent =
             match tryGetDirectory vfs.Root vfs with
@@ -2041,6 +2138,11 @@ module VirtualFileSystem =
             | None ->
                 failwith
                     $"VirtualFileSystem.mountAtRoot: the root, inode %O{vfs.Root}, is not a directory this filesystem holds. Run VirtualFileSystem.checkInvariants."
+
+        // Unbinding a covered directory and binding the mounted root below go
+        // through the builders every directory change goes through, which move
+        // the root's times; they are put back once the mount is made.
+        let rootTimes = vfs.Inodes.[vfs.Root].Times
 
         let covered =
             match Map.tryFind name rootContent.Entries with
@@ -2089,23 +2191,38 @@ module VirtualFileSystem =
 
         let vfs = bind vfs.Root name mountRoot now vfs |> bound "the mounted root"
 
-        let vfs, members =
-            devices
-            |> List.fold
-                (fun (vfs, members) (deviceName, device, devicePermissions) ->
-                    let node, vfs =
-                        allocate (InodeContent.CharacterDevice (device, devicePermissions)) owner now vfs
+        let vfs = installSeed now owner symlinkPermissions mountRoot contents vfs
 
-                    let vfs =
-                        bind mountRoot deviceName node now vfs
-                        |> bound $"the node \"%s{DirectoryEntryName.toEscaped deviceName}\""
+        let subtree = subtreeOf mountRoot vfs
 
-                    vfs, Map.add node mountRoot members
+        let members =
+            subtree
+            |> Set.fold (fun members inode -> Map.add inode mountRoot members) vfs.MountMembers
+
+        let inodes =
+            subtree
+            |> Set.fold
+                (fun inodes inode ->
+                    Map.add
+                        inode
+                        { Map.find inode inodes with
+                            Times = times
+                        }
+                        inodes
                 )
-                (vfs, Map.add mountRoot mountRoot vfs.MountMembers)
+                vfs.Inodes
+
+        let root = inodes.[vfs.Root]
 
         Ok
             { vfs with
+                Inodes =
+                    Map.add
+                        vfs.Root
+                        { root with
+                            Times = rootTimes
+                        }
+                        inodes
                 Mounts =
                     Map.add
                         mountRoot
@@ -2198,9 +2315,8 @@ module VirtualFileSystem =
         // set-group-ID bit on whichever files `rule` says, unless the writer is
         // privileged — so this is a mode change as well as a content change, and
         // the `ctime` above covers both.
-        match PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions with
-        | Error refusal -> Error (FileWriteRefusal.UnmeasuredSetIdChange refusal)
-        | Ok stripped ->
+        let stripped =
+            PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions
 
         let after =
             { vfs with
@@ -2219,6 +2335,109 @@ module VirtualFileSystem =
                 [ FsChange.ContentChanged inode ]
             else
                 [ FsChange.AttributesChanged inode ; FsChange.ContentChanged inode ]
+
+        Ok (mutation vfs after changes)
+
+    /// What a write of `count` bytes at `offset` into the regular file at
+    /// `inode`, by a writer with `credentials`, does before it answers EFAULT
+    /// because its copy from the caller's buffer faulted at the first byte:
+    /// strips whichever set-ID bits a successful write would (`rule`), makes
+    /// the file `offset` bytes long if it was shorter, filling the gap with
+    /// zeroes, allocates what `allocation` says, and moves `mtime` and `ctime`
+    /// where `faulted` says they move.
+    /// Refused, changing nothing, where the file would outgrow
+    /// `VirtualFileSystem.maxFileLength`.
+    ///
+    /// Partial in the inode as `writeFile` is, and `count` must be positive:
+    /// a write of no bytes reads no buffer, so cannot fault.
+    ///
+    /// Reports `FsChange.AttributesChanged` when it stripped a set-ID bit,
+    /// followed by `ContentChanged` when it moved the timestamps or the
+    /// length or allocated a page; nothing, and the graph it was given, when it
+    /// did none of those.
+    let internal writeFaulted
+        (inode : InodeNumber)
+        (offset : int64)
+        (count : int)
+        (rule : SetGroupIdOnWrite)
+        (faulted : FaultedWriteRule)
+        (allocation : FaultedWriteAllocation)
+        (credentials : Credentials)
+        (now : UnixTimestamp)
+        (vfs : VirtualFileSystem)
+        : Result<VfsMutation, FaultedWriteRefusal>
+        =
+        System.Diagnostics.Debug.Assert (count > 0, "writeFaulted: a write of no bytes cannot fault")
+        System.Diagnostics.Debug.Assert (offset >= 0L, "writeFaulted: offset must not be negative")
+
+        let entry, contents, permissions =
+            match Map.tryFind inode vfs.Inodes with
+            | Some ({
+                        Content = InodeContent.RegularFile (contents, permissions)
+                    } as entry) -> entry, contents, permissions
+            | Some entry ->
+                failwith
+                    $"VirtualFileSystem.writeFaulted: inode %O{inode} is %A{entry.Content}, not a regular file, so no descriptor naming it can reach a file's write (this is a bug in the caller)."
+            | None ->
+                failwith
+                    $"VirtualFileSystem.writeFaulted: inode %O{inode} is not in this filesystem. A descriptor outliving its inode means an unlink removed a still-open file; the open file description must keep it alive."
+
+        let stripped =
+            PermissionBits.afterContentChangingWrite rule (Standing.toward credentials entry.Owner) permissions
+
+        let extended =
+            if offset <= FileContents.length contents then
+                Ok contents
+            else
+                match truncatedContents contents offset with
+                | Ok extended -> Ok extended
+                | Error _ -> Error (FaultedWriteRefusal.WouldExceedMaxLength offset)
+
+        match extended with
+        | Error refusal -> Error refusal
+        | Ok extended ->
+
+        let allocated =
+            match allocation with
+            | FaultedWriteAllocation.PageAtOffset -> FileContents.allocatePage offset extended
+            | FaultedWriteAllocation.Untracked -> extended
+
+        let timesMove =
+            match faulted with
+            | FaultedWriteRule.TimesAlwaysMove -> true
+            | FaultedWriteRule.TimesMoveWhenReachingPastEnd -> offset + int64 count > FileContents.length contents
+
+        let changes =
+            [
+                if stripped <> permissions then
+                    FsChange.AttributesChanged inode
+                if
+                    timesMove
+                    || FileContents.length extended <> FileContents.length contents
+                    || not (obj.ReferenceEquals (allocated, extended))
+                then
+                    FsChange.ContentChanged inode
+            ]
+
+        if List.isEmpty changes then
+            Ok (mutation vfs vfs [])
+        else
+
+        let after =
+            { vfs with
+                Inodes =
+                    Map.add
+                        inode
+                        { entry with
+                            Content = InodeContent.RegularFile (allocated, stripped)
+                            Times =
+                                if timesMove then
+                                    InodeTimes.contentsChangedAt now entry.Times
+                                else
+                                    entry.Times
+                        }
+                        vfs.Inodes
+            }
 
         Ok (mutation vfs after changes)
 
@@ -2305,9 +2524,8 @@ module VirtualFileSystem =
 
         // A truncation is a mode change as well as a content change on one of the
         // two platforms, and the `ctime` below covers both either way.
-        match PermissionBits.afterTruncation rule (Standing.toward credentials entry.Owner) permissions with
-        | Error refusal -> Error (FileTruncationRefusal.UnmeasuredSetIdChange refusal)
-        | Ok stripped ->
+        let stripped =
+            PermissionBits.afterTruncation rule (Standing.toward credentials entry.Owner) permissions
 
         let after =
             { vfs with
@@ -2361,7 +2579,7 @@ module VirtualFileSystem =
         let content =
             match entry.Content with
             | InodeContent.RegularFile (contents, _) -> InodeContent.RegularFile (contents, bits)
-            | InodeContent.CharacterDevice (device, _) -> InodeContent.CharacterDevice (device, bits)
+            | InodeContent.CharacterDevice (number, _) -> InodeContent.CharacterDevice (number, bits)
             | InodeContent.Socket _ -> InodeContent.Socket bits
             | InodeContent.Fifo _ -> InodeContent.Fifo bits
             | InodeContent.Directory directory ->
@@ -2513,6 +2731,28 @@ module VirtualFileSystem =
             )
             Map.empty
 
+    /// The name the directory `parent` binds `inode` under, if it binds it:
+    /// in a well-formed graph, a directory's one name in its parent.
+    let internal nameIn
+        (parent : InodeNumber)
+        (inode : InodeNumber)
+        (vfs : VirtualFileSystem)
+        : DirectoryEntryName option
+        =
+        // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
+        // first. That matters because this runs on every `getcwd`, which a
+        // client may call for every relative path it resolves, and the copy
+        // made the cost scale with how many *siblings* the directory has,
+        // not with the depth of its path. Measured over one directory of 100,000 entries:
+        // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
+        // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
+        // measures *worse* than `Map.toList` on both counts.)
+        tryGetDirectory parent vfs
+        |> Option.bind (fun content ->
+            content.Entries
+            |> Map.tryPick (fun name target -> if target = inode then Some name else None)
+        )
+
     /// The absolute path of a directory, by walking `Parent` links to the root.
     ///
     /// Directories only: a regular file may be hard-linked under several names,
@@ -2535,22 +2775,7 @@ module VirtualFileSystem =
 
             // The name is not stored on the inode, so recover it from the
             // parent's own entries. A well-formed graph has exactly one.
-            //
-            // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
-            // first. That matters because this runs on every `getcwd`, which a
-            // client may call for every relative path it resolves, and the copy
-            // made the cost scale with how many *siblings* the directory has,
-            // not with the depth of its path. Measured over one directory of 100,000 entries:
-            // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
-            // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
-            // measures *worse* than `Map.toList` on both counts.)
-            match
-                tryGetDirectory content.Parent vfs
-                |> Option.bind (fun parent ->
-                    parent.Entries
-                    |> Map.tryPick (fun name target -> if target = current then Some name else None)
-                )
-            with
+            match nameIn content.Parent current vfs with
             | None -> None
             | Some name -> climb content.Parent (name :: acc) (Set.add current visited)
 
@@ -2733,23 +2958,15 @@ module VirtualFileSystem =
 
         // Nothing in this version makes a socket inode or a FIFO inode:
         // `mknodat` of `S_IFSOCK` or `S_IFIFO`, and a Unix-domain `bind`, all
-        // refuse. Nor a node for zero, random or tty: only the device filesystem's
-        // mount makes device nodes, one for each device in
-        // `CharacterDevice.all`, and `mknod` makes none. So one here came from
-        // a bug.
+        // refuse. So one here came from a bug.
         let reservedContent =
             vfs.Inodes
             |> Map.toList
             |> List.choose (fun (inode, entry) ->
                 match entry.Content with
                 | InodeContent.Socket _
-                | InodeContent.Fifo _
-                | InodeContent.CharacterDevice (CharacterDevice.Zero, _)
-                | InodeContent.CharacterDevice (CharacterDevice.Random, _)
-                | InodeContent.CharacterDevice (CharacterDevice.Tty, _) ->
-                    Some (VirtualFileSystemDefect.ReservedContent inode)
-                | InodeContent.CharacterDevice (CharacterDevice.Null, _)
-                | InodeContent.CharacterDevice (CharacterDevice.URandom, _)
+                | InodeContent.Fifo _ -> Some (VirtualFileSystemDefect.ReservedContent inode)
+                | InodeContent.CharacterDevice _
                 | InodeContent.RegularFile _
                 | InodeContent.Directory _
                 | InodeContent.Symlink _ -> None
@@ -2807,8 +3024,7 @@ module VirtualFileSystem =
                     Some (VirtualFileSystemDefect.SubdirectoryCountMismatch (directory, stored, counted))
             )
 
-        // A mounted filesystem holds its root and what that root binds, and
-        // nothing deeper: every mount this module makes is flat.
+        // A mounted filesystem holds its root and everything below it.
         let mountDefects =
             let recordedByRoot =
                 vfs.MountMembers
@@ -2826,7 +3042,7 @@ module VirtualFileSystem =
                     match mount, tryGetDirectory root vfs with
                     | None, _ -> [], Set.empty
                     | Some _, None -> [ VirtualFileSystemDefect.MountRootNotDirectory root ], Set.empty
-                    | Some _, Some content -> [], content.Entries |> Map.values |> Set.ofSeq |> Set.add root
+                    | Some _, Some _ -> [], subtreeOf root vfs
 
                 let recorded = Map.tryFind root recordedByRoot |> Option.defaultValue Set.empty
 
@@ -2868,6 +3084,23 @@ module VirtualFileSystem =
                     | InodeContent.Symlink _ -> None
                 )
 
+        let removedDirectoryNames =
+            Set.union
+                (vfs.Inodes
+                 |> Map.keys
+                 |> Seq.filter (fun inode -> isOrphanedDirectory inode vfs)
+                 |> Set.ofSeq)
+                (Map.keys vfs.RemovedDirectoryNames |> Set.ofSeq)
+            |> Set.toList
+            |> List.choose (fun inode ->
+                let recorded = Map.tryFind inode vfs.RemovedDirectoryNames
+
+                if recorded.IsSome = isOrphanedDirectory inode vfs then
+                    None
+                else
+                    Some (VirtualFileSystemDefect.RemovedDirectoryNameMismatch (inode, recorded))
+            )
+
         rootDefects
         @ rootLinks
         @ danglingEntries
@@ -2880,6 +3113,7 @@ module VirtualFileSystem =
         @ subdirectoryCounts
         @ mountDefects
         @ equivalentNames
+        @ removedDirectoryNames
 
     /// Fail loudly if `vfs` is not sound, naming `context`. For the operations
     /// that build a filesystem from host configuration, where a defect is a
@@ -2919,50 +3153,9 @@ module VirtualFileSystem =
         (entries : Map<DirectoryEntryName, SeedEntry>)
         : VirtualFileSystem
         =
-        let rec install
-            (directory : InodeNumber)
-            (entries : Map<DirectoryEntryName, SeedEntry>)
-            (vfs : VirtualFileSystem)
-            : VirtualFileSystem
-            =
-            // `Map` iterates in key order, so the inode numbers a seed produces
-            // are a function of the seed alone rather than of how the host
-            // happened to build the map. Inode numbers are visible to a process
-            // through `st_ino`, so this is part of the replay contract.
-            entries
-            |> Map.fold
-                (fun vfs name entry ->
-                    match entry with
-                    | SeedEntry.File (contents, permissions, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match createFile directory name permissions owner createdAt contents vfs with
-                        | Ok (_, created) -> created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the file %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                    | SeedEntry.Symlink (target, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match createSymlink directory name symlinkPermissions owner createdAt target vfs with
-                        | Ok (_, created) -> created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the symlink %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                    | SeedEntry.Directory (children, permissions, owner) ->
-                        let owner = owner |> Option.defaultValue defaultOwner
-
-                        match createDirectory directory name permissions owner createdAt vfs with
-                        | Ok (inode, created) -> install inode children created.After
-                        | Error error ->
-                            failwith
-                                $"ofFileSystemSeed: could not create the directory %s{DirectoryEntryName.toEscaped name}: %O{error}. Every name in a seed is unique within its directory by construction, so this cannot be a collision; the inode graph is inconsistent."
-                )
-                vfs
-
         let vfs = empty nameMatching createdAt defaultOwner
 
-        install (root vfs) entries vfs
+        installSeed createdAt defaultOwner symlinkPermissions (root vfs) entries vfs
         |> assertInvariants "VirtualFileSystem.ofFileSystemSeed"
 
     /// Construction that bypasses every invariant this module maintains.
@@ -2996,6 +3189,7 @@ module VirtualFileSystem =
                     Mounts = Map.empty
                     MountMembers = Map.empty
                     NameMatching = nameMatching
+                    RemovedDirectoryNames = Map.empty
                 }
 
             let bindings = allBindings vfs

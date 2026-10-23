@@ -77,22 +77,19 @@ module TestSelectPark =
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.Parking.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
-            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
+            Lone.deadlines asleep |> shouldEqual [ deadline ]
+
+            UnixWait.satisfied (Callers.thread thread asleep) asleep
+            |> shouldEqual (Some Set.empty)
 
             let elapsed =
-                { asleep with
-                    Scheduling =
-                        UnixSchedulingState.advanceClock
-                            (deadline - asleep.Scheduling.NanosecondsSinceBoot)
-                            asleep.Scheduling
-                }
+                UnixSystem.advanceClock (deadline - UnixSystem.nanosecondsSinceBoot asleep) asleep
 
-            UnixWait.satisfied thread elapsed
+            UnixWait.satisfied (Callers.thread thread elapsed) elapsed
             |> shouldEqual (Some (Set.singleton (WakePrimitive.DeadlinePassed deadline)))

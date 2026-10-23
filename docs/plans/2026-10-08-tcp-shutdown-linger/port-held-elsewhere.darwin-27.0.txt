@@ -1,0 +1,83 @@
+#	Darwin 27.0.0 arm64
+#	elsewhere: an address of en0
+A	bind-lo-0	holder elsewhere bound	shares
+A	bind-lo-0	holder elsewhere listening	shares
+A	bind-lo-0	holder elsewhere connected	shares
+A	bind-lo-0	holder elsewhere time-wait	shares
+A	bind-lo-0	holder lo bound	skips
+A	bind-lo-0	holder lo listening	skips
+A	bind-lo-0	holder lo connected	skips
+A	bind-lo-0	holder lo time-wait	skips
+A	bind-lo-0	holder any bound	skips
+A	bind-lo-0	holder any listening	skips
+A	bind-lo-0+reuse	holder elsewhere bound	shares
+A	bind-lo-0+reuse	holder elsewhere listening	shares
+A	bind-lo-0+reuse	holder elsewhere connected	shares
+A	bind-lo-0+reuse	holder elsewhere time-wait	shares
+A	bind-lo-0+reuse	holder lo bound	skips
+A	bind-lo-0+reuse	holder lo listening	skips
+A	bind-lo-0+reuse	holder lo connected	skips
+A	bind-lo-0+reuse	holder lo time-wait	skips
+A	bind-lo-0+reuse	holder any bound	skips
+A	bind-lo-0+reuse	holder any listening	skips
+A	connect	holder elsewhere bound	skips
+A	connect	holder elsewhere listening	skips
+A	connect	holder elsewhere connected	skips
+A	connect	holder elsewhere time-wait	skips
+A	connect	holder lo bound	skips
+A	connect	holder lo listening	skips
+A	connect	holder lo connected	skips
+A	connect	holder lo time-wait	skips
+A	connect	holder any bound	skips
+A	connect	holder any listening	skips
+B	holder elsewhere bound	lo bind-ok listen-ok	lo+reuse bind-ok listen-ok	any bind-EADDRINUSE	any+reuse bind-ok listen-ok
+C	holder elsewhere bound	detector bind-EADDRINUSE
+B	holder elsewhere listening	lo bind-ok listen-ok	lo+reuse bind-ok listen-ok	any bind-EADDRINUSE	any+reuse bind-ok listen-ok
+C	holder elsewhere listening	detector bind-EADDRINUSE
+B	holder elsewhere connected	lo bind-ok listen-ok	lo+reuse bind-ok listen-ok	any bind-EADDRINUSE	any+reuse bind-ok listen-ok
+C	holder elsewhere connected	detector bind-EADDRINUSE
+B	holder elsewhere time-wait	lo bind-ok listen-ok	lo+reuse bind-ok listen-ok	any bind-EADDRINUSE	any+reuse bind-ok listen-ok
+C	holder elsewhere time-wait	detector bind-EADDRINUSE
+C	holder any bound	detector bind-EADDRINUSE
+C	holder any listening	detector bind-EADDRINUSE
+C	c	released	closed	oreuse=0	detector bind-ok
+C	c	released	closed	oreuse=1	detector bind-ok
+C	c	released	open	oreuse=0	detector bind-ok
+C	c	released	open	oreuse=1	detector bind-ok
+C	c	tw	closed	oreuse=0	detector bind-ok
+C	c	tw	closed	oreuse=1	detector bind-ok
+C	c	tw	open	oreuse=0	detector bind-ok
+C	c	tw	open	oreuse=1	detector bind-ok
+C	c	fw2	closed	oreuse=0	detector bind-ok
+C	c	fw2	closed	oreuse=1	detector bind-ok
+C	c	fw2	open	oreuse=0	detector bind-ok
+C	c	fw2	open	oreuse=1	detector bind-ok
+C	c	active-queued	closed	oreuse=0	detector bind-ok
+C	c	active-queued	closed	oreuse=1	detector bind-ok
+C	c	active-queued	open	oreuse=0	detector bind-ok
+C	c	active-queued	open	oreuse=1	detector bind-ok
+C	c	passive-queued	closed	oreuse=0	detector bind-ok
+C	c	passive-queued	closed	oreuse=1	detector bind-ok
+C	c	passive-queued	open	oreuse=0	detector bind-ok
+C	c	passive-queued	open	oreuse=1	detector bind-ok
+C	p	released	closed	oreuse=0	detector bind-ok
+C	p	released	closed	oreuse=1	detector bind-ok
+C	p	released	open	oreuse=0	detector bind-ok
+C	p	released	open	oreuse=1	detector bind-ok
+C	p	tw	closed	oreuse=0	detector bind-ok
+C	p	tw	closed	oreuse=1	detector bind-ok
+C	p	tw	open	oreuse=0	detector bind-ok
+C	p	tw	open	oreuse=1	detector bind-ok
+C	p	fw2	closed	oreuse=0	detector bind-ok
+C	p	fw2	closed	oreuse=1	detector bind-ok
+C	p	fw2	open	oreuse=0	detector bind-ok
+C	p	fw2	open	oreuse=1	detector bind-ok
+C	p	active-queued	closed	oreuse=0	detector bind-ok
+C	p	active-queued	closed	oreuse=1	detector bind-ok
+C	p	active-queued	open	oreuse=0	detector bind-ok
+C	p	active-queued	open	oreuse=1	detector bind-ok
+C	p	passive-queued	closed	oreuse=0	detector bind-ok
+C	p	passive-queued	closed	oreuse=1	detector bind-ok
+C	p	passive-queued	open	oreuse=0	detector bind-ok
+C	p	passive-queued	open	oreuse=1	detector bind-ok
+D	pcblist64 as uid other than 0	the probe's own listener listed	a child process's listener not listed

@@ -50,6 +50,8 @@ module TestListen =
             ReuseAddress = reuse
             Options = SocketOptions.initial
             Phase = phase
+            Drained = false
+            Uid = UserId.root
         }
 
     let private withSocket
@@ -59,19 +61,24 @@ module TestListen =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                socketId
+                (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
-        let (SocketId next) = system.Machine.NextSocketId
+        let (SocketId next) = (Kernel.machine system).NextSocketId
 
         fd,
-        { system with
-            Machine =
-                { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets = SocketTable.set socketId socket machine.Sockets
+                    DatagramReceivers = ForgedSocket.receivers socketId socket machine
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
-        }
+            )
+            system
         |> Lone.withFileDescriptors registry
 
     let private boundAt (endpoint : Ipv4Endpoint) : Ipv4Binding option =
@@ -84,12 +91,12 @@ module TestListen =
             }
 
     let private listenOrFail (fd : int) (backlog : int) (system : UnixSystem<int, string>) =
-        match UnixSocket.tryListen fd backlog system with
+        match UnixSocket.tryListen (Callers.leader system) fd backlog system with
         | Ok result -> result
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{ListenRefusal.describe refusal}"
 
     let private phaseOf (socketId : SocketId) (system : UnixSystem<int, string>) : SocketPhase =
-        (UnixMachineState.socket socketId system.Machine).Phase
+        (UnixMachineState.socket socketId (Kernel.machine system)).Phase
 
     // ------------------------------------------------------------------
     // The happy path
@@ -132,10 +139,10 @@ module TestListen =
 
         where.Address |> shouldEqual Ipv4Address.any
 
-        let low, high = system.Machine.EphemeralPortRange
+        let low, high = UnixSystem.ephemeralPortRange system
         (where.Port >= low && where.Port <= high) |> shouldEqual true
 
-        let socket = UnixMachineState.socket (SocketId 0L) system.Machine
+        let socket = UnixMachineState.socket (SocketId 0L) (Kernel.machine system)
 
         socket.Ipv4Binding
         |> shouldEqual (
@@ -185,7 +192,6 @@ module TestListen =
                         {
                             Backlog = 8
                             Queue = List.map ForgedConnection.queued queued
-                            Drained = false
                         }))
                 (systemOn platform)
 
@@ -213,12 +219,16 @@ module TestListen =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
                 (Lone.fileDescriptors system)
 
-        let queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry system
 
@@ -273,7 +283,6 @@ module TestListen =
                             {
                                 Backlog = 8
                                 Queue = []
-                                Drained = false
                             }))
                     (systemOn platform)
 
@@ -346,7 +355,8 @@ module TestListen =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system |> shouldEqual (Error refusal)
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
+            |> shouldEqual (Error refusal)
 
     [<TestCaseSource(nameof platforms)>]
     let ``a socket of an unmeasured kind is refused`` (platform : SimulatedUnixPlatform) : unit =
@@ -354,7 +364,7 @@ module TestListen =
             let fd, system =
                 withSocket (SocketId 0L) (socketWith kind None false SocketPhase.Idle) (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
     /// Only `Idle`, `Listening` and `Refused` have measured answers; the rest
@@ -377,7 +387,7 @@ module TestListen =
                     (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false phase)
                     (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredPhase (SocketId 0L, phase)))
 
     /// A socket whose connect was refused answers EINVAL, whether or not the
@@ -392,7 +402,7 @@ module TestListen =
                     (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false (SocketPhase.Refused error))
                     (systemOn platform)
 
-            match UnixSocket.tryListen fd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 8 system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (ListenAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
@@ -426,7 +436,7 @@ module TestListen =
                 (socketWith SocketKind.Stream (boundAt (loopback 40000us)) false SocketPhase.Idle)
                 system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening (SocketAddress.Inet endpoint), after) ->
             endpoint.Address |> shouldEqual Ipv4Address.any
             endpoint.Port |> shouldNotEqual 40000us
@@ -466,13 +476,14 @@ module TestListen =
         let system = systemOn platform
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         EphemeralPortRange = (40000us, 40000us)
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                system
 
         // A socket already holding the only port in the range, at the wildcard
         // so that the implicit bind's candidate collides with it.
@@ -500,4 +511,4 @@ module TestListen =
             | SimulatedUnixFlavour.Linux -> Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
             | SimulatedUnixFlavour.Darwin -> Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us))
 
-        UnixSocket.tryListen fd 8 system |> shouldEqual expected
+        UnixSocket.tryListen (Callers.leader system) fd 8 system |> shouldEqual expected

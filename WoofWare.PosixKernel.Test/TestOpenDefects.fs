@@ -13,16 +13,12 @@ open WoofWare.PosixKernel
 /// client reports with its `describe` and never branches on. These tests hold
 /// the suffix `Defect` to meaning such a union, or the error of a parser.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestOpenDefects =
 
     /// The defects whose cases are hidden, and which have no patterns.
     let private openDefects : Type list =
-        [
-            typeof<FileDescriptorRegistryDefect>
-            typeof<SimulatedMachineDefect<int>>
-            typeof<UnixSystemDefect<int>>
-            typeof<VirtualFileSystemDefect>
-        ]
+        [ typeof<UnixSystemDefect<int>> ; typeof<VirtualFileSystemDefect> ]
 
     /// Public unions named `*Defect` that are the errors of parsers, which say
     /// what was wrong with the input and keep public cases.

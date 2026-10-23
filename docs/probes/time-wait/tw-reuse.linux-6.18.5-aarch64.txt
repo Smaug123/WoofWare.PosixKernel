@@ -1,0 +1,83 @@
+Linux 6.18.5 aarch64
+uptime at the first row 2.001 s
+R00@0.00 connect to X after 0.00 s -> EADDRNOTAVAIL from none
+R00@0.25 connect to X after 0.25 s -> EADDRNOTAVAIL from none
+R00@0.50 connect to X after 0.51 s -> EADDRNOTAVAIL from none
+R00@0.75 connect to X after 0.75 s -> EADDRNOTAVAIL from none
+R00@0.95 connect to X after 0.96 s -> EADDRNOTAVAIL from none
+R00@0.98 connect to X after 0.99 s -> EADDRNOTAVAIL from none
+R00@0.99 connect to X after 0.99 s -> EADDRNOTAVAIL from none
+R00@1.01 connect to X after 1.02 s -> OK from T
+R00@1.02 connect to X after 1.02 s -> OK from T
+R00@1.05 connect to X after 1.05 s -> OK from T
+R00@1.25 connect to X after 1.25 s -> OK from T
+R00@1.50 connect to X after 1.51 s -> OK from T
+R00@2.00 connect to X after 2.01 s -> OK from T
+R00@3.00 connect to X after 3.00 s -> OK from T
+R01@0.00 connect to X after 0.00 s -> EADDRNOTAVAIL from none
+R01@0.25 connect to X after 0.26 s -> EADDRNOTAVAIL from none
+R01@0.50 connect to X after 0.51 s -> EADDRNOTAVAIL from none
+R01@0.75 connect to X after 0.76 s -> EADDRNOTAVAIL from none
+R01@0.95 connect to X after 0.96 s -> EADDRNOTAVAIL from none
+R01@0.98 connect to X after 0.98 s -> EADDRNOTAVAIL from none
+R01@0.99 connect to X after 1.00 s -> EADDRNOTAVAIL from none
+R01@1.01 connect to X after 1.02 s -> OK from T
+R01@1.02 connect to X after 1.03 s -> OK from T
+R01@1.05 connect to X after 1.05 s -> OK from T
+R01@1.25 connect to X after 1.25 s -> OK from T
+R01@1.50 connect to X after 1.50 s -> OK from T
+R01@2.00 connect to X after 2.01 s -> OK from T
+R01@3.00 connect to X after 3.00 s -> OK from T
+R10@0.00 connect to X after 0.00 s -> EADDRNOTAVAIL from none
+R10@0.25 connect to X after 0.26 s -> EADDRNOTAVAIL from none
+R10@0.50 connect to X after 0.50 s -> EADDRNOTAVAIL from none
+R10@0.75 connect to X after 0.76 s -> EADDRNOTAVAIL from none
+R10@0.95 connect to X after 0.96 s -> EADDRNOTAVAIL from none
+R10@0.98 connect to X after 0.99 s -> EADDRNOTAVAIL from none
+R10@0.99 connect to X after 1.00 s -> EADDRNOTAVAIL from none
+R10@1.01 connect to X after 1.01 s -> OK from T
+R10@1.02 connect to X after 1.02 s -> OK from T
+R10@1.05 connect to X after 1.06 s -> OK from T
+R10@1.25 connect to X after 1.26 s -> OK from T
+R10@1.50 connect to X after 1.51 s -> OK from T
+R10@2.00 connect to X after 2.01 s -> OK from T
+R10@3.00 connect to X after 3.01 s -> OK from T
+R11@0.00 connect to X after 0.00 s -> EADDRNOTAVAIL from none
+R11@0.25 connect to X after 0.26 s -> EADDRNOTAVAIL from none
+R11@0.50 connect to X after 0.51 s -> EADDRNOTAVAIL from none
+R11@0.75 connect to X after 0.75 s -> EADDRNOTAVAIL from none
+R11@0.95 connect to X after 0.95 s -> EADDRNOTAVAIL from none
+R11@0.98 connect to X after 0.99 s -> EADDRNOTAVAIL from none
+R11@0.99 connect to X after 0.99 s -> EADDRNOTAVAIL from none
+R11@1.01 connect to X after 1.02 s -> OK from T
+R11@1.02 connect to X after 1.02 s -> OK from T
+R11@1.05 connect to X after 1.05 s -> OK from T
+R11@1.25 connect to X after 1.25 s -> OK from T
+R11@1.50 connect to X after 1.51 s -> OK from T
+R11@2.00 connect to X after 2.00 s -> OK from T
+R11@3.00 connect to X after 3.00 s -> OK from T
+E00@0.0 bind 127.0.0.1:T -> EADDRINUSE
+E00@0.5 bind 127.0.0.1:T -> EADDRINUSE
+E00@1.5 bind 127.0.0.1:T -> EADDRINUSE
+E01@0.0 bind 127.0.0.1:T -> EADDRINUSE
+E01@0.5 bind 127.0.0.1:T -> EADDRINUSE
+E01@1.5 bind 127.0.0.1:T -> EADDRINUSE
+E10@0.0 bind 127.0.0.1:T -> EADDRINUSE
+E10@0.5 bind 127.0.0.1:T -> EADDRINUSE
+E10@1.5 bind 127.0.0.1:T -> EADDRINUSE
+E11@0.0 bind 127.0.0.1:T -> OK; connect to X -> OK; then getsockname port T, getpeername X
+E11@0.5 bind 127.0.0.1:T -> OK; connect to X -> OK; then getsockname port T, getpeername X
+E11@1.5 bind 127.0.0.1:T -> OK; connect to X -> OK; then getsockname port T, getpeername X
+V01@1.5 bind 0.0.0.0:T -> EADDRINUSE
+V11@1.5 bind 0.0.0.0:T -> OK; connect to X -> OK; then getsockname 127.0.0.1:T
+Z0s search aimed at T; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:T reuse=0 -> OK
+Z0e bind 127.0.0.1:T reuse=1 -> EADDRINUSE; then bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+Z1s search aimed at T; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:T reuse=0 -> OK
+Z1e bind 127.0.0.1:T reuse=1 -> OK; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:T reuse=0 -> OK
+Qs@0.0 search aimed at T; connect to X -> OK from T; accept -> OK
+Qs@1.5 search aimed at T; connect to X -> OK from T; accept -> OK
+Qe@0.0 bind 127.0.0.1:T reuse=1 -> OK; connect to X -> OK from T; accept -> OK
+Qe@1.5 bind 127.0.0.1:T reuse=1 -> OK; connect to X -> OK from T; accept -> OK
+Ys search aimed at T; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:Z reuse=0 -> OK
+Ye bind 127.0.0.1:T reuse=1 -> OK; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:Z reuse=0 -> OK
+D connect to 127.0.0.1:T -> ECONNREFUSED

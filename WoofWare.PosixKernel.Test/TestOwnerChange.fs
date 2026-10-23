@@ -102,15 +102,15 @@ module TestOwnerChange =
     // ------------------------------------------------------------- the rule
 
     /// The rule `chown-rules.c`'s `predict` compared every kernel answer
-    /// against, with no mismatch, extended by the refusals of the Darwin rows
-    /// nobody has measured.
+    /// against, with no mismatch, and `root-files.c`'s Darwin rows for root
+    /// and for set-ID inodes.
     let private reference
         (rule : OwnerChangeRule)
         (standing : Standing)
         (request : OwnerChangeRequest)
         (target : OwnerChangeTarget)
         (raw : int)
-        : Result<OwnerChange, OwnerChangeRefusal>
+        : OwnerChange
         =
         let unprivileged = standing.Privilege = CallerPrivilege.Unprivileged
 
@@ -131,9 +131,9 @@ module TestOwnerChange =
                 | RequestedGroup.Other -> false
 
             if unprivileged && not (userAllowed && groupAllowed) then
-                Ok OwnerChange.Forbidden
+                OwnerChange.Forbidden
             elif target = OwnerChangeTarget.Directory then
-                Ok (OwnerChange.Changed (mode raw))
+                OwnerChange.Changed (mode raw)
             else
 
             let kill =
@@ -147,25 +147,12 @@ module TestOwnerChange =
                          0)
 
             if kill <> 0 && not standing.Owns && unprivileged then
-                Ok OwnerChange.Forbidden
+                OwnerChange.Forbidden
             else
-                Ok (OwnerChange.Changed (mode (raw &&& ~~~kill)))
+                OwnerChange.Changed (mode (raw &&& ~~~kill))
         | OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed ->
-            let bits = mode raw
-
-            if not unprivileged then
-                Error (OwnerChangeRefusal.UnmeasuredPrivilegedCaller (standing, request, bits))
-            else
-
-            let measured =
-                raw &&& 0o6000 = 0
-                || standing.Owns && (standing.InGroup || raw &&& 0o2000 = 0)
-                || not standing.Owns && request = nothingAsked && raw &&& 0o2000 = 0
-
-            if not measured then
-                Error (OwnerChangeRefusal.UnmeasuredSetIdChange (standing, request, bits))
-            elif request = nothingAsked then
-                Ok OwnerChange.Untouched
+            if request = nothingAsked then
+                OwnerChange.Untouched
             else
 
             let userAllowed =
@@ -173,19 +160,19 @@ module TestOwnerChange =
                 | RequestedUser.Unchanged
                 | RequestedUser.Current -> true
                 | RequestedUser.Callers
-                | RequestedUser.Other -> false
+                | RequestedUser.Other -> not unprivileged
 
             let groupAllowed =
                 match request.GroupAsked with
                 | RequestedGroup.Unchanged
                 | RequestedGroup.Current -> true
-                | RequestedGroup.CallersGroup -> standing.Owns
-                | RequestedGroup.Other -> false
+                | RequestedGroup.CallersGroup -> standing.Owns || not unprivileged
+                | RequestedGroup.Other -> not unprivileged
 
             if userAllowed && groupAllowed then
-                Ok (OwnerChange.Changed (mode (raw &&& ~~~0o6000)))
+                OwnerChange.Changed (mode (raw &&& ~~~0o6000))
             else
-                Ok OwnerChange.Forbidden
+                OwnerChange.Forbidden
 
     [<Test>]
     let ``verdict answers the probe's rule for every standing, request, target and mode`` () : unit =
@@ -200,6 +187,66 @@ module TestOwnerChange =
                             if actual <> expected then
                                 failwith
                                     $"%O{rule}, %A{standing}, %A{request}, %O{target}, mode 0o%04o{raw}: verdict said %A{actual}, the probe's rule %A{expected}"
+
+    [<Test>]
+    let ``Darwin's root-files CHOWN rows, for root and for uid 501, over every mode`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // root and uid 501 (groups 20 and 701) asking chown (lchown of a
+        // link) for each kind of user and group, of files, directories and
+        // links of every mode, owned by root, uid 501 and uid 502. A cell is
+        // `.` when the mode is unchanged, the digit of the set-ID bits
+        // dropped otherwise, and `P` for EPERM.
+        let rows = DarwinRootFiles.section "CHOWN"
+        rows |> List.length |> shouldEqual 168
+
+        let mismatches =
+            [
+                for row in rows do
+                    let credentials = DarwinRootFiles.credentialsOf row.Caller
+                    let standing = Standing.toward credentials row.Owner
+
+                    // "chown(owner,-1)=(502,-1)": the IDs the call named.
+                    let named = row.Call.Substring(row.Call.IndexOf "=(" + 2).TrimEnd ')'
+
+                    let user, group =
+                        match named.Split ',' with
+                        | [| user ; group |] ->
+                            (if user = "-1" then None else Some (uid (uint32 user))),
+                            (if group = "-1" then None else Some (gid (uint32 group)))
+                        | _ -> failwith $"unexpected request in %s{row.Call}"
+
+                    let request = OwnerChangeRequest.classify credentials row.Owner user group
+
+                    let target =
+                        match row.Kind with
+                        | DarwinRootFiles.Kind.Dir -> OwnerChangeTarget.Directory
+                        | DarwinRootFiles.Kind.File
+                        | DarwinRootFiles.Kind.Link -> OwnerChangeTarget.NonDirectory
+
+                    for raw in 0..0o7777 do
+                        let modelled =
+                            match
+                                OwnerChangeRules.verdict
+                                    OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
+                                    standing
+                                    request
+                                    target
+                                    (mode raw)
+                            with
+                            | OwnerChange.Forbidden -> 'P'
+                            | OwnerChange.Untouched -> '.'
+                            | OwnerChange.Changed bits when PermissionBits.toInt bits = raw -> '.'
+                            | OwnerChange.Changed bits ->
+                                char (int '0' + ((raw &&& ~~~(PermissionBits.toInt bits)) >>> 9))
+
+                        if modelled <> row.Cells.[raw] then
+                            yield
+                                $"%s{row.Caller} %A{row.Kind} %O{row.Owner} %s{row.Call} 0o%04o{raw}: measured %c{row.Cells.[raw]}, modelled %c{modelled}"
+            ]
+
+        if not (List.isEmpty mismatches) then
+            let shown = mismatches |> List.truncate 10 |> String.concat "\n"
+            failwith $"%d{List.length mismatches} cells differ, for example:\n%s{shown}"
 
     [<Test>]
     let ``each platform names its flavour's rule`` () : unit =
@@ -428,9 +475,7 @@ module TestOwnerChange =
         | None -> ()
 
         let verdict =
-            match OwnerChangeRules.verdict rule (Standing.toward credentials by) request target (mode bits) with
-            | Ok verdict -> verdict
-            | Error refusal -> failwith $"%s{line}: a measured row was refused: %A{refusal}"
+            OwnerChangeRules.verdict rule (Standing.toward credentials by) request target (mode bits)
 
         let expectedErrno, expectedBits, expectedOwner, moves = outcome verdict by bits ids
         (line, errno, afterOwner) |> shouldEqual (line, expectedErrno, expectedOwner)
@@ -622,7 +667,8 @@ module TestOwnerChange =
         rows |> shouldEqual (120 * 7 + 480 + 34)
 
     [<Test>]
-    let ``Darwin refuses the rows nobody has measured`` () : unit =
+    let ``Darwin's root may name anything, and every call naming an ID clears both set-ID bits`` () : unit =
+        // `root-files.c`'s CHOWN and CTIME rows, as literals.
         let rule = OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
 
         let standing (privilege : CallerPrivilege) (owns : bool) (inGroup : bool) : Standing =
@@ -638,65 +684,35 @@ module TestOwnerChange =
                 GroupAsked = RequestedGroup.Current
             }
 
-        let rows : (Standing * OwnerChangeRequest * int * Result<OwnerChange, OwnerChangeRefusal>) list =
+        let other : OwnerChangeRequest =
+            {
+                UserAsked = RequestedUser.Other
+                GroupAsked = RequestedGroup.Other
+            }
+
+        let rows : (Standing * OwnerChangeRequest * int * OwnerChange) list =
             [
-                // Root, whatever it asks and whoever owns the inode.
-                standing CallerPrivilege.Privileged true true,
-                nothingAsked,
-                0o644,
-                Error (
-                    OwnerChangeRefusal.UnmeasuredPrivilegedCaller (
-                        standing CallerPrivilege.Privileged true true,
-                        nothingAsked,
-                        mode 0o644
-                    )
-                )
-                // An owner outside the group, of an inode carrying S_ISGID,
-                // even asking nothing.
-                standing CallerPrivilege.Unprivileged true false,
-                nothingAsked,
-                0o2755,
-                Error (
-                    OwnerChangeRefusal.UnmeasuredSetIdChange (
-                        standing CallerPrivilege.Unprivileged true false,
-                        nothingAsked,
-                        mode 0o2755
-                    )
-                )
-                // ...but not of an inode carrying only S_ISUID.
-                standing CallerPrivilege.Unprivileged true false,
-                groupOnly,
-                0o4755,
-                Ok (OwnerChange.Changed (mode 0o755))
-                // A non-owner naming an ID of a set-ID inode.
-                standing CallerPrivilege.Unprivileged false true,
-                groupOnly,
-                0o4755,
-                Error (
-                    OwnerChangeRefusal.UnmeasuredSetIdChange (
-                        standing CallerPrivilege.Unprivileged false true,
-                        groupOnly,
-                        mode 0o4755
-                    )
-                )
-                // A non-owner asking nothing of an S_ISGID inode.
-                standing CallerPrivilege.Unprivileged false false,
-                nothingAsked,
-                0o2755,
-                Error (
-                    OwnerChangeRefusal.UnmeasuredSetIdChange (
-                        standing CallerPrivilege.Unprivileged false false,
-                        nothingAsked,
-                        mode 0o2755
-                    )
-                )
-                // ...but asking nothing of an S_ISUID inode is measured.
-                standing CallerPrivilege.Unprivileged false false, nothingAsked, 0o4755, Ok OwnerChange.Untouched
+                // Root asking nothing changes nothing, not even ctime.
+                standing CallerPrivilege.Privileged false false, nothingAsked, 0o4755, OwnerChange.Untouched
+                // Root naming anyone, of an inode it does not own.
+                standing CallerPrivilege.Privileged false false, other, 0o6755, OwnerChange.Changed (mode 0o0755)
+                standing CallerPrivilege.Privileged true true, groupOnly, 0o2745, OwnerChange.Changed (mode 0o0745)
+                // An owner outside the group, of an inode carrying S_ISGID.
+                standing CallerPrivilege.Unprivileged true false, groupOnly, 0o2755, OwnerChange.Changed (mode 0o0755)
+                standing CallerPrivilege.Unprivileged true false, nothingAsked, 0o2755, OwnerChange.Untouched
+                // A non-owner naming the IDs a set-ID inode already has.
+                standing CallerPrivilege.Unprivileged false true, groupOnly, 0o4755, OwnerChange.Changed (mode 0o0755)
+                standing CallerPrivilege.Unprivileged false false, nothingAsked, 0o2755, OwnerChange.Untouched
+                // ...and naming anyone else is still EPERM.
+                standing CallerPrivilege.Unprivileged false true, other, 0o6755, OwnerChange.Forbidden
             ]
 
         for standing, request, bits, expected in rows do
-            OwnerChangeRules.verdict rule standing request OwnerChangeTarget.NonDirectory (mode bits)
-            |> shouldEqual expected
+            (standing,
+             request,
+             bits,
+             OwnerChangeRules.verdict rule standing request OwnerChangeTarget.NonDirectory (mode bits))
+            |> shouldEqual (standing, request, bits, expected)
 
     // ------------------------------------------------------------- hand-built filesystems
 
@@ -771,13 +787,13 @@ module TestOwnerChange =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -786,7 +802,7 @@ module TestOwnerChange =
         |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{p} is absent"
 
@@ -797,20 +813,21 @@ module TestOwnerChange =
     /// every inode of a hand-built filesystem was stamped at `epoch`, so
     /// stamping its ctime at `epoch` again leaves it where it was.
     let private withBits (p : string) (bits : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
         let inode = inodeAt vfs p
 
         match VirtualFileSystem.tryGet inode vfs with
         | Some entry when entry.Times.StatusChange = epoch -> ()
         | other -> failwith $"%s{p} was not stamped at the epoch: %A{other}"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem =
                         CommittedFileSystem.initial (GraphMutators.setPermissions inode (mode bits) epoch vfs)
                 }
-        }
+            )
+            system
 
     let private chownAnswer
         (p : string)
@@ -819,7 +836,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryChown (PathArg.ofPath (path p)) user group system with
+        match UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path p)) user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"chown(%s{p}) was refused: %s{ChOwnRefusal.describe refusal}"
 
@@ -830,7 +847,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryLchown (PathArg.ofPath (path p)) user group system with
+        match UnixPathResolution.tryLchown (Callers.leader system) (PathArg.ofPath (path p)) user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"lchown(%s{p}) was refused: %s{ChOwnRefusal.describe refusal}"
 
@@ -853,7 +870,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : unit
         =
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
         let standing = Standing.toward credentials by
 
         for p, target in [ "/t/f", OwnerChangeTarget.NonDirectory ; "/t/d", OwnerChangeTarget.Directory ] do
@@ -866,19 +883,14 @@ module TestOwnerChange =
 
                     match
                         reference rule standing request target raw,
-                        UnixPathResolution.tryChown (PathArg.ofPath (path p)) user group system
+                        UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path p)) user group system
                     with
-                    | Error expected, Error actual ->
-                        actual
-                        |> shouldEqual (
-                            ChOwnRefusal.UnmeasuredOwnerChange (inodeAt system.Machine.FileSystem p, expected)
-                        )
-                    | Ok OwnerChange.Forbidden, Ok (SyscallAnswer.Failed UnixError.EPERM, after)
-                    | Ok OwnerChange.Untouched, Ok (SyscallAnswer.Completed 0L, after) ->
+                    | OwnerChange.Forbidden, Ok (SyscallAnswer.Failed UnixError.EPERM, after)
+                    | OwnerChange.Untouched, Ok (SyscallAnswer.Completed 0L, after) ->
                         if after <> system then
                             failwith
                                 $"%A{standing}, %A{request}, %s{p} at 0o%04o{raw}: answered without a change, but changed the system"
-                    | Ok (OwnerChange.Changed bits), Ok (SyscallAnswer.Completed 0L, after) ->
+                    | OwnerChange.Changed bits, Ok (SyscallAnswer.Completed 0L, after) ->
                         let changed = inodeOf p after
 
                         (p, raw, request, bitsOf p after, changed.Owner, changed.Times)
@@ -926,7 +938,7 @@ module TestOwnerChange =
                 (systemOn SimulatedUnixPlatform.linuxX64 credentials (tree by))
 
     [<Test>]
-    let ``Darwin chown answers every mode as the probe measured, and refuses where it did not`` () : unit =
+    let ``Darwin chown answers every mode as the probe measured, for every caller`` () : unit =
         let rows =
             [
                 owner 501u 20u
@@ -957,14 +969,19 @@ module TestOwnerChange =
                 asks
                 (systemOn SimulatedUnixPlatform.macOsArm64 u501 (tree by))
 
-        // Root on Darwin is refused whatever it asks.
+        // Root on Darwin (`root-files.c`), naming anyone.
         let by = owner 501u 20u
 
         sweep
             OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
             Owners.root
             by
-            [ None, None ; Some (uid 1002u), None ]
+            [
+                None, None
+                Some (uid 1002u), None
+                None, Some (gid 7778u)
+                Some (uid 0u), Some (gid 0u)
+            ]
             (systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by))
 
     // ------------------------------------------------------------- paths
@@ -991,7 +1008,7 @@ module TestOwnerChange =
         let egid = credentials.EffectiveGroup
         let by = InodeOwner.ofProcess credentials
         let system = systemOn platform credentials (pathTree by)
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         let changedOwner (p : string) (expected : InodeOwner) (after : UnixSystem<int, string>) : unit =
             let changed = inodeOf p after
@@ -1113,7 +1130,7 @@ module TestOwnerChange =
             ] do
             let by = InodeOwner.ofProcess credentials
             let system = systemOn platform credentials (pathTree by)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for p, call in [ "/p/f", chownAnswer ; "/p/d", chownAnswer ; "/p/lf", lchownAnswer ] do
                 match call p None None system with
@@ -1145,8 +1162,11 @@ module TestOwnerChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 access
                 (Lone.fileDescriptors system)
 
@@ -1155,8 +1175,11 @@ module TestOwnerChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
@@ -1168,7 +1191,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryFchown fd user group system with
+        match UnixPathResolution.tryFchown (Callers.leader system) fd user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"fchown(%d{fd}) was refused: %s{FChOwnRefusal.describe refusal}"
 
@@ -1181,7 +1204,7 @@ module TestOwnerChange =
             ] do
             let by = InodeOwner.ofProcess credentials
             let system = systemOn platform credentials (pathTree by)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for access in
                 [
@@ -1218,13 +1241,13 @@ module TestOwnerChange =
             | other -> failwith $"fchown of a directory: %A{other}"
 
             // A file whose last name has gone.
-            let inode = inodeAt system.Machine.FileSystem "/p/f"
+            let inode = inodeAt (UnixSystem.fileSystem system) "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchownAnswer fd None (Some memberGroup) unlinked with
             | SyscallAnswer.Completed 0L, after ->
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some orphan ->
                     orphan.Owner
                     |> shouldEqual
@@ -1258,7 +1281,7 @@ module TestOwnerChange =
                     after |> shouldEqual withFd
                 else
                     (inodeOf "/p/theirs" after).Times.StatusChange
-                    |> shouldEqual (UnixMachineState.realtime system.Scheduling system.Machine)
+                    |> shouldEqual (UnixSystem.realtime system)
             | other -> failwith $"fchown(-1, -1) of someone else's file: %A{other}"
 
     [<Test>]
@@ -1285,9 +1308,10 @@ module TestOwnerChange =
         // The flavour's own event queue: an epoll instance, or a kqueue.
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create (Lone.fileDescriptors system)
 
@@ -1332,7 +1356,7 @@ module TestOwnerChange =
                     | Some (OpenFileObject.Socket socket) -> socket
                     | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-                UnixPathResolution.tryFchown fd user group withSocket
+                UnixPathResolution.tryFchown (Callers.leader withSocket) fd user group withSocket
                 |> shouldEqual (Error (FChOwnRefusal.Socket socket))
 
         for fd in [ 0 ; 1 ; 2 ] do
@@ -1341,41 +1365,28 @@ module TestOwnerChange =
 
             // `UnixSystem.initial` makes the launch table's pipes first, in
             // descriptor order.
-            UnixPathResolution.tryFchown fd None None linux
+            UnixPathResolution.tryFchown (Callers.leader linux) fd None None linux
             |> shouldEqual (Error (FChOwnRefusal.LaunchedPipe (PipeId (int64 fd))))
 
     [<Test>]
-    let ``Darwin fchown refuses a privileged caller`` () : unit =
+    let ``Darwin fchown gives a privileged caller any group`` () : unit =
         let by = owner 501u 20u
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly system
 
-        UnixPathResolution.tryFchown fd None (Some (gid 12u)) withFd
-        |> shouldEqual (
-            Error (
-                FChOwnRefusal.UnmeasuredOwnerChange (
-                    inodeAt system.Machine.FileSystem "/t/f",
-                    OwnerChangeRefusal.UnmeasuredPrivilegedCaller (
-                        Standing.toward Owners.root by,
-                        {
-                            UserAsked = RequestedUser.Unchanged
-                            GroupAsked = RequestedGroup.Other
-                        },
-                        mode 0o600
-                    )
-                )
-            )
-        )
+        match UnixPathResolution.tryFchown (Callers.leader withFd) fd None (Some (gid 12u)) withFd with
+        | Ok (SyscallAnswer.Completed 0L, after) -> (inodeOf "/t/f" after).Owner |> shouldEqual (owner 501u 12u)
+        | other -> failwith $"fchown answered %A{other}"
 
     // ------------------------------------------------------------- pipes
 
     let private pipeOrFail (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat(%d{fd}): %A{other}"
 
@@ -1410,10 +1421,7 @@ module TestOwnerChange =
 
         let fds, system = pipeOrFail system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            }
+        let system = UnixSystem.advanceClock later system
 
         let system =
             if changesIds then
@@ -1430,16 +1438,16 @@ module TestOwnerChange =
             | Some (OpenFileObject.Pipe pipeId) -> pipeId
             | other -> failwith $"fd %d{fd} is not a pipe: %A{other}"
 
-        let pipe = UnixMachineState.pipe pipeId system.Machine
+        let pipe = UnixMachineState.pipe pipeId (Kernel.machine system)
 
         let status =
             match pipe.Origin with
             | PipeOrigin.Made status -> status
             | PipeOrigin.Launched _ -> failwith "a launched pipe"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Pipes =
                         Map.add
                             pipeId
@@ -1450,9 +1458,10 @@ module TestOwnerChange =
                                             Permissions = mode bits
                                         }
                             }
-                            system.Machine.Pipes
+                            machine.Pipes
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``Linux fchown changes a pipe's owner through either end, as the probe measured, for every standing``
@@ -1478,7 +1487,7 @@ module TestOwnerChange =
 
             let by = InodeOwner.ofProcess creator
             let standing = Standing.toward caller by
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for user, group in
                 [
@@ -1502,8 +1511,7 @@ module TestOwnerChange =
                             standing
                             request
                             OwnerChangeTarget.NonDirectory
-                            raw
-                        |> ok,
+                            raw,
                         answer
                     with
                     | OwnerChange.Forbidden, SyscallAnswer.Failed UnixError.EPERM ->
@@ -1546,56 +1554,71 @@ module TestOwnerChange =
 
         let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
 
-        let answered (outcome : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) =
+        let answered
+            (outcome : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+            : SyscallAnswer * UnixSystem<int, string>
+            =
             match outcome with
-            | Ok (SyscallOutcome.Answered answer, after) -> answer, after
-            | other -> failwith $"step: %A{other}"
+            | Ok (SteppedCall.FChOwnAt (answer, after))
+            | Ok (SteppedCall.FChOwn (answer, after)) -> answer, after
+            | other -> failwith $"step: %A{Result.map Stepped.view other}"
 
         let memberGroup = Some (gid 2000u)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0))
+            system
         |> answered
         |> shouldEqual (chownAnswer "/p/lf" None memberGroup system)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100))
+            system
         |> answered
         |> shouldEqual (lchownAnswer "/p/lf" None memberGroup system)
 
         UnixSystem.tryStep
-            0
+            (Callers.thread 0 system)
             (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/theirs"), Some (uid 1002u), None, 0))
             system
         |> answered
         |> shouldEqual (chownAnswer "/p/theirs" (Some (uid 1002u)) None system)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, memberGroup)) withFd
+        UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChOwn (fd, None, memberGroup)) withFd
         |> answered
         |> shouldEqual (fchownAnswer fd None memberGroup withFd)
 
-        // And the refusals come back as the syscall's own.
+        // And the refusals come back as the syscall's own: Darwin's
+        // AT_SYMLINK_NOFOLLOW_ANY, which this library does not model, and an
+        // end of a pipe the process was launched with on Linux.
         let darwin =
             systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree (owner 501u 20u))
 
-        let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly darwin
+        let call = Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0x800)
 
-        for call in
-            [
-                // AT_FDCWD on Darwin, and AT_SYMLINK_NOFOLLOW for lchown.
-                Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0)
-                Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0x20)
-            ] do
-            match UnixSystem.tryStep 0 call darwin with
-            | Error (SyscallRefusal.FChOwnAt refusal) ->
-                Error refusal
-                |> shouldEqual (
-                    UnixPathResolution.tryChown (PathArg.ofPath (path "/t/f")) None None darwin
-                    |> Result.map ignore
-                    |> Result.mapError FChOwnAtRefusal.ChOwn
-                )
-            | other -> failwith $"step %A{call} as Darwin root: %A{other}"
+        match UnixSystem.tryStep (Callers.thread 0 darwin) call darwin with
+        | Error (SyscallRefusal.FChOwnAt refusal) ->
+            Error refusal
+            |> shouldEqual (
+                UnixPathResolution.tryFchownat
+                    (Callers.leader darwin)
+                    -2
+                    (PathArg.ofPath (path "/t/f"))
+                    None
+                    None
+                    0x800
+                    darwin
+                |> Result.map ignore
+            )
+        | other -> failwith $"step %A{call} on Darwin: %A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, None)) withFd with
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FChOwn (0, None, None)) system with
         | Error (SyscallRefusal.FChOwn refusal) ->
             Error refusal
-            |> shouldEqual (UnixPathResolution.tryFchown fd None None withFd |> Result.map ignore)
-        | other -> failwith $"step fchown as Darwin root: %A{other}"
+            |> shouldEqual (
+                UnixPathResolution.tryFchown (Callers.leader system) 0 None None system
+                |> Result.map ignore
+            )
+        | other -> failwith $"step fchown of a launched pipe on Linux: %A{other}"

@@ -91,37 +91,62 @@ module TestArchitectureFacts =
                 |> Gen.map (fun s -> if isNull s then "" else s)
             ]
 
-    /// A kernel of `flavour`. Every Linux version is one `create` admits, so the
+    /// A kernel of `flavour`. Every version is one `create` admits, so the
     /// version is generated freely.
     let private kernelGen (flavour : SimulatedUnixFlavour) : Gen<SimulatedUnixKernel> =
         match flavour with
-        | SimulatedUnixFlavour.Darwin -> Gen.constant SimulatedUnixKernel.Darwin
+        | SimulatedUnixFlavour.Darwin ->
+            gen {
+                let! major = ArbMap.defaults |> ArbMap.generate<uint32>
+                let! minor = ArbMap.defaults |> ArbMap.generate<uint32>
+                let! revision = ArbMap.defaults |> ArbMap.generate<uint32>
+
+                return
+                    SimulatedUnixKernel.Darwin
+                        {
+                            VersionMajor = major
+                            VersionMinor = minor
+                            VersionRevision = revision
+                        }
+            }
         | SimulatedUnixFlavour.Linux ->
             gen {
                 let! major = ArbMap.defaults |> ArbMap.generate<uint32>
                 let! minor = ArbMap.defaults |> ArbMap.generate<uint32>
                 let! patch = ArbMap.defaults |> ArbMap.generate<uint32>
 
+                let! build = Gen.elements [ LinuxKernelBuild.SmallBuffer832 ; LinuxKernelBuild.SmallBuffer960 ]
+
                 return
-                    SimulatedUnixKernel.Linux
+                    SimulatedUnixKernel.Linux (
                         {
                             Major = major
                             Minor = minor
                             Patch = patch
-                        }
+                        },
+                        build
+                    )
             }
 
     /// The kernel of `flavour` the admission tables are asked about.
     let private kernelOf (flavour : SimulatedUnixFlavour) : SimulatedUnixKernel =
         match flavour with
-        | SimulatedUnixFlavour.Darwin -> SimulatedUnixKernel.Darwin
+        | SimulatedUnixFlavour.Darwin ->
+            SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                }
         | SimulatedUnixFlavour.Linux ->
-            SimulatedUnixKernel.Linux
+            SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                }
+                },
+                LinuxKernelBuild.SmallBuffer832
+            )
 
     let private combinationGen : Gen<SimulatedUnixKernel * SimulatedUnixArchitecture * SimulatedPageSize * string> =
         gen {
@@ -192,6 +217,96 @@ module TestArchitectureFacts =
         |> shouldEqual (SimulatedUnixFlavour.Darwin, SimulatedUnixArchitecture.Arm64, SimulatedPageSize.SixteenKiB)
 
     [<Test>]
+    let ``each preset runs the kernel version its release names`` () : unit =
+        let versionOf (platform : SimulatedUnixPlatform) : SimulatedUnixKernel = SimulatedUnixPlatform.kernel platform
+
+        versionOf SimulatedUnixPlatform.linuxX64
+        |> shouldEqual (
+            SimulatedUnixKernel.Linux (
+                {
+                    Major = 6u
+                    Minor = 17u
+                    Patch = 0u
+                },
+                LinuxKernelBuild.SmallBuffer960
+            )
+        )
+
+        versionOf SimulatedUnixPlatform.linuxArm64
+        |> shouldEqual (
+            SimulatedUnixKernel.Linux (
+                {
+                    Major = 6u
+                    Minor = 18u
+                    Patch = 5u
+                },
+                LinuxKernelBuild.SmallBuffer832
+            )
+        )
+
+        versionOf SimulatedUnixPlatform.macOsArm64
+        |> shouldEqual (
+            SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                }
+        )
+
+        // And the release each preset reports begins with that version, so the
+        // preset describes one machine.
+        for platform in
+            [
+                SimulatedUnixPlatform.linuxX64
+                SimulatedUnixPlatform.linuxArm64
+                SimulatedUnixPlatform.macOsArm64
+            ] do
+            let release = SimulatedUnixPlatform.unixRelease platform
+
+            let parsed =
+                match SimulatedUnixPlatform.kernel platform with
+                | SimulatedUnixKernel.Linux (_, build) ->
+                    LinuxRelease.version release
+                    |> Option.map (fun version -> SimulatedUnixKernel.Linux (version, build))
+                | SimulatedUnixKernel.Darwin _ -> DarwinRelease.version release |> Option.map SimulatedUnixKernel.Darwin
+
+            parsed |> shouldEqual (Some (SimulatedUnixPlatform.kernel platform))
+
+    [<Test>]
+    let ``kernel versions are ordered by their components, most significant first`` () : unit =
+        let linux (major, minor, patch) : LinuxKernelVersion =
+            {
+                Major = major
+                Minor = minor
+                Patch = patch
+            }
+
+        let darwin (major, minor, revision) : DarwinKernelVersion =
+            {
+                VersionMajor = major
+                VersionMinor = minor
+                VersionRevision = revision
+            }
+
+        // Small components, so that equal ones are common enough to exercise
+        // the later fields.
+        let part : Gen<uint32> =
+            Gen.oneof
+                [
+                    Gen.choose (0, 3) |> Gen.map uint32
+                    ArbMap.defaults |> ArbMap.generate<uint32>
+                ]
+
+        let triple : Gen<uint32 * uint32 * uint32> = Gen.zip3 part part part
+
+        let property (a : uint32 * uint32 * uint32, b : uint32 * uint32 * uint32) : unit =
+            compare (linux a) (linux b) |> sign |> shouldEqual (compare a b |> sign)
+            compare (darwin a) (darwin b) |> sign |> shouldEqual (compare a b |> sign)
+
+        Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip triple triple)) property)
+
+    [<Test>]
     let ``page sizes and getrandom's cap agree with the measured table`` () : unit =
         for (flavour, architecture, pageSize), pageBytes, maxTransfer in measuredKernels do
             let platform =
@@ -245,7 +360,7 @@ module TestArchitectureFacts =
                 UnixSystem.initial<int, string> platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-            UnixMachineState.userBufferCheck system.Machine |> shouldEqual expected
+            UnixMachineState.userBufferCheck (Kernel.machine system) |> shouldEqual expected
             UnixSystem.checkInvariants system |> shouldEqual []
 
         let limitGen =
@@ -282,8 +397,9 @@ module TestArchitectureFacts =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                UnixMachineState.userBufferCheck
-                    (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)).Machine
+                UnixMachineState.userBufferCheck (
+                    Kernel.machine (image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                )
                 |> shouldEqual (UserBufferCheck.BeforeOperation limit)
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -311,12 +427,13 @@ module TestArchitectureFacts =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let forged =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             UserBufferCheck = check
                         }
-                }
+                    )
+                    system
 
             let sound =
                 match SimulatedUnixPlatform.flavour platform, check with

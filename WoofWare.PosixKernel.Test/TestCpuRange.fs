@@ -79,14 +79,14 @@ module TestCpuRange =
 
             let spawned =
                 try
-                    Ok (UnixThreadLifecycle.trySpawn 0 1 (CpuId cpu) system)
+                    Ok (UnixThreadLifecycle.trySpawn (Callers.thread 0 system) 1 (CpuId cpu) system)
                 with e ->
                     Error e.Message
 
             match spawned, inRange count cpu with
             | Ok (Ok (SpawnAnswer.Spawned _, after)), true ->
                 cover Side.Inside
-                (UnixThreadTable.get 1 (Lone.threads after)).Cpu |> shouldEqual (CpuId cpu)
+                (Lone.thread 1 after).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants after |> shouldEqual []
             | Error message, false ->
                 cover Side.Outside
@@ -105,11 +105,13 @@ module TestCpuRange =
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
                 cover Side.Inside
-                (UnixThreadTable.get 0 (Lone.threads system)).Cpu |> shouldEqual (CpuId cpu)
+                (Lone.thread 0 system).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
-                refusal |> shouldEqual (LaunchRefusal.LeaderCpuBeyondMachine (CpuId cpu, count))
+
+                refusal
+                |> shouldEqual (BootRefusal.Launch (LaunchRefusal.LeaderCpuBeyondMachine (CpuId cpu, count)))
             | other, expected -> failwith $"%O{CpuId cpu} on %d{count} processors: got %A{other}, in range %b{expected}"
 
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
@@ -126,7 +128,7 @@ module TestCpuRange =
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixThreadTable.get 0 (Proc.threads pid (Machines.viewOf pid after))).Cpu
+                (Proc.thread (Caller.make pid 0) (Machines.viewOf pid after)).Cpu
                 |> shouldEqual (CpuId cpu)
 
                 Machines.checkInvariants after |> shouldEqual []
@@ -144,14 +146,11 @@ module TestCpuRange =
     /// public route can do.
     let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         system
-        |> Lone.mapThreads (fun threads ->
-            threads
-            |> Map.add
-                thread
-                { UnixThreadTable.get thread threads with
-                    Cpu = CpuId cpu
-                }
-        )
+        |> ForgedThread.withState
+            (Callers.thread thread system)
+            { Lone.thread thread system with
+                Cpu = CpuId cpu
+            }
 
     [<Test>]
     let ``checkInvariants reports exactly a thread on a processor the machine does not have`` () : unit =
@@ -171,11 +170,13 @@ module TestCpuRange =
                 Machines.checkInvariants machine |> shouldEqual []
             else
                 cover Side.Outside
-                let defect = UnixSystemDefect.CpuBeyondMachine (1, CpuId cpu, count)
+
+                let defect =
+                    UnixSystemDefect.CpuBeyondMachine (Callers.ofDefault 1, CpuId cpu, count)
+
                 UnixSystem.checkInvariants system |> shouldEqual [ defect ]
 
-                Machines.checkInvariants machine
-                |> shouldEqual [ SimulatedMachineDefect.View (UnixSystem.defaultProcessId, defect) ]
+                Machines.checkInvariants machine |> shouldEqual [ defect ]
 
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
         |> assertBothSides

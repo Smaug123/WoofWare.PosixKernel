@@ -41,7 +41,7 @@ module internal LinuxReadiness =
     /// otherwise.
     let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : uint32
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
@@ -165,18 +165,38 @@ module internal LinuxReadiness =
     /// draining raises a send-space wake. Every other description is left as
     /// it was.
     ///
+    /// A UDP socket's poll through a description without `O_NONBLOCK` refills
+    /// its reader queue (`DatagramReceiver.refilled`), as `udp_poll` does.
+    ///
     /// `poll(2)`, an epoll `ADD` or `MOD`, and `epoll_wait`'s re-poll of a
     /// pending entry each poll their targets so.
     let polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
-        | Some {
-                   Target = OpenFileTarget.Socket socketId
-               } ->
-            match SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase with
+        | Some ({
+                    Target = OpenFileTarget.Socket socketId
+                } as description) ->
+            let socket = UnixMachineState.socket socketId system.Machine
+
+            match SocketPhase.connectionEnd socket.Phase with
+            | None when SocketTable.receivesDatagrams socket ->
+                // Measured (`udp-release.c` in
+                // docs/plans/2026-10-18-udp-data-path): poll and epoll of a
+                // blocking UDP socket refill its reader queue, and of a
+                // non-blocking one do not.
+                if description.NonBlocking then
+                    system
+                else
+                    { system with
+                        Machine =
+                            UnixMachineState.withDatagramReceiver
+                                socketId
+                                (DatagramReceiver.refilled (UnixMachineState.datagramReceiver socketId system.Machine))
+                                system.Machine
+                    }
             | None -> system
             | Some (connectionId, connectionEnd) ->
                 let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
@@ -184,6 +204,7 @@ module internal LinuxReadiness =
                 { system with
                     Machine =
                         UnixMachineState.withTransfer
+                            system.Scheduling.NanosecondsSinceBoot
                             connectionId
                             (TcpTransfer.polled connectionEnd transfer)
                             system.Machine
@@ -207,7 +228,7 @@ module internal EpollReadyList =
     /// readiness restricted to the registration's stored mask.
     let private annotatedReady<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollState : EpollState)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list
         =
         epollState.Ready
@@ -237,7 +258,7 @@ module internal EpollReadyList =
     /// `EBADF` no kernel produces, and `false` sleeps for ever.
     let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind epollId system.Machine.OpenFiles with
@@ -266,7 +287,10 @@ module internal EpollReadyList =
     /// re-poll is nonempty, silently drop the stale ones, and stop once
     /// `maxCount` events are reported — every walked entry is consumed, and
     /// the entries the stop spared stay pending in order (measured,
-    /// `order2.c` row J).
+    /// `order2.c` row J). Each reported entry then has its registration's
+    /// `EpollRegistration.onReport` effect: the level-triggered ones go back
+    /// on the list behind the spared ones, in the order they were reported,
+    /// and the one-shot ones are disarmed.
     ///
     /// Returns the reported rows -- each the registration's `Data` and the
     /// `events` `epoll_wait` writes for it, in Linux's `<sys/epoll.h>`
@@ -278,8 +302,8 @@ module internal EpollReadyList =
     let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : (uint64 * uint32) list * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : (uint64 * uint32) list * ProcessView<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -304,34 +328,52 @@ module internal EpollReadyList =
                 $"EpollReadyList.drain: %O{epollId} is not an epoll instance (this is a bug in the caller of EpollReadyList.drain)."
         | OpenFileTarget.Epoll epollState ->
 
+        // Measured on Linux 6.18.5 (`docs/probes/epoll-modes` section B): a
+        // wait of maxevents 1 over three ready level-triggered entries left
+        // the two it spared ahead of the one it reported, and a wait of
+        // maxevents 2 over that list left the one it spared ahead of the two
+        // it reported, in their order. That is `ep_send_events` adding each
+        // reported level-triggered entry to the tail of the emptied list, and
+        // `ep_done_scan` putting the spared ones back at its head.
         let rec walk
+            (reported : int)
             (delivered : (uint64 * uint32) list)
+            (requeued : (int * OpenFileDescriptionId) list)
+            (disarming : (int * OpenFileDescriptionId) list)
             (remaining : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list)
-            : (uint64 * uint32) list * (int * OpenFileDescriptionId) list
+            : (uint64 * uint32) list *
+              (int * OpenFileDescriptionId) list *
+              (int * OpenFileDescriptionId) list *
+              (int * OpenFileDescriptionId) list
             =
             match remaining with
-            | [] -> List.rev delivered, []
-            | (_, registration, reported) :: rest ->
-                if List.length delivered = maxCount then
-                    List.rev delivered, remaining |> List.map (fun (key, _, _) -> key)
-                elif reported = 0u then
-                    walk delivered rest
-                else
-                    walk ((registration.Data, reported) :: delivered) rest
+            | [] -> List.rev delivered, [], List.rev requeued, disarming
+            | _ when reported = maxCount ->
+                List.rev delivered, remaining |> List.map (fun (key, _, _) -> key), List.rev requeued, disarming
+            | (_, _, 0u) :: rest -> walk reported delivered requeued disarming rest
+            | (key, registration, events) :: rest ->
+                let delivered = (registration.Data, events) :: delivered
 
-        let delivered, surviving = walk [] (annotatedReady epollState system)
+                match EpollRegistration.onReport registration with
+                | EpollReportEffect.Consume -> walk (reported + 1) delivered requeued disarming rest
+                | EpollReportEffect.Requeue -> walk (reported + 1) delivered (key :: requeued) disarming rest
+                | EpollReportEffect.Disarm -> walk (reported + 1) delivered requeued (key :: disarming) rest
+
+        let delivered, spared, requeued, disarming =
+            walk 0 [] [] [] (annotatedReady epollState system)
 
         // Each walked entry's target was polled again, as `ep_send_events`
         // polls each entry it takes off the list; the entries the stop spared
         // were not.
         let walked =
-            epollState.Ready |> List.filter (fun key -> not (List.contains key surviving))
+            List.take (List.length epollState.Ready - List.length spared) epollState.Ready
 
         let system =
             (system, walked)
             ||> List.fold (fun system (_, targetId) -> LinuxReadiness.polled targetId system)
 
-        delivered, UnixSystemState.mapOpenFiles (OpenFileTable.setEpollReady epollId surviving) system
+        delivered,
+        UnixSystemState.mapOpenFiles (OpenFileTable.settleEpollWalk epollId (spared @ requeued) disarming) system
 
 /// What a kqueue filter reports of a descriptor on which it is ready. `data`
 /// is what the event's `data` field holds: for `EVFILT_READ` of a listener
@@ -544,7 +586,7 @@ module internal DarwinReadiness =
         (filter : KqueueFilter)
         (pipeId : PipeId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueFilterReport option
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -610,7 +652,7 @@ module internal KqueueQueue =
     let private stateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -624,8 +666,8 @@ module internal KqueueQueue =
     let private withState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (state : KqueueState)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
@@ -661,8 +703,8 @@ module internal KqueueQueue =
     let activateRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (key : int * KqueueFilter)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let state = stateOf "activateRegistration" kqueue system
 
@@ -732,51 +774,67 @@ module internal KqueueQueue =
     /// an event one process's call causes activates another's registrations
     /// as its own.
     let activate (socketId : SocketId) (filters : KqueueFilter list) (machine : UnixMachineState) : UnixMachineState =
+        // Only the kqueues and poll queues registering the socket are
+        // visited, through their indexes by socket, so an event costs time in
+        // what watches the socket rather than in the machine.
         let openFiles =
-            (machine.OpenFiles, OpenFileTable.toSeq machine.OpenFiles |> Seq.toList)
-            ||> List.fold (fun openFiles (kqueue, description) ->
-                match description.Target with
-                | OpenFileTarget.Kqueue state ->
-                    let registrations =
-                        state.Registrations
-                        |> Map.toList
-                        |> List.map (fun (key, registration) ->
-                            key, Some registration.Socket, registration.RegisteredAt
-                        )
+            (machine.OpenFiles, OpenFileTable.kqueuesOnSocket socketId machine.OpenFiles)
+            ||> List.fold (fun openFiles (kqueue, keys) ->
+                let state =
+                    match OpenFileTable.tryFind kqueue machine.OpenFiles with
+                    | Some {
+                               Target = OpenFileTarget.Kqueue state
+                           } -> state
+                    | other ->
+                        failwith
+                            $"KqueueQueue.activate: the index says %O{kqueue} is a kqueue registering %O{socketId}, but it is %A{other} (this is a bug in this library)."
 
-                    match entering socketId filters registrations state.Active machine with
-                    | [] -> openFiles
-                    | entering ->
-                        OpenFileTable.setKqueueState
-                            kqueue
-                            { state with
-                                Active = state.Active @ entering
-                            }
-                            openFiles
-                | OpenFileTarget.Epoll _
-                | OpenFileTarget.File _
-                | OpenFileTarget.Directory _
-                | OpenFileTarget.Socket _
-                | OpenFileTarget.CharacterDevice _
-                | OpenFileTarget.Fifo _
-                | OpenFileTarget.Inotify _
-                | OpenFileTarget.Pipe _ -> openFiles
+                let registrations =
+                    keys
+                    |> Set.toList
+                    |> List.map (fun key ->
+                        let registration = Map.find key state.Registrations
+                        key, Some registration.Socket, registration.RegisteredAt
+                    )
+
+                match entering socketId filters registrations state.Active machine with
+                | [] -> openFiles
+                | entering ->
+                    OpenFileTable.setKqueueState
+                        kqueue
+                        { state with
+                            Active = state.Active @ entering
+                        }
+                        openFiles
             )
 
         let pollQueues =
-            machine.PollQueues
-            |> Map.map (fun _ queue ->
+            (machine.PollQueues, PollQueueTable.registeringOnSocket socketId machine.PollQueues)
+            ||> List.fold (fun pollQueues (id, keys) ->
+                let queue =
+                    match PollQueueTable.tryFind id machine.PollQueues with
+                    | Some queue -> queue
+                    | None ->
+                        failwith
+                            $"KqueueQueue.activate: the index says %O{id} registers %O{socketId}, but the machine holds no such queue (this is a bug in this library)."
+
                 let registrations =
-                    queue.Registrations
-                    |> Map.toList
-                    |> List.map (fun (key, registration) -> key, registration.Socket, int64 registration.RegisteredAt)
+                    keys
+                    |> Set.toList
+                    |> List.map (fun key ->
+                        let registration = Map.find key queue.Registrations
+                        key, registration.Socket, int64 registration.RegisteredAt
+                    )
 
                 match entering socketId filters registrations queue.Active machine with
-                | [] -> queue
+                | [] -> pollQueues
                 | entering ->
-                    { queue with
-                        Active = queue.Active @ entering
-                    }
+                    PollQueueTable.set
+                        id
+                        { queue with
+                            Active = queue.Active @ entering
+                        }
+                        pollQueues
             )
 
         { machine with
@@ -793,7 +851,7 @@ module internal KqueueQueue =
     /// so the kqueue cannot have gone while something waits on it.
     let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -825,8 +883,8 @@ module internal KqueueQueue =
     let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : KqueueReport list * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : KqueueReport list * ProcessView<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -909,6 +967,11 @@ type internal SocketWake =
     /// applied, and on Linux whatever it asked, even when that changed
     /// nothing.
     | ShutDown of how : TcpShutdownHow
+    /// The UDP socket sent a datagram, which left its send buffer at once.
+    | DatagramSent
+    /// An ICMP port-unreachable error left `ECONNREFUSED` pending at the UDP
+    /// socket.
+    | ErrorRaised
 
 [<RequireQualifiedAccess>]
 module internal SocketWake =
@@ -929,8 +992,18 @@ module internal SocketWake =
         | SocketWake.AcceptQueuePush
         | SocketWake.DataArrived ->
             Some (EpollEvents.In ||| EpollEvents.Pri ||| EpollEvents.RdNorm ||| EpollEvents.RdBand)
-        // What `sk_stream_write_space` passes its waiters.
-        | SocketWake.SendSpace -> Some (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.WrBand)
+        // What `sk_stream_write_space` passes its waiters, and what
+        // `sock_def_write_space` passes them as a sent datagram's buffer is
+        // freed (measured, `udp-transfer.c` G6 in
+        // docs/plans/2026-10-18-udp-data-path: an EPOLLOUT|EPOLLET
+        // registration on a UDP sender is reported after each send).
+        | SocketWake.SendSpace
+        | SocketWake.DatagramSent -> Some (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.WrBand)
+        // What `sock_def_error_report` passes its waiters. Every registration
+        // stores EPOLLERR, so every one is queued: measured (`udp-transfer.c`
+        // G7, in docs/plans/2026-10-18-udp-data-path), a registration for
+        // IN|ET alone is reported 0x8 after the send that raised the error.
+        | SocketWake.ErrorRaised -> Some EpollEvents.Err
         // State changes, which queue every registration regardless of interest:
         // the entry keeps the wake's position through a later interest change,
         // and delivery's re-poll does the filtering (measured, `order8.c`,
@@ -975,6 +1048,15 @@ module internal SocketWake =
         | SocketWake.PeerFin -> [ KqueueFilter.Read ]
         // Only Linux resets a refused socket, and Linux has no kqueue.
         | SocketWake.RefusalReset -> []
+        // Measured (`udp-transfer.c` G6): a Darwin UDP sender's send
+        // activates no EVFILT_WRITE.
+        | SocketWake.DatagramSent -> []
+        // Measured (`udp-transfer.c` L1 and section 2.6 of
+        // docs/plans/2026-10-18-udp-data-path): the error makes EVFILT_READ
+        // ready, with data 0. Which filters it activates is unobservable
+        // here, since `kevent` refuses to register a UDP socket
+        // (`DarwinReadiness.modelsSocket`).
+        | SocketWake.ErrorRaised -> [ KqueueFilter.Read ]
 
     /// `wake` happened to the socket `socketId`: signal every epoll
     /// registration of it on the machine, and activate every kqueue
@@ -992,8 +1074,8 @@ module internal SocketWake =
     let signal<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (wake : SocketWake)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let system =
             UnixSystemState.mapOpenFiles
@@ -1016,8 +1098,8 @@ module internal SocketWake =
     let internal signalTransfer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (wakes : TcpWake list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         (system, wakes)
         ||> List.fold (fun system wake ->

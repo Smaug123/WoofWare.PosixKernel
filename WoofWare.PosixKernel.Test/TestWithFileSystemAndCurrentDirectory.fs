@@ -53,11 +53,11 @@ module TestWithFileSystemAndCurrentDirectory =
     /// — so a row asserting "it stood in *this* inode" is checked against the
     /// graph rather than against the function's own answer.
     let private inodeOf (system : UnixSystem<int, string>) (path : string) : InodeNumber =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
@@ -86,8 +86,8 @@ module TestWithFileSystemAndCurrentDirectory =
         =
         match UnixBootImage.tryBoot (launchAt (UnixBootImage.platform image) dir) image with
         | Ok system -> Ok system
-        | Error (LaunchRefusal.CurrentDirectory (_, fault)) -> Error (StartFault.Directory fault)
-        | Error refusal -> failwith $"unexpected launch refusal: %s{LaunchRefusal.describe refusal}"
+        | Error (BootRefusal.Launch (LaunchRefusal.CurrentDirectory (_, fault))) -> Error (StartFault.Directory fault)
+        | Error refusal -> failwith $"unexpected boot refusal: %s{BootRefusal.describe refusal}"
 
     let private startAt
         (platform : SimulatedUnixPlatform)
@@ -117,7 +117,7 @@ module TestWithFileSystemAndCurrentDirectory =
         // that refused everything.
         match startAt SimulatedUnixPlatform.linuxX64 seed "/outer/inner" with
         | Ok system ->
-            UnixPathResolution.currentDirectoryPath system
+            UnixPathResolution.currentDirectoryPath (Lone.pid system) system
             |> shouldEqual (Some (absolute "/outer/inner"))
         | Error fault -> failwith $"expected /outer/inner to be accepted, but it answered %O{fault}."
 
@@ -148,7 +148,7 @@ module TestWithFileSystemAndCurrentDirectory =
         (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (inodeOf system "/outer/inner")
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (absolute "/outer/inner"))
 
         UnixSystem.checkInvariants system |> shouldBeEmpty
@@ -322,7 +322,7 @@ module TestWithFileSystemAndCurrentDirectory =
             Map.ofList [ Unchecked.defaultof<DirectoryEntryName>, SeedEntry.file noBytes ]
 
         let exn =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.ArgumentException> (fun () ->
                 UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
                 |> UnixBootImage.tryWithFileSystem createdAt Owners.linuxDefault forged
                 |> ignore<Result<UnixBootImage<int, string>, FileSystemSeedFault>>
@@ -364,7 +364,7 @@ module TestWithFileSystemAndCurrentDirectory =
 
         match startAt SimulatedUnixPlatform.macOsArm64 entries path with
         | Ok system ->
-            UnixPathResolution.currentDirectoryPath system
+            UnixPathResolution.currentDirectoryPath (Lone.pid system) system
             |> shouldEqual (Some (absolute path))
         | Error fault -> failwith $"Darwin's NAME_MAX admits this name, but it answered %O{fault}."
 
@@ -389,10 +389,10 @@ module TestWithFileSystemAndCurrentDirectory =
         | Error fault -> failwith $"Darwin's NAME_MAX admits this name, but it answered %A{fault}."
         | Ok system ->
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (absolute path))
 
-        system.Machine.UnixPlatform |> shouldEqual SimulatedUnixPlatform.macOsArm64
+        UnixSystem.platform system |> shouldEqual SimulatedUnixPlatform.macOsArm64
         UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]
@@ -410,12 +410,20 @@ module TestWithFileSystemAndCurrentDirectory =
                     (Map.ofList [ name (String.replicate 255 "中"), SeedEntry.directory FileSystemSeed.empty ])
                     ("/" + String.replicate 255 "中")
                 // A symlink whose expansion carries the walk past Darwin's
-                // PATH_MAX, which is the length the walk itself refuses: four
-                // hundred two-byte components, each within NAME_MAX.
+                // PATH_MAX, which is the length the walk itself refuses: a
+                // target of 333 two-byte components, each within NAME_MAX and
+                // together within what `symlink` stores, spliced in ahead of
+                // the rest of the path.
                 startAt
                     SimulatedUnixPlatform.macOsArm64
-                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 400 "/ab"), None) ])
-                    "/l"
+                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 333 "/ab"), None) ])
+                    "/l/abcdefghijklmnopqrstuvwxyz"
+                // A symlink whose target is longer than Darwin's `symlink`
+                // stores.
+                startAt
+                    SimulatedUnixPlatform.macOsArm64
+                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 1024 "a"), None) ])
+                    "/"
                 // A seed name no Darwin filesystem would bind.
                 startAt
                     SimulatedUnixPlatform.macOsArm64
@@ -439,9 +447,23 @@ module TestWithFileSystemAndCurrentDirectory =
                             name "dev", SeedEntry.directory (Map.ofList [ name "x", SeedEntry.file noBytes ])
                         ])
                     "/"
-                // A directory in the device filesystem, whose names this kernel
-                // knows only some of.
-                startAt SimulatedUnixPlatform.linuxX64 seed "/dev/pts"
+                // A device node, which this kernel holds only in the device
+                // filesystem.
+                startAt
+                    SimulatedUnixPlatform.linuxX64
+                    (Map.ofList
+                        [
+                            name "null",
+                            SeedEntry.CharacterDevice (
+                                DeviceNumber (1u, 3u),
+                                PermissionBits.parseOrFail "TestWithFileSystemAndCurrentDirectory" 0o666,
+                                None
+                            )
+                        ])
+                    "/"
+                // A name past NAME_MAX on Darwin's devfs, whose lookup takes
+                // it where this kernel's walk checks the length first.
+                startAt SimulatedUnixPlatform.macOsArm64 seed ("/dev/" + System.String ('a', 256))
             ]
             |> List.choose (fun result ->
                 match result with
@@ -494,25 +516,28 @@ module TestWithFileSystemAndCurrentDirectory =
         // Darwin re-checks the total length when it splices a symlink target in,
         // and reports the same `ENAMETOOLONG` a component past `NAME_MAX` earns.
         // So `TooLong` covers both, and must not be read as the NAME_MAX story:
-        // nothing about `/l` here is too long, and shortening it cannot help --
-        // it is the seed's symlink target that no path can accommodate.
-        // Four hundred components of two bytes each: every one of them is
+        // no component of the path is too long, and nor is the path itself --
+        // it is the seed's symlink target, spliced in ahead of the rest of the
+        // path, that the total cannot accommodate (999 + 27 + the NUL is past
+        // 1024). 333 components of two bytes each: every one of them is
         // comfortably inside `NAME_MAX`, so the only limit this can reach is
-        // the total length. A single 1100-byte component would take the
-        // `NAME_MAX` path instead and prove nothing about the splice.
-        let deep = String.replicate 400 "/ab"
+        // the total length; and 999 bytes is within the 1023 a `symlink` on
+        // Darwin stores, so the seed itself is one Darwin could hold.
+        let deep = String.replicate 333 "/ab"
 
         let entries =
             Map.ofList [ name "l", SeedEntry.Symlink (SymlinkTarget.parseOrFail "test" deep, None) ]
 
-        startAt SimulatedUnixPlatform.macOsArm64 entries "/l"
+        let path = "/l/abcdefghijklmnopqrstuvwxyz"
+
+        startAt SimulatedUnixPlatform.macOsArm64 entries path
         |> Result.map ignore
         |> shouldEqual (Error (StartFault.Directory (CurrentDirectoryFault.TooLong SimulatedUnixFlavour.Darwin)))
 
         // Linux does not re-check a splice at all, so the same seed gets all the
         // way to the target and finds nothing there. This is what says the row
         // above measures the re-check rather than the length of anything.
-        startAt SimulatedUnixPlatform.linuxX64 entries "/l"
+        startAt SimulatedUnixPlatform.linuxX64 entries path
         |> Result.map ignore
         |> shouldEqual (Error (StartFault.Directory (CurrentDirectoryFault.DoesNotResolve UnixError.ENOENT)))
 

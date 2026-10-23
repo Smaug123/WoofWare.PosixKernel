@@ -14,7 +14,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        match UnixThreadLifecycle.trySpawn (Proc.leader pid system) child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn (Caller.make pid (Proc.leader pid system)) child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"
@@ -28,7 +28,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if Map.containsKey name (Proc.threads pid system) then
+        if Map.containsKey name (Proc.threadMap pid system) then
             system
         else
             spawnIn pid name system

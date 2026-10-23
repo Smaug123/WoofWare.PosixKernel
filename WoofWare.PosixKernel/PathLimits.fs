@@ -151,6 +151,7 @@ module PathLimits =
     /// using the pre-made <c>SimulatedUnixPlatform.pathLimits</c> instances instead
     /// of constructing a <c>PathLimits</c> by hand.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentOutOfRangeException">A limit is one no Unix this library models has: fewer than one or more than 255 symlink traversals, a <c>PATH_MAX</c> below 256, or a <c>NAME_MAX</c> that forbids every filename.</exception>
     let create
         (maxSymlinkTraversals : int)
         (pathMaxBytes : int)
@@ -158,9 +159,13 @@ module PathLimits =
         (spliceRecheck : SpliceLengthRecheck)
         : PathLimits
         =
+        let outOfRange (parameter : string) (description : string) : unit =
+            raise (Refusal.exceptionOf "PathLimits.create" (RefusalKind.OutOfRange parameter) description)
+
         if maxSymlinkTraversals < 1 then
-            failwith
-                $"PathLimits.create: a kernel that permits %d{maxSymlinkTraversals} symlink traversals could not resolve a path through any symbolic link at all; every Unix this library models permits at least one."
+            outOfRange
+                "maxSymlinkTraversals"
+                $"a kernel that permits %d{maxSymlinkTraversals} symlink traversals could not resolve a path through any symbolic link at all; every Unix this library models permits at least one."
 
         // Two adjacent `int` parameters are an argument-order hazard, so the
         // bounds are chosen to make a swap a loud failure rather than a subtly
@@ -168,21 +173,24 @@ module PathLimits =
         // _POSIX_PATH_MAX, is 256) and none permits anywhere near 256 symlink
         // traversals, so `create 1024 32 ...` cannot pass both checks.
         if maxSymlinkTraversals > 255 then
-            failwith
-                $"PathLimits.create: %d{maxSymlinkTraversals} symlink traversals is far beyond any Unix this library models (Linux permits 40, Darwin 32). Are the first two arguments the wrong way round?"
+            outOfRange
+                "maxSymlinkTraversals"
+                $"%d{maxSymlinkTraversals} symlink traversals is far beyond any Unix this library models (Linux permits 40, Darwin 32). Are the first two arguments the wrong way round?"
 
         if pathMaxBytes < 256 then
-            failwith
-                $"PathLimits.create: a PATH_MAX of %d{pathMaxBytes} bytes is below POSIX's _POSIX_PATH_MAX floor of 256. Are the first two arguments the wrong way round?"
+            outOfRange
+                "pathMaxBytes"
+                $"a PATH_MAX of %d{pathMaxBytes} bytes is below POSIX's _POSIX_PATH_MAX floor of 256. Are the first two arguments the wrong way round?"
 
         match nameMax with
         | NameLengthLimit.Bytes bytes when bytes < 1 ->
-            failwith $"PathLimits.create: a NAME_MAX of %d{bytes} bytes would forbid every filename."
+            outOfRange "nameMax" $"a NAME_MAX of %d{bytes} bytes would forbid every filename."
         | NameLengthLimit.Utf16CodeUnitsOrBytes (units, _) when units < 1 ->
-            failwith $"PathLimits.create: a NAME_MAX of %d{units} UTF-16 code units would forbid every filename."
+            outOfRange "nameMax" $"a NAME_MAX of %d{units} UTF-16 code units would forbid every filename."
         | NameLengthLimit.Utf16CodeUnitsOrBytes (_, fallbackBytes) when fallbackBytes < 1 ->
-            failwith
-                $"PathLimits.create: a NAME_MAX of %d{fallbackBytes} bytes would forbid every filename that is not valid UTF-8."
+            outOfRange
+                "nameMax"
+                $"a NAME_MAX of %d{fallbackBytes} bytes would forbid every filename that is not valid UTF-8."
         | NameLengthLimit.Bytes _
         | NameLengthLimit.Utf16CodeUnitsOrBytes _ -> ()
 
@@ -262,14 +270,21 @@ module PathLimits =
     /// any path report ELOOP. That is the failure worth catching: not a crash,
     /// but a plausible-looking answer from a kernel that cannot exist, produced
     /// silently for every path in the filesystem.
+    ///
+    /// Throws `ArgumentException`, with `context` in the message, for such a
+    /// value.
     let assertValid (context : string) (limits : PathLimits) : PathLimits =
         // The integer checks come first, and the `NameMax` one is written to
         // avoid needing the unit: on a forged default every field is zero at
         // once, and this must report that rather than depend on which field
         // happens to be examined first.
         if limits.MaxSymlinkTraversals < 1 || limits.PathMaxBytes < 1 then
-            failwith
-                $"%s{context}: these path limits permit %d{limits.MaxSymlinkTraversals} symlink traversals and a PATH_MAX of %d{limits.PathMaxBytes} bytes, which no Unix does. A PathLimits that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; obtain one from SimulatedUnixPlatform.pathLimits instead."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "limits")
+                    $"these path limits permit %d{limits.MaxSymlinkTraversals} symlink traversals and a PATH_MAX of %d{limits.PathMaxBytes} bytes, which no Unix does. A PathLimits that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; obtain one from SimulatedUnixPlatform.pathLimits instead."
+            )
 
         let nameMax =
             match limits.NameMax with
@@ -277,8 +292,12 @@ module PathLimits =
             | NameLengthLimit.Utf16CodeUnitsOrBytes (units, fallbackBytes) -> min units fallbackBytes
 
         if nameMax < 1 then
-            failwith
-                $"%s{context}: these path limits permit a NAME_MAX of %d{nameMax}, which would forbid every filename. A PathLimits that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; obtain one from SimulatedUnixPlatform.pathLimits instead."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "limits")
+                    $"these path limits permit a NAME_MAX of %d{nameMax}, which would forbid every filename. A PathLimits that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; obtain one from SimulatedUnixPlatform.pathLimits instead."
+            )
 
         limits
 

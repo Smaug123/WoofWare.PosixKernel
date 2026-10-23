@@ -55,10 +55,10 @@ module TestSocketErrorOption =
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private phaseOf (fd : int) (system : UnixSystem<int, string>) : SocketPhase =
-        (UnixMachineState.socket (socketIdOf fd system) system.Machine).Phase
+        (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Phase
 
     let private endpointOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match (UnixMachineState.socket (socketIdOf fd system) system.Machine).Ipv4Binding with
+        match (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Ipv4Binding with
         | Some binding -> binding.Endpoint
         | None -> failwith $"fd %d{fd} is not bound"
 
@@ -67,11 +67,6 @@ module TestSocketErrorOption =
 
     let private datagram (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
-
-    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking fd true system with
-        | SetNonBlockingAnswer.Set, system -> system
-        | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
 
     let private bindAt (fd : int) (endpoint : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
@@ -92,7 +87,7 @@ module TestSocketErrorOption =
         let fd, system = stream system
         let system = bindAt fd (loopback listenerPort) system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | Ok (answer, _) -> failwith $"listen answered %A{answer}"
         | Error refusal -> failwith $"listen refused: %s{ListenRefusal.describe refusal}"
@@ -109,7 +104,7 @@ module TestSocketErrorOption =
         : int * UnixSystem<int, string>
         =
         let fd, system = stream (fresh platform)
-        let system = nonBlocking fd system |> prepare fd
+        let system = NonBlocking.set fd system |> prepare fd
         let outcome, system = connect fd nobody system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         phaseOf fd system |> shouldEqual (SocketPhase.Refused RefusalError.Pending)
@@ -128,18 +123,18 @@ module TestSocketErrorOption =
         (system : UnixSystem<int, string>)
         : GetSockOptAnswer * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
             | Ok GetSockOptAdmission.ReadLength -> Some declaredLength
             | Ok GetSockOptAdmission.SkipLength
             | Ok (GetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level optionName value length read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level optionName value length read system with
         | Ok answer -> answer
         | Error refusal -> failwith $"getsockopt refused: %s{SocketOptionRefusal.describe refusal}"
 
@@ -201,7 +196,7 @@ module TestSocketErrorOption =
                          let _, system = connect client (loopback listenerPort) system
 
                          let server, _, system =
-                             UnixConnection.acceptConnection (socketIdOf listener system) system
+                             Lone.UnixConnection.acceptConnection (socketIdOf listener system) system
 
                          "accepted server end", server, system)
                     yield
@@ -220,7 +215,7 @@ module TestSocketErrorOption =
                         yield
                             (let _, system = listening (fresh platform)
                              let client, system = stream system
-                             let system = nonBlocking client system
+                             let system = NonBlocking.set client system
                              let _, system = connect client (loopback listenerPort) system
 
                              phaseOf client system
@@ -393,7 +388,7 @@ module TestSocketErrorOption =
         let fd, system = refused linux
         let _, system = readErrorPlainly fd system
 
-        UnixMachineState.socketReadinessLevel (socketIdOf fd system) system.Machine
+        UnixMachineState.socketReadinessLevel (socketIdOf fd system) (Kernel.machine system)
         |> shouldEqual
             {
                 In = true

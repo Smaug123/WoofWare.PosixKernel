@@ -40,13 +40,38 @@ type RenameWalkOrder =
     /// `namei` makes for itself under rename semantics.
     | SourceThenDestination
 
+/// Where Linux's `rename(2)` refuses a destination that is the source's own
+/// parent or an ancestor of it (ENOTEMPTY), against the ENOTDIR a trailing
+/// separator earns when the source is not a directory. The two meet only when
+/// both apply: `rename("a/f/", "a")` and `rename("a/f", "a/")`, with `a/f` a
+/// file.
+///
+/// Measured by `docs/probes/rename/ancestor-trap.py` on Linux 6.17, 6.18 and
+/// 7.0, unprivileged and at uid 0.
+[<RequireQualifiedAccess>]
+type RenameAncestorCheck =
+    /// After the trailing-separator checks, so `rename("a/f/", "a")` is
+    /// ENOTDIR: Linux before 6.19.
+    | AfterTrailingSeparators
+    /// Before them, so `rename("a/f/", "a")` is ENOTEMPTY: Linux from 6.19,
+    /// which makes the check while it locks the two parents, before it looks
+    /// at either path's trailing separator.
+    | BeforeTrailingSeparators
+
+/// The order in which `rename(2)` makes the refusals it judges against both
+/// resolved paths.
+[<RequireQualifiedAccess>]
+type RenameRefusalOrder =
+    /// Linux's, with its check of a destination that is the source's ancestor
+    /// where `ancestorCheck` puts it.
+    | Linux of ancestorCheck : RenameAncestorCheck
+    /// Darwin's, which refuses no destination for being the source's ancestor.
+    | Darwin
+
 // The ordering half lives in `RenameRules.linuxVerdict` and
 // `RenameRules.darwinVerdict`, for the reason `UnlinkRules.verdict` gives.
 /// Everything a kernel does differently when `rename(2)` moves a name.
 ///
-/// Two fields. The rest of the divergence — the *order* of the refusals and
-/// the errno vocabulary — follows from the platform's flavour alone, so it
-/// is not a field here.
 /// `rename` diverges more than any operation before it: the two flavours
 /// disagree about where the permission checks sit, about *which* directory's
 /// write bit a directory-over-directory rename even consults, and about where
@@ -59,6 +84,9 @@ type RenameRules =
         /// Which path is resolved first, and how far, before the other is
         /// looked at. See `RenameWalkOrder`.
         WalkOrder : RenameWalkOrder
+        /// The order of the refusals judged once both paths are resolved. See
+        /// `RenameRefusalOrder`.
+        RefusalOrder : RenameRefusalOrder
     }
 
 /// What `rename(2)` should do next, once both of its paths have been resolved.
@@ -91,27 +119,6 @@ type internal RenameVerdict =
 /// The questions `rename(2)` asks about the four directories it can refuse for.
 [<RequireQualifiedAccess>]
 module private RenameChecks =
-    /// Whether `inode` refuses this caller the write bit.
-    ///
-    /// Asked of four different directories — the source's parent, the
-    /// destination's parent, the moved directory (whose ".." a change of parent
-    /// rewrites) and, on Darwin only, the directory a directory displaces — so
-    /// `role` names which, for the crash message. The sticky bit is a separate
-    /// question, which `RemovalChecks.sticky` answers.
-    ///
-    /// Partial in `inode`, which every caller has just obtained from a
-    /// resolution or from a directory entry.
-    let lacksWrite (role : string) (credentials : Credentials) (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
-        match VirtualFileSystem.tryGet inode vfs with
-        | Some entry ->
-            PermissionBits.deniedTo
-                (Standing.toward credentials entry.Owner)
-                AccessRequest.Write
-                (Inode.permissions entry)
-        | None ->
-            failwith
-                $"RenameChecks.lacksWrite: %s{role} is inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
-
     /// The inode the destination name is bound to, when that inode is a
     /// directory. `None` covers both "the name is free" and "it names something
     /// that is not a directory", which no arm needs to tell apart — the arms
@@ -250,7 +257,10 @@ module internal RenameRules =
     /// own parent, or an ancestor of it, is refused straight after the EINVAL
     /// arm, ahead of the type rule and every EACCES. Measured (ext4, uid 1000
     /// and 0): `rename(a/f, a)` with `f` a file is ENOTEMPTY, not EISDIR, and
-    /// `rename(a/sub, a)` with `a` unwritable is ENOTEMPTY, not EACCES.
+    /// `rename(a/sub, a)` with `a` unwritable is ENOTEMPTY, not EACCES. Under
+    /// `RenameAncestorCheck.BeforeTrailingSeparators` it comes earlier still,
+    /// ahead of the two trailing-separator arms: `rename(a/f/, a)` is ENOTEMPTY
+    /// there and ENOTDIR under `AfterTrailingSeparators`.
     ///
     /// Linux never consults the mode of the thing being displaced: measured,
     /// `rename(dir, emptydir)` succeeds with the destination at mode 0. That is
@@ -260,6 +270,7 @@ module internal RenameRules =
     /// their next check and nothing else moves, so privilege exempts the caller
     /// from the write bits and the sticky bits and from nothing else.
     let private linuxVerdict
+        (ancestorCheck : RenameAncestorCheck)
         (credentials : Credentials)
         (source : Resolution)
         (destination : Resolution)
@@ -286,7 +297,22 @@ module internal RenameRules =
         let displacedDirectory = RenameChecks.existingDirectory destinationExisting vfs
         let displacesNonDirectory = RenameChecks.namesNonDirectory destinationExisting vfs
 
-        if source.TrailingSeparatorDemanded && not movedIsDirectory then
+        // The other direction of the subtree trap below: the destination names
+        // the source's own parent, or an ancestor of it. Linux refuses that with
+        // ENOTEMPTY before `vfs_rename`, so it beats the type rule and every
+        // EACCES -- measured for a file, a symlink and a directory source, with
+        // the parents writable and not (`docs/probes/rename/ancestor-trap.py`).
+        let destinationIsAncestor =
+            match displacedDirectory with
+            | Some displaced -> VirtualFileSystem.isWithinSubtree displaced sourceDirectory vfs
+            | None -> false
+
+        if
+            ancestorCheck = RenameAncestorCheck.BeforeTrailingSeparators
+            && destinationIsAncestor
+        then
+            RenameVerdict.Refuse UnixError.ENOTEMPTY
+        elif source.TrailingSeparatorDemanded && not movedIsDirectory then
             RenameVerdict.Refuse UnixError.ENOTDIR
         elif destination.TrailingSeparatorDemanded && not movedIsDirectory then
             RenameVerdict.Refuse UnixError.ENOTDIR
@@ -297,23 +323,17 @@ module internal RenameRules =
             && VirtualFileSystem.isWithinSubtree moved destinationDirectory vfs
         then
             RenameVerdict.Refuse UnixError.EINVAL
-        elif
-            // The other direction of the same trap: the destination names the
-            // source's own parent, or an ancestor of it. `do_renameat2` refuses
-            // that with ENOTEMPTY immediately after the EINVAL arm and before
-            // `vfs_rename`, so it beats the type rule and every EACCES --
-            // measured for a file, a symlink and a directory source, with the
-            // parents writable and not (`docs/probes/rename/ancestor-trap.py`).
-            (match displacedDirectory with
-             | Some displaced -> VirtualFileSystem.isWithinSubtree displaced sourceDirectory vfs
-             | None -> false)
-        then
+        elif destinationIsAncestor then
+            // Reached under `BeforeTrailingSeparators` too, where the first arm
+            // has already refused every call this one would: an ancestor of the
+            // source is neither the source nor inside it, so neither arm between
+            // the two can answer such a call.
             RenameVerdict.Refuse UnixError.ENOTEMPTY
-        elif RenameChecks.lacksWrite "the source's parent" credentials sourceDirectory vfs then
+        elif RemovalChecks.lacksWrite "RenameRules: the source's parent" credentials sourceDirectory vfs then
             RenameVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials sourceDirectory sourceName moved vfs = StickyRemoval.Forbidden then
             RenameVerdict.Refuse UnixError.EPERM
-        elif RenameChecks.lacksWrite "the destination's parent" credentials destinationDirectory vfs then
+        elif RemovalChecks.lacksWrite "RenameRules: the destination's parent" credentials destinationDirectory vfs then
             RenameVerdict.Refuse UnixError.EACCES
         elif
             (match destinationExisting with
@@ -329,7 +349,7 @@ module internal RenameRules =
         elif
             movedIsDirectory
             && sourceDirectory <> destinationDirectory
-            && RenameChecks.lacksWrite "the moved directory" credentials moved vfs
+            && RemovalChecks.lacksWrite "RenameRules: the moved directory" credentials moved vfs
         then
             RenameVerdict.Refuse UnixError.EACCES
         else
@@ -385,8 +405,7 @@ module internal RenameRules =
     ///    told apart. Measured with a second name for root's file in root's
     ///    sticky `/private/tmp`: moving it is EACCES, over another name for the
     ///    same inode included, while the type arm, the trailing-separator arm and
-    ///    the EINVAL arm above all beat it. Whether it exempts a privileged caller
-    ///    has not been measured, and such a caller is refused.
+    ///    the EINVAL arm above all beat it. It exempts a privileged caller.
     ///  * Then a write check on the destination side, and *which* directory it
     ///    asks about is the strangest measured fact in this syscall: when a
     ///    directory replaces an existing directory, Darwin consults the write bit
@@ -400,9 +419,10 @@ module internal RenameRules =
     ///    A sticky destination parent refuses replacing an entry the caller owns
     ///    neither of, with EACCES, beside that parent's write check: measured,
     ///    moving the caller's own file onto root's file in `/private/tmp` is
-    ///    EACCES. Whether that holds when a directory displaces a directory,
-    ///    where the parent's write bit is not consulted at all, has not been
-    ///    measured, and such a rename is refused; so is a privileged caller.
+    ///    EACCES. When a directory displaces a directory, where the parent's
+    ///    write bit is not consulted at all, its sticky bit is not either: the
+    ///    displaced directory's write bit alone decides. A privileged caller is
+    ///    exempt from the sticky bit, as from every write bit.
     ///  * Both paths naming one inode changes nothing and succeeds — below the
     ///    two write checks above, which is why the self-rename of a directory
     ///    whose own write bit is missing is EACCES here and succeeds on Linux.
@@ -427,7 +447,7 @@ module internal RenameRules =
         (source : Resolution)
         (destination : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<RenameVerdict, StickyRefusal>
+        : RenameVerdict
         =
         let destinationParentIsOrphan =
             match destination.Target with
@@ -436,13 +456,32 @@ module internal RenameRules =
             | ResolvedTarget.Directory _ -> false
 
         if destinationParentIsOrphan then
-            Ok (RenameVerdict.Refuse UnixError.ENOENT)
+            RenameVerdict.Refuse UnixError.ENOENT
         else
 
+        // Whether moving `moved` to the destination crosses a mount: XNU
+        // compares the moved object's mount with the destination directory's,
+        // and with the displaced object's where there is one, so renaming
+        // `/dev` itself, or onto it, is EXDEV too (measured on Darwin 27.0,
+        // `docs/probes/devfs-darwin`, NS rename rows).
+        let crossesMount (moved : InodeNumber) : bool =
+            match destination.Target with
+            | ResolvedTarget.Entry (destinationDirectory, _, destinationExisting) ->
+                VirtualFileSystem.mountedRootOf moved vfs
+                <> VirtualFileSystem.mountedRootOf destinationDirectory vfs
+                || (
+                    match destinationExisting with
+                    | Some displaced ->
+                        VirtualFileSystem.mountedRootOf displaced vfs
+                        <> VirtualFileSystem.mountedRootOf moved vfs
+                    | None -> false
+                )
+            | ResolvedTarget.Directory _ -> false
+
         match source.Target with
-        | ResolvedTarget.Directory (_, reachedBy) ->
+        | ResolvedTarget.Directory (inode, reachedBy) ->
             match reachedBy with
-            | FinalNavigation.Root -> Ok (RenameVerdict.Refuse UnixError.EISDIR)
+            | FinalNavigation.Root -> RenameVerdict.Refuse UnixError.EISDIR
             // No root special case, unlike Darwin's `unlink` and `rmdir`, which
             // each give the root its own EBUSY arm. Establishing that took some
             // care, because the obvious measurement is masked: a filesystem root
@@ -459,16 +498,19 @@ module internal RenameRules =
             // So EXDEV is the mount boundary talking, and where it stays quiet
             // the root answers exactly what any other directory answers.
             //
-            // A rename out of the one mounted filesystem this library has, the
-            // device filesystem, is EXDEV before this verdict is asked, and
-            // nothing inside it can be renamed, so the EINVAL readings are the
-            // applicable ones.
+            // Across the device filesystem's mount it is EXDEV, `rename("/dev/.",
+            // "/tmp/x")` and `rename("/tmp/.", "/dev/n")` alike, and within it
+            // EINVAL (`docs/probes/devfs-darwin`, NS rename rows).
             | FinalNavigation.Current
-            | FinalNavigation.Parent -> Ok (RenameVerdict.Refuse UnixError.EINVAL)
+            | FinalNavigation.Parent ->
+                if crossesMount inode then
+                    RenameVerdict.Refuse UnixError.EXDEV
+                else
+                    RenameVerdict.Refuse UnixError.EINVAL
         | ResolvedTarget.Entry (sourceDirectory, sourceName, sourceExisting) ->
 
         match sourceExisting with
-        | None -> Ok (RenameVerdict.Refuse UnixError.ENOENT)
+        | None -> RenameVerdict.Refuse UnixError.ENOENT
         | Some moved ->
 
         let movedIsDirectory = RemovalChecks.isDirectory moved vfs
@@ -477,40 +519,59 @@ module internal RenameRules =
         | ResolvedTarget.Directory (_, reachedBy) ->
             match reachedBy with
             | FinalNavigation.Current
-            | FinalNavigation.Parent -> Ok (RenameVerdict.Refuse UnixError.EINVAL)
+            | FinalNavigation.Parent -> RenameVerdict.Refuse UnixError.EINVAL
             | FinalNavigation.Root ->
                 if movedIsDirectory then
-                    Ok (RenameVerdict.Refuse UnixError.EINVAL)
+                    RenameVerdict.Refuse UnixError.EINVAL
                 else
-                    Ok (RenameVerdict.Refuse UnixError.EISDIR)
+                    RenameVerdict.Refuse UnixError.EISDIR
         | ResolvedTarget.Entry (destinationDirectory, destinationName, destinationExisting) ->
 
         let displacedDirectory = RenameChecks.existingDirectory destinationExisting vfs
         let displacesNonDirectory = RenameChecks.namesNonDirectory destinationExisting vfs
 
-        if movedIsDirectory && displacesNonDirectory then
-            Ok (RenameVerdict.Refuse UnixError.ENOTDIR)
-        elif not movedIsDirectory && displacedDirectory.IsSome then
-            Ok (RenameVerdict.Refuse UnixError.EISDIR)
-        elif
+        // Darwin's devfs refuses an unprivileged caller every rename within it
+        // EPERM, ahead of the type rule, the subtree's EINVAL and the write
+        // checks, and behind only a free destination's trailing separator and
+        // a rename of a name onto itself, which the write check answers
+        // (measured on Darwin 27.0, `docs/probes/devfs-darwin`, NS rename
+        // rows: `rename("/dev/null", "/dev/monotonic")` is EPERM,
+        // `rename("/dev/null", "/dev/n/")` ENOENT and
+        // `rename("/dev/null", "/dev/null")` EACCES). A rename across its
+        // mount is EXDEV before this verdict is asked, and a privileged caller
+        // is refused before it.
+        // The type rule is about an existing destination and this arm about a
+        // free one, so neither ever shadows the other; this one is first
+        // because it beats the mount's EXDEV.
+        if
             destination.TrailingSeparatorDemanded
             && destinationExisting.IsNone
             && not movedIsDirectory
         then
-            Ok (RenameVerdict.Refuse UnixError.ENOENT)
+            RenameVerdict.Refuse UnixError.ENOENT
+        elif crossesMount moved then
+            RenameVerdict.Refuse UnixError.EXDEV
+        elif
+            VirtualFileSystem.isOnDevfs sourceDirectory vfs
+            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && destinationExisting <> Some moved
+        then
+            RenameVerdict.Refuse UnixError.EPERM
+        elif movedIsDirectory && displacesNonDirectory then
+            RenameVerdict.Refuse UnixError.ENOTDIR
+        elif not movedIsDirectory && displacedDirectory.IsSome then
+            RenameVerdict.Refuse UnixError.EISDIR
         elif
             movedIsDirectory
             && VirtualFileSystem.isWithinSubtree moved destinationDirectory vfs
         then
-            Ok (RenameVerdict.Refuse UnixError.EINVAL)
-        elif RenameChecks.lacksWrite "the source's parent" credentials sourceDirectory vfs then
-            Ok (RenameVerdict.Refuse UnixError.EACCES)
+            RenameVerdict.Refuse UnixError.EINVAL
+        elif
+            RemovalChecks.lacksWrite "RenameRules: the source's parent" credentials sourceDirectory vfs
+            || RemovalChecks.darwinStickyRefuses credentials sourceDirectory sourceName moved vfs
+        then
+            RenameVerdict.Refuse UnixError.EACCES
         else
-
-        match RemovalChecks.darwinStickyRefuses credentials sourceDirectory sourceName moved vfs with
-        | Error refusal -> Error refusal
-        | Ok true -> Ok (RenameVerdict.Refuse UnixError.EACCES)
-        | Ok false ->
 
         // Which directory this asks about is the measured oddity. A directory
         // displacing a directory is the one shape where Darwin consults the
@@ -518,37 +579,32 @@ module internal RenameRules =
         // `displacedDirectory` being `Some` here already implies the source is
         // a directory, because the EISDIR arm above refused the only other way
         // to reach this line with one.
-        let destinationRefuses : Result<bool, StickyRefusal> =
+        //
+        // Measured as root by `docs/probes/darwin-root/root-files.c` (STICKY):
+        // uid 501 moving its own directory over uid 504's in uid 502's sticky
+        // directory succeeds when the displaced directory is 0777 and is EACCES
+        // when it is 0755, sticky parent or not, so the parent's sticky bit is
+        // not consulted there.
+        let destinationRefuses : bool =
             match displacedDirectory with
             | Some displaced ->
-                match RemovalChecks.sticky credentials destinationDirectory destinationName displaced vfs with
-                | StickyRemoval.Forbidden
-                | StickyRemoval.ForbiddenButPrivileged ->
-                    Error (
-                        StickyRefusal.DarwinDirectoryDisplacingDirectory (
-                            destinationDirectory,
-                            displaced,
-                            RemovalChecks.standingTowards credentials displaced vfs
-                        )
-                    )
-                | StickyRemoval.Unrestricted ->
-                    Ok (RenameChecks.lacksWrite "the displaced directory" credentials displaced vfs)
+                RemovalChecks.lacksWrite "RenameRules: the displaced directory" credentials displaced vfs
             | None ->
-                if RenameChecks.lacksWrite "the destination's parent" credentials destinationDirectory vfs then
-                    Ok true
-                else
+                RemovalChecks.lacksWrite "RenameRules: the destination's parent" credentials destinationDirectory vfs
+                || (
                     match destinationExisting with
                     | Some displaced ->
                         RemovalChecks.darwinStickyRefuses credentials destinationDirectory destinationName displaced vfs
-                    | None -> Ok false
+                    | None -> false
+                )
 
-        match destinationRefuses with
-        | Error refusal -> Error refusal
-        | Ok true -> Ok (RenameVerdict.Refuse UnixError.EACCES)
-        | Ok false ->
+        if destinationRefuses then
+            RenameVerdict.Refuse UnixError.EACCES
+        else if
 
-        if destinationExisting = Some moved then
-            Ok RenameVerdict.NoOp
+            destinationExisting = Some moved
+        then
+            RenameVerdict.NoOp
         elif
             // Two occasions, not one, and this is where Darwin parts from Linux
             // a second time. Linux wants this bit only when the parent changes,
@@ -563,16 +619,16 @@ module internal RenameRules =
             // rather than a spelling of the displaced-directory one above.
             movedIsDirectory
             && (sourceDirectory <> destinationDirectory || displacedDirectory.IsSome)
-            && RenameChecks.lacksWrite "the moved directory" credentials moved vfs
+            && RemovalChecks.lacksWrite "RenameRules: the moved directory" credentials moved vfs
         then
-            Ok (RenameVerdict.Refuse UnixError.EACCES)
+            RenameVerdict.Refuse UnixError.EACCES
         else
 
         match displacedDirectory with
         | Some displaced when not (RemovalChecks.isEmptyDirectory displaced vfs) ->
-            Ok (RenameVerdict.Refuse UnixError.ENOTEMPTY)
+            RenameVerdict.Refuse UnixError.ENOTEMPTY
         | Some _
-        | None -> Ok (RenameVerdict.Move (sourceDirectory, sourceName, destinationDirectory, destinationName))
+        | None -> RenameVerdict.Move (sourceDirectory, sourceName, destinationDirectory, destinationName)
 
     /// Decide what a `rename(2)` owes, given how its two paths resolved.
     ///
@@ -597,30 +653,23 @@ module internal RenameRules =
     /// and a move into the source's own subtree each beat it. The source name is
     /// only looked up, so it is never refused this way.
     ///
-    /// Refused where Darwin's sticky rule has not been measured for this caller;
-    /// see `StickyRefusal`.
     let verdict
-        (flavour : SimulatedUnixFlavour)
+        (order : RenameRefusalOrder)
         (bindable : BindableEntryNames)
         (credentials : Credentials)
         (source : Resolution)
         (destination : Resolution)
         (vfs : VirtualFileSystem)
-        : Result<RenameVerdict, StickyRefusal>
+        : RenameVerdict
         =
         let verdict =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> Ok (linuxVerdict credentials source destination vfs)
-            | SimulatedUnixFlavour.Darwin -> darwinVerdict credentials source destination vfs
+            match order with
+            | RenameRefusalOrder.Linux ancestorCheck -> linuxVerdict ancestorCheck credentials source destination vfs
+            | RenameRefusalOrder.Darwin -> darwinVerdict credentials source destination vfs
 
-        verdict
-        |> Result.map (fun verdict ->
-            match verdict with
-            | RenameVerdict.Move (_, _, _, destinationName) when
-                not (BindableEntryNames.admits bindable destinationName)
-                ->
-                RenameVerdict.Refuse UnixError.EILSEQ
-            | RenameVerdict.Move _
-            | RenameVerdict.NoOp
-            | RenameVerdict.Refuse _ -> verdict
-        )
+        match verdict with
+        | RenameVerdict.Move (_, _, _, destinationName) when not (BindableEntryNames.admits bindable destinationName) ->
+            RenameVerdict.Refuse UnixError.EILSEQ
+        | RenameVerdict.Move _
+        | RenameVerdict.NoOp
+        | RenameVerdict.Refuse _ -> verdict

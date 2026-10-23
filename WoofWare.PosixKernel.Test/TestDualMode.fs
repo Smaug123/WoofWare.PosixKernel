@@ -32,12 +32,12 @@ module TestDualMode =
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     let private ipv6Only (system : UnixSystem<int, string>) (fd : int) (value : int) : UnixSystem<int, string> =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.ipv6OptionLevel platform
         let name = SimulatedUnixPlatform.ipv6OnlyOption platform
 
         match
-            UnixSocket.trySetsockoptBytes
+            Lone.UnixSocket.trySetsockoptBytes
                 fd
                 level
                 name
@@ -67,7 +67,7 @@ module TestDualMode =
             | other -> failwith $"listener bind answered %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen answered %A{other}"
 
@@ -100,7 +100,7 @@ module TestDualMode =
 
             SocketAddress.toString address |> shouldEqual "[::ffff:127.0.0.1]:5000"
 
-            (UnixMachineState.socket (socketIdOf fd system) system.Machine).Ipv4Binding
+            (UnixMachineState.socket (socketIdOf fd system) (Kernel.machine system)).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
             |> shouldEqual (Some (loopback 5000us))
         | other -> failwith $"bind answered %A{other}"
@@ -115,20 +115,20 @@ module TestDualMode =
         let socketId = socketIdOf client system
 
         let viaSocket =
-            UnixConnection.connectSocket socketId false 28u (CopyIn.mapped platform 28u blob) system
+            Lone.UnixConnection.connectSocket socketId false 28u (CopyIn.mapped platform 28u blob) system
 
         let viaDescriptor = CopyIn.connect client UserBuffer.Mapped 28u blob system
         viaSocket |> shouldEqual viaDescriptor
 
         match viaSocket with
         | Ok (SyscallAnswer.Completed 0L, system) ->
-            let socket = UnixMachineState.socket socketId system.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Addressing, socket.Phase with
             | SocketAddressing.Inet6DualMode (Some (DualModeBinding.Mapped binding)),
               SocketPhase.Established (connection, ConnectionEnd.Client) ->
                 binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
-                let connection = UnixMachineState.connection connection system.Machine
+                let connection = UnixMachineState.connection connection (Kernel.machine system)
                 connection.ServerAddress |> shouldEqual (loopback port)
                 connection.ClientAddress |> shouldEqual binding.Endpoint
             | other -> failwith $"the client is %A{other}"
@@ -150,9 +150,9 @@ module TestDualMode =
 
             let system = connect port client system
 
-            match (UnixMachineState.socket (socketIdOf client system) system.Machine).Phase with
+            match (UnixMachineState.socket (socketIdOf client system) (Kernel.machine system)).Phase with
             | SocketPhase.Established (connection, _) ->
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
             | other -> failwith $"the client is %A{other}"
 
         let connectWith (blob : uint16 -> byte[]) (length : uint32) (port : uint16) (fd : int) system =
@@ -269,7 +269,7 @@ module TestDualMode =
     let ``an IPv6 socket does not listen`` (platform : SimulatedUnixPlatform) : unit =
         let _, client, system = listenerAndClient platform 0
 
-        match UnixSocket.tryListen client 8 system with
+        match UnixSocket.tryListen (Callers.leader system) client 8 system with
         | Error (ListenRefusal.Ipv6Listener socket) -> socket |> shouldEqual (socketIdOf client system)
         | other -> failwith $"listen answered %A{other}"
 
@@ -293,7 +293,7 @@ module TestDualMode =
             Error (BindRefusal.Copy (SockaddrCopyRefusal.UnmodelledInet6Kind (socketId, SocketKind.Datagram)))
         )
 
-        UnixSocket.tryGetsockname fd UserBuffer.Mapped 28u system
+        UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 28u system
         |> shouldEqual (Error (GetSockNameRefusal.UnmodelledInet6Kind (socketId, SocketKind.Datagram)))
 
     [<Test>]

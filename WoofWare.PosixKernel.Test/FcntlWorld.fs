@@ -93,17 +93,44 @@ module internal FcntlWorld =
         | SimulatedUnixFlavour.Linux -> 1030
         | SimulatedUnixFlavour.Darwin -> 67
 
-    /// `O_NONBLOCK` in `platform`'s numbering.
-    let nonBlock (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> OpenFlagNumbering.LinuxNonBlock
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinNonBlock
+    /// The status flags `F_SETFL` takes that this kernel refuses to set
+    /// (`FcntlRefusal.UnmodelledStatusFlags`), in `platform`'s numbering:
+    /// `O_APPEND` and `O_ASYNC`, and on Linux `O_DIRECT` and `O_NOATIME`.
+    let unmodelledStatusFlags (platform : SimulatedUnixPlatform) : int =
+        let unmodelled =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux ->
+                [
+                    UnmodelledOpenFlag.Append
+                    UnmodelledOpenFlag.Asynchronous
+                    UnmodelledOpenFlag.Direct
+                    UnmodelledOpenFlag.NoAccessTime
+                ]
+            | SimulatedUnixFlavour.Darwin -> [ UnmodelledOpenFlag.Append ; UnmodelledOpenFlag.Asynchronous ]
 
-    /// `O_CLOEXEC` in `platform`'s numbering.
-    let closeOnExec (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> OpenFlagNumbering.LinuxCloseOnExec
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinCloseOnExec
+        unmodelled
+        |> List.fold (fun word flag -> word ||| OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled flag)) 0
+
+    // The flag words other than open(2)'s that `make` passes, in Linux's
+    // numbering, the only flavour that has them.
+
+    /// `SOCK_NONBLOCK`, as `socket-arguments.c` measured it on Linux 6.18.5
+    /// aarch64 (`socketSyscall/linux.tsv`): type 0x801 made a non-blocking
+    /// stream socket.
+    [<Literal>]
+    let private LinuxSocketNonBlock : int = 0x800
+
+    /// `SOCK_CLOEXEC`, as `socket-arguments.c` measured it on Linux 6.18.5
+    /// aarch64 (`socketSyscall/linux.tsv`): type 0x80001 made a stream socket
+    /// with `FD_CLOEXEC`.
+    [<Literal>]
+    let private LinuxSocketCloseOnExec : int = 0x80000
+
+    /// `EPOLL_CLOEXEC`, as `epoll-wait.c` measured it on Linux 6.18.5 aarch64
+    /// (section A, recorded in its header): the one bit `epoll_create1` took,
+    /// and the one that gave the new descriptor `FD_CLOEXEC`.
+    [<Literal>]
+    let private LinuxEpollCloseOnExec : int = 0x80000
 
     let private name (text : string) : DirectoryEntryName =
         DirectoryEntryName.parseOrFail context text
@@ -162,7 +189,7 @@ module internal FcntlWorld =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFcntl fd command argument system with
+        match UnixDescriptor.tryFcntl (Callers.leader system) fd command argument system with
         | Ok answered -> answered
         | Error refusal ->
             failwith $"fcntl(%d{fd}, %d{command}, 0x%x{argument}) was refused: %s{FcntlRefusal.describe refusal}"
@@ -179,6 +206,13 @@ module internal FcntlWorld =
         | SyscallAnswer.Completed value -> $"ok %d{value}"
         | SyscallAnswer.Failed error -> $"%A{error}"
 
+    /// A descriptor-making call's answer as the probe prints a number: "ok <n>"
+    /// or the errno.
+    let descriptorNumber (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned fd -> $"ok %d{fd}"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
+
     /// `F_GETFL` of `fd`, as the probe prints it.
     let statusFlags (fd : int) (system : UnixSystem<int, string>) : string = word (fst (fcntl fd GetFl 0 system))
 
@@ -187,8 +221,8 @@ module internal FcntlWorld =
 
     /// `open(2)` of `path` with the raw word `flags`, which must succeed.
     let openRaw (flags : int) (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match OpenOutcomes.openPath flags (PathArg.ofText path) 0o644 system with
-        | Ok (SyscallAnswer.Completed fd, system) -> int fd, system
+        match OpenOutcomes.openPath (PathArg.ofText path) flags 0o644 system with
+        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
         | other -> failwith $"open(%s{path}, 0x%x{flags}): %A{other}"
 
     /// `open(2)` of `path` with `flags`, which must succeed.
@@ -198,7 +232,7 @@ module internal FcntlWorld =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        openRaw (OpenFlagWords.encode system.Machine.UnixPlatform flags) path system
+        openRaw (OpenFlagWords.encode (UnixSystem.platform system) flags) path system
 
     /// The request for `access` and nothing else.
     let opening (access : FileAccessMode) : OpenFlags =
@@ -211,12 +245,13 @@ module internal FcntlWorld =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     /// A pipe made with the raw `pipe2` word `flags`: its read and write ends.
     let pipe (flags : int) (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 flags UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (r, w), system) -> (r, w), system
         | other -> failwith $"pipe2(0x%x{flags}): %A{other}"
 
@@ -242,12 +277,12 @@ module internal FcntlWorld =
             | other -> failwith $"bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen fd 16 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 16 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen: %A{other}"
 
         if nonBlocking then
-            fd, snd (UnixDescriptor.setNonBlocking fd true system)
+            fd, snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd true system)
         else
             fd, system
 
@@ -265,11 +300,13 @@ module internal FcntlWorld =
         | Ok (_, system) -> system
         | Error refusal -> failwith $"connect: %s{ConnectRefusal.describe refusal}"
 
-    /// A socket accepted from a listener at `port`, after a client connected
-    /// to it: the accepted descriptor.
+    /// A socket accepted, with the `accept4` flag word `flags`, from a
+    /// listener at `port` after a client connected to it: the accepted
+    /// descriptor.
     let accepted
         (port : uint16)
         (nonBlocking : bool)
+        (flags : int)
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
@@ -280,110 +317,111 @@ module internal FcntlWorld =
 
         let system = connect client port system
 
-        match UnixConnection.tryAccept 0 listenerFd UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        match
+            UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) flags system
+        with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept: %A{other}"
 
-    /// A fresh descriptor of the probe's kind `kind`, or `None` for one made by
-    /// `accept4`, which this kernel does not model. Fails for a kind the probe
-    /// did not make on `system`'s flavour.
-    let make (kind : string) (system : UnixSystem<int, string>) : (int * UnixSystem<int, string>) option =
-        let platform = system.Machine.UnixPlatform
+    /// A fresh descriptor of the probe's kind `kind`. Fails for a kind the
+    /// probe did not make on `system`'s flavour.
+    let make (kind : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        let platform = UnixSystem.platform system
         let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
         let socketWith (extra : int) =
             let domain, kind, protocol =
                 NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Default
 
-            match UnixSocket.trySocket domain (kind ||| extra) protocol system with
-            | Ok (Ok created) -> Some created
+            match UnixSocket.trySocket (Callers.leader system) domain (kind ||| extra) protocol system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"socket with 0x%x{extra}: %A{other}"
 
         let socket domain kind =
-            Some (NewSocket.create domain kind SocketProtocol.Default system)
+            (NewSocket.create domain kind SocketProtocol.Default system)
 
         match kind with
-        | "file-rdonly" -> Some (openWith (opening FileAccessMode.ReadOnly) "f" system)
-        | "file-wronly" -> Some (openWith (opening FileAccessMode.WriteOnly) "f" system)
-        | "file-rdwr" -> Some (openWith (opening FileAccessMode.ReadWrite) "f" system)
+        | "file-rdonly" -> (openWith (opening FileAccessMode.ReadOnly) "f" system)
+        | "file-wronly" -> (openWith (opening FileAccessMode.WriteOnly) "f" system)
+        | "file-rdwr" -> (openWith (opening FileAccessMode.ReadWrite) "f" system)
         | "file-rdonly-cloexec" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadOnly with
-                        CloseOnExec = true
-                    }
-                    "f"
-                    system
-            )
+            (openWith
+                { opening FileAccessMode.ReadOnly with
+                    CloseOnExec = true
+                }
+                "f"
+                system)
         | "file-rdwr-cloexec" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadWrite with
-                        CloseOnExec = true
-                    }
-                    "f"
-                    system
-            )
+            (openWith
+                { opening FileAccessMode.ReadWrite with
+                    CloseOnExec = true
+                }
+                "f"
+                system)
         | "file-rdwr-sync" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadWrite with
-                        Synchronous = true
-                        DataSynchronous = linux
-                    }
-                    "f"
-                    system
-            )
-        | "dir" -> Some (openWith (opening FileAccessMode.ReadOnly) "d" system)
+            (openWith
+                { opening FileAccessMode.ReadWrite with
+                    Synchronous = true
+                    DataSynchronous = linux
+                }
+                "f"
+                system)
+        | "dir" -> (openWith (opening FileAccessMode.ReadOnly) "d" system)
         | "dir-o_directory" ->
-            Some (
-                openWith
-                    { opening FileAccessMode.ReadOnly with
-                        Directory = true
-                    }
-                    "d"
-                    system
-            )
-        | "foreign-rdonly" -> Some (openWith (opening FileAccessMode.ReadOnly) "foreign" system)
-        | "pipe-r" -> pipe 0 system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe-w" -> pipe 0 system |> fun ((_, w), system) -> Some (w, system)
-        | "pipe2-nonblock-r" -> pipe (nonBlock platform) system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe2-nonblock-w" -> pipe (nonBlock platform) system |> fun ((_, w), system) -> Some (w, system)
-        | "pipe2-cloexec-r" -> pipe (closeOnExec platform) system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe2-cloexec-w" -> pipe (closeOnExec platform) system |> fun ((_, w), system) -> Some (w, system)
+            (openWith
+                { opening FileAccessMode.ReadOnly with
+                    Directory = true
+                }
+                "d"
+                system)
+        | "foreign-rdonly" -> (openWith (opening FileAccessMode.ReadOnly) "foreign" system)
+        | "pipe-r" -> pipe 0 system |> fun ((r, _), system) -> (r, system)
+        | "pipe-w" -> pipe 0 system |> fun ((_, w), system) -> (w, system)
+        | "pipe2-nonblock-r" ->
+            pipe (OpenFlagWords.nonBlock platform) system
+            |> fun ((r, _), system) -> (r, system)
+        | "pipe2-nonblock-w" ->
+            pipe (OpenFlagWords.nonBlock platform) system
+            |> fun ((_, w), system) -> (w, system)
+        | "pipe2-cloexec-r" ->
+            pipe (OpenFlagWords.closeOnExec platform) system
+            |> fun ((r, _), system) -> (r, system)
+        | "pipe2-cloexec-w" ->
+            pipe (OpenFlagWords.closeOnExec platform) system
+            |> fun ((_, w), system) -> (w, system)
         | "pipe2-clofork-r" when not linux ->
-            pipe OpenFlagNumbering.DarwinCloseOnFork system
-            |> fun ((r, _), system) -> Some (r, system)
+            pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
+            |> fun ((r, _), system) -> (r, system)
         | "pipe2-clofork-w" when not linux ->
-            pipe OpenFlagNumbering.DarwinCloseOnFork system
-            |> fun ((_, w), system) -> Some (w, system)
+            pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
+            |> fun ((_, w), system) -> (w, system)
         | "inet-stream" -> socket SocketDomain.Inet SocketKind.Stream
         | "inet-dgram" -> socket SocketDomain.Inet SocketKind.Datagram
         | "inet6-stream" -> socket SocketDomain.Inet6 SocketKind.Stream
         | "unix-stream" -> socket SocketDomain.Unix SocketKind.Stream
         | "unix-dgram" -> socket SocketDomain.Unix SocketKind.Datagram
-        | "inet-stream-sock_nonblock" when linux -> socketWith OpenFlagNumbering.LinuxNonBlock
-        | "inet-stream-sock_cloexec" when linux -> socketWith OpenFlagNumbering.LinuxCloseOnExec
-        | "accepted" -> Some (accepted 5000us false system)
-        | "accepted-from-nonblocking" -> Some (accepted 5000us true system)
+        | "inet-stream-sock_nonblock" when linux -> socketWith LinuxSocketNonBlock
+        | "inet-stream-sock_cloexec" when linux -> socketWith LinuxSocketCloseOnExec
+        | "accepted" -> (accepted 5000us false 0 system)
+        | "accepted-from-nonblocking" -> (accepted 5000us true 0 system)
+        | "accept4-sock_nonblock" when linux -> (accepted 5000us false LinuxSocketNonBlock system)
+        | "accept4-sock_cloexec" when linux -> (accepted 5000us false LinuxSocketCloseOnExec system)
         | "port" when linux ->
-            match UnixPoll.tryEpollCreate1 0 system with
-            | Ok (Ok created) -> Some created
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1(0): %A{other}"
         | "port-cloexec" when linux ->
-            match UnixPoll.tryEpollCreate1 EpollCreateFlags.CloseOnExec system with
-            | Ok (Ok created) -> Some created
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) LinuxEpollCloseOnExec system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"epoll_create1(EPOLL_CLOEXEC): %A{other}"
         | "port" ->
-            match UnixKqueue.tryKqueue system with
-            | Ok created -> Some created
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
+            | Ok (DescriptorAnswer.Failed error, _) -> failwith $"kqueue: %O{error}"
             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
-        | "null-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)
-        | "null-wronly" when linux -> Some (openWith (opening FileAccessMode.WriteOnly) "/dev/null" system)
-        | "null-rdwr" when linux -> Some (openWith (opening FileAccessMode.ReadWrite) "/dev/null" system)
-        | "urandom-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/urandom" system)
-        | "urandom-rdwr" when linux -> Some (openWith (opening FileAccessMode.ReadWrite) "/dev/urandom" system)
-        // Linux's accept4, which this kernel does not model.
-        | "accept4-sock_nonblock"
-        | "accept4-sock_cloexec" -> None
+        | "null-rdonly" when linux -> (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)
+        | "null-wronly" when linux -> (openWith (opening FileAccessMode.WriteOnly) "/dev/null" system)
+        | "null-rdwr" when linux -> (openWith (opening FileAccessMode.ReadWrite) "/dev/null" system)
+        | "urandom-rdonly" when linux -> (openWith (opening FileAccessMode.ReadOnly) "/dev/urandom" system)
+        | "urandom-rdwr" when linux -> (openWith (opening FileAccessMode.ReadWrite) "/dev/urandom" system)
         | other -> failwith $"the probe made a %s{other} on %O{platform}, which FcntlWorld does not make"

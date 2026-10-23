@@ -17,6 +17,10 @@ open NUnit.Framework
 /// `POSIXKERNEL_SOCKET_FUZZ=1`; the corpus test replays previously-measured real
 /// transcripts and runs everywhere.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestSocketFuzz =
 
     let private corpusPrefix = "WoofWare.PosixKernel.Test.socketFuzzCorpus."

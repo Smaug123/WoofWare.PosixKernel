@@ -128,7 +128,7 @@ module TestPathArgument =
         // caller would get a confident ENAMETOOLONG for every path a process
         // ever names.
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 parse Unchecked.defaultof<PathLimits> (bytesOf "/etc") |> ignore<PathArgument>
             )
 
@@ -141,7 +141,7 @@ module TestPathArgument =
         // also not the same as an empty path, which the row below shows is a
         // legitimate argument.
         let exn =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 PathArgument.copyIn linux (PathArgumentBytes.Bytes Unchecked.defaultof<UnixByteString>)
                 |> ignore<PathArgument>
             )

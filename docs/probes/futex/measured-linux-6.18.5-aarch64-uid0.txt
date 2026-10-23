@@ -1,0 +1,178 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, container --cap-add ALL
+# Linux 6.18.5 aarch64, uid 0, 5 CPUs
+wait-screen addr=match timeout=10ms ret=-1 errno=ETIMEDOUT took=10
+wait-screen addr=match timeout=zero ret=-1 errno=ETIMEDOUT took=0
+wait-screen addr=match timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=match timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=match timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=match timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=mismatch timeout=null ret=-1 errno=EAGAIN took=0
+wait-screen addr=mismatch timeout=10ms ret=-1 errno=EAGAIN took=0
+wait-screen addr=mismatch timeout=zero ret=-1 errno=EAGAIN took=0
+wait-screen addr=mismatch timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=mismatch timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=mismatch timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=mismatch timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=misaligned timeout=null ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=10ms ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=zero ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=misaligned-mismatch timeout=null ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=10ms ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=zero ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=misaligned-mismatch timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=unmapped timeout=null ret=-1 errno=EFAULT took=0
+wait-screen addr=unmapped timeout=10ms ret=-1 errno=EFAULT took=0
+wait-screen addr=unmapped timeout=zero ret=-1 errno=EFAULT took=0
+wait-screen addr=unmapped timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=unmapped-misaligned timeout=null ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=10ms ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=zero ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=unmapped-misaligned timeout=unmapped ret=-1 errno=EFAULT took=0
+wait-screen addr=null timeout=null ret=-1 errno=EFAULT took=0
+wait-screen addr=null timeout=10ms ret=-1 errno=EFAULT took=0
+wait-screen addr=null timeout=zero ret=-1 errno=EFAULT took=0
+wait-screen addr=null timeout=nsec=1e9 ret=-1 errno=EINVAL took=0
+wait-screen addr=null timeout=nsec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=null timeout=sec=-1 ret=-1 errno=EINVAL took=0
+wait-screen addr=null timeout=unmapped ret=-1 errno=EFAULT took=0
+wake-screen addr=aligned-no-waiters n=1 ret=0 errno=0
+wake-screen addr=misaligned n=1 ret=-1 errno=EINVAL
+wake-screen addr=unmapped n=1 ret=0 errno=0
+wake-screen addr=unmapped-misaligned n=1 ret=-1 errno=EINVAL
+wake-screen addr=null n=1 ret=0 errno=0
+range wait addr=0x0000fffffffffff8 ret=-1 errno=EFAULT
+range wake addr=0x0000fffffffffff8 ret=0 errno=0
+range wait addr=0x0000fffffffffffc ret=-1 errno=EFAULT
+range wake addr=0x0000fffffffffffc ret=0 errno=0
+range wait addr=0x0001000000000000 ret=-1 errno=EFAULT
+range wake addr=0x0001000000000000 ret=-1 errno=EFAULT
+range wait addr=0x0001000000000004 ret=-1 errno=EFAULT
+range wake addr=0x0001000000000004 ret=-1 errno=EFAULT
+range wait addr=0x8000000000000000 ret=-1 errno=EFAULT
+range wake addr=0x8000000000000000 ret=-1 errno=EFAULT
+range wait addr=0xfffffffffffffffc ret=-1 errno=EFAULT
+range wake addr=0xfffffffffffffffc ret=-1 errno=EFAULT
+range wake addr=0x0001000000000002 ret=-1 errno=EINVAL
+range wait addr=0x0001000000000002 ret=-1 errno=EINVAL
+range wait addr=0x0001000000000000 timeout=nsec=1e9 ret=-1 errno=EINVAL
+compare word=0xFFFFFFFF val=-1 ret=-1 errno=ETIMEDOUT | word=0x80000000 val=INT_MIN ret=-1 errno=ETIMEDOUT
+switches zero-timeout x1000 switches=1000 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=84315
+switches 1ns-timeout x1000 switches=999 ETIMEDOUT=1000 EAGAIN=0 ok=0 other=0 took-us=84477
+switches mismatch zero-timeout x1000 switches=0 ETIMEDOUT=0 EAGAIN=1000 ok=0 other=0 took-us=187
+huge tv_sec=9223372035 asleep=1 woke=1 W:ret=0 errno=0 at=108
+huge tv_sec=9223372036 asleep=1 woke=1 W:ret=0 errno=0 at=105
+huge tv_sec=9223372036854775807 asleep=1 woke=1 W:ret=0 errno=0 at=106
+count waiters=0 n=1 ret=0 errno=0 returned=0
+count waiters=0 n=0 ret=0 errno=0 returned=0
+count waiters=0 n=-1 ret=0 errno=0 returned=0
+count waiters=1 n=0 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=1
+count waiters=1 n=1 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=1
+count waiters=1 n=-1 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=1
+count waiters=1 n=INT_MIN ret=1 errno=0 returned=1 A:ret=0 errno=0 at=1
+count waiters=3 n=0 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=4 B=asleep C=asleep
+count waiters=3 n=1 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=4 B=asleep C=asleep
+count waiters=3 n=2 ret=2 errno=0 returned=2 A:ret=0 errno=0 at=4 B:ret=0 errno=0 at=4 C=asleep
+count waiters=3 n=INT_MAX ret=3 errno=0 returned=3 A:ret=0 errno=0 at=4 B:ret=0 errno=0 at=4 C:ret=0 errno=0 at=4
+count waiters=3 n=-1 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=4 B=asleep C=asleep
+count waiters=3 n=-2 ret=1 errno=0 returned=1 A:ret=0 errno=0 at=5 B=asleep C=asleep
+count waiters=3 n=INT_MIN ret=1 errno=0 returned=1 A:ret=0 errno=0 at=5 B=asleep C=asleep
+order fifo trial=0 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=1 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=2 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=3 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=4 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=5 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=6 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=7 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=8 wchan=__futex_wait woke=1:A,1:B,1:C
+order fifo trial=9 wchan=__futex_wait woke=1:A,1:B,1:C
+order rewait trial=0 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=1 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=2 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=3 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=4 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=5 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=6 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=7 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=8 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order rewait trial=9 wchan=__futex_wait woke=1:A,1:B,1:C,1:A,1:B,1:C
+order n=2 trial=0 wchan=__futex_wait woke=2:AB,1:C
+order n=2 trial=1 wchan=__futex_wait woke=2:AB,1:C
+order n=2 trial=2 wchan=__futex_wait woke=2:AB,1:C
+order n=2 trial=3 wchan=__futex_wait woke=2:AB,1:C
+order n=2 trial=4 wchan=__futex_wait woke=2:AB,1:C
+signal handler flags=0 untimed handled=109 woke=0 W:ret=-1 errno=EINTR at=109
+signal handler flags=SA_RESTART untimed handled=108 woke=1 W:ret=0 errno=0 at=305
+signal handler flags=0 timed=2s handled=106 woke=0 W:ret=-1 errno=EINTR at=106
+signal handler flags=SA_RESTART timed=2s handled=105 woke=0 W:ret=-1 errno=EINTR at=105
+signal handler-stores-1 flags=0 untimed handled=102 woke=0 W:ret=-1 errno=EINTR at=102
+signal handler-stores-1 flags=SA_RESTART untimed handled=100 woke=0 W:ret=-1 errno=EAGAIN at=100
+signal handler-stores-1 flags=SA_RESTART timed=2s handled=110 woke=0 W:ret=-1 errno=EINTR at=110
+signal SIG_IGN untimed handled=- woke=1 W:ret=0 errno=0 at=306
+signal URG-default untimed handled=- woke=1 W:ret=0 errno=0 at=302
+signal blocked-by-waiter handler untimed handled=- woke=1 W:ret=0 errno=0 at=305
+stop untimed no-store ready-at=1 stop-at=106 stopped=1 woke=1 W:ret=0 errno=0 at=603
+stop untimed store-1 ready-at=1 stop-at=108 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=205
+stop timed=300ms no-store ready-at=1 stop-at=104 stopped=1 woke=0 W:ret=-1 errno=ETIMEDOUT at=300
+stop timed=2s store-1 ready-at=1 stop-at=100 stopped=1 woke=0 W:ret=-1 errno=EAGAIN at=202
+race signal-then-wake flags=0 untimed trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 untimed trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 untimed trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 untimed trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 untimed trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=SA_RESTART untimed trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=SA_RESTART untimed trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=SA_RESTART untimed trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=SA_RESTART untimed trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=SA_RESTART untimed trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 timed=2s trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 timed=2s trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 timed=2s trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 timed=2s trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race signal-then-wake flags=0 timed=2s trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=1
+race timeout-then-wake timed=10ms spin=50ms trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race timeout-then-wake timed=10ms spin=50ms trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race timeout-then-wake timed=10ms spin=50ms trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race timeout-then-wake timed=10ms spin=50ms trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race timeout-then-wake timed=10ms spin=50ms trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=51
+race timeout-then-signal timed=10ms spin=50ms flags=0 trial=0 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=0 trial=1 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=0 trial=2 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=0 trial=3 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=0 trial=4 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=SA_RESTART trial=0 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=SA_RESTART trial=1 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=SA_RESTART trial=2 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=SA_RESTART trial=3 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race timeout-then-signal timed=10ms spin=50ms flags=SA_RESTART trial=4 waiter-policy=FIFO/10 ran-early=0 woke=-1 handled=yes A:ret=-1 errno=ETIMEDOUT at=51
+race signalled-A-keeps-slot (A then B parked; signal A; wake 1) trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=2 B=asleep
+race signalled-A-keeps-slot (A then B parked; signal A; wake 1) trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=3 B=asleep
+race signalled-A-keeps-slot (A then B parked; signal A; wake 1) trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=3 B=asleep
+race signalled-A-keeps-slot (A then B parked; signal A; wake 1) trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=2 B=asleep
+race signalled-A-keeps-slot (A then B parked; signal A; wake 1) trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=yes A:ret=0 errno=0 at=2 B=asleep
+race timed-out-A-keeps-slot (A 10ms then B parked; spin 50ms; wake 1) trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=53 B=asleep
+race timed-out-A-keeps-slot (A 10ms then B parked; spin 50ms; wake 1) trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=52 B=asleep
+race timed-out-A-keeps-slot (A 10ms then B parked; spin 50ms; wake 1) trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=53 B=asleep
+race timed-out-A-keeps-slot (A 10ms then B parked; spin 50ms; wake 1) trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=53 B=asleep
+race timed-out-A-keeps-slot (A 10ms then B parked; spin 50ms; wake 1) trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1 handled=- A:ret=0 errno=0 at=53 B=asleep
+race taken-A-is-skipped (A then B parked; wake 1; wake 1) trial=0 waiter-policy=FIFO/10 ran-early=0 woke=1,1 handled=- A:ret=0 errno=0 at=3 B:ret=0 errno=0 at=3 first-to-return=A
+race taken-A-is-skipped (A then B parked; wake 1; wake 1) trial=1 waiter-policy=FIFO/10 ran-early=0 woke=1,1 handled=- A:ret=0 errno=0 at=2 B:ret=0 errno=0 at=2 first-to-return=A
+race taken-A-is-skipped (A then B parked; wake 1; wake 1) trial=2 waiter-policy=FIFO/10 ran-early=0 woke=1,1 handled=- A:ret=0 errno=0 at=3 B:ret=0 errno=0 at=3 first-to-return=A
+race taken-A-is-skipped (A then B parked; wake 1; wake 1) trial=3 waiter-policy=FIFO/10 ran-early=0 woke=1,1 handled=- A:ret=0 errno=0 at=2 B:ret=0 errno=0 at=2 first-to-return=A
+race taken-A-is-skipped (A then B parked; wake 1; wake 1) trial=4 waiter-policy=FIFO/10 ran-early=0 woke=1,1 handled=- A:ret=0 errno=0 at=2 B:ret=0 errno=0 at=2 first-to-return=A
+xproc wait=PRIVATE wake=PRIVATE child-asleep=1 asleep-by=1 woke=0 child:ret=-1 errno=ETIMEDOUT at=303
+xproc wait=PRIVATE wake=shared child-asleep=1 asleep-by=1 woke=0 child:ret=-1 errno=ETIMEDOUT at=301
+xproc wait=shared wake=shared (control) child-asleep=1 asleep-by=1 woke=1 child:ret=0 errno=0 at=107

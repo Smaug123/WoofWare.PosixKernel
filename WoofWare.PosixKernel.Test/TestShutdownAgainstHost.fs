@@ -42,79 +42,17 @@ module TestShutdownAgainstHost =
     // The host
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
     [<DllImport("libc", EntryPoint = "getpeername", SetLastError = true)>]
     extern int private hostGetPeerName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
 
     [<DllImport("libc", EntryPoint = "shutdown", SetLastError = true)>]
     extern int private hostShutdown(int fd, int how)
 
-    [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
-    extern int private hostSetSockOpt(int fd, int level, int optionName, byte[] value, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOptBytes(int fd, int level, int optionName, byte[] value, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
-    [<DllImport("libc", EntryPoint = "epoll_ctl", SetLastError = true)>]
-    extern int private hostEpollCtl(int epfd, int op, int fd, byte[] event)
-
     [<DllImport("libc", EntryPoint = "epoll_wait", SetLastError = true)>]
     extern int private hostEpollWait(int epfd, byte[] events, int maxEvents, int timeoutMs)
 
-    [<DllImport("libc", EntryPoint = "kqueue", SetLastError = true)>]
-    extern int private hostKqueue()
-
     [<DllImport("libc", EntryPoint = "kevent", SetLastError = true)>]
     extern int private hostKevent(int kq, byte[] changes, int nchanges, byte[] events, int nevents, int64[] timeout)
-
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably, so these go through .NET's own fixed-arity wrappers.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<Literal>]
     let private AF_INET = 2
@@ -170,7 +108,7 @@ module TestShutdownAgainstHost =
         let mutable length = uint32 info.Length
 
         // IPPROTO_TCP, TCP_CONNECTION_INFO
-        if hostGetSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
+        if HostCalls.getSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
             failwith $"getsockopt(TCP_CONNECTION_INFO) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         if length <> uint32 info.Length then
@@ -299,6 +237,66 @@ module TestShutdownAgainstHost =
                 && overlapsIpv4 (localAddress.Substring mapped.Length))
         | _ -> failwith $"a /proc/net/tcp local address of unexpected length: %s{localAddress}"
 
+    /// The host's IPv4 addresses outside 127.0.0.0/8, as its interfaces list
+    /// them now: they come and go, as a virtual machine's bridge does.
+    let private nonLoopbackIpv4Addresses () : Ipv4Address list =
+        Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetUnicastAddresses ()
+        |> Seq.map (fun unicast -> unicast.Address)
+        |> Seq.filter (fun address -> address.AddressFamily = Net.Sockets.AddressFamily.InterNetwork)
+        |> Seq.map (fun address ->
+            Ipv4Address (
+                Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian (ReadOnlySpan (address.GetAddressBytes ()))
+            )
+        )
+        |> Seq.filter (fun address -> not (Ipv4Prefix.contains address Ipv4Prefix.loopbackNetwork))
+        |> Seq.distinct
+        |> Seq.toList
+
+    /// Each of the host's IPv4 addresses outside 127.0.0.0/8 at which a bind
+    /// of `port` without `SO_REUSEADDR` was refused with `EADDRINUSE`, so
+    /// that some socket holds the port there or at the wildcard. On both
+    /// flavours, a pair's own sockets, all at 127.0.0.1, never refuse such a
+    /// bind, in any state `bind-held-endpoint.c` brings an end to; a socket
+    /// there refuses it whether bound, listening, connected or in TIME_WAIT
+    /// with no descriptor, and so does one bound or listening at the wildcard
+    /// (`port-held-elsewhere.c`, C).
+    let private heldElsewhere (flavour : SimulatedUnixFlavour) (port : int) : Ipv4Address list =
+        let platform = HostPlatform.platformOf flavour
+
+        let errno =
+            UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform)
+
+        nonLoopbackIpv4Addresses ()
+        |> List.filter (fun address ->
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
+
+            if fd < 0 then
+                failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+            let sockaddr =
+                SimulatedUnixPlatform.encodeInternetSockaddr platform (Ipv4Endpoint.ofParts address (uint16 port))
+
+            Marshal.SetLastPInvokeError 0
+            let bound = HostCalls.bind (fd, sockaddr, uint32 sockaddr.Length)
+            let bindErrno = Marshal.GetLastPInvokeError ()
+            HostCalls.close fd |> ignore<int>
+
+            if bound = 0 then
+                false
+            elif bindErrno = errno UnixError.EADDRINUSE then
+                true
+            // The address has left its interface since it was listed.
+            elif bindErrno = errno UnixError.EADDRNOTAVAIL then
+                false
+            else
+                failwith
+                    $"a bind of %s{Ipv4Address.toString address}:%d{port}, to look for a socket holding the port there, failed with errno %d{bindErrno}"
+        )
+
+    /// How many fresh ports `HostPair` tries for an explicit bind before it
+    /// fails, each found free a moment before.
+    let private explicitPortAttempts : int = 5
+
     /// A pair on the host, as the probe's `pair_locked` makes one.
     type private HostPair (flavour : SimulatedUnixFlavour, shape : ShutdownPairShape) =
         let platform = HostPlatform.platformOf flavour
@@ -315,17 +313,42 @@ module TestShutdownAgainstHost =
         let portOf (fd : int) : int =
             let name = Array.zeroCreate<byte> 16
             let mutable length = 16u
-            check "getsockname" (hostGetSockName (fd, name, &length))
+            check "getsockname" (HostCalls.getSockName (fd, name, &length))
             (int name.[2] <<< 8) ||| int name.[3]
 
         let freePort () : int =
-            let t = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let t = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" t
             let address = loopbackAt 0
-            check "bind" (hostBind (t, address, uint32 address.Length))
+            check "bind" (HostCalls.bind (t, address, uint32 address.Length))
             let port = portOf t
-            hostClose t |> ignore<int>
+            HostCalls.close t |> ignore<int>
             port
+
+        // Binds `fd` to 127.0.0.1 at an explicit port, as the probe's
+        // `pair_locked` does, choosing one that `freePort` found free. Any
+        // socket on the host, such as a concurrent test's bind of port 0 or
+        // its `connect`, can take that port between `freePort` releasing it
+        // and this bind, so a refusal with `EADDRINUSE` tries a fresh port,
+        // up to `explicitPortAttempts` times in all.
+        let bindExplicitPort (fd : int) : unit =
+            let addressInUse =
+                UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) UnixError.EADDRINUSE
+
+            let rec go (attempt : int) : unit =
+                let port = freePort ()
+                let address = loopbackAt port
+
+                if HostCalls.bind (fd, address, uint32 address.Length) < 0 then
+                    let errno = Marshal.GetLastPInvokeError ()
+
+                    if errno = addressInUse && attempt < explicitPortAttempts then
+                        go (attempt + 1)
+                    else
+                        failwith
+                            $"bind of 127.0.0.1:%d{port} failed with errno %d{errno}, on attempt %d{attempt} of %d{explicitPortAttempts}"
+
+            go 1
 
         let errorName (errno : int) : string =
             match UnixError.ofRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno with
@@ -352,7 +375,7 @@ module TestShutdownAgainstHost =
                 let entry = [| int64 (uint32 fd) ||| (int64 pollIn <<< 32) |]
                 let remaining = max 0L (deadline - Environment.TickCount64)
                 Marshal.SetLastPInvokeError 0
-                let ready = hostPoll (entry, 1un, int remaining)
+                let ready = HostCalls.pollPacked (entry, 1un, int remaining)
 
                 if ready > 0 then
                     true
@@ -373,7 +396,7 @@ module TestShutdownAgainstHost =
         let setReuseAddress (fd : int) : unit =
             check
                 "setsockopt(SO_REUSEADDR)"
-                (hostSetSockOpt (
+                (HostCalls.setSockOpt (
                     fd,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     SimulatedUnixPlatform.reuseAddressOption platform,
@@ -402,7 +425,7 @@ module TestShutdownAgainstHost =
 
             check
                 "getsockopt(SO_RCVBUF)"
-                (hostGetSockOpt (
+                (HostCalls.getSockOptInt (
                     fd,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     darwinReceiveBufferOption,
@@ -475,14 +498,29 @@ module TestShutdownAgainstHost =
 
                 go ()
 
-        // Linux's `connect` chooses a local port that a socket outside the
-        // pair already holds, provided their remote endpoints differ, and such
-        // a socket refuses a bind of that port whatever the pair's own sockets
-        // do. Darwin's chooses only a free port. Read while the refused
+        // A socket outside the pair can hold the pair's port, and then refuses
+        // a bind of it whatever the pair's own sockets do: Linux's `connect`
+        // chooses a local port that such a socket holds, provided their
+        // remote endpoints differ, and on both flavours a bind of
+        // 127.0.0.1:0, as the listener's and `freePort`'s are, can be given a
+        // port that a socket at another of the host's addresses holds
+        // (`port-held-elsewhere.c`, A). Looked for while the refused
         // candidate is still open, so that the holder cannot yet have gone.
+        // Darwin lists only the caller's own sockets
+        // (`port-held-elsewhere.c`, D), so there the holder is looked for by
+        // binding the port at each of the host's other addresses
+        // (`heldElsewhere`), which finds one there or at the wildcard and
+        // cannot tell one at 127.0.0.1 from the pair's own sockets.
         let noteRefusal (wildcard : bool) (port : int) : unit =
             match flavour with
-            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Darwin ->
+                let found =
+                    heldElsewhere flavour port
+                    |> List.map (fun address ->
+                        $"a bind of %s{Ipv4Address.toString address}:%d{port} was refused, so a socket outside the pair holds that port there or at the wildcard"
+                    )
+
+                foreignHolders <- foreignHolders @ found
             | SimulatedUnixFlavour.Linux ->
                 let cPort, pPort = connection
 
@@ -502,18 +540,8 @@ module TestShutdownAgainstHost =
                 foreignHolders <- foreignHolders @ foreign
 
         do
-            let listener = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let listener = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" listener
-
-            let address =
-                loopbackAt (
-                    match shape with
-                    | ShutdownPairShape.ListenerLocked -> freePort ()
-                    | ShutdownPairShape.Plain
-                    | ShutdownPairShape.ClientLocked
-                    | ShutdownPairShape.ClientReuseAddress
-                    | ShutdownPairShape.ListenerReuseAddress -> 0
-                )
 
             match shape with
             | ShutdownPairShape.ListenerReuseAddress -> setReuseAddress listener
@@ -522,37 +550,46 @@ module TestShutdownAgainstHost =
             | ShutdownPairShape.ListenerLocked
             | ShutdownPairShape.ClientReuseAddress -> ()
 
-            check "bind" (hostBind (listener, address, uint32 address.Length))
-            check "listen" (hostListen (listener, 4))
+            match shape with
+            | ShutdownPairShape.ListenerLocked -> bindExplicitPort listener
+            | ShutdownPairShape.Plain
+            | ShutdownPairShape.ClientLocked
+            | ShutdownPairShape.ClientReuseAddress
+            | ShutdownPairShape.ListenerReuseAddress ->
+                let address = loopbackAt 0
+                check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+
+            check "listen" (HostCalls.listen (listener, 4))
             let destination = loopbackAt (portOf listener)
-            let client = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" client
 
             match shape with
-            | ShutdownPairShape.ClientLocked ->
-                let own = loopbackAt (freePort ())
-                check "bind" (hostBind (client, own, uint32 own.Length))
+            | ShutdownPairShape.ClientLocked -> bindExplicitPort client
             | ShutdownPairShape.ClientReuseAddress -> setReuseAddress client
             | ShutdownPairShape.Plain
             | ShutdownPairShape.ListenerLocked
             | ShutdownPairShape.ListenerReuseAddress -> ()
 
-            check "connect" (hostConnect (client, destination, uint32 destination.Length))
+            check "connect" (HostCalls.connect (client, destination, uint32 destination.Length))
             settle ()
-            let server = hostAccept (listener, 0n, 0n)
+            let server = HostCalls.accept (listener, 0n, 0n)
             check "accept" server
-            hostClose listener |> ignore<int>
+            HostCalls.close listener |> ignore<int>
 
             for fd in [ client ; server ] do
-                if hostSetNonBlocking (nativeint fd, 1) <> 0 then
+                if HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                     failwith $"could not make fd %d{fd} non-blocking"
 
             fds <- Map.ofList [ c, client ; p, server ]
             connection <- portOf client, portOf server
 
         /// Each socket outside this pair that was found holding a port whose
-        /// bind was refused with `EADDRINUSE`, as `/proc/net/tcp` listed it;
-        /// empty on Darwin, whose `connect` never shares a port.
+        /// bind was refused with `EADDRINUSE`: on Linux, as `/proc/net/tcp`
+        /// listed it, where its address overlaps the refused bind's; on
+        /// Darwin, as `heldElsewhere` found it, at another of the host's
+        /// addresses or the wildcard, which overlaps a refused wildcard bind
+        /// and, from the wildcard only, a refused bind at 127.0.0.1.
         member _.ForeignHolders : string list = foreignHolders
 
         /// Each way this pair was found to have moved on from the state the
@@ -569,14 +606,14 @@ module TestShutdownAgainstHost =
 
         member this.Read (e : ConnectionEnd) (count : int) : string =
             let result, errno =
-                call (fun () -> int64 (hostRead (this.Fd e, hostBuffer, unativeint count)))
+                call (fun () -> int64 (HostCalls.read (this.Fd e, hostBuffer, unativeint count)))
 
             settle ()
             ans result errno
 
         member this.WriteAnswer (e : ConnectionEnd) (count : int) : Result<int, string> =
             let result, errno =
-                call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, unativeint count)))
+                call (fun () -> int64 (HostCalls.write (this.Fd e, hostBuffer, unativeint count)))
 
             if result > 0L then
                 noteWritten e result
@@ -595,13 +632,19 @@ module TestShutdownAgainstHost =
             let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
             for fd in Map.values fds do
-                hostSetSockOpt (fd, SimulatedUnixPlatform.socketOptionLevel platform, lingerOption flavour, linger, 8u)
+                HostCalls.setSockOpt (
+                    fd,
+                    SimulatedUnixPlatform.socketOptionLevel platform,
+                    lingerOption flavour,
+                    linger,
+                    8u
+                )
                 |> ignore<int>
 
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
             fds <- Map.empty
-            edgePort |> Option.iter (hostClose >> ignore<int>)
+            edgePort |> Option.iter (HostCalls.close >> ignore<int>)
             edgePort <- None
 
         interface IShutdownPair with
@@ -615,7 +658,7 @@ module TestShutdownAgainstHost =
 
                 check
                     "getsockopt(SO_ERROR)"
-                    (hostGetSockOpt (
+                    (HostCalls.getSockOptInt (
                         this.Fd e,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         SimulatedUnixPlatform.socketErrorOption platform,
@@ -644,7 +687,7 @@ module TestShutdownAgainstHost =
                     checkFilled ()
 
                 awaitAcknowledged ()
-                let result, errno = call (fun () -> int64 (hostClose (this.Fd e)))
+                let result, errno = call (fun () -> int64 (HostCalls.close (this.Fd e)))
                 fds <- Map.remove e fds
                 settle ()
                 ans result errno
@@ -655,7 +698,7 @@ module TestShutdownAgainstHost =
                 let result, errno =
                     call (fun () ->
                         int64 (
-                            hostSetSockOpt (
+                            HostCalls.setSockOpt (
                                 this.Fd e,
                                 SimulatedUnixPlatform.socketOptionLevel platform,
                                 lingerOption flavour,
@@ -674,7 +717,7 @@ module TestShutdownAgainstHost =
             member this.Fionread e =
                 let mutable available = 0
 
-                if hostBytesAvailable (nativeint (this.Fd e), &available) <> 0 then
+                if HostCalls.bytesAvailable (nativeint (this.Fd e), &available) <> 0 then
                     -1
                 else
                     available
@@ -682,26 +725,26 @@ module TestShutdownAgainstHost =
             member this.Rdy e =
                 let fd = this.Fd e
                 let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (rdyEvents flavour)) <<< 32) |]
-                check "poll" (hostPoll (entry, 1un, 0))
+                check "poll" (HostCalls.pollPacked (entry, 1un, 0))
                 let revents = int (uint16 (entry.[0] >>> 48))
 
                 let waiters =
                     match flavour with
                     | SimulatedUnixFlavour.Linux ->
-                        let ep = hostEpollCreate1 0
+                        let ep = HostCalls.epollCreate1 0
                         check "epoll_create1" ep
 
                         check
                             "epoll_ctl"
-                            (hostEpollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+                            (HostCalls.epollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
 
                         let out = Array.zeroCreate<byte> epollEventSize
                         let n = hostEpollWait (ep, out, 1, 0)
-                        hostClose ep |> ignore<int>
+                        HostCalls.close ep |> ignore<int>
                         let events = if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u
                         $"epoll=0x%x{events}"
                     | SimulatedUnixFlavour.Darwin ->
-                        let kq = hostKqueue ()
+                        let kq = HostCalls.kqueue ()
                         check "kqueue" kq
 
                         let changes =
@@ -712,7 +755,7 @@ module TestShutdownAgainstHost =
                         check "kevent" (hostKevent (kq, changes, 2, null, 0, null))
                         let out = Array.zeroCreate<byte> 64
                         let n = hostKevent (kq, null, 0, out, 2, [| 0L ; 0L |])
-                        hostClose kq |> ignore<int>
+                        HostCalls.close kq |> ignore<int>
                         let events = keventsOf out (max n 0)
 
                         let render (filter : int16) =
@@ -733,7 +776,7 @@ module TestShutdownAgainstHost =
                         total
                     else
                         let result, errno =
-                            call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, 1048576un)))
+                            call (fun () -> int64 (HostCalls.write (this.Fd e, hostBuffer, 1048576un)))
 
                         if result > 0L then
                             go (total + result) 0
@@ -782,7 +825,7 @@ module TestShutdownAgainstHost =
                 // end polls cannot keep the drain going.
                 let rec go (total : int64) (dry : int) (patient : bool) =
                     let result, errno =
-                        call (fun () -> int64 (hostRead (this.Fd e, hostBuffer, 1048576un)))
+                        call (fun () -> int64 (HostCalls.read (this.Fd e, hostBuffer, 1048576un)))
 
                     if result > 0L then
                         go (total + result) 0 true
@@ -807,16 +850,16 @@ module TestShutdownAgainstHost =
             member this.RegisterEdges ends =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    let ep = hostEpollCreate1 0
+                    let ep = HostCalls.epollCreate1 0
                     check "epoll_create1" ep
 
                     for e in ends do
                         let fd = this.Fd e
-                        check "epoll_ctl" (hostEpollCtl (ep, 1, fd, epollEvent 0x80002005u (uint64 fd)))
+                        check "epoll_ctl" (HostCalls.epollCtl (ep, 1, fd, epollEvent 0x80002005u (uint64 fd)))
 
                     edgePort <- Some ep
                 | SimulatedUnixFlavour.Darwin ->
-                    let kq = hostKqueue ()
+                    let kq = HostCalls.kqueue ()
                     check "kqueue" kq
                     let flags = KeventFlags.Add ||| KeventFlags.Clear
 
@@ -880,24 +923,24 @@ module TestShutdownAgainstHost =
             member this.PortOf e = portOf (this.Fd e)
 
             member _.BindFree port =
-                let n = hostSocket (AF_INET, SOCK_STREAM, 0)
+                let n = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
                 check "socket" n
                 let address = loopbackAt port
 
                 let result, errno =
-                    call (fun () -> int64 (hostBind (n, address, uint32 address.Length)))
+                    call (fun () -> int64 (HostCalls.bind (n, address, uint32 address.Length)))
 
                 if result < 0L && errorName errno = "EADDRINUSE" then
                     noteRefusal false port
 
-                hostClose n |> ignore<int>
+                HostCalls.close n |> ignore<int>
 
                 if result = 0L then "bind-ok"
                 elif errorName errno = "EADDRINUSE" then "bind-EADDRINUSE"
                 else ans result errno
 
             member _.Candidate reuse wildcard port =
-                let n = hostSocket (AF_INET, SOCK_STREAM, 0)
+                let n = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
                 check "socket" n
 
                 if reuse then
@@ -909,7 +952,7 @@ module TestShutdownAgainstHost =
                         (Ipv4Endpoint.ofParts (if wildcard then Ipv4Address.any else Ipv4Address.loopback) (uint16 port))
 
                 let bound, bindErrno =
-                    call (fun () -> int64 (hostBind (n, address, uint32 address.Length)))
+                    call (fun () -> int64 (HostCalls.bind (n, address, uint32 address.Length)))
 
                 if bound < 0L && errorName bindErrno = "EADDRINUSE" then
                     noteRefusal wildcard port
@@ -918,14 +961,14 @@ module TestShutdownAgainstHost =
                     if bound < 0L then
                         $"bind-%s{errorName bindErrno}"
                     else
-                        let listened, listenErrno = call (fun () -> int64 (hostListen (n, 4)))
+                        let listened, listenErrno = call (fun () -> int64 (HostCalls.listen (n, 4)))
 
                         if listened < 0L then
                             $"bind-ok listen-%s{errorName listenErrno}"
                         else
                             "bind-ok listen-ok"
 
-                hostClose n |> ignore<int>
+                HostCalls.close n |> ignore<int>
                 answer
 
             member this.ReuseAddress e =
@@ -934,7 +977,7 @@ module TestShutdownAgainstHost =
 
                 check
                     "getsockopt(SO_REUSEADDR)"
-                    (hostGetSockOpt (
+                    (HostCalls.getSockOptInt (
                         this.Fd e,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         SimulatedUnixPlatform.reuseAddressOption platform,
@@ -971,7 +1014,10 @@ module TestShutdownAgainstHost =
     /// have each been spoilt so. A foreign socket can only refuse a bind
     /// that would otherwise have succeeded, so a line that survives is the
     /// pairs' own answer, except where a foreign holder came and went in the
-    /// moment between the refusal and the listing of sockets, which leaves
+    /// moment between the refusal and the look for it, or, on Darwin, held
+    /// the port at 127.0.0.1, which it can have taken only once the pair had
+    /// released it, since neither a bind of 127.0.0.1:0 nor `connect` is
+    /// given a port held there (`port-held-elsewhere.c`, A). Either leaves
     /// the refusal in place.
     let private hostReplay
         (flavour : SimulatedUnixFlavour)
@@ -1175,22 +1221,28 @@ module TestShutdownAgainstHost =
                 "0000000000000000FFFF00000200007F", false, true
             ]
 
-    /// `releasedThenBound`'s listener could not take the port, because
-    /// another socket took it once `c` had released it.
-    exception private ForeignListenerRefused of port : int
+    /// A socket outside a scenario's pair held a port the scenario binds
+    /// before the scenario could measure what it was written to, so its test
+    /// is run again (`whilePortAlreadyHeld`).
+    exception private PortAlreadyHeld of port : int
 
     /// Section H's `c released closed` row, reduced to one candidate: `c`
-    /// releases its endpoint, and a fresh socket binds it. On the attempts
-    /// `foreignOn` names, a listener outside the pair holds the port across
-    /// that bind, as another test's socket can; this raises
-    /// `ForeignListenerRefused` if another socket took the port first. Each
-    /// run of the scenario is counted in `attempts`.
+    /// releases its endpoint, and a fresh socket binds it, at the wildcard if
+    /// `wildcard` and at 127.0.0.1 otherwise. On the attempts `foreignOn`
+    /// names, a listener outside the pair holds the port at `foreignAt`
+    /// across that bind, as another test's or another process's socket can;
+    /// this raises `PortAlreadyHeld` if another socket held the port there
+    /// first. Each run of the scenario is counted in `attempts`.
     ///
     /// `c` binds explicitly to a port its own `bind` chose (`ClientLocked`),
     /// which no other socket's `connect` will share, so that until `c`
-    /// releases it no socket but the pair holds that port.
+    /// releases it no socket but the pair holds that port at 127.0.0.1 or the
+    /// wildcard; a socket at another of the host's addresses can already hold
+    /// it (`port-held-elsewhere.c`, A).
     let private releasedThenBound
         (flavour : SimulatedUnixFlavour)
+        (foreignAt : Ipv4Address)
+        (wildcard : bool)
         (foreignOn : int -> bool)
         (attempts : int ref)
         : ShutdownProbe.Scenario
@@ -1204,7 +1256,7 @@ module TestShutdownAgainstHost =
 
             let foreign =
                 if foreignOn attempts.Value then
-                    let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+                    let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
                     if fd < 0 then
                         failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -1212,35 +1264,39 @@ module TestShutdownAgainstHost =
                     let address =
                         SimulatedUnixPlatform.encodeInternetSockaddr
                             (HostPlatform.platformOf flavour)
-                            (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
+                            (Ipv4Endpoint.ofParts foreignAt (uint16 port))
 
-                    if hostBind (fd, address, uint32 address.Length) <> 0 || hostListen (fd, 4) <> 0 then
-                        hostClose fd |> ignore<int>
-                        raise (ForeignListenerRefused port)
+                    if
+                        HostCalls.bind (fd, address, uint32 address.Length) <> 0
+                        || HostCalls.listen (fd, 4) <> 0
+                    then
+                        HostCalls.close fd |> ignore<int>
+                        raise (PortAlreadyHeld port)
 
                     Some fd
                 else
                     None
 
-            s.Emit (s.Candidate false false port)
-            foreign |> Option.iter (hostClose >> ignore<int>)
+            s.Emit (s.Candidate false wildcard port)
+            foreign |> Option.iter (HostCalls.close >> ignore<int>)
             s.Lines
 
-    /// Runs `test` again, up to four more times, while `releasedThenBound`'s
-    /// listener found its port taken.
-    let rec private whileForeignListenerRefused (tries : int) (test : unit -> unit) : unit =
+    /// Runs `test` again, up to four more times, while it raises
+    /// `PortAlreadyHeld`.
+    let rec private whilePortAlreadyHeld (tries : int) (test : unit -> unit) : unit =
         try
             test ()
-        with ForeignListenerRefused _ when tries > 1 ->
-            whileForeignListenerRefused (tries - 1) test
+        with PortAlreadyHeld _ when tries > 1 ->
+            whilePortAlreadyHeld (tries - 1) test
 
-    /// Only Linux's `connect` chooses a local port that another socket holds,
-    /// so only there is a foreign holder looked for.
+    /// A foreign holder at 127.0.0.1 is told from the pair's own sockets only
+    /// by Linux's listing of every socket; on Darwin, `heldElsewhere` finds
+    /// one only at another address or the wildcard.
     let private onLinuxHost (action : unit -> unit) : unit =
         HostPlatform.onUnixHost (fun flavour ->
             match flavour with
             | SimulatedUnixFlavour.Linux -> action ()
-            | SimulatedUnixFlavour.Darwin -> Assert.Ignore "a foreign holder is looked for on Linux only"
+            | SimulatedUnixFlavour.Darwin -> Assert.Ignore "a foreign holder at 127.0.0.1 is looked for on Linux only"
         )
 
     // A later attempt can meet a foreign holder of its own, so the count is
@@ -1248,7 +1304,7 @@ module TestShutdownAgainstHost =
     [<Test>]
     let ``a host scenario whose bind another socket refused is run again`` () =
         onLinuxHost (fun () ->
-            whileForeignListenerRefused
+            whilePortAlreadyHeld
                 5
                 (fun () ->
                     let attempts = ref 0
@@ -1256,7 +1312,9 @@ module TestShutdownAgainstHost =
                     hostReplay
                         SimulatedUnixFlavour.Linux
                         false
-                        [ releasedThenBound SimulatedUnixFlavour.Linux ((=) 1) attempts ]
+                        [
+                            releasedThenBound SimulatedUnixFlavour.Linux Ipv4Address.loopback false ((=) 1) attempts
+                        ]
                     |> shouldEqual [ ShutdownLine.Line "bind-ok listen-ok" ]
 
                     attempts.Value |> shouldBeGreaterThan 1
@@ -1266,7 +1324,7 @@ module TestShutdownAgainstHost =
     [<Test>]
     let ``a host scenario whose binds another socket always refuses fails the replay`` () =
         onLinuxHost (fun () ->
-            whileForeignListenerRefused
+            whilePortAlreadyHeld
                 5
                 (fun () ->
                     let attempts = ref 0
@@ -1276,12 +1334,19 @@ module TestShutdownAgainstHost =
                             hostReplay
                                 SimulatedUnixFlavour.Linux
                                 false
-                                [ releasedThenBound SimulatedUnixFlavour.Linux (fun _ -> true) attempts ]
+                                [
+                                    releasedThenBound
+                                        SimulatedUnixFlavour.Linux
+                                        Ipv4Address.loopback
+                                        false
+                                        (fun _ -> true)
+                                        attempts
+                                ]
                             |> ignore<ShutdownLine list>
 
                             None
                         with
-                        | ForeignListenerRefused _ -> reraise ()
+                        | PortAlreadyHeld _ -> reraise ()
                         | error -> Some error
 
                     match error with
@@ -1294,7 +1359,8 @@ module TestShutdownAgainstHost =
 
     // `c` holds its endpoint in TIME_WAIT, so the bind's refusal is the
     // pair's own, and the scenario runs once. `ClientLocked`, as for
-    // `releasedThenBound`, so that no other socket shares c's port.
+    // `releasedThenBound`, so that no other socket shares c's port at
+    // 127.0.0.1.
     [<Test>]
     let ``a host scenario whose bind the pair itself refused is not run again`` () =
         onLinuxHost (fun () ->
@@ -1349,7 +1415,10 @@ module TestShutdownAgainstHost =
                     let mutable value = 0
                     let mutable length = 4u
 
-                    if hostGetSockOpt (fd, level, darwinReceiveBufferOption, &value, &length) <> 0 then
+                    if
+                        HostCalls.getSockOptInt (fd, level, darwinReceiveBufferOption, &value, &length)
+                        <> 0
+                    then
                         failwith $"getsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                     value
@@ -1357,7 +1426,7 @@ module TestShutdownAgainstHost =
                 let before = sizeOf ()
                 let doubled = BitConverter.GetBytes (2 * before)
 
-                if hostSetSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
+                if HostCalls.setSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
                     failwith $"setsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                 sizeOf () |> shouldBeGreaterThan before
@@ -1395,6 +1464,99 @@ module TestShutdownAgainstHost =
             | Some error -> error.Message |> shouldContainText "receive buffer grew"
 
             attempts.Value |> shouldEqual hostScenarioAttempts
+        )
+
+    /// Runs `action` with one of the host's IPv4 addresses outside
+    /// 127.0.0.0/8; ignores the test on a host with none, where no socket can
+    /// hold a port at another address.
+    let private onHostWithAddressElsewhere (action : SimulatedUnixFlavour -> Ipv4Address -> unit) : unit =
+        HostPlatform.onUnixHost (fun flavour ->
+            match nonLoopbackIpv4Addresses () with
+            | elsewhere :: _ -> action flavour elsewhere
+            | [] -> Assert.Ignore "the host has no IPv4 address outside 127.0.0.0/8"
+        )
+
+    // A bind of 127.0.0.1:0, as the listener's and `freePort`'s are, can be
+    // given a port that a socket at another of the host's addresses holds,
+    // and on both flavours such a socket refuses a wildcard bind of that port
+    // without SO_REUSEADDR (`port-held-elsewhere.c`, A and B). A later
+    // attempt can meet a holder of its own, so the count is at least two.
+    [<Test>]
+    let ``a host scenario whose wildcard bind a socket at another address refused is run again`` () =
+        onHostWithAddressElsewhere (fun flavour elsewhere ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    hostReplay flavour false [ releasedThenBound flavour elsewhere true ((=) 1) attempts ]
+                    |> shouldEqual [ ShutdownLine.Line "bind-ok listen-ok" ]
+
+                    attempts.Value |> shouldBeGreaterThan 1
+                )
+        )
+
+    [<Test>]
+    let ``a host scenario whose wildcard binds a socket at another address always refuses fails the replay`` () =
+        onHostWithAddressElsewhere (fun flavour elsewhere ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    let error =
+                        try
+                            hostReplay
+                                flavour
+                                false
+                                [ releasedThenBound flavour elsewhere true (fun _ -> true) attempts ]
+                            |> ignore<ShutdownLine list>
+
+                            None
+                        with
+                        | PortAlreadyHeld _ -> reraise ()
+                        | error -> Some error
+
+                    match error with
+                    | None -> Assert.Fail "the replay returned although every run was refused by another socket"
+                    | Some error -> error.Message |> shouldContainText "another socket"
+
+                    attempts.Value |> shouldEqual hostScenarioAttempts
+                )
+        )
+
+    // `c` holds its endpoint in TIME_WAIT at 127.0.0.1, which refuses a
+    // wildcard bind on both flavours (`bind-held-endpoint.c`'s `tw` rows) and
+    // never a bind at another address (`port-held-elsewhere.c`, C), so the
+    // scenario runs once, unless a socket elsewhere held c's port from the
+    // start.
+    [<Test>]
+    let ``a host scenario whose wildcard bind the pair itself refused is not run again`` () =
+        onHostWithAddressElsewhere (fun flavour _ ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    let scenario : ShutdownProbe.Scenario =
+                        fun pairOf ->
+                            attempts.Value <- attempts.Value + 1
+                            let s = ShutdownRecorder (pairOf ShutdownPairShape.ClientLocked)
+                            let port = s.PortOf c
+
+                            if not (List.isEmpty (heldElsewhere flavour port)) then
+                                raise (PortAlreadyHeld port)
+
+                            s.Close c |> ignore<string>
+                            s.Shutdown p TcpShutdownHow.Write |> ignore<string>
+                            s.Emit (s.Candidate false true port)
+                            s.Lines
+
+                    hostReplay flavour false [ scenario ]
+                    |> shouldEqual [ ShutdownLine.Line "bind-EADDRINUSE" ]
+
+                    attempts.Value |> shouldEqual 1
+                )
         )
 
     // The shape of Linux 6.18.5's /proc/net/netstat, with most of each
@@ -1547,37 +1709,41 @@ module TestShutdownAgainstHost =
                 (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
 
         let stream () =
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" fd
             fd
 
         let listening () : int * byte[] =
             let l = stream ()
             let any = loopbackAt 0
-            check "bind" (hostBind (l, any, 16u))
-            check "listen" (hostListen (l, 4))
+            check "bind" (HostCalls.bind (l, any, 16u))
+            check "listen" (HostCalls.listen (l, 4))
             let name = Array.zeroCreate<byte> 16
             let mutable length = 16u
-            check "getsockname" (hostGetSockName (l, name, &length))
+            check "getsockname" (HostCalls.getSockName (l, name, &length))
             l, name
 
         let rdy (fd : int) : string =
             let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (rdyEvents flavour)) <<< 32) |]
-            check "poll" (hostPoll (entry, 1un, 0))
+            check "poll" (HostCalls.pollPacked (entry, 1un, 0))
             let revents = int (uint16 (entry.[0] >>> 48))
 
             let waiters =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    let ep = hostEpollCreate1 0
+                    let ep = HostCalls.epollCreate1 0
                     check "epoll_create1" ep
-                    check "epoll_ctl" (hostEpollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+
+                    check
+                        "epoll_ctl"
+                        (HostCalls.epollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+
                     let out = Array.zeroCreate<byte> epollEventSize
                     let n = hostEpollWait (ep, out, 1, 0)
-                    hostClose ep |> ignore<int>
+                    HostCalls.close ep |> ignore<int>
                     $"epoll=0x%x{(if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u)}"
                 | SimulatedUnixFlavour.Darwin ->
-                    let kq = hostKqueue ()
+                    let kq = HostCalls.kqueue ()
                     check "kqueue" kq
 
                     let changes =
@@ -1588,7 +1754,7 @@ module TestShutdownAgainstHost =
                     check "kevent" (hostKevent (kq, changes, 2, null, 0, null))
                     let out = Array.zeroCreate<byte> 64
                     let n = hostKevent (kq, null, 0, out, 2, [| 0L ; 0L |])
-                    hostClose kq |> ignore<int>
+                    HostCalls.close kq |> ignore<int>
                     let events = keventsOf out (max n 0)
 
                     let render (filter : int16) =
@@ -1600,7 +1766,7 @@ module TestShutdownAgainstHost =
                     $"kq-read=%s{render KeventFilter.Read} kq-write=%s{render KeventFilter.Write}"
 
             let mutable available = 0
-            hostBytesAvailable (nativeint fd, &available) |> ignore<int>
+            HostCalls.bytesAvailable (nativeint fd, &available) |> ignore<int>
             $"poll=0x%x{revents} %s{waiters} fionread=%d{available}"
 
         let shutdownOf (fd : int) (how : int) : string = call (fun () -> hostShutdown (fd, how))
@@ -1609,16 +1775,16 @@ module TestShutdownAgainstHost =
             Stream = stream
             Datagram =
                 fun () ->
-                    let fd = hostSocket (AF_INET, 2, 0)
+                    let fd = HostCalls.socket (AF_INET, 2, 0)
                     check "socket" fd
                     fd
             NotSocket =
                 fun () ->
                     let fds = Array.zeroCreate<int> 2
 
-                    match hostPipe fds with
+                    match HostCalls.pipe fds with
                     | 0 ->
-                        hostClose fds.[1] |> ignore<int>
+                        HostCalls.close fds.[1] |> ignore<int>
                         fds.[0]
                     | _ -> failwith "pipe failed"
             // Any thread of the test host may open a descriptor, and so take a
@@ -1629,30 +1795,30 @@ module TestShutdownAgainstHost =
             BindAny =
                 fun fd ->
                     let any = loopbackAt 0
-                    check "bind" (hostBind (fd, any, 16u))
+                    check "bind" (HostCalls.bind (fd, any, 16u))
             Shutdown = fun fd how -> ShutdownLine.Line (shutdownOf fd how)
-            Close = fun fd -> hostClose fd |> ignore<int>
+            Close = fun fd -> HostCalls.close fd |> ignore<int>
             Refused =
                 fun () ->
                     let l, name = listening ()
-                    hostClose l |> ignore<int>
+                    HostCalls.close l |> ignore<int>
                     let f = stream ()
-                    f, call (fun () -> hostConnect (f, name, 16u))
+                    f, call (fun () -> HostCalls.connect (f, name, 16u))
             Unreported =
                 fun how ->
                     let l, name = listening ()
                     let f = stream ()
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
-                    let first = call (fun () -> hostConnect (f, name, 16u))
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
+                    let first = call (fun () -> HostCalls.connect (f, name, 16u))
 
                     let sh =
                         match how with
                         | None -> "-"
                         | Some how -> shutdownOf f how
 
-                    let again = call (fun () -> hostConnect (f, name, 16u))
-                    hostClose f |> ignore<int>
-                    hostClose l |> ignore<int>
+                    let again = call (fun () -> HostCalls.connect (f, name, 16u))
+                    HostCalls.close f |> ignore<int>
+                    HostCalls.close l |> ignore<int>
 
                     let name =
                         match how with
@@ -1665,29 +1831,29 @@ module TestShutdownAgainstHost =
                     let hn = rawHowName how
                     let l, name = listening ()
                     let f = stream ()
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
                     let before = rdy f
                     let sh = shutdownOf f how
                     let after = rdy f
-                    hostSetNonBlocking (nativeint f, 0) |> ignore<int>
-                    let connected = call (fun () -> hostConnect (f, name, 16u))
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
-                    let peer = hostAccept (l, 0n, 0n)
+                    HostCalls.setNonBlocking (nativeint f, 0) |> ignore<int>
+                    let connected = call (fun () -> HostCalls.connect (f, name, 16u))
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
+                    let peer = HostCalls.accept (l, 0n, 0n)
                     check "accept" peer
-                    let written = call (fun () -> int (hostWrite (f, hostBuffer, 1un)))
-                    hostWrite (peer, hostBuffer, 1un) |> ignore<nativeint>
+                    let written = call (fun () -> int (HostCalls.write (f, hostBuffer, 1un)))
+                    HostCalls.write (peer, hostBuffer, 1un) |> ignore<nativeint>
                     Thread.Sleep 30
-                    let read = call (fun () -> int (hostRead (f, hostBuffer, 4096un)))
+                    let read = call (fun () -> int (HostCalls.read (f, hostBuffer, 4096un)))
                     let rc = rdy f
-                    hostClose f |> ignore<int>
-                    hostClose peer |> ignore<int>
-                    hostClose l |> ignore<int>
-                    let u = hostSocket (AF_INET, 2, 0)
+                    HostCalls.close f |> ignore<int>
+                    HostCalls.close peer |> ignore<int>
+                    HostCalls.close l |> ignore<int>
+                    let u = HostCalls.socket (AF_INET, 2, 0)
                     check "socket" u
                     let ub = rdy u
                     let us = shutdownOf u how
                     let ua = rdy u
-                    hostClose u |> ignore<int>
+                    HostCalls.close u |> ignore<int>
 
                     [
                         ShutdownLine.Line
@@ -1723,7 +1889,7 @@ module TestShutdownAgainstHost =
         HostPlatform.onUnixHost (fun flavour ->
             let own = Array.zeroCreate<int> 2
 
-            if hostPipe own <> 0 then
+            if HostCalls.pipe own <> 0 then
                 failwith $"pipe failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             let held = ResizeArray<int> ()
@@ -1735,7 +1901,7 @@ module TestShutdownAgainstHost =
                 let mutable copy = -1
 
                 while copy < closed do
-                    copy <- hostDup own.[0]
+                    copy <- HostCalls.dup own.[0]
 
                     if copy < 0 then
                         failwith $"dup failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -1754,10 +1920,10 @@ module TestShutdownAgainstHost =
                     |> ShutdownProbe.disagreements ShutdownProbe.Probe.Shutdown flavour "U" withoutSigPipe
                 finally
                     for fd in held do
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
 
-                    hostClose own.[0] |> ignore<int>
-                    hostClose own.[1] |> ignore<int>
+                    HostCalls.close own.[0] |> ignore<int>
+                    HostCalls.close own.[1] |> ignore<int>
 
             disagreements |> shouldEqual []
         )
@@ -1779,12 +1945,17 @@ module TestShutdownAgainstHost =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -1792,7 +1963,7 @@ module TestShutdownAgainstHost =
         CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
 
     let private kernelBind (fd : int) (port : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (loopback system.Machine.UnixPlatform port) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (loopback (UnixSystem.platform system) port) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"bind: %A{other}"
 
@@ -1805,7 +1976,7 @@ module TestShutdownAgainstHost =
     let private kernelPortOf (fd : int) (system : UnixSystem<int, string>) : int =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> int binding.Endpoint.Port
             | None -> failwith $"fd %d{fd} is unbound"
         | other -> failwith $"fd %d{fd} names %A{other}"
@@ -1848,7 +2019,7 @@ module TestShutdownAgainstHost =
                     s
 
             let s =
-                match UnixSocket.tryListen listener 4 s with
+                match UnixSocket.tryListen (Callers.leader s) listener 4 s with
                 | Ok (ListenAnswer.Listening _, s) -> s
                 | other -> failwith $"listen: %A{other}"
 
@@ -1871,13 +2042,13 @@ module TestShutdownAgainstHost =
                 | other -> failwith $"connect: %A{other}"
 
             let server, s =
-                match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u s with
-                | Ok (AcceptOutcome.Accepted (accepted, _, _), s) -> accepted, s
+                match UnixConnection.tryAccept (Callers.thread 1 s) listener UserBuffer.Mapped (Some 16u) 0 s with
+                | Ok (AcceptOutcome.Accepted (accepted, _), s) -> accepted, s
                 | other -> failwith $"accept: %A{other}"
 
             let s = kernelClose listener s
-            let _, s = UnixDescriptor.setNonBlocking client true s
-            let _, s = UnixDescriptor.setNonBlocking server true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) client true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) server true s
             system <- s
             fds <- Map.ofList [ c, client ; p, server ]
 
@@ -1923,7 +2094,7 @@ module TestShutdownAgainstHost =
                 let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
                 match
-                    UnixSocket.tryGetsockoptLength
+                    Lone.UnixSocket.tryGetsockoptLength
                         (this.Fd e)
                         level
                         optionName
@@ -1953,7 +2124,7 @@ module TestShutdownAgainstHost =
                 (this :> IShutdownPair).ShutdownRaw e raw
 
             member this.ShutdownRaw e how =
-                match UnixConnection.tryShutdown (this.Fd e) how system with
+                match UnixConnection.tryShutdown (Callers.leader system) (this.Fd e) how system with
                 | Ok (answer, after) ->
                     UnixSystem.checkInvariants after |> shouldEqual []
                     system <- after
@@ -1967,7 +2138,7 @@ module TestShutdownAgainstHost =
                 | Error refusal -> failwith $"shutdown refused: %s{ShutdownRefusal.describe refusal}"
 
             member this.Close e =
-                match UnixDescriptor.tryClose (this.Fd e) system with
+                match UnixDescriptor.tryClose (Callers.leader system) (this.Fd e) system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     system <- after
                     fds <- Map.remove e fds
@@ -1988,7 +2159,7 @@ module TestShutdownAgainstHost =
                 // Darwin answers EINVAL first once both directions are shut.
                 let supplied =
                     match
-                        UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
+                        Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
                     with
                     | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
                     | Ok SetSockOptAdmission.NoCopy
@@ -1997,7 +2168,14 @@ module TestShutdownAgainstHost =
                         failwith $"setsockopt(SO_LINGER) refused: %s{SocketOptionRefusal.describe refusal}"
 
                 match
-                    UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+                    Lone.UnixSocket.trySetsockoptBytes
+                        fd
+                        level
+                        name
+                        UserBuffer.Mapped
+                        (uint32 value.Length)
+                        supplied
+                        system
                 with
                 | Ok (answer, after) ->
                     system <- after
@@ -2012,8 +2190,8 @@ module TestShutdownAgainstHost =
                 (this :> IShutdownPair).Close e
 
             member this.Fionread e =
-                match UnixDescriptor.tryBytesAvailable (this.Fd e) UserBuffer.Mapped system with
-                | Ok (BytesAvailableAnswer.Reported count) -> count
+                match UnixDescriptor.tryBytesAvailable (Callers.leader system) (this.Fd e) UserBuffer.Mapped system with
+                | Ok (BytesAvailableAnswer.Reported count, _) -> count
                 | other -> failwith $"FIONREAD: %A{other}"
 
             member this.Rdy e =
@@ -2022,7 +2200,7 @@ module TestShutdownAgainstHost =
                 let revents, after =
                     match
                         UnixPoll.tryPoll
-                            (Lone.leader system)
+                            (Callers.leader system)
                             [
                                 {
                                     Fd = fd
@@ -2048,7 +2226,7 @@ module TestShutdownAgainstHost =
                             | Some description -> description
                             | None -> failwith $"fd %d{fd} names no description"
 
-                        let level = LinuxReadiness.ofDescription description system
+                        let level = Lone.LinuxReadiness.ofDescription description system
                         $"epoll=0x%x{level &&& (uint32 (rdyEvents flavour) ||| 0x18u)}"
                     | SimulatedUnixFlavour.Darwin ->
                         let kq, s = KeventWorld.kqueue system
@@ -2062,13 +2240,17 @@ module TestShutdownAgainstHost =
                         let events, s =
                             match
                                 UnixKqueue.tryKevent
-                                    (Lone.leader s)
+                                    (Callers.leader s)
                                     kq
                                     2
                                     changes
                                     2
                                     UserBuffer.Mapped
-                                    (KeventTimeout.Readable (0L, 0L))
+                                    (TimespecArgument.Readable
+                                        {
+                                            Seconds = 0L
+                                            Nanoseconds = 0L
+                                        })
                                     s
                             with
                             | Ok (KeventOutcome.Answered events, s) -> events, s
@@ -2108,8 +2290,8 @@ module TestShutdownAgainstHost =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
                     let ep, s =
-                        match UnixPoll.tryEpollCreate1 0 system with
-                        | Ok (Ok created) -> created
+                        match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+                        | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let s =
@@ -2118,7 +2300,13 @@ module TestShutdownAgainstHost =
                             let fd = this.Fd e
 
                             match
-                                UnixPoll.tryEpollCtl ep 1 fd (EpollEventArgument.Readable (0x80002005u, uint64 fd)) s
+                                UnixPoll.tryEpollCtl
+                                    (Callers.leader s)
+                                    ep
+                                    1
+                                    fd
+                                    (EpollEventArgument.Readable (0x80002005u, uint64 fd))
+                                    s
                             with
                             | Ok (EpollCtlAnswer.Changed, s) -> s
                             | other -> failwith $"epoll_ctl: %A{other}"
@@ -2142,13 +2330,17 @@ module TestShutdownAgainstHost =
                     let s =
                         match
                             UnixKqueue.tryKevent
-                                (Lone.leader s)
+                                (Callers.leader s)
                                 kq
                                 changes.Length
                                 changes
                                 0
                                 UserBuffer.Mapped
-                                (KeventTimeout.Readable (0L, 0L))
+                                (TimespecArgument.Readable
+                                    {
+                                        Seconds = 0L
+                                        Nanoseconds = 0L
+                                    })
                                 s
                         with
                         | Ok (KeventOutcome.Answered [], s) -> s
@@ -2167,7 +2359,7 @@ module TestShutdownAgainstHost =
 
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    match UnixPoll.tryEpollWait (Lone.leader system) port 4 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.leader system) port 4 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, after) ->
                         system <- after
 
@@ -2182,13 +2374,17 @@ module TestShutdownAgainstHost =
                 | SimulatedUnixFlavour.Darwin ->
                     match
                         UnixKqueue.tryKevent
-                            (Lone.leader system)
+                            (Callers.leader system)
                             port
                             0
                             []
                             4
                             UserBuffer.Mapped
-                            (KeventTimeout.Readable (0L, 0L))
+                            (TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                })
                             system
                     with
                     | Ok (KeventOutcome.Answered [], after) ->
@@ -2237,7 +2433,7 @@ module TestShutdownAgainstHost =
                 let answer, s =
                     match CopyIn.bind fresh UserBuffer.Mapped 16u address s with
                     | Ok (BindAnswer.Bound _, s) ->
-                        match UnixSocket.tryListen fresh 4 s with
+                        match UnixSocket.tryListen (Callers.leader s) fresh 4 s with
                         | Ok (ListenAnswer.Listening _, s) -> "bind-ok listen-ok", s
                         | Ok (ListenAnswer.Failed error, s) -> $"bind-ok listen-%A{error}", s
                         | Error refusal -> failwith $"listen refused: %A{refusal}"
@@ -2252,7 +2448,7 @@ module TestShutdownAgainstHost =
                 let name = SimulatedUnixPlatform.reuseAddressOption platform
 
                 match
-                    UnixSocket.tryGetsockoptLength
+                    Lone.UnixSocket.tryGetsockoptLength
                         (this.Fd e)
                         level
                         name
@@ -2268,7 +2464,7 @@ module TestShutdownAgainstHost =
                     failwith $"getsockopt(SO_REUSEADDR) refused: %s{SocketOptionRefusal.describe refusal}"
 
             member this.PeerName e =
-                match UnixSocket.tryGetpeername (this.Fd e) UserBuffer.Mapped 16u system with
+                match UnixSocket.tryGetpeername (Callers.leader system) (this.Fd e) UserBuffer.Mapped 16u system with
                 | Ok (GetSockNameAnswer.Reported _) -> "ok"
                 | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
                 | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"
@@ -2319,7 +2515,7 @@ module TestShutdownAgainstHost =
             | Error refusal -> failwith $"connect refused: %s{ConnectRefusal.describe refusal}"
 
         let shutdownOf (fd : int) (how : int) : ShutdownLine =
-            match UnixConnection.tryShutdown fd how system with
+            match UnixConnection.tryShutdown (Callers.leader system) fd how system with
             | Ok (answer, after) ->
                 system <- after
 
@@ -2333,7 +2529,7 @@ module TestShutdownAgainstHost =
             let l = created SocketKind.Stream SocketProtocol.Tcp
             system <- kernelBind l 0 system
 
-            match UnixSocket.tryListen l 4 system with
+            match UnixSocket.tryListen (Callers.leader system) l 4 system with
             | Ok (ListenAnswer.Listening _, after) -> system <- after
             | other -> failwith $"listen: %A{other}"
 
@@ -2344,7 +2540,7 @@ module TestShutdownAgainstHost =
             Datagram = fun () -> created SocketKind.Datagram SocketProtocol.Udp
             NotSocket =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- kernelClose writeFd after
                         readFd
@@ -2353,7 +2549,7 @@ module TestShutdownAgainstHost =
             // stays free, and the closed-fd rows ask about one, as the probe's do.
             NamesNothing =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- after |> kernelClose writeFd |> kernelClose readFd
                         readFd
@@ -2371,7 +2567,7 @@ module TestShutdownAgainstHost =
                 fun how ->
                     let l, port = listening ()
                     let f = created SocketKind.Stream SocketProtocol.Tcp
-                    let _, after = UnixDescriptor.setNonBlocking f true system
+                    let _, after = UnixDescriptor.setNonBlocking (Callers.leader system) f true system
                     system <- after
                     let first = connectAnswer f port
 
@@ -2545,7 +2741,7 @@ module TestShutdownAgainstHost =
                         let system = if bound then kernelBind fd 0 system else system
                         let socket = kernelSocketOf fd system
 
-                        match flavour, UnixConnection.tryShutdown fd how system with
+                        match flavour, UnixConnection.tryShutdown (Callers.leader system) fd how system with
                         | SimulatedUnixFlavour.Darwin, Ok (ShutdownAnswer.Failed UnixError.ENOTCONN, after) ->
                             after |> shouldEqual system
                         | SimulatedUnixFlavour.Linux, Error (ShutdownRefusal.LinuxUnconnected refused) ->
@@ -2558,16 +2754,16 @@ module TestShutdownAgainstHost =
             let system = kernelBind listener 0 system
 
             let system =
-                match UnixSocket.tryListen listener 4 system with
+                match UnixSocket.tryListen (Callers.leader system) listener 4 system with
                 | Ok (ListenAnswer.Listening _, system) -> system
                 | other -> failwith $"listen: %A{other}"
 
             for how in [ 0 ; 1 ; 2 ] do
-                UnixConnection.tryShutdown listener how system
+                UnixConnection.tryShutdown (Callers.leader system) listener how system
                 |> Result.map fst
                 |> shouldEqual (Error (ShutdownRefusal.Listener (kernelSocketOf listener system)))
 
             // A `how` out of range is screened before the state.
-            UnixConnection.tryShutdown listener 3 system
+            UnixConnection.tryShutdown (Callers.leader system) listener 3 system
             |> Result.map fst
             |> shouldEqual (Ok (ShutdownAnswer.Failed UnixError.EINVAL))

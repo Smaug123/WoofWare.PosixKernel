@@ -1,0 +1,23 @@
+Linux 6.18.5 aarch64
+i/s T=43101 holder OK at 127.0.0.1:43101; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+i/sr T=43102 holder OK at 127.0.0.1:43102; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+ir/s T=43103 holder OK at 127.0.0.1:43103; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+ir/sr T=43104 holder OK at 127.0.0.1:43104; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+o/s T=43105 holder OK at 127.0.0.2:43105; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+o/sr T=43106 holder OK at 127.0.0.2:43106; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+L/s T=43107 holder OK at 127.0.0.1:43107; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+L/sr T=43108 holder OK at 127.0.0.1:43108; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+e/s T=43109 holder OK at 127.0.0.1:43109; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+e/sr T=43110 holder OK at 127.0.0.1:43110; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+er/s T=43111 holder OK at 127.0.0.1:43111; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+er/sr T=43112 holder OK at 127.0.0.1:43112; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+c/s T=43113 holder OK at 127.0.0.1:43113; connect to Y -> OK getsockname=127.0.0.1:43113
+c/sr T=43114 holder OK at 127.0.0.1:43114; connect to Y -> OK getsockname=127.0.0.1:43114
+cr/s T=43115 holder OK at 127.0.0.1:43115; connect to Y -> OK getsockname=127.0.0.1:43115
+cr/sr T=43116 holder OK at 127.0.0.1:43116; connect to Y -> OK getsockname=127.0.0.1:43116
+f/s T=43117 holder OK at 127.0.0.1:43117, closed; connect to Y -> OK getsockname=127.0.0.1:43117
+f/sr T=43118 holder OK at 127.0.0.1:43118, closed; connect to Y -> OK getsockname=127.0.0.1:43118
+fr/s T=43119 holder OK at 127.0.0.1:43119, closed; connect to Y -> OK getsockname=127.0.0.1:43119
+fr/sr T=43120 holder OK at 127.0.0.1:43120, closed; connect to Y -> OK getsockname=127.0.0.1:43120
+fe/s T=43121 holder OK at 127.0.0.1:43121, closed; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+fe/sr T=43122 holder OK at 127.0.0.1:43122, closed; connect to Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0

@@ -53,33 +53,6 @@ module TestDirectoryReadAgainstHost =
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_LStat", SetLastError = true)>]
     extern int private hostLStat(string path, byte[] output)
 
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(string path, uint32 mode)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(string path)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(string path)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     let private hostSucceeded (what : string) (result : int) : unit =
         if result < 0 then
             failwith $"host %s{what} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -186,7 +159,7 @@ module TestDirectoryReadAgainstHost =
             None
         else
 
-        let fd = hostOpen (candidate, 0, 0)
+        let fd = HostCalls.openFile (candidate, 0, 0)
 
         if fd < 0 then
             None
@@ -198,7 +171,7 @@ module TestDirectoryReadAgainstHost =
             else
                 None
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     let private onMeasurableHost (action : SimulatedUnixFlavour -> string -> unit) : unit =
         HostPlatform.onUnixHost (fun flavour ->
@@ -224,6 +197,7 @@ module TestDirectoryReadAgainstHost =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -242,8 +216,23 @@ module TestDirectoryReadAgainstHost =
         | SyscallAnswer.Completed value -> value, system
         | SyscallAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
 
+    let private returned
+        (what : string)
+        (answer : DescriptorAnswer, system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match answer with
+        | DescriptorAnswer.Returned fd -> fd, system
+        | DescriptorAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
+
     let private modelInode (path : string) (system : UnixSystem<int, string>) : InodeNumber =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (rooted path)) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (rooted path))
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Inode
         | other -> failwith $"model stat %s{path}: %A{other}"
 
@@ -299,9 +288,9 @@ module TestDirectoryReadAgainstHost =
                 let root =
                     Path.Combine (hostBase, "posixkernel-getdents-" + Guid.NewGuid().ToString "N")
 
-                hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+                HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
                 let hostD = Path.Combine (root, "d")
-                hostMkdir (hostD, 0o755u) |> hostSucceeded "mkdir d"
+                HostCalls.mkdir (hostD, 0o755u) |> hostSucceeded "mkdir d"
 
                 let mutable live : Live list = []
 
@@ -311,7 +300,7 @@ module TestDirectoryReadAgainstHost =
                         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                     let system =
-                        Answered.mkdir (PathArg.ofPath (rooted "d")) 0o755 system
+                        Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted "d")) 0o755 system
                         |> completed "mkdir d"
                         |> snd
 
@@ -319,20 +308,24 @@ module TestDirectoryReadAgainstHost =
                         (system, entries)
                         ||> List.fold (fun system (name, isDirectory) ->
                             if isDirectory then
-                                hostMkdir (Path.Combine (hostD, name), 0o755u)
+                                HostCalls.mkdir (Path.Combine (hostD, name), 0o755u)
                                 |> hostSucceeded $"mkdir %s{name}"
 
-                                Answered.mkdir (PathArg.ofPath (rooted $"d/%s{name}")) 0o755 system
+                                Answered.mkdir
+                                    (Callers.leader system)
+                                    (PathArg.ofPath (rooted $"d/%s{name}"))
+                                    0o755
+                                    system
                                 |> completed $"mkdir %s{name}"
                                 |> snd
                             else
                                 File.Create(Path.Combine (hostD, name)).Dispose ()
 
                                 let fd, system =
-                                    Answered.openPath creating (rooted $"d/%s{name}") 0o644 system
-                                    |> completed $"creat %s{name}"
+                                    Answered.openPath (rooted $"d/%s{name}") creating 0o644 system
+                                    |> returned $"creat %s{name}"
 
-                                match UnixDescriptor.tryClose (int fd) system with
+                                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                                 | Ok (SyscallAnswer.Completed _, system) -> system
                                 | other -> failwith $"model close: %A{other}"
                         )
@@ -375,18 +368,18 @@ module TestDirectoryReadAgainstHost =
                                 $"description %d{description}: the host yielded %A{host} before end-of-directory, not every entry once"
 
                     let openBoth (system : UnixSystem<int, string>) =
-                        let hostFd = hostOpen (hostD, 0, 0)
+                        let hostFd = HostCalls.openFile (hostD, 0, 0)
                         hostSucceeded "open d" hostFd
 
                         let modelFd, system =
-                            Answered.openPath reading (rooted "d") 0 system |> completed "open d"
+                            Answered.openPath (rooted "d") reading 0 system |> returned "open d"
 
                         live <-
                             live
                             @ [
                                 {
                                     HostFd = hostFd
-                                    ModelFd = int modelFd
+                                    ModelFd = modelFd
                                     Description = nextDescription
                                 }
                             ]
@@ -405,17 +398,18 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    let hostFd = hostDup target.HostFd
+                                    let hostFd = HostCalls.dup target.HostFd
                                     hostSucceeded "dup" hostFd
 
-                                    let modelFd, system = Answered.dup target.ModelFd system |> completed "dup"
+                                    let modelFd, system =
+                                        Answered.dup (Callers.leader system) target.ModelFd system |> returned "dup"
 
                                     live <-
                                         live
                                         @ [
                                             { target with
                                                 HostFd = hostFd
-                                                ModelFd = int modelFd
+                                                ModelFd = modelFd
                                             }
                                         ]
 
@@ -424,10 +418,12 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    hostLSeek (target.HostFd, 0L, 0) |> shouldEqual 0L
+                                    HostCalls.lseek (target.HostFd, 0L, 0) |> shouldEqual 0L
 
                                     let answer, system =
-                                        match UnixDescriptor.tryLseek target.ModelFd 0L 0 system with
+                                        match
+                                            UnixDescriptor.tryLseek (Callers.leader system) target.ModelFd 0L 0 system
+                                        with
                                         | Ok result -> result
                                         | Error refusal -> failwith $"model rewind refused: %A{refusal}"
 
@@ -439,10 +435,10 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    hostClose target.HostFd |> hostSucceeded "close"
+                                    HostCalls.close target.HostFd |> hostSucceeded "close"
                                     live <- live |> List.filter (fun l -> l.HostFd <> target.HostFd)
 
-                                    match UnixDescriptor.tryClose target.ModelFd system with
+                                    match UnixDescriptor.tryClose (Callers.leader system) target.ModelFd system with
                                     | Ok (SyscallAnswer.Completed _, system) -> system
                                     | other -> failwith $"model close: %A{other}"
                             | HostDirectoryStep.Read which ->
@@ -470,7 +466,12 @@ module TestDirectoryReadAgainstHost =
                                             List.rev acc, system
                                         else
 
-                                        match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                                        match
+                                            UnixNamespace.tryReadDirectoryEntry
+                                                (Callers.leader system)
+                                                target.ModelFd
+                                                system
+                                        with
                                         | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> List.rev acc, system
                                         | Ok (ReadDirectoryAnswer.Entry record, system) ->
                                             let name = record.Name.ToString ()
@@ -521,25 +522,29 @@ module TestDirectoryReadAgainstHost =
                         // on Darwin, whatever each had read.
                         for name, isDirectory in entries do
                             if isDirectory then
-                                hostRmdir (Path.Combine (hostD, name)) |> hostSucceeded $"rmdir %s{name}"
+                                HostCalls.rmdir (Path.Combine (hostD, name)) |> hostSucceeded $"rmdir %s{name}"
                             else
-                                hostUnlink (Path.Combine (hostD, name)) |> hostSucceeded $"unlink %s{name}"
+                                HostCalls.unlink (Path.Combine (hostD, name))
+                                |> hostSucceeded $"unlink %s{name}"
 
-                        hostRmdir hostD |> hostSucceeded "rmdir d"
+                        HostCalls.rmdir hostD |> hostSucceeded "rmdir d"
 
                         let system =
                             (system, entries)
                             ||> List.fold (fun system (name, isDirectory) ->
                                 let answer =
                                     if isDirectory then
-                                        Answered.rmdir (rooted $"d/%s{name}") system
+                                        Answered.rmdir (Callers.leader system) (rooted $"d/%s{name}") system
                                     else
-                                        Answered.unlink (rooted $"d/%s{name}") system
+                                        Answered.unlink (Callers.leader system) (rooted $"d/%s{name}") system
 
                                 answer |> completed $"remove %s{name}" |> snd
                             )
 
-                        let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
+                        let system =
+                            Answered.rmdir (Callers.leader system) (rooted "d") system
+                            |> completed "rmdir d"
+                            |> snd
 
                         for target in live do
                             let host =
@@ -548,12 +553,14 @@ module TestDirectoryReadAgainstHost =
                                 | Ok records -> failwith $"host read of a removed directory yielded %A{records}"
                                 | Error error -> ReadDirectoryAnswer.Failed error
 
-                            match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                            match
+                                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) target.ModelFd system
+                            with
                             | Ok (model, _) -> model |> shouldEqual host
                             | Error refusal -> failwith $"model read of a removed directory refused: %A{refusal}"
                 finally
                     for target in live do
-                        hostClose target.HostFd |> ignore<int>
+                        HostCalls.close target.HostFd |> ignore<int>
 
                     if Directory.Exists root then
                         Directory.Delete (root, true)
@@ -576,21 +583,21 @@ module TestDirectoryReadAgainstHost =
             let root =
                 Path.Combine (hostBase, "posixkernel-getdents-" + Guid.NewGuid().ToString "N")
 
-            hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+            HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
             let hostFile = Path.Combine (root, "f")
             File.Create(hostFile).Dispose ()
 
             let hostPipe =
                 let fds = Array.zeroCreate<int> 2
-                hostPipe fds |> hostSucceeded "pipe"
+                HostCalls.pipe fds |> hostSucceeded "pipe"
                 fds
 
             // AF_UNIX and SOCK_STREAM, 1 and 1 on both kernels.
-            let hostSocket = hostSocket (1, 1, 0)
+            let hostSocket = HostCalls.socket (1, 1, 0)
             hostSucceeded "socket" hostSocket
-            let hostReadable = hostOpen (hostFile, 0, 0)
+            let hostReadable = HostCalls.openFile (hostFile, 0, 0)
             hostSucceeded "open f O_RDONLY" hostReadable
-            let hostWriteOnly = hostOpen (hostFile, 1, 0)
+            let hostWriteOnly = HostCalls.openFile (hostFile, 1, 0)
             hostSucceeded "open f O_WRONLY" hostWriteOnly
 
             try
@@ -599,25 +606,25 @@ module TestDirectoryReadAgainstHost =
                     |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                 let fd, system =
-                    Answered.openPath creating (rooted "f") 0o644 system |> completed "creat f"
+                    Answered.openPath (rooted "f") creating 0o644 system |> returned "creat f"
 
                 let system =
-                    match UnixDescriptor.tryClose (int fd) system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"%A{refusal}"
 
                 let readable, system =
-                    Answered.openPath reading (rooted "f") 0 system |> completed "open f"
+                    Answered.openPath (rooted "f") reading 0 system |> returned "open f"
 
                 let writeOnly, system =
                     Answered.openPath
+                        (rooted "f")
                         { reading with
                             Access = FileAccessMode.WriteOnly
                         }
-                        (rooted "f")
                         0
                         system
-                    |> completed "open f"
+                    |> returned "open f"
 
                 let socket, system =
                     NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system
@@ -628,7 +635,7 @@ module TestDirectoryReadAgainstHost =
                     | Error error -> ReadDirectoryAnswer.Failed error
 
                 let modelAnswer (fd : int) : ReadDirectoryAnswer =
-                    match UnixNamespace.tryReadDirectoryEntry fd system with
+                    match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
                     | Ok (answer, _) -> answer
                     | Error refusal -> failwith $"%A{refusal}"
 
@@ -638,8 +645,8 @@ module TestDirectoryReadAgainstHost =
                 // can; docs/probes/closed-descriptor measured that both flavours
                 // answer it as they do a freed slot.
                 [
-                    "a readable regular file", hostReadable, int readable
-                    "a write-only regular file", hostWriteOnly, int writeOnly
+                    "a readable regular file", hostReadable, readable
+                    "a write-only regular file", hostWriteOnly, writeOnly
                     "a pipe's read end", hostPipe.[0], 0
                     "a pipe's write end", hostPipe.[1], 1
                     "a socket", hostSocket, socket
@@ -654,7 +661,7 @@ module TestDirectoryReadAgainstHost =
                 )
             finally
                 for fd in [ hostPipe.[0] ; hostPipe.[1] ; hostSocket ; hostReadable ; hostWriteOnly ] do
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
 
                 Directory.Delete (root, true)
         )

@@ -40,7 +40,7 @@ module TestSocketTable =
     /// `close(2)`. A refusal crashes the test; an errno comes back, because that
     /// is an answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -56,20 +56,20 @@ module TestSocketTable =
         (kernel : UnixSystem<int, string>)
         : (uint64 * uint32) list * UnixSystem<int, string>
         =
-        let predicted = EpollReadyList.hasDeliverableEvent queueId kernel
-        let delivered, system = EpollReadyList.drain queueId maxCount kernel
+        let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId kernel
+        let delivered, system = Lone.EpollReadyList.drain queueId maxCount kernel
 
         if List.isEmpty delivered = predicted then
             failwith
-                $"EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
+                $"Lone.EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
 
         delivered, system
 
     let private hasDeliverableEpollEvents (queueId : OpenFileDescriptionId) (kernel : UnixSystem<int, string>) : bool =
-        EpollReadyList.hasDeliverableEvent queueId kernel
+        Lone.EpollReadyList.hasDeliverableEvent queueId kernel
 
     let private linuxReadiness (targetId : OpenFileDescriptionId) (kernel : UnixSystem<int, string>) : uint32 =
-        LinuxReadiness.ofDescription targetId kernel
+        Lone.LinuxReadiness.ofDescription targetId kernel
 
     /// A process launched with no descriptors at all, and so no pipes: the base
     /// for a descriptor table built wholly by hand.
@@ -89,6 +89,7 @@ module TestSocketTable =
         =
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (descriptions |> List.map (fun (fd, id, _) -> fd, id) |> Map.ofList)
                 (descriptions
                  |> List.map (fun (_, id, target) ->
@@ -98,19 +99,32 @@ module TestSocketTable =
                          AccessMode = FileAccessMode.ReadWrite
                          NonBlocking = false
                          Flock = None
-                         Status = OpenFileStatus.none
+                         Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                      }
                  )
                  |> Map.ofList)
                 (OpenFileDescriptionId (int64 descriptions.Length + 100L))
 
-        { unlaunchedSystem with
-            Machine =
-                { unlaunchedSystem.Machine with
-                    Sockets = sockets |> List.map (fun (id, socket) -> SocketId id, socket) |> Map.ofList
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
+                    Sockets =
+                        (SocketTable.empty, sockets)
+                        ||> List.fold (fun table (id, socket) -> SocketTable.set (SocketId id) socket table)
+                    // Each UDP socket comes with its receive side, as
+                    // `socket(2)` makes it.
+                    DatagramReceivers =
+                        (machine, sockets)
+                        ||> List.fold (fun forged (id, socket) ->
+                            { forged with
+                                DatagramReceivers = ForgedSocket.receivers (SocketId id) socket forged
+                            }
+                        )
+                        |> fun forged -> forged.DatagramReceivers
                     NextSocketId = SocketId nextSocketId
                 }
-        }
+            )
+            unlaunchedSystem
         |> Lone.withFileDescriptors registry
 
     let private someSocket : SocketDescription =
@@ -119,6 +133,8 @@ module TestSocketTable =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Drained = false
+            Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
         }
@@ -136,7 +152,7 @@ module TestSocketTable =
 
         match description.Target with
         | OpenFileTarget.Socket socketId ->
-            let socket = UnixMachineState.socket socketId kernel.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine kernel)
             socket.Domain |> shouldEqual SocketDomain.Inet6
             socket.Kind |> shouldEqual SocketKind.Datagram
             socket.Protocol |> shouldEqual SocketProtocol.Udp
@@ -154,8 +170,8 @@ module TestSocketTable =
         let _, kernel =
             NewSocket.create SocketDomain.Unix SocketKind.Datagram SocketProtocol.Default kernel
 
-        kernel.Machine.Sockets |> Map.count |> shouldEqual 2
-        kernel.Machine.NextSocketId |> shouldEqual (SocketId 2L)
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 2
+        (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 2L)
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// Closing the last descriptor onto a socket destroys the socket too. Before
@@ -166,16 +182,16 @@ module TestSocketTable =
         let fd, kernel =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
-        kernel.Machine.Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
 
         match closeFd fd kernel with
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        kernel.Machine.Sockets |> shouldEqual Map.empty
+        SocketTable.all (Kernel.machine kernel).Sockets |> shouldEqual Map.empty
         // Not rewound: identities are never reused, so the next socket does not
         // take the dead one's name.
-        kernel.Machine.NextSocketId |> shouldEqual (SocketId 1L)
+        (Kernel.machine kernel).NextSocketId |> shouldEqual (SocketId 1L)
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// ...and closing one of two descriptors onto a socket destroys neither the
@@ -189,7 +205,12 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let duped, kernel =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
+                    fd
+                    (Lone.fileDescriptors kernel)
+            with
             | Ok (duped, registry) -> duped, Lone.withFileDescriptors registry kernel
             | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
@@ -197,7 +218,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        kernel.Machine.Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         // And the surviving descriptor still resolves to it.
@@ -205,7 +226,12 @@ module TestSocketTable =
         | Some description ->
             match description.Target with
             | OpenFileTarget.Socket socketId ->
-                UnixMachineState.socket socketId kernel.Machine |> shouldEqual someSocket
+                // A socket carries the uid of the process that made it.
+                UnixMachineState.socket socketId (Kernel.machine kernel)
+                |> shouldEqual
+                    { someSocket with
+                        Uid = (Lone.proc kernel).Credentials.EffectiveUser
+                    }
             | other -> failwith $"expected a socket target, got %O{other}"
         | None -> failwith "the original descriptor should still be live"
 
@@ -218,7 +244,9 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let epoll, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
+                (Lone.fileDescriptors kernel)
 
         let kernel = Lone.withFileDescriptors registry kernel
 
@@ -226,7 +254,7 @@ module TestSocketTable =
         | Error e -> failwith $"expected close to succeed, got %O{e}"
         | Ok kernel ->
 
-        kernel.Machine.Sockets |> Map.count |> shouldEqual 1
+        SocketTable.all (Kernel.machine kernel).Sockets |> Map.count |> shouldEqual 1
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// A description naming a socket the table does not hold. `UnixMachineState.socket`
@@ -268,7 +296,7 @@ module TestSocketTable =
     let ``resolving an unknown socket identity fails loudly`` () : unit =
         let e =
             Assert.Throws<System.Exception> (fun () ->
-                UnixMachineState.socket (SocketId 99L) initialSystem.Machine |> ignore
+                UnixMachineState.socket (SocketId 99L) (Kernel.machine initialSystem) |> ignore
             )
 
         e.Message |> shouldContainText "names no socket in this kernel's socket table"
@@ -348,12 +376,13 @@ module TestSocketTable =
                     lifetimeSeed
 
             let mutable kernel =
-                { initialSystem with
-                    Machine =
-                        { initialSystem.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             CommittedFileSystem = CommittedFileSystem.initial filesystem
                         }
-                }
+                    )
+                    initialSystem
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         CurrentDirectoryInode = VirtualFileSystem.root filesystem
@@ -392,7 +421,12 @@ module TestSocketTable =
                     | Error e -> failwith $"unexpected close error: %O{e}"
                 | 2
                 | 3 ->
-                    match FileDescriptorRegistry.dup live.[rng.Next live.Length] (Lone.fileDescriptors kernel) with
+                    match
+                        FileDescriptorRegistry.dup
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
+                            live.[rng.Next live.Length]
+                            (Lone.fileDescriptors kernel)
+                    with
                     | Ok (_, registry) ->
                         kernel <- Lone.withFileDescriptors registry kernel
 
@@ -405,10 +439,10 @@ module TestSocketTable =
                     // filesystem does not contain is a state `open(2)` cannot
                     // produce, and `DanglingOpenInode` says so.
                     let candidates =
-                        VirtualFileSystem.inodes kernel.Machine.FileSystem
+                        VirtualFileSystem.inodes (UnixSystem.fileSystem kernel)
                         |> Map.toList
                         |> List.map fst
-                        |> List.filter (fun inode -> inode <> VirtualFileSystem.root kernel.Machine.FileSystem)
+                        |> List.filter (fun inode -> inode <> VirtualFileSystem.root (UnixSystem.fileSystem kernel))
 
                     if not (List.isEmpty candidates) then
                         let inode = candidates.[rng.Next candidates.Length]
@@ -416,14 +450,20 @@ module TestSocketTable =
                         // A directory gets a directory description, as `open(2)`
                         // gives it one.
                         let _, registry =
-                            match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
+                            match VirtualFileSystem.tryGetContent inode (UnixSystem.fileSystem kernel) with
                             | Some (InodeContent.Directory _) ->
                                 FileDescriptorRegistry.openDirectory
+                                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
                             | _ ->
                                 FileDescriptorRegistry.openFile
+                                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel)))
+                                    false
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly
@@ -447,7 +487,7 @@ module TestSocketTable =
                     // orphan a whole subtree at once — and asserting soundness
                     // in it would be asserting a rule nobody has decided.
                     let removable =
-                        let filesystem = kernel.Machine.FileSystem
+                        let filesystem = UnixSystem.fileSystem kernel
 
                         let isRemovable (target : InodeNumber) : bool =
                             match VirtualFileSystem.tryGetContent target filesystem with
@@ -483,29 +523,26 @@ module TestSocketTable =
                                 UnbindTargetEffect.LostALink
                                 holder
                                 chosen
-                                (UnixMachineState.realtime kernel.Scheduling kernel.Machine)
-                                kernel.Machine.FileSystem
+                                (UnixSystem.realtime kernel)
+                                (UnixSystem.fileSystem kernel)
                         with
                         | Error e -> failwith $"unexpected unbind error: %O{e}"
                         | Ok (inode, mutation) ->
                             let before = VirtualFileSystem.inodes (VfsMutation.after mutation) |> Map.count
 
                             kernel <-
-                                { kernel with
-                                    Machine =
-                                        UnixMachineState.commitFileSystem ChangeNotice.Names mutation kernel.Machine
-                                }
-                                |> ObjectLifetime.forgetIfUnheld inode
+                                Kernel.mapMachine (UnixMachineState.commitFileSystem ChangeNotice.Names mutation) kernel
+                                |> Lone.ObjectLifetime.forgetIfUnheld inode
 
                             cover LifetimeMixLabel.Unlink
 
-                            if (VirtualFileSystem.inodes kernel.Machine.FileSystem |> Map.count) < before then
+                            if (VirtualFileSystem.inodes (UnixSystem.fileSystem kernel) |> Map.count) < before then
                                 cover LifetimeMixLabel.Reap
 
                             // The inode survived the loss of its last name, and
                             // it is a directory — so something is holding an
                             // orphan whose ".." must not dangle.
-                            match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
+                            match VirtualFileSystem.tryGetContent inode (UnixSystem.fileSystem kernel) with
                             | Some (InodeContent.Directory _) -> cover LifetimeMixLabel.HeldOrphanDirectory
                             | Some (InodeContent.RegularFile _)
                             | Some (InodeContent.Socket _)
@@ -514,7 +551,10 @@ module TestSocketTable =
                             | Some (InodeContent.Symlink _)
                             | None -> ()
                 | 6 ->
-                    let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+                    let _, registry =
+                        FileDescriptorRegistry.createEpoll
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform kernel))
+                            (Lone.fileDescriptors kernel)
 
                     kernel <- Lone.withFileDescriptors registry kernel
                 | _ ->
@@ -543,7 +583,7 @@ module TestSocketTable =
                 FileDescriptorRegistry.checkInvariants (Lone.fileDescriptors kernel)
                 |> shouldEqual []
 
-                VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes kernel) kernel.Machine.FileSystem
+                VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes kernel) (UnixSystem.fileSystem kernel)
                 |> shouldEqual []
 
         let coverage =
@@ -601,36 +641,37 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued queue
-                                    Drained = false
                                 }
                     }
                 ]
                 1L
 
-        UnixMachineState.socketReadinessLevel (SocketId 0L) (listening []).Machine
+        UnixMachineState.socketReadinessLevel (SocketId 0L) (Kernel.machine (listening []))
         |> shouldEqual ReadinessLevel.none
 
         let queued =
             let kernel = listening [ ConnectionId 0L ]
 
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Connections =
                             Map.ofList
                                 [
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 6000us
-                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
+                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet machine
                                     }
                                 ]
                         NextConnectionId = ConnectionId 1L
                     }
-            }
+                )
+                kernel
 
-        UnixMachineState.socketReadinessLevel (SocketId 0L) queued.Machine
+        UnixMachineState.socketReadinessLevel (SocketId 0L) (Kernel.machine queued)
         |> shouldEqual
             { ReadinessLevel.none with
                 In = true
@@ -643,7 +684,7 @@ module TestSocketTable =
         let kernel =
             forge [ 3, OpenFileDescriptionId 10L, OpenFileTarget.Socket (SocketId 0L) ] [ 0L, someSocket ] 1L
 
-        UnixMachineState.socketReadinessLevel (SocketId 0L) kernel.Machine
+        UnixMachineState.socketReadinessLevel (SocketId 0L) (Kernel.machine kernel)
         |> shouldEqual
             { ReadinessLevel.none with
                 Out = true
@@ -666,7 +707,7 @@ module TestSocketTable =
                 ]
                 1L
 
-        UnixMachineState.socketReadinessLevel (SocketId 0L) kernel.Machine
+        UnixMachineState.socketReadinessLevel (SocketId 0L) (Kernel.machine kernel)
         |> shouldEqual
             { ReadinessLevel.none with
                 Out = true
@@ -688,7 +729,7 @@ module TestSocketTable =
                 ]
                 1L
 
-        UnixMachineState.socketReadinessLevel (SocketId 0L) kernel.Machine
+        UnixMachineState.socketReadinessLevel (SocketId 0L) (Kernel.machine kernel)
         |> shouldEqual
             {
                 In = true
@@ -759,7 +800,6 @@ module TestSocketTable =
                                 {
                                     Backlog = backlog
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                 for i in 1..clients -> int64 i, someSocket
@@ -774,7 +814,7 @@ module TestSocketTable =
         : SyscallAnswer * UnixSystem<int, string>
         =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 client
                 nonBlocking
                 16u
@@ -793,7 +833,7 @@ module TestSocketTable =
         : ConnectRefusal
         =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 client
                 false
                 16u
@@ -813,18 +853,18 @@ module TestSocketTable =
         let outcome, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        let client = UnixMachineState.socket (SocketId 1L) kernel.Machine
+        let client = UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)
 
         let connectionId =
             match client.Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase with
         | SocketPhase.Listening listenState -> ListenState.connections listenState |> shouldEqual [ connectionId ]
         | other -> failwith $"expected Listening, got %A{other}"
 
-        let tcpConnection = UnixMachineState.connection connectionId kernel.Machine
+        let tcpConnection = UnixMachineState.connection connectionId (Kernel.machine kernel)
         tcpConnection.ServerAddress |> shouldEqual (loopback 5000us)
 
         // The implicit bind: loopback, a nonzero port from the ephemeral
@@ -833,7 +873,7 @@ module TestSocketTable =
         | None -> failwith "expected the connect to bind the client implicitly"
         | Some binding ->
             binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
-            let low, high = kernel.Machine.EphemeralPortRange
+            let low, high = UnixSystem.ephemeralPortRange kernel
 
             (binding.Endpoint.Port >= low && binding.Endpoint.Port <= high)
             |> shouldEqual true
@@ -849,11 +889,11 @@ module TestSocketTable =
         let _, kernel = connect (SocketId 2L) false (loopback 5000us) kernel
 
         let connectionOf (client : int64) =
-            match (UnixMachineState.socket (SocketId client) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId client) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase with
         | SocketPhase.Listening listenState ->
             ListenState.connections listenState
             |> shouldEqual [ connectionOf 1L ; connectionOf 2L ]
@@ -870,14 +910,14 @@ module TestSocketTable =
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
 
         let connectionId =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
             | SocketPhase.EstablishedPendingReport connectionId -> connectionId
             | other -> failwith $"expected EstablishedPendingReport, got %A{other}"
 
         let outcome, kernel = connect (SocketId 1L) true (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
         | SocketPhase.Established (reported, ConnectionEnd.Client) -> reported |> shouldEqual connectionId
         | other -> failwith $"expected Established, got %A{other}"
 
@@ -889,22 +929,23 @@ module TestSocketTable =
         let kernel =
             let baseKernel = listenerAndClients 8 5000us 1
 
-            { baseKernel with
-                Machine =
-                    { baseKernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         UnixPlatform = SimulatedUnixPlatform.macOsArm64
                         // The TCP buffer sysctls are the flavour's, which a connect reads.
                         TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
                         TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace SimulatedUnixFlavour.Darwin
                         TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax SimulatedUnixFlavour.Darwin
                     }
-            }
+                )
+                baseKernel
 
         let outcome, kernel = connect (SocketId 1L) true (loopback 5000us) kernel
 
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
 
-        match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
         | SocketPhase.Established _ -> ()
         | other -> failwith $"expected Established, got %A{other}"
 
@@ -922,14 +963,14 @@ module TestSocketTable =
 
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.Refused RefusalError.Pending)
 
         let outcome, kernel = connect (SocketId 0L) true (loopback 9999us) kernel
 
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual SocketPhase.Idle
 
         let outcome, _ = connect (SocketId 0L) true (loopback 9999us) kernel
@@ -940,16 +981,17 @@ module TestSocketTable =
         let darwin =
             let baseKernel = fresh ()
 
-            { baseKernel with
-                Machine =
-                    { baseKernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         UnixPlatform = SimulatedUnixPlatform.macOsArm64
                         // The TCP buffer sysctls are the flavour's, which a connect reads.
                         TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
                         TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace SimulatedUnixFlavour.Darwin
                         TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax SimulatedUnixFlavour.Darwin
                     }
-            }
+                )
+                baseKernel
 
         let _, darwinPending = connect (SocketId 0L) true (loopback 9999us) darwin
 
@@ -958,7 +1000,7 @@ module TestSocketTable =
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EISCONN)
         kernel |> shouldEqual darwinPending
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.Refused RefusalError.Pending)
 
         let outcome, _ = connect (SocketId 0L) true (loopback 9999us) kernel
@@ -970,7 +1012,7 @@ module TestSocketTable =
 
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.Refused RefusalError.Reported)
 
         let outcome, afterRetry = connect (SocketId 0L) true (loopback 9999us) kernel
@@ -982,11 +1024,11 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 1
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1000,18 +1042,19 @@ module TestSocketTable =
                                                 })
                                             someSocket.Addressing
                                 }
-                                kernel.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                kernel
 
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
 
         let connectionId =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        (UnixMachineState.connection connectionId kernel.Machine).ClientAddress
+        (UnixMachineState.connection connectionId (Kernel.machine kernel)).ClientAddress
         |> shouldEqual (loopback 4444us)
 
     /// Both error directions of the capacity boundary matter: recording where
@@ -1035,16 +1078,17 @@ module TestSocketTable =
         let kernel =
             let baseKernel = listenerAndClients 1 5000us 2
 
-            { baseKernel with
-                Machine =
-                    { baseKernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         UnixPlatform = SimulatedUnixPlatform.macOsArm64
                         // The TCP buffer sysctls are the flavour's, which a connect reads.
                         TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
                         TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace SimulatedUnixFlavour.Darwin
                         TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax SimulatedUnixFlavour.Darwin
                     }
-            }
+                )
+                baseKernel
 
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
 
@@ -1102,7 +1146,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = []
-                                    Drained = false
                                 }
                     }
                     1L, someSocket
@@ -1110,12 +1153,13 @@ module TestSocketTable =
                 2L
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextEventRegistrationOrdinal = 1L
                     }
-            }
+                )
+                kernel
 
         hasDeliverableEpollEvents (OpenFileDescriptionId 50L) kernel
         |> shouldEqual false
@@ -1139,29 +1183,34 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 2
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            kernel.Machine.Sockets
-                            |> Map.add
+                            machine.Sockets
+                            |> SocketTable.set
                                 (SocketId 0L)
-                                { UnixMachineState.socket (SocketId 0L) kernel.Machine with
+                                { UnixMachineState.socket (SocketId 0L) machine with
                                     ReuseAddress = true
                                 }
                     }
-            }
+                )
+                kernel
 
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
         let _, kernel = connect (SocketId 2L) false (loopback 5000us) kernel
 
         let connectionOf (client : int64) =
-            match (UnixMachineState.socket (SocketId client) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId client) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        let fd, tcpConnection, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
-        let firstClient = UnixMachineState.connection (connectionOf 1L) kernel.Machine
+        let fd, tcpConnection, kernel =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
+
+        let firstClient =
+            UnixMachineState.connection (connectionOf 1L) (Kernel.machine kernel)
+
         tcpConnection |> shouldEqual firstClient
 
         let acceptedId =
@@ -1172,7 +1221,7 @@ module TestSocketTable =
                 | other -> failwith $"expected a socket target, got %O{other}"
             | None -> failwith "the accepted descriptor is not live"
 
-        let accepted = UnixMachineState.socket acceptedId kernel.Machine
+        let accepted = UnixMachineState.socket acceptedId (Kernel.machine kernel)
 
         accepted.Phase
         |> shouldEqual (SocketPhase.Established (connectionOf 1L, ConnectionEnd.Server))
@@ -1190,16 +1239,18 @@ module TestSocketTable =
 
         accepted.ReuseAddress |> shouldEqual true
 
-        match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase with
+        match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase with
         | SocketPhase.Listening listenState -> ListenState.connections listenState |> shouldEqual [ connectionOf 2L ]
         | other -> failwith $"expected Listening, got %A{other}"
 
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
-        let _, _, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
+        let _, _, kernel = Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
 
         let e =
-            Assert.Throws<System.Exception> (fun () -> UnixConnection.acceptConnection (SocketId 0L) kernel |> ignore)
+            Assert.Throws<System.Exception> (fun () ->
+                Lone.UnixConnection.acceptConnection (SocketId 0L) kernel |> ignore
+            )
 
         e.Message |> shouldContainText "the accept queue is empty"
 
@@ -1209,10 +1260,12 @@ module TestSocketTable =
     let ``closing the last reference sweeps the connection`` () : unit =
         let kernel = listenerAndClients 8 5000us 1
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
-        let acceptedFd, _, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
+
+        let acceptedFd, _, kernel =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
 
         let connectionId =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
@@ -1223,7 +1276,9 @@ module TestSocketTable =
             | Ok kernel -> kernel
             | Error e -> failwith $"expected close to succeed, got %O{e}"
 
-        Map.containsKey connectionId kernel.Machine.Connections |> shouldEqual true
+        Map.containsKey connectionId (Kernel.machine kernel).Connections
+        |> shouldEqual true
+
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         // The accepted socket dies too; nothing references the connection.
@@ -1232,7 +1287,9 @@ module TestSocketTable =
             | Ok kernel -> kernel
             | Error e -> failwith $"expected close to succeed, got %O{e}"
 
-        Map.containsKey connectionId kernel.Machine.Connections |> shouldEqual false
+        Map.containsKey connectionId (Kernel.machine kernel).Connections
+        |> shouldEqual false
+
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// A queued connection outlives its client (measured: accept still returns
@@ -1243,7 +1300,7 @@ module TestSocketTable =
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
 
         let connectionId =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
@@ -1254,7 +1311,9 @@ module TestSocketTable =
 
         // Still queued, so still alive — this is what lets a later accept
         // return it.
-        Map.containsKey connectionId kernel.Machine.Connections |> shouldEqual true
+        Map.containsKey connectionId (Kernel.machine kernel).Connections
+        |> shouldEqual true
+
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         let kernel =
@@ -1262,7 +1321,9 @@ module TestSocketTable =
             | Ok kernel -> kernel
             | Error e -> failwith $"expected close to succeed, got %O{e}"
 
-        Map.containsKey connectionId kernel.Machine.Connections |> shouldEqual false
+        Map.containsKey connectionId (Kernel.machine kernel).Connections
+        |> shouldEqual false
+
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
     /// A datagram connect stores the peer it was given — a value with no other
@@ -1285,20 +1346,20 @@ module TestSocketTable =
         let outcome, kernel = connect (SocketId 0L) false (loopback 9999us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.DatagramPeer (SocketAddress.Inet (loopback 9999us)))
 
         // Re-connect re-targets.
         let _, kernel = connect (SocketId 0L) false (loopback 1234us) kernel
 
-        (UnixMachineState.socket (SocketId 0L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.DatagramPeer (SocketAddress.Inet (loopback 1234us)))
 
         // AF_UNSPEC dissolves on Linux, and — measured, unlike TCP's reset —
         // drops the implicit binding entirely, port included.
         let outcome, kernel =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     (SocketId 0L)
                     false
                     16u
@@ -1312,7 +1373,7 @@ module TestSocketTable =
             | Error refusal -> failwith $"connect refused: %s{ConnectRefusal.describe refusal}"
 
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
-        let socket = UnixMachineState.socket (SocketId 0L) kernel.Machine
+        let socket = UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)
         socket.Phase |> shouldEqual SocketPhase.Idle
         socket.Ipv4Binding |> shouldEqual None
 
@@ -1320,26 +1381,27 @@ module TestSocketTable =
         let outcome, kernel = connect (SocketId 0L) false (loopback 1234us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Ipv4Binding with
+        match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Ipv4Binding with
         | Some binding -> (binding.Endpoint.Port > 0us) |> shouldEqual true
         | None -> failwith "expected the re-connect to bind the socket"
 
         // Darwin refuses the dissolve instead.
         let darwin =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         UnixPlatform = SimulatedUnixPlatform.macOsArm64
                         // The TCP buffer sysctls are the flavour's, which a connect reads.
                         TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
                         TcpReceiveSpace = UnixMachineState.defaultTcpReceiveSpace SimulatedUnixFlavour.Darwin
                         TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax SimulatedUnixFlavour.Darwin
                     }
-            }
+                )
+                kernel
 
         let outcome, _ =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     (SocketId 0L)
                     false
                     16u
@@ -1395,7 +1457,6 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = [ ForgedConnection.queued (ConnectionId 5L) ]
-                                    Drained = false
                                 }
                     }
                 ]
@@ -1410,22 +1471,24 @@ module TestSocketTable =
             forge [ 3, OpenFileDescriptionId 10L, OpenFileTarget.Socket (SocketId 0L) ] [ 0L, someSocket ] 1L
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Connections =
                             Map.ofList
                                 [
                                     ConnectionId 2L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
-                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
+                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet machine
                                     }
                                 ]
                         NextConnectionId = ConnectionId 1L
                     }
-            }
+                )
+                kernel
 
         UnixSystem.checkInvariants kernel
         |> shouldEqual
@@ -1481,34 +1544,39 @@ module TestSocketTable =
                                 {
                                     Backlog = 8
                                     Queue = List.map ForgedConnection.queued [ ConnectionId 0L ; ConnectionId 0L ]
-                                    Drained = false
                                 }
                     }
                 ]
                 1L
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Connections =
                             Map.ofList
                                 [
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
                                         // No socket is the client end: it has
                                         // closed.
                                         Transfer =
-                                            TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
-                                            |> TcpTransfer.close ConnectionEnd.Client false
+                                            TcpBufferSizing.newTransfer SocketDomain.Inet machine
+                                            |> TcpTransfer.close
+                                                ConnectionEnd.Client
+                                                false
+                                                PortHold.Connected
+                                                UserId.root
                                             |> snd
                                     }
                                 ]
                         NextConnectionId = ConnectionId 1L
                     }
-            }
+                )
+                kernel
 
         UnixSystem.checkInvariants kernel
         |> shouldEqual [ UnixSystemDefect.DuplicateQueuedConnection (ConnectionId 0L) ]
@@ -1556,33 +1624,40 @@ module TestSocketTable =
                  ))
                 (int64 phases.Length)
 
-        { kernel with
-            Machine =
-                { kernel.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Connections =
                         Map.ofList
                             [
                                 ConnectionId 0L,
                                 {
                                     ClientAddress = loopback 1us
+                                    FinsExchangedAt = None
                                     ServerAddress = loopback 2us
                                     Transfer =
-                                        (TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine, closed)
+                                        (TcpBufferSizing.newTransfer SocketDomain.Inet machine, closed)
                                         ||> List.fold (fun transfer closer ->
-                                            TcpTransfer.close closer false transfer |> snd
+                                            TcpTransfer.close
+                                                closer
+                                                false
+                                                (ForgedConnection.portHold closer)
+                                                UserId.root
+                                                transfer
+                                            |> snd
                                         )
                                 }
                             ]
                     NextConnectionId = ConnectionId 1L
                 }
-        }
+            )
+            kernel
 
     let private queuing (connections : ConnectionId list) : SocketPhase =
         SocketPhase.Listening
             {
                 Backlog = 8
                 Queue = List.map ForgedConnection.queued connections
-                Drained = false
             }
 
     /// A connection has one client and one server: the server end is queued
@@ -1668,13 +1743,13 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 1
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 0L)
-                                { UnixMachineState.socket (SocketId 0L) kernel.Machine with
+                                { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
                                         SocketAddressing.replaceBinding
                                             (Some
@@ -1684,24 +1759,25 @@ module TestSocketTable =
                                                     LockedPort = false
                                                     PortHold = PortHold.Reserved
                                                 })
-                                            (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
+                                            (UnixMachineState.socket (SocketId 0L) machine).Addressing
                                 }
-                                kernel.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                kernel
 
         let outcome, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
         let connectionId =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase with
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
         // The connection's server address is the *destination*, not the
         // wildcard the listener bound: the accepted socket's getsockname
         // reports loopback.
-        (UnixMachineState.connection connectionId kernel.Machine).ServerAddress
+        (UnixMachineState.connection connectionId (Kernel.machine kernel)).ServerAddress
         |> shouldEqual (loopback 5000us)
 
     /// The somaxconn clamp, at a forged sysctl of 3 so the boundary is in
@@ -1714,12 +1790,13 @@ module TestSocketTable =
             let kernel =
                 let baseKernel = listenerAndClients backlog 5000us 5
 
-                { baseKernel with
-                    Machine =
-                        { baseKernel.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             SoMaxConn = 3
                         }
-                }
+                    )
+                    baseKernel
 
             // Capacity is somaxconn + 1 = 4: four connects land, the fifth
             // refuses.
@@ -1741,9 +1818,9 @@ module TestSocketTable =
             let kernel =
                 let baseKernel = listenerAndClients backlog 5000us 4
 
-                { baseKernel with
-                    Machine =
-                        { baseKernel.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             UnixPlatform = SimulatedUnixPlatform.macOsArm64
                             // The TCP buffer sysctls are the flavour's, which a connect reads.
                             TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
@@ -1751,7 +1828,8 @@ module TestSocketTable =
                             TcpSendSpaceMax = UnixMachineState.defaultTcpSendSpaceMax SimulatedUnixFlavour.Darwin
                             SoMaxConn = 3
                         }
-                }
+                    )
+                    baseKernel
 
             // Capacity is exactly somaxconn = 3.
             let kernel =
@@ -1774,11 +1852,11 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 1
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -1792,14 +1870,15 @@ module TestSocketTable =
                                                 })
                                             someSocket.Addressing
                                 }
-                                kernel.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                kernel
 
         let outcome, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        let client = UnixMachineState.socket (SocketId 1L) kernel.Machine
+        let client = UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)
 
         client.Ipv4Binding
         |> shouldEqual (
@@ -1817,7 +1896,7 @@ module TestSocketTable =
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        (UnixMachineState.connection connectionId kernel.Machine).ClientAddress
+        (UnixMachineState.connection connectionId (Kernel.machine kernel)).ClientAddress
         |> shouldEqual (loopback 4444us)
 
     /// The largest configurable sysctl must not wrap the Linux `+ 1`: a
@@ -1827,12 +1906,13 @@ module TestSocketTable =
         let kernel =
             let baseKernel = listenerAndClients System.Int32.MaxValue 5000us 1
 
-            { baseKernel with
-                Machine =
-                    { baseKernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         SoMaxConn = System.Int32.MaxValue
                     }
-            }
+                )
+                baseKernel
 
         let outcome, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -1874,24 +1954,25 @@ module TestSocketTable =
                     forge [ 3, OpenFileDescriptionId 10L, OpenFileTarget.Socket (SocketId 0L) ] [ 0L, someSocket ] 1L
 
                 let kernel =
-                    { kernel with
-                        Machine =
-                            { kernel.Machine with
+                    Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
                                 UnixPlatform =
                                     if darwin then
                                         SimulatedUnixPlatform.macOsArm64
                                     else
-                                        kernel.Machine.UnixPlatform
+                                        machine.UnixPlatform
                                 Sockets =
-                                    Map.add
+                                    SocketTable.set
                                         (SocketId 0L)
                                         { someSocket with
                                             Addressing =
                                                 SocketAddressing.replaceBinding preBinding someSocket.Addressing
                                         }
-                                        kernel.Machine.Sockets
+                                        machine.Sockets
                             }
-                    }
+                        )
+                        kernel
 
                 let start = kernel
 
@@ -1902,7 +1983,7 @@ module TestSocketTable =
                 // While the refusal pends, the source reads as resolved
                 // loopback with a nonzero port on both flavours.
                 let pending =
-                    match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Ipv4Binding with
                     | Some binding -> binding
                     | None -> failwith "expected the pending attempt to have bound the socket"
 
@@ -1916,7 +1997,7 @@ module TestSocketTable =
                 |> shouldEqual (SyscallAnswer.Failed (if darwin then UnixError.EISCONN else UnixError.ECONNREFUSED))
 
                 let delivered =
-                    match (UnixMachineState.socket (SocketId 0L) kernel.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (SocketId 0L) (Kernel.machine kernel)).Ipv4Binding with
                     | Some binding -> binding
                     | None -> failwith "expected the retry to keep the socket bound"
 
@@ -1929,7 +2010,7 @@ module TestSocketTable =
                     let outcome, blocked = connect (SocketId 0L) false (loopback 9999us) start
                     outcome |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-                    match (UnixMachineState.socket (SocketId 0L) blocked.Machine).Ipv4Binding with
+                    match (UnixMachineState.socket (SocketId 0L) (Kernel.machine blocked)).Ipv4Binding with
                     | Some binding -> binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
                     | None -> failwith "expected the blocking refusal to keep the socket bound"
 
@@ -1965,9 +2046,9 @@ module TestSocketTable =
                     ]
                     2L
 
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         UnixPlatform = SimulatedUnixPlatform.macOsArm64
                         // The TCP buffer sysctls are the flavour's, which a connect reads.
                         TcpSendSpace = UnixMachineState.defaultTcpSendSpace SimulatedUnixFlavour.Darwin
@@ -1976,7 +2057,8 @@ module TestSocketTable =
                         Connections = connections
                         NextConnectionId = ConnectionId 1L
                     }
-            }
+                )
+                kernel
 
         // Bound and idle: the measured dropped-SYN refusal.
         connectRefused (SocketId 1L) (loopback 5000us) (kernelWith SocketPhase.Idle Map.empty)
@@ -1993,6 +2075,7 @@ module TestSocketTable =
                         ConnectionId 0L,
                         {
                             ClientAddress = loopback 4000us
+                            FinsExchangedAt = None
                             ServerAddress = loopback 5000us
                             Transfer = TcpTransfer.create SimulatedUnixFlavour.Darwin 146988 408300
                         }
@@ -2002,7 +2085,7 @@ module TestSocketTable =
 
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-        (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase
+        (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Phase
         |> shouldEqual (SocketPhase.Refused RefusalError.Reported)
 
         // A refused socket's port likewise answers RST.
@@ -2027,14 +2110,14 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 1
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            kernel.Machine.Sockets
-                            |> Map.add
+                            machine.Sockets
+                            |> SocketTable.set
                                 (SocketId 0L)
-                                { UnixMachineState.socket (SocketId 0L) kernel.Machine with
+                                { UnixMachineState.socket (SocketId 0L) machine with
                                     Addressing =
                                         SocketAddressing.replaceBinding
                                             (Some
@@ -2044,9 +2127,9 @@ module TestSocketTable =
                                                     LockedPort = true
                                                     PortHold = PortHold.Reserved
                                                 })
-                                            (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
+                                            (UnixMachineState.socket (SocketId 0L) machine).Addressing
                                 }
-                            |> Map.add
+                            |> SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -2061,7 +2144,8 @@ module TestSocketTable =
                                             someSocket.Addressing
                                 }
                     }
-            }
+                )
+                kernel
 
         let e =
             Assert.Throws<System.Exception> (fun () -> connect (SocketId 1L) false (loopback 5000us) kernel |> ignore)
@@ -2073,11 +2157,11 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 2
 
         let boundAt (socketId : int64) (kernel : UnixSystem<int, string>) =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId socketId)
                                 { someSocket with
                                     Addressing =
@@ -2091,9 +2175,10 @@ module TestSocketTable =
                                                 })
                                             someSocket.Addressing
                                 }
-                                kernel.Machine.Sockets
+                                machine.Sockets
                     }
-            }
+                )
+                kernel
 
         let kernel = kernel |> boundAt 1L |> boundAt 2L
         let outcome, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
@@ -2113,18 +2198,19 @@ module TestSocketTable =
         let kernel =
             let baseKernel = listenerAndClients 8 5000us 2
 
-            { baseKernel with
-                Machine =
-                    { baseKernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         EphemeralPortRange = 40000us, 40001us
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                baseKernel
 
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
 
         let firstPort =
-            match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Ipv4Binding with
+            match (UnixMachineState.socket (SocketId 1L) (Kernel.machine kernel)).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
             | None -> failwith "expected the connect to bind the client"
 
@@ -2139,18 +2225,19 @@ module TestSocketTable =
         // Rewind the cursor onto the occupied port, as a wrapped sweep would
         // land: the hazard is precisely the allocator re-offering it.
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextEphemeralPort = 40000us
                     }
-            }
+                )
+                kernel
 
         // The next client must take the other port rather than colliding.
         let outcome, kernel = connect (SocketId 2L) false (loopback 5000us) kernel
         outcome |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match (UnixMachineState.socket (SocketId 2L) kernel.Machine).Ipv4Binding with
+        match (UnixMachineState.socket (SocketId 2L) (Kernel.machine kernel)).Ipv4Binding with
         | Some binding -> binding.Endpoint.Port |> shouldEqual 40001us
         | None -> failwith "expected the connect to bind the client"
 
@@ -2161,11 +2248,11 @@ module TestSocketTable =
         let kernel = listenerAndClients 8 5000us 1
 
         let kernel =
-            { kernel with
-                Machine =
-                    { kernel.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 (SocketId 1L)
                                 { someSocket with
                                     Addressing =
@@ -2179,7 +2266,7 @@ module TestSocketTable =
                                                 })
                                             someSocket.Addressing
                                 }
-                                kernel.Machine.Sockets
+                                machine.Sockets
                         Connections =
                             Map.ofList
                                 [
@@ -2189,13 +2276,15 @@ module TestSocketTable =
                                         // from the listener's endpoint to the
                                         // client's.
                                         ClientAddress = loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 4444us
-                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
+                                        Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet machine
                                     }
                                 ]
                         NextConnectionId = ConnectionId 1L
                     }
-            }
+                )
+                kernel
 
         let e =
             Assert.Throws<System.Exception> (fun () -> connect (SocketId 1L) false (loopback 5000us) kernel |> ignore)

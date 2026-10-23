@@ -38,15 +38,62 @@ type LinuxKernelVersion =
     override this.ToString () : string =
         $"%d{this.Major}.%d{this.Minor}.%d{this.Patch}"
 
-/// Which kernel a `SimulatedUnixPlatform` runs, with whatever the facts this
-/// library derives from that kernel's source vary over.
+/// A Darwin kernel's version: the major, minor and revision numbers of the XNU
+/// source tree it was built from (its `config/MasterVersion`, which
+/// `<libkern/version.h>` exposes as `version_major`, `version_minor` and
+/// `version_revision`), and which a real `uname -r` prints: 27.0.0 on macOS 27.0.
+///
+/// This is the Darwin version, not the macOS product version and not XNU's
+/// project tag (`xnu-13432.1.9`), and it plays the part for Darwin that
+/// `LinuxKernelVersion` plays for Linux: a fact this library derives from
+/// Darwin's source that changed between versions follows this, never the
+/// platform's release string.
+///
+/// Ordered by `VersionMajor`, then `VersionMinor`, then `VersionRevision`,
+/// which is the order of the fields, so the structural comparison F# derives is
+/// the version order.
+type DarwinKernelVersion =
+    {
+        /// `version_major`: 27 in 27.0.0.
+        VersionMajor : uint32
+        /// `version_minor`: 0 in 27.0.0.
+        VersionMinor : uint32
+        /// `version_revision`: 0 in 27.0.0.
+        VersionRevision : uint32
+    }
+
+    override this.ToString () : string =
+        $"%d{this.VersionMajor}.%d{this.VersionMinor}.%d{this.VersionRevision}"
+
+/// How a Linux kernel was built, for the facts this library derives from it
+/// that follow the configuration its source was compiled with, rather than
+/// the source's version or the architecture: two kernels of one version, built
+/// for one architecture, can differ in these.
+///
+/// That is one fact so far: what a socket receiving a datagram over loopback
+/// is charged for the smallest buffer the datagram can arrive in (its
+/// `truesize`). The charge of every larger datagram follows from it. Only
+/// builds that have been measured are cases.
+[<RequireQualifiedAccess>]
+type LinuxKernelBuild =
+    /// The smallest buffer is charged 832 bytes, and holds a datagram of up to
+    /// 197 bytes. Measured on Apple's `container` kernel, 6.18.5 for arm64
+    /// (`docs/plans/2026-10-18-udp-data-path/udp-truesize.c`).
+    | SmallBuffer832
+    /// The smallest buffer is charged 960 bytes, and holds a datagram of up to
+    /// 325 bytes. Measured on the Azure kernels of GitHub's `ubuntu-24.04`
+    /// runners, 6.17.0-1022 and 7.0.0-1017, each for x86-64 and arm64.
+    | SmallBuffer960
+
+/// Which kernel a `SimulatedUnixPlatform` runs, and the version of the source
+/// it was built from, which the facts this library derives from that source
+/// may vary over.
 [<RequireQualifiedAccess>]
 type SimulatedUnixKernel =
-    /// Linux, built from this version's source.
-    | Linux of LinuxKernelVersion
-    /// Darwin. No fact this library derives from Darwin's source varies between
-    /// its versions yet, so none is recorded.
-    | Darwin
+    /// Linux, built from this version's source as `build` says.
+    | Linux of version : LinuxKernelVersion * build : LinuxKernelBuild
+    /// Darwin, built from this version's source.
+    | Darwin of DarwinKernelVersion
 
 [<RequireQualifiedAccess>]
 module SimulatedUnixKernel =
@@ -54,7 +101,7 @@ module SimulatedUnixKernel =
     let flavour (kernel : SimulatedUnixKernel) : SimulatedUnixFlavour =
         match kernel with
         | SimulatedUnixKernel.Linux _ -> SimulatedUnixFlavour.Linux
-        | SimulatedUnixKernel.Darwin -> SimulatedUnixFlavour.Darwin
+        | SimulatedUnixKernel.Darwin _ -> SimulatedUnixFlavour.Darwin
 
 /// Why a combination of kernel, architecture, page size and release is not a
 /// `SimulatedUnixPlatform`.
@@ -81,8 +128,8 @@ type SimulatedUnixPlatformError =
 /// letting the host leak in here would change their *control flow* between
 /// runs.
 ///
-/// Modelled as a kernel (a flavour, and for Linux the version of the source it
-/// was built from), an architecture, a page size and a release string, each of
+/// Modelled as a kernel (a flavour, the version of the source it was built
+/// from, and for Linux how it was built), an architecture, a page size and a release string, each of
 /// which a kernel image is built with, rather than as a bag of loose
 /// `utsname` fields, so that the facts we report stay mutually consistent as
 /// more of `utsname` gets modelled: its machine field would be a total
@@ -94,7 +141,8 @@ type SimulatedUnixPlatformError =
 /// combinations whose facts have been measured.
 ///
 /// The release string is identity alone: no fact follows from it. A fact that
-/// changed between Linux versions follows the kernel's `LinuxKernelVersion`.
+/// changed between versions of a kernel follows the kernel's version
+/// (`LinuxKernelVersion` or `DarwinKernelVersion`).
 ///
 /// Construct with `SimulatedUnixPlatform.linuxX64`, `linuxArm64`, `macOsArm64`,
 /// or `create` for a specific kernel and release string.
@@ -111,8 +159,8 @@ type SimulatedUnixPlatform =
     override this.ToString () : string =
         let kernel =
             match this.Kernel with
-            | SimulatedUnixKernel.Linux version -> $"Linux %O{version}"
-            | SimulatedUnixKernel.Darwin -> "Darwin"
+            | SimulatedUnixKernel.Linux (version, build) -> $"Linux %O{version} (%O{build})"
+            | SimulatedUnixKernel.Darwin version -> $"Darwin %O{version}"
 
         $"%s{kernel} %O{this.Architecture} %O{this.PageSize} %s{this.Release}"
 
@@ -125,8 +173,13 @@ type SimulatedUnixPlatform =
             && this.Release = other.Release
         | _ -> false
 
+    // Folded by hand rather than with `HashCode.Combine` or the release's own
+    // `GetHashCode`, both of whose seeds differ from one process to the next.
     override this.GetHashCode () : int =
-        System.HashCode.Combine (this.Kernel, this.Architecture, this.PageSize, this.Release)
+        let fields =
+            ((hash this.Kernel * 31) + hash this.Architecture) * 31 + hash this.PageSize
+
+        this.Release |> Seq.fold (fun acc c -> acc * 31 + int c) fields
 
 /// What `getcwd(3)` answers when the current directory has been *removed* — so
 /// there is no path to report — and how small a buffer can still change that
@@ -228,6 +281,26 @@ type GetSockNameFaultLength =
     /// attempting the copy that then faulted.
     | AlreadyReported
 
+/// How a Linux UDP socket decides whether a datagram arriving at it fits its
+/// receive buffer (`SO_RCVBUF`), against a charge that includes what was taken
+/// and not yet given back.
+[<RequireQualifiedAccess>]
+type internal LinuxDatagramAdmission =
+    /// Admitted while the charge already held is at most the buffer, so the
+    /// datagram admitted last may take the charge past it.
+    | WhileHeldFits
+    /// Admitted only when the charge held and the datagram's own fit the buffer
+    /// together.
+    | WhenBothFit
+
+/// The rules a platform's UDP receive side keeps that a platform fact varies:
+/// on Linux the build's charges and the version's admission. Darwin's follow
+/// from its flavour alone.
+[<RequireQualifiedAccess>]
+type internal DatagramReceiveRules =
+    | Linux of build : LinuxKernelBuild * admission : LinuxDatagramAdmission
+    | Darwin
+
 /// What a kernel does with the buffer size a `readlink(2)` caller passed,
 /// before it copies anything. `SimulatedUnixPlatform.readlinkCapacity`.
 [<RequireQualifiedAccess>]
@@ -275,8 +348,11 @@ type internal EphemeralSearchCall =
     | Bind
     /// `listen(2)` on a socket holding no port.
     | Listen
-    /// `connect(2)` on a socket holding no port.
+    /// `connect(2)` on a stream socket holding no port.
     | Connect
+    /// `connect(2)` or `write(2)` on a datagram socket holding no port, which
+    /// Linux binds as `bind(2)` of port 0 would before the call goes on.
+    | DatagramAutobind
 
 [<RequireQualifiedAccess>]
 module SimulatedUnixPlatform =
@@ -333,8 +409,8 @@ module SimulatedUnixPlatform =
     /// A platform running `kernel`, built for `architecture` with pages of
     /// `pageSize`, reporting `release` from `uname -r`.
     ///
-    /// `release` need not agree with a Linux kernel's version: it is what a
-    /// process reads, and nothing else follows from it.
+    /// `release` need not agree with the kernel's version: it is what a process
+    /// reads, and nothing else follows from it.
     ///
     /// Validated here rather than when a fact is read, which is what makes
     /// every accessor below total: a value of this type is a platform some Unix
@@ -376,6 +452,10 @@ module SimulatedUnixPlatform =
                 Release = release
             }
 
+    /// `create`, throwing for what it refuses, with `context` in the message:
+    /// `ArgumentException` for a release string no `uname -r` could print, and
+    /// `UnmodelledException` for a combination of kernel, architecture and
+    /// page size that nobody has measured.
     let createOrFail
         (context : string)
         (kernel : SimulatedUnixKernel)
@@ -386,7 +466,13 @@ module SimulatedUnixPlatform =
         =
         match create kernel architecture pageSize release with
         | Ok platform -> platform
-        | Error error -> failwith $"%s{context}: %s{describeError error}"
+        | Error error ->
+            let kind =
+                match error with
+                | SimulatedUnixPlatformError.Release _ -> RefusalKind.Contradictory "release"
+                | SimulatedUnixPlatformError.UnmeasuredKernel _ -> RefusalKind.Unmodelled
+
+            raise (Refusal.exceptionOf context kind (describeError error))
 
     /// 64-bit x86 Linux with 4 KiB pages, at a kernel release a real machine was running (a
     /// GitHub Actions Ubuntu runner's): the release this reports, and the
@@ -404,12 +490,14 @@ module SimulatedUnixPlatform =
     let linuxX64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.linuxX64"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 17u
                     Patch = 0u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer960
+            ))
             SimulatedUnixArchitecture.X64
             SimulatedPageSize.FourKiB
             "6.17.0-1022-azure"
@@ -420,23 +508,31 @@ module SimulatedUnixPlatform =
     let linuxArm64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.linuxArm64"
-            (SimulatedUnixKernel.Linux
+            (SimulatedUnixKernel.Linux (
                 {
                     Major = 6u
                     Minor = 18u
                     Patch = 5u
-                })
+                },
+                LinuxKernelBuild.SmallBuffer832
+            ))
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.FourKiB
             "6.18.5"
 
     /// 64-bit ARM macOS 27.0, whose pages are 16 KiB. The release is the
-    /// *Darwin* kernel's, so `27.0.0` rather than `27.0`; as for `linuxX64`, it
-    /// names the kernel the Darwin behaviour below was measured against.
+    /// *Darwin* kernel's, so `27.0.0` rather than `27.0`, and so is the kernel
+    /// version 27.0.0 the behaviour below follows; as for `linuxX64`, they name
+    /// the kernel the Darwin behaviour below was measured against.
     let macOsArm64 : SimulatedUnixPlatform =
         createOrFail
             "SimulatedUnixPlatform.macOsArm64"
-            SimulatedUnixKernel.Darwin
+            (SimulatedUnixKernel.Darwin
+                {
+                    VersionMajor = 27u
+                    VersionMinor = 0u
+                    VersionRevision = 0u
+                })
             SimulatedUnixArchitecture.Arm64
             SimulatedPageSize.SixteenKiB
             "27.0.0"
@@ -445,8 +541,8 @@ module SimulatedUnixPlatform =
     let flavour (platform : SimulatedUnixPlatform) : SimulatedUnixFlavour =
         SimulatedUnixKernel.flavour platform.Kernel
 
-    /// Which kernel this platform runs, and for Linux the version of the source
-    /// it was built from.
+    /// Which kernel this platform runs, and the version of the source it was
+    /// built from.
     let kernel (platform : SimulatedUnixPlatform) : SimulatedUnixKernel = platform.Kernel
 
     /// The instruction set this platform's processes run as.
@@ -464,22 +560,31 @@ module SimulatedUnixPlatform =
     /// Re-check the invariant of a value that may not have come from `create`.
     /// See `FileName.assertValid`: the only value this can reject is
     /// `Unchecked.defaultof` / C# `default`, whose null release would otherwise
-    /// be handed to a process as its `uname -r`.
+    /// be handed to a process as its `uname -r`. That value is null, and
+    /// throws `ArgumentNullException`, with `context` in the message.
     let assertValid (context : string) (platform : SimulatedUnixPlatform) : SimulatedUnixPlatform =
         // A record is a reference type, so the forged value is `null` itself
         // rather than a record with a null field — and reading `Flavour` off it
         // would throw a `NullReferenceException` naming nothing useful.
         match box platform with
         | null ->
-            failwith
-                $"%s{context}: the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Null "platform")
+                    "the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            )
         | _ ->
 
         match create platform.Kernel platform.Architecture platform.PageSize platform.Release with
         | Ok _ -> platform
         | Error error ->
-            failwith
-                $"%s{context}: %s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "platform")
+                    $"%s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            )
 
     /// Whose `<errno.h>` numbering this platform reports, for the errors where
     /// the two Unixes disagree.
@@ -525,7 +630,7 @@ module SimulatedUnixPlatform =
     /// length cell when the address copy faults. See `GetSockNameFaultLength`.
     let getSockNameFaultLength (platform : SimulatedUnixPlatform) : GetSockNameFaultLength =
         match kernel platform with
-        | SimulatedUnixKernel.Linux version ->
+        | SimulatedUnixKernel.Linux (version, _) ->
             // Commit 1fb0e471611d ("net: remove one stac/clac pair from
             // move_addr_to_user()"), first released in 6.18, moved the length's
             // store ahead of the address's copy.
@@ -540,7 +645,33 @@ module SimulatedUnixPlatform =
                 GetSockNameFaultLength.AlreadyReported
             else
                 GetSockNameFaultLength.Untouched
-        | SimulatedUnixKernel.Darwin -> GetSockNameFaultLength.Untouched
+        | SimulatedUnixKernel.Darwin _ -> GetSockNameFaultLength.Untouched
+
+    /// What this platform's UDP receive side charges and admits by. See
+    /// `DatagramReceiveRules`.
+    let internal datagramReceiveRules (platform : SimulatedUnixPlatform) : DatagramReceiveRules =
+        match kernel platform with
+        | SimulatedUnixKernel.Linux (version, build) ->
+            // Commit 9aaec660b5be ("udp: refine __udp_enqueue_schedule_skb()
+            // test"), first released in 6.18, stopped letting the last
+            // datagram take the charge past the buffer. Measured on both sides
+            // (`udp-truesize.c`): every fill on 6.17.0 admits one datagram more
+            // than fits, and none on 6.18.5 or 7.0.0.
+            let dropsWhatDoesNotFit =
+                {
+                    Major = 6u
+                    Minor = 18u
+                    Patch = 0u
+                }
+
+            let admission =
+                if version >= dropsWhatDoesNotFit then
+                    LinuxDatagramAdmission.WhenBothFit
+                else
+                    LinuxDatagramAdmission.WhileHeldFits
+
+            DatagramReceiveRules.Linux (build, admission)
+        | SimulatedUnixKernel.Darwin _ -> DatagramReceiveRules.Darwin
 
     /// The number every descriptor this kernel hands out lies below: the soft
     /// `RLIMIT_NOFILE` it assumes the process has at least. A call that would
@@ -666,21 +797,6 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> SetIdBitsOnTruncation.Strip
         | SimulatedUnixFlavour.Darwin -> SetIdBitsOnTruncation.Preserve
 
-    /// What this platform's `chmod(2)` and `fchmod(2)` do for a privileged
-    /// caller.
-    ///
-    /// Everything else about a mode change is unanimous: who may make one, the
-    /// `S_ISGID` an owner outside the inode's group loses, the bits above
-    /// `0o7777` that are ignored, and the `ctime` that moves.
-    let privilegedModeChange (platform : SimulatedUnixPlatform) : PrivilegedModeChange =
-        // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/chmod-rules.c`:
-        // on Linux 6.18.5 root sets all 4096 modes exactly, on a file and on a
-        // directory, whether it owns the inode or not and whether it is in the
-        // inode's group or not. Darwin 27.0 was measured at uid 501 only.
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux -> PrivilegedModeChange.SetsRequestedBits
-        | SimulatedUnixFlavour.Darwin -> PrivilegedModeChange.Unmeasured
-
     /// What this platform's `fchmodat(2)` does with `AT_SYMLINK_NOFOLLOW` when
     /// the path names a symbolic link.
     let symlinkModeChange (platform : SimulatedUnixPlatform) : SymlinkModeChange =
@@ -708,10 +824,12 @@ module SimulatedUnixPlatform =
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/access-rules.c`:
         // on Linux 6.18.5 root's `access(X_OK)` on a regular file is granted
         // exactly when some execute bit is set, over all 4096 modes, owning it
-        // or not, in its group or not. Darwin 27.0 was measured at uid 501 only.
+        // or not, in its group or not, and refused EACCES otherwise. On Darwin
+        // 27.0 (`docs/probes/darwin-root/root-files.c`) the same condition
+        // grants it, and it is refused EPERM otherwise.
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> PrivilegedExecution.NeedsAnExecuteBit
-        | SimulatedUnixFlavour.Darwin -> PrivilegedExecution.Unmeasured
+        | SimulatedUnixFlavour.Darwin -> PrivilegedExecution.RegularFileNeedsAnExecuteBit
 
     /// Who may change an inode's owner and group on this platform, and which
     /// set-ID bits a change clears.
@@ -721,6 +839,8 @@ module SimulatedUnixPlatform =
         // every caller standing over every mode and every kind of ID named;
         // Darwin 27.0 at uid 501 for its owner over every mode it could set,
         // and for a non-owner on other users' inodes. Its output is beside it.
+        // Darwin's root, and uid 501 against inodes with set-ID bits, by
+        // `docs/probes/darwin-root/root-files.c` (CHOWN).
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> OwnerChangeRule.ClearsSetIdFromNonDirectories
         | SimulatedUnixFlavour.Darwin -> OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
@@ -751,6 +871,26 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
         | SimulatedUnixFlavour.Darwin -> SetGroupIdOnWrite.StripAlways
+
+    /// What a `write(2)` or `pwrite(2)` to a regular file has already done to
+    /// it when its copy from the caller's buffer faults; see `FaultedWriteRule`.
+    let internal faultedWriteRule (platform : SimulatedUnixPlatform) : FaultedWriteRule =
+        // Measured by docs/probes/faulting-file-write, through NULL and a
+        // PROT_NONE page, on Linux 6.18.5 (tmpfs and ext4 alike, by the owner
+        // in and out of the file's group, a non-owner in and out of it, and
+        // root) and Darwin 27.0 (APFS, uid 501 owning the file, in and out of
+        // its group; and as root, uid 501 owning it, uid 502 not, and root
+        // writing uid 501's file and its own, which agree on everything but
+        // which set-ID bits go). On both, the call answers EFAULT having stripped the
+        // set-ID bits a successful write strips and grown the file to the
+        // write's offset, leaving the descriptor's offset where it was. Linux
+        // runs `file_remove_privs` and `file_update_time` before the copy, so
+        // its times move for every such write; Darwin's move only for one that
+        // reaches past the end of the file, even when it stripped a bit, over
+        // lengths, offsets and counts either side of 4 KiB and 16 KiB.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> FaultedWriteRule.TimesAlwaysMove
+        | SimulatedUnixFlavour.Darwin -> FaultedWriteRule.TimesMoveWhenReachingPastEnd
 
     /// How this platform's `*at` syscalls find the directory a path starts
     /// from; see `StartingPointRules`.
@@ -898,7 +1038,7 @@ module SimulatedUnixPlatform =
     let groupListReport (platform : SimulatedUnixPlatform) : GroupListReport =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> GroupListReport.SortedSupplementaryGroups
-        | SimulatedUnixFlavour.Darwin -> GroupListReport.Unmeasured
+        | SimulatedUnixFlavour.Darwin -> GroupListReport.EffectiveGroupThenSupplementaryGroups
 
     /// Everything this platform's `mkdir(2)` does differently. See `MkDirRules`
     /// for the measurements; note in particular that `ModeMask` is not
@@ -950,18 +1090,34 @@ module SimulatedUnixPlatform =
             }
 
     /// Everything this platform's `rename(2)` does differently. See
-    /// `RenameRules`, whose field this picks; the walk is
-    /// `finalNameTrailingSeparator`'s, and the ordering of the refusals —
-    /// which is most of the divergence — follows from the flavour alone.
+    /// `RenameRules`, whose fields this picks; the walk is
+    /// `finalNameTrailingSeparator`'s.
     let renameRules (platform : SimulatedUnixPlatform) : RenameRules =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux ->
+        match kernel platform with
+        | SimulatedUnixKernel.Linux (version, _) ->
+            // Commit 5c8752729970 ("VFS/nfsd/ovl: introduce start_renaming()
+            // and end_renaming()"), first released in 6.19, moved the check of a
+            // destination that is the source's ancestor into the locking of the
+            // two parents, ahead of the trailing-separator checks.
+            let checksAncestorWhileLocking =
+                {
+                    Major = 6u
+                    Minor = 19u
+                    Patch = 0u
+                }
+
             {
                 WalkOrder = RenameWalkOrder.ParentsThenFinals
+                RefusalOrder =
+                    if version >= checksAncestorWhileLocking then
+                        RenameRefusalOrder.Linux RenameAncestorCheck.BeforeTrailingSeparators
+                    else
+                        RenameRefusalOrder.Linux RenameAncestorCheck.AfterTrailingSeparators
             }
-        | SimulatedUnixFlavour.Darwin ->
+        | SimulatedUnixKernel.Darwin _ ->
             {
                 WalkOrder = RenameWalkOrder.SourceThenDestination
+                RefusalOrder = RenameRefusalOrder.Darwin
             }
 
     /// Whether this platform's kernel screens a read or write buffer before it
@@ -1052,7 +1208,8 @@ module SimulatedUnixPlatform =
     let linkReadRule (platform : SimulatedUnixPlatform) : LinkReadRule =
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/readlink-mode.c`
         // on Linux 6.18.5 (root and uid 1000, links whose modes debugfs set
-        // on ext4) and Darwin 27.0 (uid 501). Darwin's root was not measured.
+        // on ext4) and Darwin 27.0 (uid 501); Darwin's root by
+        // `docs/probes/darwin-root/root-files.c`.
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> LinkReadRule.ModeIgnored
         | SimulatedUnixFlavour.Darwin -> LinkReadRule.ReadBitOfSelectedTriple
@@ -1328,6 +1485,29 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> localRoutes |> List.exists (Ipv4Prefix.contains address)
         | SimulatedUnixFlavour.Darwin -> false
 
+    /// Whether this machine's own TCP answers a SYN to `address`, given the
+    /// addresses it holds and its local routes: Linux answers at every address
+    /// inside a local route as well as at those it holds; Darwin answers only
+    /// at an address it holds, and drops a SYN to any other address its local
+    /// routes bring back to it.
+    let internal receivesStreamAt
+        (platform : SimulatedUnixPlatform)
+        (localAddresses : Ipv4Address list)
+        (localRoutes : Ipv4Prefix list)
+        (address : Ipv4Address)
+        : bool
+        =
+        // Measured by `docs/probes/loopback-alias-connect`, on Linux 6.18.5
+        // and Darwin 27.0, connecting to 127.0.0.2 with loopback's
+        // 127.0.0.0/8 route: Linux completes against a wildcard listener and
+        // answers ECONNREFUSED with none; Darwin waits whatever listens.
+        List.contains address localAddresses
+        || (
+            match flavour platform with
+            | SimulatedUnixFlavour.Linux -> localRoutes |> List.exists (Ipv4Prefix.contains address)
+            | SimulatedUnixFlavour.Darwin -> false
+        )
+
     /// What this platform's `bind(2)` makes of `address` on a socket of `kind`,
     /// if it is the broadcast address or a multicast one; `None` for any other.
     ///
@@ -1370,100 +1550,6 @@ module SimulatedUnixPlatform =
         | Some BindGroupAddressRule.RejectedWithTheFamily -> false
         | None -> not (isBindableAddress platform localAddresses localRoutes address)
 
-    /// Does a bind of `candidate` collide with what already holds `existing`,
-    /// as `existingHolder` says: a socket bound there, or a connection end
-    /// whose socket has closed?
-    ///
-    /// Both flavours refuse two sockets the same port on overlapping addresses,
-    /// and both relax that when `SO_REUSEADDR` is set — in opposite directions,
-    /// which is the whole of the divergence here and is measured in both:
-    ///
-    /// * **Linux** relaxes only while nothing is listening. Two sockets that both
-    ///   set the flag may share an address, exactly or through the wildcard,
-    ///   until one of them calls `listen(2)`; after that the second bind is
-    ///   `EADDRINUSE`.
-    /// * **Darwin** relaxes only for addresses that differ. Two sockets that both
-    ///   set the flag may hold the wildcard and a specific address on one port,
-    ///   listening or not; the exact duplicate is `EADDRINUSE` either way.
-    ///
-    /// With the flag absent from the candidate, the two agree and refuse.
-    ///
-    /// Each socket's flag is read as it stands when the question is asked, not
-    /// as it stood when that socket was bound; a connection end whose socket
-    /// has closed holds its endpoint with the flag that socket carried then.
-    ///
-    /// The same relation answers `listen(2)`, which is measured rather than
-    /// assumed: on Linux two reuse-carrying sockets may share an endpoint until
-    /// one listens, and the *second* `listen` is then EADDRINUSE — exactly what
-    /// this says when the other socket is already listening. Darwin never refuses
-    /// a listen, and never lets the pair coexist in the first place.
-    let internal bindConflict
-        (platform : SimulatedUnixPlatform)
-        (existing : Ipv4Endpoint)
-        (existingReuse : bool)
-        (existingHolder : EndpointHolder)
-        (candidate : Ipv4Endpoint)
-        (candidateReuse : bool)
-        : bool
-        =
-        if existing.Port <> candidate.Port then
-            false
-        elif not (Ipv4Endpoint.addressesOverlap existing candidate) then
-            false
-        else
-
-        let existingIsListening = existingHolder = EndpointHolder.Listener
-
-        // A connection end's pcb is keyed by its full peer tuple, and a
-        // replacement listener can bind over it: measured on both kernels
-        // (accept a connection, close the listener, bind a reuse-carrying
-        // replacement at the exact endpoint — OK; without the candidate's
-        // reuse flag — EADDRINUSE). The same holds of an end whose socket has
-        // closed and which still holds its endpoint, on both
-        // (`bind-held-endpoint.c` in
-        // docs/plans/2026-10-08-tcp-shutdown-linger), whose flag is the one its
-        // socket carried when it closed.
-        let existingIsEstablished = existingHolder = EndpointHolder.ConnectionEnd
-
-        match flavour platform with
-        // Linux relaxes only while nothing listens, and only when *both* sockets
-        // carry the flag. That rule already answers the measured established
-        // rows correctly: an established child carries its listener's flag, so
-        // a reuse-carrying rebind over it passes and a flagless one conflicts.
-        | SimulatedUnixFlavour.Linux -> not (existingReuse && candidateReuse) || existingIsListening
-        // Darwin relaxes only for addresses that differ, and keys on the
-        // *candidate's* flag alone — measured: a wildcard listener that
-        // `listen(2)` bound implicitly carries no flag at all, and a later
-        // reuse-carrying bind to a specific address on its port still succeeds.
-        // The exact-duplicate refusal exempts established sockets (measured
-        // above).
-        | SimulatedUnixFlavour.Darwin ->
-            (existing.Address = candidate.Address && not existingIsEstablished)
-            || not candidateReuse
-
-    /// Whether `listen(2)` on a socket that is *already bound*, and not yet
-    /// listening, asks the port admission question again, so that a binding
-    /// admitted earlier can still be refused a listen. A socket already
-    /// listening is asked nothing on either flavour: its listen only updates
-    /// the backlog (measured, `relisten-held.c` in
-    /// docs/plans/2026-10-08-tcp-shutdown-linger).
-    ///
-    /// The flavours differ, and not merely in strictness. Linux's
-    /// `inet_csk_listen_start` calls `get_port` a second time, which is why two
-    /// sockets carrying SO_REUSEADDR may share an endpoint right up until one of
-    /// them listens; Darwin's `tcp_usr_listen` binds only when the socket has no
-    /// port yet, so an already-bound listen consults nothing. Both measured.
-    ///
-    /// This is not a strictness knob that could be left on for safety. Darwin's
-    /// bind rule is asymmetric in SO_REUSEADDR -- it keys on the *candidate's*
-    /// flag alone -- so re-asking it at listen time asks with the roles swapped,
-    /// and a pair admitted at bind time answers the other way. Re-checking there
-    /// would invent an EADDRINUSE, not merely tighten one.
-    let listenRescreensBinding (platform : SimulatedUnixPlatform) : bool =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux -> true
-        | SimulatedUnixFlavour.Darwin -> false
-
     /// Whether a refused TCP connect gives back the port of a socket whose
     /// port `bind(2)` chose (`lockedPort`) or did not. A port given back
     /// holds off no other socket's bind, though `getsockname` goes on
@@ -1492,12 +1578,16 @@ module SimulatedUnixPlatform =
     /// What `call` on a TCP socket answers when its search for an ephemeral
     /// port finds every port of the range taken, or `None` where this library
     /// does not answer. Linux answers `EADDRINUSE` to `bind(2)` and `listen(2)`
-    /// (`inet_csk_get_port`) and `EADDRNOTAVAIL` to `connect(2)`
-    /// (`__inet_hash_connect`), leaving the socket unbound. Darwin answers
-    /// `EADDRNOTAVAIL` to all three, but this library's search can pass over a
-    /// port Darwin's would take, one an established socket holds for a search
-    /// carrying `SO_REUSEADDR` being unmeasured, so it is not answered. Both
-    /// measured (`docs/probes/ephemeral-search`).
+    /// (`inet_csk_get_port`, and `udp_lib_get_port` for a datagram socket's
+    /// bind), `EADDRNOTAVAIL` to a stream `connect(2)`
+    /// (`__inet_hash_connect`), and `EAGAIN` to a datagram socket's
+    /// `connect(2)` or `write(2)` (`inet_autobind`), leaving the socket
+    /// unbound. Darwin answers `EADDRNOTAVAIL` to all three stream calls, but
+    /// this library's search can pass over a port Darwin's would take, one an
+    /// established socket holds for a search carrying `SO_REUSEADDR` being
+    /// unmeasured, so it is not answered. Measured
+    /// (`docs/probes/ephemeral-search`, and for a datagram socket's calls on
+    /// Linux `docs/probes/port-sharing`).
     let internal ephemeralPortsExhausted
         (platform : SimulatedUnixPlatform)
         (call : EphemeralSearchCall)
@@ -1507,6 +1597,7 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Bind
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Listen -> Some UnixError.EADDRINUSE
         | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Connect -> Some UnixError.EADDRNOTAVAIL
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.DatagramAutobind -> Some UnixError.EAGAIN
         | SimulatedUnixFlavour.Darwin, _ -> None
 
     /// Where this platform keeps a socket address's family, and how wide it is.
@@ -1526,14 +1617,21 @@ module SimulatedUnixPlatform =
     /// own numbering.
     let internetAddressFamily : int = 2
 
-    /// Ports a process may bind only as root.
-    ///
-    /// Measured as 1024 on both: binding 1023 is `EACCES` for an unprivileged
-    /// caller and 1024 succeeds. A constant rather than a function of the
-    /// platform because the two agree, and not configuration though Linux does
-    /// expose it as `ip_unprivileged_port_start` -- nothing needs to vary it
-    /// yet, and a knob with no consumer is a knob no test covers.
-    let privilegedPortCeiling : uint16 = 1024us
+    /// Whether this platform's `bind(2)` keeps a port below the machine's
+    /// unprivileged port start for root when the address is, or is not, the
+    /// wildcard (`0.0.0.0` or `::`). Linux keeps it at every address; Darwin
+    /// keeps it only at an address other than the wildcard, so an unprivileged
+    /// process binds `0.0.0.0:80` there.
+    let internal privilegedPortGuards (platform : SimulatedUnixPlatform) (wildcard : bool) : bool =
+        // Measured by `docs/probes/privileged-port`, on Linux 6.18.5 at uid
+        // 1000 and Darwin 27.0 at uid 501, stream and datagram, at ports 1, 80
+        // and 1023: Linux answers EACCES at 0.0.0.0, 127.0.0.1, ::, ::1 and the
+        // v4-mapped wildcard and loopback alike; Darwin binds 0.0.0.0, :: and
+        // ::ffff:0.0.0.0, and answers EACCES at 127.0.0.1, ::1 and
+        // ::ffff:127.0.0.1.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> true
+        | SimulatedUnixFlavour.Darwin -> not wildcard
 
     /// The most supplementary groups a process on this platform can hold:
     /// `NGROUPS_MAX`, 65536 on Linux and 16 on Darwin.
@@ -1547,6 +1645,17 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> 65536
         | SimulatedUnixFlavour.Darwin -> 16
+
+    /// The most supplementary groups a process on this platform holds: Linux's
+    /// `NGROUPS_MAX`, and one fewer on Darwin, whose list of `NGROUPS_MAX`
+    /// holds the effective group first (`GroupListReport`).
+    let supplementaryGroupsHeld (platform : SimulatedUnixPlatform) : int =
+        // Measured on Darwin 27.0 as root (`setresid.c`): a list of 16 is
+        // installed whole, its first group becoming the effective group, and
+        // 17 is EINVAL.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> supplementaryGroupLimit platform
+        | SimulatedUnixFlavour.Darwin -> supplementaryGroupLimit platform - 1
 
     /// `AF_INET6`, in the platform's own numbering, which unlike `AF_INET` the two
     /// families disagree about: 10 on Linux against 30 on Darwin. Measured.
@@ -1626,13 +1735,24 @@ module SimulatedUnixPlatform =
     /// the family field `sockaddrFamilyField` places: as many as it is wide, in
     /// the machine's own byte order.
     ///
-    /// Any other number of bytes is not a family field, and is refused.
+    /// Any other number of bytes is not a family field: it, and the default
+    /// `ImmutableArray`, throw `ArgumentException`.
     let decodeSockaddrFamily (platform : SimulatedUnixPlatform) (field : ImmutableArray<byte>) : int =
         let width = SockaddrFamilyField.width (sockaddrFamilyField platform)
 
         if field.IsDefault || field.Length <> width then
-            failwith
-                $"SimulatedUnixPlatform.decodeSockaddrFamily: this platform's family field is %d{width} bytes wide, and the caller passed %d{(if field.IsDefault then 0 else field.Length)} (this is a bug in the caller)."
+            let passed =
+                if field.IsDefault then
+                    "the default ImmutableArray"
+                else
+                    $"%d{field.Length} bytes"
+
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeSockaddrFamily"
+                    (RefusalKind.Contradictory "field")
+                    $"this platform's family field is %d{width} bytes wide, and the caller passed %s{passed}."
+            )
 
         match width with
         | 1 -> int field.[0]
@@ -1674,10 +1794,28 @@ module SimulatedUnixPlatform =
 
     /// The C `int` in the four bytes of `bytes` from `offset`, as `encodeCInt`
     /// lays one out.
+    ///
+    /// Throws `ArgumentException` if `bytes` is the default `ImmutableArray`,
+    /// and `ArgumentOutOfRangeException` if it holds no four bytes from
+    /// `offset`.
     let decodeCInt (platform : SimulatedUnixPlatform) (bytes : ImmutableArray<byte>) (offset : int) : int =
-        if bytes.IsDefault || offset < 0 || bytes.Length < offset + 4 then
-            failwith
-                $"SimulatedUnixPlatform.decodeCInt: no four bytes at offset %d{offset} of %d{(if bytes.IsDefault then 0 else bytes.Length)} (this is a bug in the caller)."
+        if bytes.IsDefault then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.Contradictory "bytes")
+                    "bytes is the default ImmutableArray, whose underlying array is null."
+            )
+
+        // Subtracted rather than added, so that an offset near Int32.MaxValue
+        // does not wrap onto one that passes.
+        if offset < 0 || offset > bytes.Length - 4 then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.OutOfRange "offset")
+                    $"no four bytes at offset %d{offset} of %d{bytes.Length}."
+            )
 
         let span = bytes.AsSpan().Slice (offset, 4)
 

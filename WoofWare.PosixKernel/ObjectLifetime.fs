@@ -69,12 +69,8 @@ module internal DescriptionReleaseRefusal =
 [<RequireQualifiedAccess>]
 module ObjectLifetime =
 
-    /// `pinnedInodes`, with `graph` as the filesystem the closure climbs.
-    let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (graph : VirtualFileSystem)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Set<InodeNumber>
-        =
+    /// `frontier` closed under `DirectoryContent.Parent` in `graph`.
+    let private climb (graph : VirtualFileSystem) (frontier : InodeNumber list) : Set<InodeNumber> =
         let rec climb (frontier : InodeNumber list) (seen : Set<InodeNumber>) : Set<InodeNumber> =
             match frontier with
             | [] -> seen
@@ -98,7 +94,37 @@ module ObjectLifetime =
                 | Some (InodeContent.Symlink _)
                 | None -> climb rest seen
 
-        climb (Set.toList (UnixMachineState.heldInodes system.Machine)) Set.empty
+        climb frontier Set.empty
+
+    /// `pinnedInodes` of `machine`, with `graph` as the filesystem the closure
+    /// climbs.
+    let private pinnedOn (graph : VirtualFileSystem) (machine : UnixMachineState) : Set<InodeNumber> =
+        climb graph (Set.toList (UnixMachineState.heldInodes machine))
+
+    /// Whether `inode` is in `pinnedInodes` of `machine`, with `graph` as the
+    /// filesystem the closure climbs: in time logarithmic in what the machine
+    /// holds, but for a directory it does not hold directly, for which linear
+    /// in the directories it holds and their ancestors.
+    let internal isPinned (graph : VirtualFileSystem) (inode : InodeNumber) (machine : UnixMachineState) : bool =
+        UnixMachineState.holdsDirectly inode machine
+        // The closure climbs from a held inode only through directories, so a
+        // directory not held itself is pinned exactly when some held
+        // directory's ancestors include it. Every directory held directly is
+        // among `heldDirectories`, since a description onto a directory is a
+        // `Directory` one and a process stands only in a directory
+        // (`UnixSystemDefect.DescriptionKindMismatch`,
+        // `UnixSystemDefect.CurrentDirectoryIsNotADirectory`).
+        || (
+            match VirtualFileSystem.tryGetContent inode graph with
+            | Some (InodeContent.Directory _) ->
+                Set.contains inode (climb graph (UnixMachineState.heldDirectories machine))
+            | Some (InodeContent.RegularFile _)
+            | Some (InodeContent.Socket _)
+            | Some (InodeContent.Fifo _)
+            | Some (InodeContent.CharacterDevice _)
+            | Some (InodeContent.Symlink _)
+            | None -> false
+        )
 
     /// Every inode that must not be freed: every process's current directory
     /// and every open file description's inode, closed under
@@ -120,7 +146,7 @@ module ObjectLifetime =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
-        pinnedIn system.Machine.FileSystem system
+        pinnedOn system.Machine.FileSystem system.Machine
 
     /// Whether `graph` has `inode` and names it nowhere, it is not the root,
     /// and this system holds no reference to it: whether a real kernel would
@@ -128,7 +154,7 @@ module ObjectLifetime =
     let private freeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (graph : VirtualFileSystem)
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         // The root is excluded explicitly rather than by the binding count,
@@ -140,7 +166,7 @@ module ObjectLifetime =
         inode <> VirtualFileSystem.root graph
         && (VirtualFileSystem.tryGet inode graph).IsSome
         && VirtualFileSystem.bindingCount inode graph = 0
-        && not (Set.contains inode (pinnedIn graph system))
+        && not (isPinned graph inode system.Machine)
 
     /// The directory `inode` records as its parent in `graph`, whose ".."
     /// reference it holds; `None` for anything else.
@@ -172,8 +198,8 @@ module ObjectLifetime =
     /// just dropped.
     let rec internal forgetIfUnheld<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let graph = system.Machine.FileSystem
 
@@ -215,8 +241,8 @@ module ObjectLifetime =
     let internal commitRemoving<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (removed : InodeNumber)
         (mutation : VfsMutation)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let after = VfsMutation.after mutation
 
@@ -256,7 +282,9 @@ module ObjectLifetime =
     /// was opened through, since unlinked (`ChangeNotice.NameReleased`), its
     /// inode once nothing names or holds it, and the directory of the name it
     /// was opened through likewise — in `system`, whose open file table no
-    /// longer holds the description.
+    /// longer holds the description. The release of a description onto an
+    /// inode is reported to the inotify instances watching it first
+    /// (`ChangeNotice.Released`).
     ///
     /// Destroying a connected stream socket's description closes its end of
     /// the connection (`TcpTransfer.close`): the peer gets a FIN, behind
@@ -282,8 +310,8 @@ module ObjectLifetime =
     /// docs/plans/2026-10-08-tcp-shutdown-linger).
     let internal releaseDestroyed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destroyedDescription : DestroyedDescription)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         let destroyed = destroyedDescription.Description
 
@@ -297,6 +325,28 @@ module ObjectLifetime =
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
         | OpenFileTarget.CharacterDevice (inode, _, _) ->
+            // The release itself, as Linux's `fsnotify_close` reports it, under
+            // the name the description was opened through, before anything the
+            // release lets go of goes (measured, `docs/probes/inotify-close`
+            // section U).
+            let system =
+                match destroyedDescription.OpenedThrough with
+                | None ->
+                    failwith
+                        $"ObjectLifetime.releaseDestroyed: the description of %A{destroyed.Target} records no name it was opened through, which every description onto an inode records (FileDescriptorRegistryDefect.OpenedThroughMismatch; this is a bug in this library)."
+                | Some through ->
+                    { system with
+                        Machine =
+                            UnixMachineState.commitFileSystem
+                                (ChangeNotice.Released (
+                                    inode,
+                                    through,
+                                    FileAccessMode.permitsWrite destroyed.AccessMode
+                                ))
+                                (VirtualFileSystem.unchanged system.Machine.FileSystem)
+                                system.Machine
+                    }
+
             // The description may have been the last holding a name of a file
             // since unlinked, which goes as it does (Linux's dentry): an
             // inotify watch on the file, if it has no link left, hears of its
@@ -305,8 +355,14 @@ module ObjectLifetime =
             // inotify, when the graph forgets it.
             let system =
                 match destroyed.Target, destroyedDescription.OpenedThrough with
-                | (OpenFileTarget.File _ | OpenFileTarget.CharacterDevice _), Some (ReachedThrough.Name (_, true)) when
-                    not (OpenFileTable.nameHeldElsewhere destroyedDescription system.Machine.OpenFiles)
+                | (OpenFileTarget.File _ | OpenFileTarget.CharacterDevice _),
+                  Some (ReachedThrough.Name (_, true) as through) when
+                    not (
+                        OpenFileTable.nameHeldElsewhere
+                            through
+                            destroyedDescription.NameIdentity
+                            system.Machine.OpenFiles
+                    )
                     ->
                     { system with
                         Machine =
@@ -327,7 +383,6 @@ module ObjectLifetime =
             match destroyedDescription.OpenedThrough with
             | Some (ReachedThrough.Name (dentry, _)) -> Ok (forgetIfUnheld dentry.Parent system)
             | Some ReachedThrough.Unnamed
-            | Some (ReachedThrough.RemovedDirectory _)
             | None -> Ok system
         | OpenFileTarget.Fifo (inode, _) -> ReservedFifo.fail "ObjectLifetime.releaseDestroyed" inode
         | OpenFileTarget.Pipe (pipeId, _) ->
@@ -358,13 +413,13 @@ module ObjectLifetime =
         | OpenFileTarget.Socket socketId ->
 
         let dying =
-            match Map.tryFind socketId system.Machine.Sockets with
+            match SocketTable.tryFind socketId system.Machine.Sockets with
             | Some socket -> socket
             | None ->
                 failwith
                     $"ObjectLifetime.releaseDestroyed: the description names socket %O{socketId}, which this system's socket table does not hold. Releasing a description is the only operation here that removes a socket, and it removes it together with the description that named it, so a live description onto an absent socket means the two tables were built out of step. There is nothing to repair it with: the objects this release would have freed cannot be found (this is a bug in this library or in whatever assembled this system)."
 
-        let sockets = Map.remove socketId system.Machine.Sockets
+        let sockets = SocketTable.remove socketId system.Machine.Sockets
 
         // A connection lives while any socket phase or accept queue
         // references it. The dying socket may have been the last such
@@ -383,7 +438,7 @@ module ObjectLifetime =
             | SocketPhase.Connecting _ -> []
 
         let stillReferenced (connection : ConnectionId) : bool =
-            sockets
+            SocketTable.all sockets
             |> Map.exists (fun _ survivor ->
                 match survivor.Phase with
                 | SocketPhase.Established (c, _)
@@ -416,10 +471,15 @@ module ObjectLifetime =
                 |> List.map (fun queued ->
                     // The server end keeps the SO_REUSEADDR its socket would
                     // have held: the listener's when the connection completed.
+                    // It holds the listener's port as an accepted socket would,
+                    // and carries the listener's uid (see
+                    // `UnixConnection.dropConnection`).
                     let wakes, transfer =
                         TcpTransfer.abort
                             ConnectionEnd.Server
                             queued.ReuseAddress
+                            PortHold.Reserved
+                            dying.Uid
                             (UnixMachineState.connection queued.Connection system.Machine).Transfer
 
                     queued.Connection, wakes, transfer
@@ -431,6 +491,15 @@ module ObjectLifetime =
             | SocketPhase.Established _
             | SocketPhase.EstablishedPendingReport _ ->
 
+            // How the dying socket, which holds a connection end, holds its
+            // port, which its closed end keeps.
+            let portHold () : PortHold =
+                match dying.Ipv4Binding with
+                | Some binding -> binding.PortHold
+                | None ->
+                    failwith
+                        $"ObjectLifetime.releaseDestroyed: socket %O{socketId} holds a connection end and no IPv4 binding (this is a bug in this library)."
+
             match SocketPhase.connectionEnd dying.Phase with
             | None -> Ok []
             | Some (connection, connectionEnd) when dying.Options.Linger.Enabled && dying.Options.Linger.Hundredths = 0L ->
@@ -439,7 +508,9 @@ module ObjectLifetime =
                 if TcpTransfer.abortRefused connectionEnd transfer then
                     Error (DescriptionReleaseRefusal.DarwinAbortBehindQueuedFin (socketId, connection))
                 else
-                    let wakes, transfer = TcpTransfer.abort connectionEnd dying.ReuseAddress transfer
+                    let wakes, transfer =
+                        TcpTransfer.abort connectionEnd dying.ReuseAddress (portHold ()) dying.Uid transfer
+
                     Ok [ connection, wakes, transfer ]
             | Some (connection, connectionEnd) ->
                 let transfer = (UnixMachineState.connection connection system.Machine).Transfer
@@ -465,42 +536,42 @@ module ObjectLifetime =
                 elif TcpTransfer.closeRefused connectionEnd transfer then
                     Error (DescriptionReleaseRefusal.DarwinCloseBehindQueuedFin (socketId, connection))
                 else
-                    let wakes, transfer = TcpTransfer.close connectionEnd dying.ReuseAddress transfer
+                    let wakes, transfer =
+                        TcpTransfer.close connectionEnd dying.ReuseAddress (portHold ()) dying.Uid transfer
+
                     Ok [ connection, wakes, transfer ]
 
         match closing with
         | Error refusal -> Error refusal
         | Ok closing ->
 
+        let now = system.Scheduling.NanosecondsSinceBoot
+
         let connections =
             (system.Machine.Connections, closing)
             ||> List.fold (fun connections (connection, _, transfer) ->
-                Map.change
-                    connection
-                    (Option.map (fun existing ->
-                        { existing with
-                            Transfer = transfer
-                        }
-                    ))
-                    connections
+                Map.change connection (Option.map (UnixMachineState.transferredAt now transfer)) connections
             )
 
-        let connections =
-            (connections, candidates)
-            ||> List.fold (fun connections connection ->
+        // A connection nothing references any more is forgotten, and an end
+        // of it in TIME_WAIT outlives it (`UnixMachineState.forgetConnection`).
+        let machine =
+            ({ system.Machine with
+                Sockets = sockets
+                DatagramReceivers = Map.remove socketId system.Machine.DatagramReceivers
+                Connections = connections
+             },
+             candidates)
+            ||> List.fold (fun machine connection ->
                 if stillReferenced connection then
-                    connections
+                    machine
                 else
-                    Map.remove connection connections
+                    UnixMachineState.forgetConnection connection machine
             )
 
         let released =
             { system with
-                Machine =
-                    { system.Machine with
-                        Sockets = sockets
-                        Connections = connections
-                    }
+                Machine = machine
             }
 
         // Each FIN's or reset's edge, raised now that the survivor's level
@@ -526,8 +597,8 @@ module ObjectLifetime =
     /// real kernel releases the file when the call drops its reference.
     let private releaseUnreferenced<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         (Ok system, List.distinct descriptions)
         ||> List.fold (fun result id ->
@@ -554,8 +625,8 @@ module ObjectLifetime =
     let internal releaseUnreferencedUnrefusable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         match releaseUnreferenced descriptions system with
         | Ok released -> released

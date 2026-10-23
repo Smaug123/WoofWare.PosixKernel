@@ -22,46 +22,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketErrorAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
-
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
-    // arm64 ABI passes variadic arguments on the stack), so this goes through
-    // the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
-
     [<Literal>]
     let private AF_INET = 2
 
@@ -83,7 +43,7 @@ module TestSocketErrorAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestSocketErrorAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
+                let page = HostCalls.mmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestSocketErrorAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -171,20 +131,20 @@ module TestSocketErrorAgainstHost =
 
     /// A host socket bound to an ephemeral loopback port, and that port.
     let private hostBound (platform : SimulatedUnixPlatform) : int * uint16 =
-        let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
         if fd < 0 then
             failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let address = hostSockaddr platform 0us
 
-        if hostBind (fd, address, uint32 address.Length) <> 0 then
+        if HostCalls.bind (fd, address, uint32 address.Length) <> 0 then
             failwith $"bind failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let name = Array.zeroCreate<byte> 16
         let mutable length = 16u
 
-        if hostGetSockName (fd, name, &length) <> 0 then
+        if HostCalls.getSockName (fd, name, &length) <> 0 then
             failwith $"getsockname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         fd, (uint16 name.[2] <<< 8) ||| uint16 name.[3]
@@ -192,13 +152,13 @@ module TestSocketErrorAgainstHost =
     /// Whether some other socket on the host holds `port`, which turns a
     /// connect meant to be refused into one that is not.
     let private portTaken (platform : SimulatedUnixPlatform) (port : uint16) : bool =
-        let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
         try
             let address = hostSockaddr platform port
-            hostBind (fd, address, uint32 address.Length) <> 0
+            HostCalls.bind (fd, address, uint32 address.Length) <> 0
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     /// Wait until a non-blocking connect in flight on the host has an outcome,
     /// as the model's connect has one at once.
@@ -206,7 +166,7 @@ module TestSocketErrorAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 POLLOUT <<< 32) |]
 
-        if hostPoll (entry, 1un, 5000) <> 1 then
+        if HostCalls.pollPacked (entry, 1un, 5000) <> 1 then
             failwith $"the host's connect on fd %d{fd} had no outcome after five seconds"
 
     let private modelConnect
@@ -216,10 +176,10 @@ module TestSocketErrorAgainstHost =
         : (int * UnixSystem<int, string>) option
         =
         match
-            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopback port)) system
+            CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopback port)) system
         with
         | Ok (SyscallAnswer.Completed _, system) -> Some (0, system)
-        | Ok (SyscallAnswer.Failed error, system) -> Some (errnoOf system.Machine.UnixPlatform error, system)
+        | Ok (SyscallAnswer.Failed error, system) -> Some (errnoOf (UnixSystem.platform system) error, system)
         | Error _ -> None
 
     /// A model holding a listener at `listenerPort` and a fresh TCP socket,
@@ -243,27 +203,21 @@ module TestSocketErrorAgainstHost =
                     listener
                     UserBuffer.Mapped
                     16u
-                    (CopyIn.inet system.Machine.UnixPlatform (loopback listenerPort))
+                    (CopyIn.inet (UnixSystem.platform system) (loopback listenerPort))
                     system
             with
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"the model's listener did not bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 16 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 16 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"the model's listener did not listen: %A{other}"
 
         let fd, system =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-        let system =
-            if nonBlocking then
-                match UnixDescriptor.setNonBlocking fd true system with
-                | SetNonBlockingAnswer.Set, system -> system
-                | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
-            else
-                system
+        let system = if nonBlocking then NonBlocking.set fd system else system
 
         fd, system
 
@@ -301,7 +255,9 @@ module TestSocketErrorAgainstHost =
                         Marshal.SetLastPInvokeError 0
 
                         let errno =
-                            if hostGetSockOpt (fd, level, optionName, valueAddress, lengthAddress) = 0 then
+                            if
+                                HostCalls.getSockOptPointer (fd, level, optionName, valueAddress, lengthAddress) = 0
+                            then
                                 0
                             else
                                 Marshal.GetLastPInvokeError ()
@@ -333,13 +289,13 @@ module TestSocketErrorAgainstHost =
         (system : UnixSystem<int, string>)
         : Observed * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
         let lengthBuffer = userBuffer lengthCell
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level optionName (userBuffer value) lengthBuffer system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName (userBuffer value) lengthBuffer system with
             | Ok GetSockOptAdmission.ReadLength -> Some declaredLength
             | Ok GetSockOptAdmission.SkipLength
             | Ok (GetSockOptAdmission.Answered _)
@@ -351,7 +307,7 @@ module TestSocketErrorAgainstHost =
             | Buffer.Null
             | Buffer.Faulting -> None
 
-        match UnixSocket.tryGetsockoptLength fd level optionName (userBuffer value) lengthBuffer read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level optionName (userBuffer value) lengthBuffer read system with
         | Error refusal -> failwith $"the model refused SO_ERROR: %s{SocketOptionRefusal.describe refusal}"
         | Ok (GetSockOptAnswer.Failed (error, overwritten), system) ->
             {
@@ -383,13 +339,13 @@ module TestSocketErrorAgainstHost =
         let listener, listenerPort = hostBound platform
 
         try
-            if hostListen (listener, 16) <> 0 then
+            if HostCalls.listen (listener, 16) <> 0 then
                 failwith $"listen failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
             try
-                if nonBlocking && hostSetNonBlocking (nativeint fd, 1) <> 0 then
+                if nonBlocking && HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                     failwith "setting O_NONBLOCK on the host's socket failed"
 
                 let modelFd, system = modelSystem platform listenerPort nonBlocking
@@ -398,7 +354,7 @@ module TestSocketErrorAgainstHost =
                     let address = hostSockaddr platform port
                     Marshal.SetLastPInvokeError 0
 
-                    if hostConnect (fd, address, uint32 address.Length) = 0 then
+                    if HostCalls.connect (fd, address, uint32 address.Length) = 0 then
                         0
                     else
                         let errno = Marshal.GetLastPInvokeError ()
@@ -441,14 +397,14 @@ module TestSocketErrorAgainstHost =
 
                             Some (observed host, observed model, system)
                         | Operation.Listen ->
-                            match UnixSocket.tryListen modelFd 4 system with
+                            match UnixSocket.tryListen (Callers.leader system) modelFd 4 system with
                             | Error _ -> None
                             | Ok (answer, system) ->
 
                             Marshal.SetLastPInvokeError 0
 
                             let host =
-                                if hostListen (fd, 4) = 0 then
+                                if HostCalls.listen (fd, 4) = 0 then
                                     0
                                 else
                                     Marshal.GetLastPInvokeError ()
@@ -479,9 +435,9 @@ module TestSocketErrorAgainstHost =
 
                 go 0 operations system
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         finally
-            hostClose listener |> ignore<int>
+            HostCalls.close listener |> ignore<int>
 
     [<Test>]
     let ``SO_ERROR reads and connects answer as this kernel does`` () : unit =
@@ -495,7 +451,7 @@ module TestSocketErrorAgainstHost =
             // re-chosen whenever another socket on the host takes it.
             let freshNobody () : uint16 =
                 let fd, port = hostBound platform
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
                 port
 
             let nobody = ref (freshNobody ())

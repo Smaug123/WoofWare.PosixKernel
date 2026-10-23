@@ -18,7 +18,8 @@ type internal UnixMachineState =
             /// (`UnixProcessState.FileDescriptors`) holds only which of these
             /// each descriptor names.
             OpenFiles : OpenFileTable
-            /// Every socket on the machine, by identity.
+            /// Every socket on the machine, by identity, with its UDP sockets
+            /// indexed by the port each is bound to (`SocketTable`).
             ///
             /// Separate from `OpenFiles` because a socket's lifetime is not
             /// a description's: an `OpenFileTarget.Socket` holds only the
@@ -29,12 +30,38 @@ type internal UnixMachineState =
             /// connection awaiting `accept(2)` is a `TcpConnection` in
             /// `Connections`, not a socket, precisely so this rule can stay
             /// strict.
-            Sockets : Map<SocketId, SocketDescription>
+            Sockets : SocketTable
             /// Every TCP connection the simulated kernel holds: established ends
             /// referenced from a socket's `SocketPhase`, and completed
             /// connections waiting in some listener's accept queue. An entry is
             /// removed when nothing references it any more (`UnixDescriptor.close`).
             Connections : Map<ConnectionId, TcpConnection>
+            /// The receive side of every UDP socket on the machine: the
+            /// datagrams each holds, what they cost its receive buffer, and
+            /// its pending error. A socket's entry is made with it
+            /// (`UnixSocket.socket`) and goes with it
+            /// (`ObjectLifetime.releaseDestroyed`), and
+            /// `UnixSystem.checkInvariants` holds the keys to the UDP sockets
+            /// in `Sockets`.
+            DatagramReceivers : Map<SocketId, DatagramReceiver>
+            /// Which datagrams that reach no socket the machine answers with
+            /// an ICMP port-unreachable error, and what it remembers of those
+            /// it has answered: a record for the whole machine, which outlives
+            /// the socket that sent the datagram.
+            PortUnreachableReplies : PortUnreachableReplies
+            /// Every TCP connection end in TIME_WAIT whose connection both
+            /// sockets have closed, keyed by its own endpoint and its peer's.
+            /// An entry is made as the connection is forgotten, for the end
+            /// whose FIN was made first, and goes only when a connect takes
+            /// its four-tuple over: when TIME_WAIT ends is unmeasured, so past
+            /// the window it was measured to last
+            /// (`PortHolderRules.timeWaitWindow`) a question it decides is
+            /// refused.
+            TimeWaits : Map<Ipv4Endpoint * Ipv4Endpoint, TcpTimeWait>
+            /// How long TIME_WAIT lasts, and when a connect may take its
+            /// four-tuple over: the machine's sysctls, at their measured
+            /// defaults (`UnixMachineState.defaultTcpTimeWait`).
+            TcpTimeWait : TcpTimeWaitSysctls
             /// The identity the next completed connect will allocate. Monotonic
             /// and never reused, for the same replay-trace reason as
             /// `NextSocketId`.
@@ -49,13 +76,13 @@ type internal UnixMachineState =
             /// The kqueue of every Darwin `poll(2)` asleep on the machine, in
             /// whichever process: see `PollQueue`. Made as the call goes to
             /// sleep, and destroyed with the park that names it.
-            PollQueues : Map<PollQueueId, PollQueue>
+            PollQueues : PollQueueTable
             /// The identity the next sleeping Darwin `poll` gives its kqueue.
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
             NextPollQueueId : PollQueueId
             /// The ordinal the next park of any thread records as its
-            /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `UnixWait.park`.
+            /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `Parking.park`.
             ///
             /// The machine's rather than a process's, because what a kernel orders
             /// by park is a wait queue on a kernel object, and processes can share
@@ -76,7 +103,7 @@ type internal UnixMachineState =
             ThreadIds : ThreadIdAllocator
             /// Where the next process's ID comes from, and the ID of every
             /// process on the machine: see `ProcessIdTable`. A process joins it
-            /// when it is launched (`UnixBootImage.boot`, `SimulatedMachine.launch`)
+            /// when it is launched (`UnixBootImage.boot`, `UnixSystem.launch`)
             /// and leaves it when it ends.
             ProcessIds : ProcessIdTable
             /// For each directory some process stands in, how many processes
@@ -84,8 +111,8 @@ type internal UnixMachineState =
             ///
             /// The machine's rather than read off each process, because a
             /// directory one process stands in must outlive a removal by
-            /// another, and a process's view cannot see the other processes. A
-            /// launch takes a hold on the process's starting directory, `chdir`
+            /// another, whose call reads it here rather than in the other
+            /// processes. A launch takes a hold on the process's starting directory, `chdir`
             /// moves one, and the process's end lets its own go. An inode no
             /// process stands in has no entry.
             CurrentDirectories : Map<InodeNumber, int>
@@ -102,6 +129,11 @@ type internal UnixMachineState =
             /// Range `NextEphemeralPort` sweeps, inclusive at both ends. Host
             /// configuration; see `UnixSystem.defaultEphemeralPortRange`.
             EphemeralPortRange : uint16 * uint16
+            /// The lowest port a process without privilege may bind:
+            /// Linux's `net.ipv4.ip_unprivileged_port_start`, host
+            /// configuration (see `UnixSystem.defaultUnprivilegedPortStart`),
+            /// and on Darwin, which has no such setting, always 1024.
+            UnprivilegedPortStart : uint16
             /// The value of the `somaxconn` sysctl (`net.core.somaxconn` on
             /// Linux, `kern.ipc.somaxconn` on Darwin): the ceiling `listen(2)`
             /// clamps its backlog to before the accept-queue capacity is derived.
@@ -138,6 +170,18 @@ type internal UnixMachineState =
             /// per-flavour default; see `UnixBootImage.withTcpSendSpaceMax`.
             /// Only the Linux flavour reads it, through `TcpBufferSizing`.
             TcpSendSpaceMax : int
+            /// The receive buffer a new UDP socket starts with, in bytes:
+            /// Linux's `net.core.rmem_default` sysctl, Darwin's
+            /// `net.inet.udp.recvspace`. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpReceiveSpace`); see
+            /// `UnixBootImage.withUdpReceiveSpace`.
+            UdpReceiveSpace : int
+            /// The send buffer a new UDP socket starts with, in bytes: Linux's
+            /// `net.core.wmem_default` sysctl, and Darwin's
+            /// `net.inet.udp.maxdgram`, which is also the largest datagram a
+            /// Darwin UDP socket sends. Host configuration with a per-flavour
+            /// default (`UnixMachineState.defaultUdpSendSpace`).
+            UdpSendSpace : int
             /// The IPv4 addresses this machine holds. Host configuration; see
             /// `UnixSystem.defaultLocalIpv4Addresses`.
             LocalIpv4Addresses : Ipv4Address list
@@ -158,17 +202,6 @@ type internal UnixMachineState =
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
             NextPipeId : PipeId
-            /// Every write that reached a client draining a pipe, oldest first: the
-            /// bytes the outside world has received from the machine's processes.
-            ///
-            /// A client reads what its own ends received by filtering on
-            /// `Delivery.Endpoint`, which names the process the pipe was launched
-            /// into as well as the descriptor. One log rather than one per endpoint, so that
-            /// the order of writes across endpoints is kept: a process writing to
-            /// its output, then its error stream, then its output again is read
-            /// back in that order. It grows without bound: a process that writes
-            /// gigabytes costs that much memory.
-            Delivered : DeliveryLog
             /// The inode number the next pipe end will be given, as `fstat(2)`
             /// reports it. Monotonic and never reused: a process can compare the
             /// numbers two descriptors report to decide whether they name one pipe,
@@ -281,27 +314,16 @@ type internal UnixMachineState =
     member this.FileSystem : VirtualFileSystem =
         CommittedFileSystem.graph this.CommittedFileSystem
 
-/// What a socket is taking an ephemeral port for, which decides what stands
-/// in a candidate port's way.
+/// What a socket is taking an ephemeral port for, which decides which rule
+/// judges what stands in a candidate port's way.
 [<RequireQualifiedAccess>]
 type internal EphemeralPortUse =
-    /// `bind(2)` with port 0, and the implicit bind `listen(2)` performs on an
-    /// unbound socket: the port is reserved outright. For a stream socket,
-    /// another socket's binding at an overlapping address stands in the way
-    /// whatever either's `SO_REUSEADDR`, since the search never relaxes the
-    /// bind rule as an explicit bind may; for a datagram socket it stands in
-    /// the way as `bind(2)` decides. So does an endpoint of any TCP connection
-    /// whose socket has closed, because a real kernel keeps a closing socket in
-    /// its bind table until its connection is gone.
+    /// `bind(2)` with port 0, and the implicit bind `listen(2)` performs on a
+    /// socket with no port, or a datagram socket's write: the port is
+    /// reserved outright (`PortHolderRules.bindSearchMeets`).
     | Reserve
-    /// The implicit bind `connect(2)` performs on an unbound socket, towards
-    /// `destination`. A connection stands in the way only when it occupies the
-    /// four-tuple to `destination`: a real kernel selects a connect-time port
-    /// from its connection table, so a port held towards another destination
-    /// is free. Under Linux, a stream socket's binding stands in the way at any
-    /// address if `bind(2)` or `listen(2)` made it, and otherwise only through
-    /// its connection; elsewhere a binding stands in the way as `bind(2)`
-    /// decides.
+    /// The implicit bind `connect(2)` performs on a socket with no port,
+    /// towards `destination` (`PortHolderRules.connectSearchMeets`).
     | ConnectTo of destination : Ipv4Endpoint
 
 [<RequireQualifiedAccess>]
@@ -328,71 +350,81 @@ module UnixMachineState =
     /// `machine` with the filesystem `mutation` leaves, which must have been
     /// made from `machine.FileSystem`, and the records its changes raise
     /// queued on the inotify instances watching what they changed, the
-    /// syscall having reached it as `notice` says; or the refusal of a change
-    /// an inotify watch could hear of through a name this kernel does not
-    /// keep (`CommittedFileSystem.commit`). Every syscall that changes the
-    /// filesystem stores its change through here or `commitFileSystem`.
-    let internal tryCommitFileSystem
-        (notice : ChangeNotice)
-        (mutation : VfsMutation)
-        (machine : UnixMachineState)
-        : Result<UnixMachineState, UnplacedChangeRefusal>
-        =
-        CommittedFileSystem.commit
-            notice
-            machine.InotifyLimits.MaxQueuedEvents
-            mutation
-            machine.OpenFiles
-            machine.CommittedFileSystem
-        |> Result.map (fun (committed, openFiles) ->
-            { machine with
-                CommittedFileSystem = committed
-                OpenFiles = openFiles
-            }
-        )
-
-    /// `tryCommitFileSystem`, for a change no watch can make this kernel
-    /// refuse: a change of names (`ChangeNotice.Names`), the release of a
-    /// name (`ChangeNotice.NameReleased`), or one that reached
-    /// what it changed through a name or none, rather than through a removed
-    /// directory (`ReachedThrough.RemovedDirectory`). A write and a
-    /// truncation are such changes, being of a regular file, which only a
-    /// name reaches. Loudly partial on a notice of a removed directory.
+    /// syscall having reached it as `notice` says
+    /// (`CommittedFileSystem.commit`). Every syscall that changes the
+    /// filesystem stores its change through here.
     let internal commitFileSystem
         (notice : ChangeNotice)
         (mutation : VfsMutation)
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        match notice with
-        | ChangeNotice.Names
-        | ChangeNotice.NameReleased _
-        | ChangeNotice.SetAttributes (ReachedThrough.Name _, _)
-        | ChangeNotice.SetAttributes (ReachedThrough.Unnamed, _)
-        | ChangeNotice.Written (ReachedThrough.Name _)
-        | ChangeNotice.Written ReachedThrough.Unnamed -> ()
-        | ChangeNotice.SetAttributes (ReachedThrough.RemovedDirectory _, _)
-        | ChangeNotice.Written (ReachedThrough.RemovedDirectory _) ->
-            failwith
-                $"UnixMachineState.commitFileSystem: committed %A{notice}, which may be refused; commit it through tryCommitFileSystem (this is a bug in this library)."
+        let committed, openFiles =
+            CommittedFileSystem.commit
+                notice
+                machine.InotifyLimits.MaxQueuedEvents
+                mutation
+                machine.OpenFiles
+                machine.CommittedFileSystem
 
-        match tryCommitFileSystem notice mutation machine with
-        | Ok machine -> machine
-        | Error refusal ->
-            failwith
-                $"UnixMachineState.commitFileSystem: %A{notice} was refused, which reached no removed directory: %s{UnplacedChangeRefusal.describe refusal} (this is a bug in this library)."
+        { machine with
+            CommittedFileSystem = committed
+            OpenFiles = openFiles
+        }
 
-    /// The type of filesystem `inode` is on: the root filesystem's mount, or,
-    /// for an inode on the device filesystem, tmpfs, which a Linux devtmpfs
-    /// is underneath (measured: its `f_type`, and its directories' sizes,
-    /// follow tmpfs's rules).
-    let internal fileSystemTypeOf (inode : InodeNumber) (machine : UnixMachineState) : EmulatedFileSystemType =
+    /// The filesystem `inode` is on: the root filesystem's mount, or, for an
+    /// inode on the device filesystem, tmpfs, which a Linux devtmpfs is
+    /// underneath, or Darwin's devfs.
+    let internal fileSystemOf (inode : InodeNumber) (machine : UnixMachineState) : InodeFileSystem =
         match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
-        | None, _ -> EmulatedMount.fileSystemType machine.Mount
-        | Some _, DeviceFileSystemMount.Devtmpfs _ -> EmulatedFileSystemType.Tmpfs
-        | Some root, DeviceFileSystemMount.Devfs ->
-            failwith
-                $"UnixMachineState.fileSystemTypeOf: inode %O{inode} is on the filesystem mounted at inode %O{root}, which is Darwin's devfs; no path or descriptor can reach it (this is a bug in this library)."
+        | None, _ -> InodeFileSystem.Typed (EmulatedMount.fileSystemType machine.Mount)
+        | Some _, DeviceFileSystemMount.Devtmpfs _ -> InodeFileSystem.Typed EmulatedFileSystemType.Tmpfs
+        | Some _, DeviceFileSystemMount.Devfs _ -> InodeFileSystem.Devfs
+
+    /// `machine` after a read of `inode` at `now`: the inode's access time
+    /// moved where the rule of the filesystem it is on says it moves
+    /// (`AccessTimeUpdate`), and nothing else changed.
+    let internal afterRead (inode : InodeNumber) (now : UnixTimestamp) (machine : UnixMachineState) : UnixMachineState =
+        let rule =
+            match VirtualFileSystem.mountedRootOf inode machine.FileSystem, machine.DeviceMount with
+            | None, _ -> AccessTimeUpdate.ofMount machine.Mount
+            | Some _, DeviceFileSystemMount.Devtmpfs _ ->
+                match
+                    (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem)
+                        .Content
+                with
+                // Measured (`docs/probes/devtmpfs-times`): no read moves a time
+                // of a devtmpfs node; a device's driver, not the filesystem,
+                // answers the read.
+                | InodeContent.CharacterDevice _ -> AccessTimeUpdate.Never
+                // A devtmpfs is mounted `relatime` (`DevtmpfsMount.Flags`), and a
+                // listing of one of its directories moves the directory's atime
+                // under that rule (`docs/probes/devtmpfs-listing`).
+                | _ -> AccessTimeUpdate.Relative
+            // Measured on Darwin 27.0 (`docs/probes/devfs-darwin`, TIMES
+            // rows): every listing call moved a devfs directory's atime to
+            // now, to the microsecond, however recently the last had, and an
+            // open or a lookup moved nothing. A read of a node moves its atime
+            // the same way (`docs/design/devices-raw/devfs-times.c`).
+            | Some _, DeviceFileSystemMount.Devfs _ -> AccessTimeUpdate.Always
+
+        let times =
+            (VirtualFileSystem.get "UnixMachineState.afterRead: the inode read" inode machine.FileSystem).Times
+
+        // devfs keeps its times to the microsecond.
+        let now =
+            match machine.DeviceMount, VirtualFileSystem.mountedRootOf inode machine.FileSystem with
+            | DeviceFileSystemMount.Devfs _, Some _ -> UnixTimestamp.truncateToMicroseconds now
+            | DeviceFileSystemMount.Devfs _, None
+            | DeviceFileSystemMount.Devtmpfs _, _ -> now
+
+        match AccessTimeUpdate.afterRead rule now times with
+        | None -> machine
+        | Some times ->
+            commitFileSystem
+                (ChangeNotice.Read inode)
+                (VirtualFileSystem.setTimes inode times machine.FileSystem)
+                machine
 
     /// Whether `protection` is something a machine of `flavour` can be
     /// configured with: anything on Linux, and on Darwin, which has none of
@@ -425,15 +457,6 @@ module UnixMachineState =
         let (CpuId.CpuId index) = cpu
         index >= 0 && index < machine.ProcessorCount
 
-    /// Every write that has reached a client draining one of this machine's
-    /// pipes, oldest first: what the outside world has received from the
-    /// process. See `UnixMachineState.Delivered`.
-    ///
-    /// The client that drains those pipes reads this through
-    /// `UnixSystem.delivered`. No process can read this back, because the bytes
-    /// have left the machine.
-    let internal delivered (machine : UnixMachineState) : DeliveryLog = machine.Delivered
-
     /// The socket `socketId` names.
     ///
     /// Total, and loudly partial rather than an option: every `SocketId` a
@@ -441,11 +464,35 @@ module UnixMachineState =
     /// `checkInvariants` rejects a machine in which one of those names nothing.
     /// A `None` here would push that impossible case onto every call site.
     let internal socket (socketId : SocketId) (machine : UnixMachineState) : SocketDescription =
-        match Map.tryFind socketId machine.Sockets with
+        match SocketTable.tryFind socketId machine.Sockets with
         | Some socket -> socket
         | None ->
             failwith
                 $"UnixMachineState.socket: %O{socketId} names no socket in this kernel's socket table. Every SocketId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingSocket exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand, rather than anything the simulated process did."
+
+    /// The receive side of the UDP socket `socketId`. Loudly partial, as
+    /// `socket` is: `UnixSystem.checkInvariants` holds every UDP socket to
+    /// having one.
+    let internal datagramReceiver (socketId : SocketId) (machine : UnixMachineState) : DatagramReceiver =
+        match Map.tryFind socketId machine.DatagramReceivers with
+        | Some receiver -> receiver
+        | None ->
+            failwith
+                $"UnixMachineState.datagramReceiver: %O{socketId} has no receive side in this kernel. Every UDP socket is made with one, and UnixSystemDefect.UdpSocketWithoutReceiver exists to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
+
+    /// `machine` with the receive side of the UDP socket `socketId` replaced
+    /// by `receiver`. Loudly partial, as `datagramReceiver` is.
+    let internal withDatagramReceiver
+        (socketId : SocketId)
+        (receiver : DatagramReceiver)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        datagramReceiver socketId machine |> ignore
+
+        { machine with
+            DatagramReceivers = Map.add socketId receiver machine.DatagramReceivers
+        }
 
     /// A new kqueue for a Darwin `poll` about to sleep, holding `queue`: its
     /// identity, and the machine holding it.
@@ -455,14 +502,14 @@ module UnixMachineState =
 
         id,
         { machine with
-            PollQueues = Map.add id queue machine.PollQueues
+            PollQueues = PollQueueTable.add id queue machine.PollQueues
             NextPollQueueId = PollQueueId (next + 1L)
         }
 
     /// The kqueue `queue` of a sleeping Darwin `poll`. Loudly partial: the
     /// caller read the identity from a park, which holds it.
     let internal pollQueue (queue : PollQueueId) (machine : UnixMachineState) : PollQueue =
-        match Map.tryFind queue machine.PollQueues with
+        match PollQueueTable.tryFind queue machine.PollQueues with
         | Some found -> found
         | None ->
             failwith
@@ -476,11 +523,8 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        if not (Map.containsKey queue machine.PollQueues) then
-            failwith $"UnixMachineState.setPollQueue: %O{queue} is not on the machine (this is a bug in this library)."
-
         { machine with
-            PollQueues = Map.add queue state machine.PollQueues
+            PollQueues = PollQueueTable.set queue state machine.PollQueues
         }
 
     /// Every live open file description on the machine naming `socketId`.
@@ -489,13 +533,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            match description.Target with
-            | OpenFileTarget.Socket target when target = socketId -> Some descriptionId
-            | _ -> None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingSocket socketId machine.OpenFiles
 
     /// Every live open file description on the machine naming `pipeEnd` of
     /// `pipeId`.
@@ -505,20 +543,15 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : Set<OpenFileDescriptionId>
         =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (descriptionId, description) ->
-            if description.Target = OpenFileTarget.Pipe (pipeId, pipeEnd) then
-                Some descriptionId
-            else
-                None
-        )
-        |> Set.ofSeq
+        OpenFileTable.descriptionsNamingPipeEnd pipeId pipeEnd machine.OpenFiles
 
     /// Whether `pipeEnd` of the pipe `pipeId`, which is `pipe`, is still open:
     /// whether some open file description on the machine names it, or the
     /// client holds it (`PipeState.heldByClient`).
     ///
-    /// Derived rather than stored, so it cannot disagree with the table: the
+    /// Read from the count of the descriptions onto each end that the table
+    /// keeps with them (`OpenFileTable.describesPipeEnd`), so it cannot
+    /// disagree with the table: the
     /// end closes when the last description onto it goes, which is when its
     /// last descriptor closes, or when a call that held it returns after that,
     /// unless the client holds it; and `dup` keeps it open.
@@ -530,8 +563,7 @@ module UnixMachineState =
         : bool
         =
         PipeState.heldByClient pipeEnd pipe
-        || OpenFileTable.toSeq machine.OpenFiles
-           |> Seq.exists (fun (_, description) -> description.Target = OpenFileTarget.Pipe (pipeId, pipeEnd))
+        || OpenFileTable.describesPipeEnd pipeId pipeEnd machine.OpenFiles
 
     /// Every inode something on the machine holds a reference to *directly*,
     /// independently of any name the filesystem binds to it: each open file
@@ -552,33 +584,24 @@ module UnixMachineState =
     /// want, though — see `ObjectLifetime.pinnedInodes`, which adds those the
     /// *filesystem* holds on behalf of these.
     let internal heldInodes (machine : UnixMachineState) : Set<InodeNumber> =
-        OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.File (inode, _)
-            | OpenFileTarget.Directory (inode, _)
-            | OpenFileTarget.CharacterDevice (inode, _, _)
-            | OpenFileTarget.Fifo (inode, _) -> Some inode
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.Epoll _
-            // A watch does not keep the inode it watches: the watch goes
-            // when the inode does.
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Pipe _ -> None
-        )
+        // An inotify instance's watch does not keep the inode it watches: the
+        // watch goes when the inode does.
+        OpenFileTable.heldInodes machine.OpenFiles
         |> Set.ofSeq
-        |> Set.union (
-            OpenFileTable.toSeqOpenedThrough machine.OpenFiles
-            |> Seq.choose (fun (_, _, through) ->
-                match through with
-                | ReachedThrough.Name (dentry, _) -> Some dentry.Parent
-                | ReachedThrough.Unnamed
-                | ReachedThrough.RemovedDirectory _ -> None
-            )
-            |> Set.ofSeq
-        )
         |> Set.union (machine.CurrentDirectories |> Map.keys |> Set.ofSeq)
+
+    /// Whether `inode` is in `heldInodes`, in time logarithmic in what the
+    /// machine holds.
+    let internal holdsDirectly (inode : InodeNumber) (machine : UnixMachineState) : bool =
+        OpenFileTable.holdsInode inode machine.OpenFiles
+        || Map.containsKey inode machine.CurrentDirectories
+
+    /// The directories of `heldInodes`: each one an open file description is
+    /// onto, each holding a name a description was opened through, and each
+    /// some process stands in. In time linear in their number.
+    let internal heldDirectories (machine : UnixMachineState) : InodeNumber list =
+        List.ofSeq (OpenFileTable.heldDirectories machine.OpenFiles)
+        @ List.ofSeq (Map.keys machine.CurrentDirectories)
 
     /// `machine` with one more process standing in `inode`.
     let internal holdCurrentDirectory (inode : InodeNumber) (machine : UnixMachineState) : UnixMachineState =
@@ -641,10 +664,25 @@ module UnixMachineState =
             failwith
                 $"UnixMachineState.connection: %O{connectionId} names no connection in this kernel's connection table. UnixSystemDefect.DanglingConnection and DanglingQueuedConnection exist to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
 
+    /// `connection` carrying `transfer`, which a call made at `now` by the
+    /// kernel clock left it: if that completed the exchange of FINs, it did so
+    /// at `now`.
+    let internal transferredAt (now : int64) (transfer : TcpTransfer) (connection : TcpConnection) : TcpConnection =
+        { connection with
+            Transfer = transfer
+            FinsExchangedAt =
+                match connection.FinsExchangedAt with
+                | Some exchanged -> Some exchanged
+                | None when TcpTransfer.exchangeComplete transfer -> Some now
+                | None -> None
+        }
+
     /// `connectionId`'s entry in the connection table, with the bytes and end
-    /// states it carries replaced by `transfer`. Loudly partial, as
+    /// states it carries replaced by `transfer`, which a call made at `now` by
+    /// the kernel clock left (`transferredAt`). Loudly partial, as
     /// `connection` is.
     let internal withTransfer
+        (now : int64)
         (connectionId : ConnectionId)
         (transfer : TcpTransfer)
         (machine : UnixMachineState)
@@ -653,13 +691,7 @@ module UnixMachineState =
         let existing = connection connectionId machine
 
         { machine with
-            Connections =
-                Map.add
-                    connectionId
-                    { existing with
-                        Transfer = transfer
-                    }
-                    machine.Connections
+            Connections = Map.add connectionId (transferredAt now transfer existing) machine.Connections
         }
 
     /// The socket that is the `connectionEnd` end of `connectionId`
@@ -671,7 +703,7 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : SocketId option
         =
-        machine.Sockets
+        SocketTable.all machine.Sockets
         |> Map.tryFindKey (fun _ socket -> SocketPhase.connectionEnd socket.Phase = Some (connectionId, connectionEnd))
 
     /// The readiness a socket presents right now, before any waiter's interest
@@ -711,6 +743,18 @@ module UnixMachineState =
                 { ReadinessLevel.none with
                     Out = true
                     Hup = true
+                }
+            | SocketKind.Datagram when SocketTable.receivesDatagrams target ->
+                // Measured (`udp-transfer.c` G1 to G4, L1 and L5, in
+                // docs/plans/2026-10-18-udp-data-path): OUT always, since a
+                // UDP send never waits; IN while a datagram is queued; ERR
+                // while an ICMP error is pending, whatever is queued.
+                let receiver = datagramReceiver socketId machine
+
+                { ReadinessLevel.none with
+                    In = not (DatagramReceiver.isEmpty receiver)
+                    Out = true
+                    Err = DatagramReceiver.errorPending receiver
                 }
             | SocketKind.Datagram ->
                 { ReadinessLevel.none with
@@ -817,7 +861,7 @@ module UnixMachineState =
     /// so whether the end's socket is open or has closed, and the last may
     /// happen after the close, at the read by the peer that lets the FIN
     /// through. A Linux socket still open keeps an explicitly bound port
-    /// regardless (`releasedPort`).
+    /// regardless (`PortHolderRules.openEndKeepsPort`).
     ///
     /// Measured on both: a fresh socket binds the survivor's exact endpoint
     /// once a reset has reached it, at either end (`reset-binding.c` in
@@ -829,296 +873,343 @@ module UnixMachineState =
     /// first, or one still queued, it cannot, unless, under Darwin, the end
     /// closed under linger zero after the exchange (section L,
     /// `bothfin-cfirst`).
-    let internal endpointReleased (connectionEnd : ConnectionEnd) (connection : TcpConnection) : bool =
+    let private endpointReleased (connectionEnd : ConnectionEnd) (connection : TcpConnection) : bool =
         resetReleasedTuple connection
         || TcpTransfer.passiveFinArrived connectionEnd connection.Transfer
         || TcpTransfer.abortReleased connectionEnd connection.Transfer
 
-    /// Whether the connected socket `socket`'s binding has stopped reserving
-    /// its port because its end of the connection is done with it
-    /// (`endpointReleased`): on Darwin always, and on Linux unless the port
-    /// was bound explicitly (`SocketBinding.LockedPort`), whose port the
-    /// socket's close releases. `getsockname` still reports the port.
-    let internal releasedPort (socket : SocketDescription) (machine : UnixMachineState) : bool =
-        match SocketPhase.connectionEnd socket.Phase with
-        | None -> false
-        | Some (connectionId, connectionEnd) ->
-            endpointReleased connectionEnd (connection connectionId machine)
-            && (
-                match SimulatedUnixPlatform.flavour machine.UnixPlatform, socket.Ipv4Binding with
-                | SimulatedUnixFlavour.Darwin, _ -> true
-                | SimulatedUnixFlavour.Linux, Some binding -> not binding.LockedPort
-                | SimulatedUnixFlavour.Linux, None -> true
+    /// An end in TIME_WAIT, as a port holder.
+    let internal timeWaitHolder (timeWait : TcpTimeWait) : PortHolder =
+        {
+            Endpoint = timeWait.Local
+            Kind = PortHolderKind.TimeWait timeWait.EnteredAt
+            Claim = PortClaim.ofPortHold timeWait.PortHold
+            ReuseAddress = timeWait.ReuseAddress
+            Peer = Some timeWait.Remote
+            Owner = PortHolderOwner.ClosedSocket timeWait.SocketUid
+        }
+
+    /// What a socket in `phase` is, as a port holder.
+    let private holderKind (socketId : SocketId) (phase : SocketPhase) : PortHolderKind =
+        match phase with
+        | SocketPhase.Listening _ -> PortHolderKind.Listener
+        | SocketPhase.Refused _ -> PortHolderKind.Refused
+        | SocketPhase.Idle -> PortHolderKind.Idle
+        | SocketPhase.DatagramPeer _ -> PortHolderKind.DatagramPeer
+        | SocketPhase.Established _
+        | SocketPhase.EstablishedPendingReport _ -> PortHolderKind.ConnectionEnd
+        // Linux hashes a connect in flight by its four-tuple, as it does an
+        // established end; how that holds the endpoint against a bind is
+        // unmeasured.
+        | SocketPhase.Connecting _ -> ReservedConnecting.fail "UnixMachineState.portHolders" socketId
+
+    /// Everything on `machine` that holds a port of `transport`'s, or a TCP
+    /// four-tuple, in the way of a bind, a listen, a search or a connect made
+    /// on the socket `asking`: every other socket bound at an IPv4 endpoint
+    /// and not connected, and for a stream socket every end of every TCP
+    /// connection, whether a socket holds it, its socket has closed, or it
+    /// waits in an accept queue, and every end in TIME_WAIT whose connection
+    /// is gone (`TimeWaits`). No such call is made on a connected socket.
+    ///
+    /// Ports are per transport: a UDP socket takes a port a TCP socket
+    /// holds.
+    let internal portHolders
+        (asking : SocketId)
+        (transport : SocketKind)
+        (machine : UnixMachineState)
+        : PortHolder list
+        =
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+        let unconnected =
+            SocketTable.all machine.Sockets
+            |> Map.toList
+            |> List.choose (fun (socketId, socket) ->
+                match socket.Ipv4Binding, SocketPhase.connectionEnd socket.Phase with
+                | Some binding, None when socketId <> asking && socket.Kind = transport ->
+                    Some
+                        {
+                            Endpoint = binding.Endpoint
+                            Kind = holderKind socketId socket.Phase
+                            Claim = PortClaim.ofPortHold binding.PortHold
+                            ReuseAddress = socket.ReuseAddress
+                            Peer = None
+                            Owner = PortHolderOwner.Socket socket.Uid
+                        }
+                | _ -> None
             )
 
-    /// The endpoint of each TCP connection end whose socket has closed and
-    /// which still holds it (`endpointReleased`), with the `SO_REUSEADDR` its
-    /// socket carried when it closed.
-    ///
-    /// A server end still in an accept queue has no socket yet, and is not
-    /// among them: the listener's own binding holds its port.
-    let private orphanedEndpoints (machine : UnixMachineState) : (Ipv4Endpoint * bool) list =
-        machine.Connections
-        |> Map.toList
-        |> List.collect (fun (_, connection) ->
-            [
-                ConnectionEnd.Client, connection.ClientAddress
-                ConnectionEnd.Server, connection.ServerAddress
-            ]
-            |> List.choose (fun (connectionEnd, endpoint) ->
-                match (TcpTransfer.towards connectionEnd connection.Transfer).Receiver with
-                | TcpEndState.Open _
-                | TcpEndState.Reset _ -> None
-                | TcpEndState.Closed reuseAddress ->
-                    if endpointReleased connectionEnd connection then
-                        None
-                    else
-                        Some (endpoint, reuseAddress)
-            )
-        )
+        let connectionEnds =
+            match transport with
+            | SocketKind.Datagram
+            | SocketKind.SeqPacket -> []
+            | SocketKind.Stream ->
 
-    /// Whether another socket's binding conflicts with `candidate`, taken on
-    /// behalf of `socket`, by `SimulatedUnixPlatform.bindConflict`. A binding
-    /// its connection released (`releasedPort`), or whose refused connect gave
-    /// its port back (`PortHold.GivenBack`), conflicts with nothing.
-    let private socketBindingConflicts
-        (socketId : SocketId)
-        (socket : SocketDescription)
-        (candidate : Ipv4Binding)
-        (machine : UnixMachineState)
-        : bool
-        =
-        machine.Sockets
-        |> Map.exists (fun otherId (other : SocketDescription) ->
-            if otherId = socketId || releasedPort other machine then
-                false
-            else
+            let socketsByEnd : Map<ConnectionId * ConnectionEnd, SocketId * SocketDescription> =
+                SocketTable.all machine.Sockets
+                |> Map.toList
+                |> List.choose (fun (socketId, socket) ->
+                    SocketPhase.connectionEnd socket.Phase
+                    |> Option.map (fun held -> held, (socketId, socket))
+                )
+                |> Map.ofList
 
-            match other.Ipv4Binding with
-            | None -> false
-            | Some existing when not (PortHold.isHeld existing.PortHold) -> false
-            | Some existing ->
-                // Separate port namespaces per transport, measured: a UDP
-                // socket takes a port a listening TCP socket holds.
-                other.Kind = socket.Kind
-                && SimulatedUnixPlatform.bindConflict
-                    machine.UnixPlatform
-                    existing.Endpoint
-                    other.ReuseAddress
-                    (EndpointHolder.ofPhase other.Phase)
-                    candidate.Endpoint
-                    socket.ReuseAddress
-        )
+            machine.Connections
+            |> Map.toList
+            |> List.collect (fun (connectionId, connection) ->
+                let tupleHeld = not (resetReleasedTuple connection)
 
-    /// Whether anything else holding an endpoint conflicts with `candidate`,
-    /// taken on behalf of `socket`: another socket's binding
-    /// (`socketBindingConflicts`), or, for a stream socket, a TCP connection
-    /// end whose socket has closed and which still holds its endpoint
-    /// (`orphanedEndpoints`), judged by `SimulatedUnixPlatform.bindConflict`
-    /// as a connected socket would be, with the `SO_REUSEADDR` its socket
-    /// carried when it closed.
-    ///
-    /// The relation `bind(2)` decides admission with, and `listen(2)` asks
-    /// again on the flavour that re-screens an already-bound socket. An
-    /// ephemeral choice asks its own rules instead (`allocateEphemeralPort`). Measured for a
-    /// connection end, open or closed, on both flavours, with and without
-    /// `SO_REUSEADDR` on either side, at loopback and the wildcard, and the
-    /// `listen(2)` of a socket that bound
-    /// (`bind-held-endpoint.c` in docs/plans/2026-10-08-tcp-shutdown-linger).
-    let internal bindingConflicts
-        (socketId : SocketId)
-        (socket : SocketDescription)
-        (candidate : Ipv4Binding)
-        (machine : UnixMachineState)
-        : bool
-        =
-        socketBindingConflicts socketId socket candidate machine
-        || socket.Kind = SocketKind.Stream
-           && orphanedEndpoints machine
-              |> List.exists (fun (held, reuse) ->
-                  SimulatedUnixPlatform.bindConflict
-                      machine.UnixPlatform
-                      held
-                      reuse
-                      EndpointHolder.ConnectionEnd
-                      candidate.Endpoint
-                      socket.ReuseAddress
-              )
+                [
+                    ConnectionEnd.Client, connection.ClientAddress, connection.ServerAddress
+                    ConnectionEnd.Server, connection.ServerAddress, connection.ClientAddress
+                ]
+                |> List.choose (fun (connectionEnd, local, remote) ->
+                    let peer = if tupleHeld then Some remote else None
+                    let released = endpointReleased connectionEnd connection
 
-    /// Whether anything other than `socketId` holds `port`, at any address and
-    /// whatever anyone's `SO_REUSEADDR`: a socket of `socket`'s kind bound at
-    /// it, unless its connection released it (`releasedPort`) or its refused
-    /// connect gave it back (`PortHold.GivenBack`), or, for a
-    /// stream socket, a connection end whose socket has closed and which still
-    /// holds it (`orphanedEndpoints`). Darwin's implicit connect bind, which
-    /// binds the wildcard, passes over every port another socket is bound at,
-    /// with the flag or without it (`docs/probes/implicit-self-connect`, rows H
-    /// and Hr).
-    let internal portHeldByAnother
-        (socketId : SocketId)
-        (socket : SocketDescription)
-        (port : uint16)
-        (machine : UnixMachineState)
-        : bool
-        =
-        let boundThere =
-            machine.Sockets
-            |> Map.exists (fun otherId (other : SocketDescription) ->
-                otherId <> socketId
-                && other.Kind = socket.Kind
-                && not (releasedPort other machine)
-                && (
-                    match other.Ipv4Binding with
-                    | Some binding -> PortHold.isHeld binding.PortHold && binding.Endpoint.Port = port
-                    | None -> false
+                    match Map.tryFind (connectionId, connectionEnd) socketsByEnd with
+                    | Some (socketId, socket) ->
+                        let binding =
+                            match socket.Ipv4Binding with
+                            | Some binding -> binding
+                            | None ->
+                                failwith
+                                    $"UnixMachineState.portHolders: socket %O{socketId} holds the %A{connectionEnd} end of %O{connectionId} and no IPv4 binding (this is a bug in this library)."
+
+                        Some
+                            {
+                                Endpoint = local
+                                Kind = PortHolderKind.ConnectionEnd
+                                Claim =
+                                    if
+                                        released && not (PortHolderRules.openEndKeepsPort flavour binding.LockedPort)
+                                    then
+                                        PortClaim.Released
+                                    else
+                                        PortClaim.ofPortHold binding.PortHold
+                                ReuseAddress = socket.ReuseAddress
+                                Peer = peer
+                                Owner = PortHolderOwner.Socket socket.Uid
+                            }
+                    | None ->
+
+                    match (TcpTransfer.towards connectionEnd connection.Transfer).Receiver with
+                    | TcpEndState.Closed (reuseAddress, portHold, uid) ->
+                        Some
+                            {
+                                Endpoint = local
+                                Kind = PortHolderKind.ConnectionEnd
+                                Claim =
+                                    if released then
+                                        PortClaim.Released
+                                    else
+                                        PortClaim.ofPortHold portHold
+                                ReuseAddress = reuseAddress
+                                Peer = peer
+                                Owner = PortHolderOwner.ClosedSocket uid
+                            }
+                    // A server end in an accept queue, whose listener's own
+                    // binding holds the port; or an end a reset reached,
+                    // which holds nothing.
+                    | TcpEndState.Open _
+                    | TcpEndState.Reset _ ->
+                        peer
+                        |> Option.map (fun peer ->
+                            {
+                                Endpoint = local
+                                Kind = PortHolderKind.ConnectionEnd
+                                Claim = PortClaim.Released
+                                ReuseAddress = false
+                                Peer = Some peer
+                                Owner = PortHolderOwner.NoSocket
+                            }
+                        )
                 )
             )
 
-        boundThere
-        || socket.Kind = SocketKind.Stream
-           && orphanedEndpoints machine |> List.exists (fun (held, _) -> held.Port = port)
+        let timeWaits =
+            match transport with
+            | SocketKind.Datagram
+            | SocketKind.SeqPacket -> []
+            | SocketKind.Stream -> machine.TimeWaits |> Map.toList |> List.map (snd >> timeWaitHolder)
 
-    /// The bindings of the sockets of `socket`'s kind other than `socketId`
-    /// that hold their ports, by port: none whose connection released it
-    /// (`releasedPort`) or whose refused connect gave it back
-    /// (`PortHold.GivenBack`). Worked out once for a whole search.
-    let private heldBindingsByPort
+        unconnected @ connectionEnds @ timeWaits
+
+    /// What an end in TIME_WAIT on `machine` is judged by, at `now` by the
+    /// kernel clock (`UnixSchedulingState.NanosecondsSinceBoot`).
+    let internal timeWaitClock (now : int64) (machine : UnixMachineState) : TimeWaitClock =
+        {
+            Now = now
+            Sysctls = machine.TcpTimeWait
+        }
+
+    /// Whether anything else holding a port stands in the way of `socket`'s
+    /// `bind(2)` of `candidate` at `now` (`PortHolderRules.bindVerdict`).
+    let internal bindingConflicts
+        (now : int64)
         (socketId : SocketId)
         (socket : SocketDescription)
+        (candidate : Ipv4Binding)
         (machine : UnixMachineState)
-        : Map<uint16, Ipv4Binding list>
+        : PortVerdict
         =
-        machine.Sockets
-        |> Map.toList
-        |> List.choose (fun (otherId, other) ->
-            if otherId = socketId || other.Kind <> socket.Kind || releasedPort other machine then
-                None
-            else
-                match other.Ipv4Binding with
-                | Some binding when PortHold.isHeld binding.PortHold -> Some binding
-                | Some _
-                | None -> None
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
+
+        portHolders socketId socket.Kind machine
+        |> Seq.map (fun holder ->
+            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress socket.Uid
         )
-        |> List.groupBy (fun binding -> binding.Endpoint.Port)
-        |> Map.ofList
+        |> PortVerdict.ofAll
 
-    /// Whether one of `held`, the bindings other sockets hold at
-    /// `candidate`'s port, is at an address overlapping it, however it came by
-    /// the port, whatever either socket's `SO_REUSEADDR`, and whether or not it
-    /// listens: what a stream socket's search for a port to bind passes over,
-    /// which never relaxes the bind rule as an explicit bind may. Measured on
-    /// Linux (`inet_csk_find_open_port`), and on Darwin for a search carrying
-    /// `SO_REUSEADDR` against sockets carrying it too
-    /// (`docs/probes/ephemeral-search`).
-    let private searchMeetsHolder (held : Ipv4Binding list) (candidate : Ipv4Binding) : bool =
-        held
-        |> List.exists (fun binding -> Ipv4Endpoint.addressesOverlap binding.Endpoint candidate.Endpoint)
+    /// Whether anything else holding a port stands in the way of `listen(2)`
+    /// at `now` on `socket`, already bound at `bound` and not yet listening
+    /// (`PortHolderRules.listenVerdict`).
+    let internal listenConflicts
+        (now : int64)
+        (socketId : SocketId)
+        (socket : SocketDescription)
+        (bound : Ipv4Binding)
+        (machine : UnixMachineState)
+        : PortVerdict
+        =
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
 
-    /// Whether one of `held`, the bindings other stream sockets hold at a port,
-    /// is one `bind(2)` or `listen(2)` made (`PortHold.Reserved`), at any
-    /// address and whatever anyone's `SO_REUSEADDR`: an explicit bind, one of
-    /// port 0, a listener's own implicit bind, or the listener's port an
-    /// accepted socket holds. Linux's search for a connect's port
-    /// (`__inet_hash_connect`) passes over every such port, and shares one only
-    /// connect's own implicit bind gave another socket (measured,
-    /// `docs/probes/ephemeral-search`).
-    let private linuxBindMadeHolder (held : Ipv4Binding list) : bool =
-        held |> List.exists (fun binding -> binding.PortHold = PortHold.Reserved)
+        portHolders socketId socket.Kind machine
+        |> Seq.map (fun holder -> PortHolderRules.listenVerdict flavour clock holder bound.Endpoint socket.ReuseAddress)
+        |> PortVerdict.ofAll
+
+    /// Whether a TCP SYN from `socketId` towards `destination`, where nothing
+    /// listens, is dropped rather than answered with a reset
+    /// (`PortHolderRules.dropsSyn`).
+    let internal synDropped (socketId : SocketId) (destination : Ipv4Endpoint) (machine : UnixMachineState) : bool =
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+
+        portHolders socketId SocketKind.Stream machine
+        |> List.exists (fun holder -> PortHolderRules.dropsSyn flavour holder destination)
 
     /// Whether a TCP connection occupies the four-tuple between `source` and
-    /// `destination`, in either orientation. One a reset has reached does
-    /// not (`resetReleasedTuple`).
-    let private connectionOccupiesTuple
+    /// `destination`, in either orientation: one of its ends occupies it each
+    /// way round (`PortHolderRules.occupiesFourTuple`). One a reset has
+    /// reached does not, nor does an end in TIME_WAIT, whose connection is
+    /// gone (`timeWaitOn`).
+    let internal fourTupleOccupied
+        (socketId : SocketId)
         (source : Ipv4Endpoint)
         (destination : Ipv4Endpoint)
         (machine : UnixMachineState)
         : bool
         =
-        machine.Connections
-        |> Map.exists (fun _ connection ->
-            not (resetReleasedTuple connection)
-            && ((connection.ClientAddress = source && connection.ServerAddress = destination)
-                || (connection.ClientAddress = destination && connection.ServerAddress = source))
+        portHolders socketId SocketKind.Stream machine
+        |> List.exists (fun holder ->
+            holder.Kind = PortHolderKind.ConnectionEnd
+            && PortHolderRules.occupiesFourTuple holder source destination
         )
+
+    /// The end in TIME_WAIT at `local`, towards `remote`, as a port holder, if
+    /// there is one.
+    let internal timeWaitOn
+        (local : Ipv4Endpoint)
+        (remote : Ipv4Endpoint)
+        (machine : UnixMachineState)
+        : PortHolder option
+        =
+        Map.tryFind (local, remote) machine.TimeWaits |> Option.map timeWaitHolder
+
+    /// `machine` with the end in TIME_WAIT at `local`, towards `remote`, gone,
+    /// as a connect that takes its four-tuple over ends it; as it was if there
+    /// is none.
+    let internal endTimeWait
+        (local : Ipv4Endpoint)
+        (remote : Ipv4Endpoint)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        { machine with
+            TimeWaits = Map.remove (local, remote) machine.TimeWaits
+        }
 
     /// Hands out the lowest free port at or after the cursor, sweeping the
     /// range once and wrapping, as the binding `candidate` makes of it, on
-    /// behalf of `socket`. `purpose` decides what makes a port free.
+    /// behalf of `socket`, at `now` by the kernel clock. `purpose` decides
+    /// what makes a port free. A connect's search may take over the
+    /// four-tuple of an end in TIME_WAIT, which the connect then ends.
     ///
-    /// `None` when a full sweep finds nothing, which the caller answers: see
-    /// `SimulatedUnixPlatform.ephemeralPortsExhausted`.
+    /// `Ok None` when a full sweep finds nothing, which the caller answers:
+    /// see `SimulatedUnixPlatform.ephemeralPortsExhausted`. An error where
+    /// whether the first port the sweep cannot rule out is free depends on an
+    /// end in TIME_WAIT this kernel cannot judge.
     let internal allocateEphemeralPort
+        (now : int64)
         (purpose : EphemeralPortUse)
         (socketId : SocketId)
         (socket : SocketDescription)
         (candidate : uint16 -> Ipv4Binding)
         (machine : UnixMachineState)
-        : (Ipv4Binding * UnixMachineState) option
+        : Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>
         =
         let low, high = machine.EphemeralPortRange
         let width = int high - int low + 1
+        let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
 
-        // What holds each port, worked out once for the sweep rather than
-        // once for each port it considers.
-        let heldAt =
-            let byPort = lazy (heldBindingsByPort socketId socket machine)
-            fun (port : uint16) -> byPort.Force () |> Map.tryFind port |> Option.defaultValue []
+        let verdict (holder : PortHolder) (binding : Ipv4Binding) : PortVerdict =
+            match purpose with
+            | EphemeralPortUse.Reserve ->
+                PortHolderRules.bindSearchVerdict flavour clock socket.Kind holder binding.Endpoint socket.ReuseAddress
+            | EphemeralPortUse.ConnectTo destination ->
+                PortHolderRules.connectSearchVerdict
+                    flavour
+                    clock
+                    socket.Kind
+                    holder
+                    binding.Endpoint
+                    destination
+                    socket.ReuseAddress
 
-        // Whether a TCP connection end whose socket has gone still occupies
-        // `endpoint`'s port, whatever either side's SO_REUSEADDR
-        // (`orphanedEndpoints`).
-        let orphans = lazy (orphanedEndpoints machine)
+        // Each holder by its endpoint's port, the only port a rule finds it in
+        // the way of, worked out once for the sweep rather than once for each
+        // port it considers.
+        let holdersAt =
+            lazy
+                (portHolders socketId socket.Kind machine
+                 |> List.groupBy (fun holder -> holder.Endpoint.Port)
+                 |> Map.ofList)
 
-        let orphanOccupies (endpoint : Ipv4Endpoint) : bool =
-            orphans.Force ()
-            |> List.exists (fun (held, _) -> held.Port = endpoint.Port && Ipv4Endpoint.addressesOverlap held endpoint)
-
-        let acceptable (port : uint16) : Ipv4Binding option =
+        let judge (port : uint16) : Ipv4Binding * PortVerdict =
             let binding = candidate port
 
             if binding.Endpoint.Port <> port then
                 failwith
                     $"UnixMachineState.allocateEphemeralPort: the candidate binding for port %d{port} names port %d{binding.Endpoint.Port} instead (this is a bug in this library)."
 
-            let free =
-                match purpose, socket.Kind, SimulatedUnixPlatform.flavour machine.UnixPlatform with
-                | EphemeralPortUse.Reserve, SocketKind.Stream, _ ->
-                    not (searchMeetsHolder (heldAt port) binding)
-                    // A port an end whose socket has closed still holds is
-                    // passed over whatever either side's SO_REUSEADDR.
-                    && not (orphanOccupies binding.Endpoint)
-                // A datagram socket's search is the bind rule's: Linux's lets
-                // two sockets carrying SO_REUSEADDR share a port, by the
-                // source (`udp_lib_lport_inuse`), which is unmeasured.
-                | EphemeralPortUse.Reserve, _, _ -> not (socketBindingConflicts socketId socket binding machine)
-                | EphemeralPortUse.ConnectTo destination, SocketKind.Stream, SimulatedUnixFlavour.Linux ->
-                    not (linuxBindMadeHolder (heldAt port))
-                    // An end whose socket has closed constrains a connect's
-                    // port by its four-tuple alone: which other ports a
-                    // connect passes over is unmeasured.
-                    && not (connectionOccupiesTuple binding.Endpoint destination machine)
-                | EphemeralPortUse.ConnectTo destination, _, _ ->
-                    not (socketBindingConflicts socketId socket binding machine)
-                    && not (connectionOccupiesTuple binding.Endpoint destination machine)
+            let standing = holdersAt.Force () |> Map.tryFind port |> Option.defaultValue []
+            binding, standing |> Seq.map (fun holder -> verdict holder binding) |> PortVerdict.ofAll
 
-            if free then Some binding else None
-
-        let rec sweep (remaining : int) (port : uint16) : (Ipv4Binding * UnixMachineState) option =
+        let rec sweep
+            (remaining : int)
+            (port : uint16)
+            : Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>
+            =
             if remaining = 0 then
-                None
+                Ok None
             else
 
             let next = if port = high then low else port + 1us
 
-            match acceptable port with
-            | Some binding ->
-                Some (
-                    binding,
-                    { machine with
-                        NextEphemeralPort = next
-                    }
+            match judge port with
+            | _, PortVerdict.InTheWay -> sweep (remaining - 1) next
+            | _, PortVerdict.Undetermined refusal -> Error refusal
+            | binding, PortVerdict.Clear ->
+                Ok (
+                    Some (
+                        binding,
+                        { machine with
+                            NextEphemeralPort = next
+                        }
+                    )
                 )
-            | None -> sweep (remaining - 1) next
 
         // A cursor outside the range can only come from a hand-built machine;
         // start from the bottom rather than sweeping from nowhere.
@@ -1129,6 +1220,67 @@ module UnixMachineState =
                 machine.NextEphemeralPort
 
         sweep width start
+
+    /// `machine` with the connection `connectionId` forgotten, as when
+    /// neither of its ends has a socket or a place in an accept queue any
+    /// more, and each end of it in TIME_WAIT recorded in `TimeWaits`: an end
+    /// whose FIN was made first, both FINs having arrived
+    /// (`TcpTransfer.timeWait`), unless a reset reached the connection or a
+    /// Darwin close under `SO_LINGER` {1, 0} freed the end
+    /// (`TcpTransfer.abortReleased`). It entered TIME_WAIT when both FINs had
+    /// arrived (`TcpConnection.FinsExchangedAt`).
+    let internal forgetConnection (connectionId : ConnectionId) (machine : UnixMachineState) : UnixMachineState =
+        let forgotten = connection connectionId machine
+
+        let timeWaits =
+            if resetReleasedTuple forgotten then
+                []
+            else
+
+            [
+                ConnectionEnd.Client, forgotten.ClientAddress, forgotten.ServerAddress
+                ConnectionEnd.Server, forgotten.ServerAddress, forgotten.ClientAddress
+            ]
+            |> List.choose (fun (connectionEnd, local, remote) ->
+                if
+                    not (TcpTransfer.timeWait connectionEnd forgotten.Transfer)
+                    || TcpTransfer.abortReleased connectionEnd forgotten.Transfer
+                then
+                    None
+                else
+
+                match (TcpTransfer.towards connectionEnd forgotten.Transfer).Receiver, forgotten.FinsExchangedAt with
+                | TcpEndState.Closed (reuseAddress, portHold, uid), Some exchanged ->
+                    Some
+                        {
+                            Local = local
+                            Remote = remote
+                            ReuseAddress = reuseAddress
+                            PortHold = portHold
+                            SocketUid = uid
+                            EnteredAt = exchanged
+                        }
+                | other, exchanged ->
+                    failwith
+                        $"UnixMachineState.forgetConnection: the %A{connectionEnd} end of %O{connectionId} is in TIME_WAIT as it is forgotten, but it is %A{other} and the exchange of FINs completed at %A{exchanged} (this is a bug in this library)."
+            )
+
+        { machine with
+            Connections = Map.remove connectionId machine.Connections
+            TimeWaits =
+                (machine.TimeWaits, timeWaits)
+                ||> List.fold (fun timeWaits timeWait -> Map.add (timeWait.Local, timeWait.Remote) timeWait timeWaits)
+        }
+
+    /// The TIME_WAIT sysctls' defaults on each flavour, measured on the
+    /// probe machines (2026-10-14): `net.inet.tcp.msl` reads 15000 (ms) on
+    /// Darwin 27.0.0, and `net.ipv4.tcp_tw_reuse_delay` reads 1000 (ms), with
+    /// `net.ipv4.tcp_tw_reuse` at 2, on the Linux 6.18.5 container
+    /// (`docs/probes/time-wait`).
+    let internal defaultTcpTimeWait (flavour : SimulatedUnixFlavour) : TcpTimeWaitSysctls =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> TcpTimeWaitSysctls.Linux 1_000_000_000L
+        | SimulatedUnixFlavour.Darwin -> TcpTimeWaitSysctls.Darwin 15_000_000_000L
 
     /// The `somaxconn` sysctl's default on each flavour, measured on the
     /// probe machines (2026-08-21): `net.core.somaxconn` reads 4096 on the
@@ -1148,6 +1300,27 @@ module UnixMachineState =
         match flavour with
         | SimulatedUnixFlavour.Linux -> 16384
         | SimulatedUnixFlavour.Darwin -> 131072
+
+    /// The UDP receive buffer sysctl's default on each flavour, measured on
+    /// the probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.rmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.recvspace`
+    /// 786896 on Darwin 27.0.0, as a fresh UDP socket's `SO_RCVBUF` reports.
+    /// GitHub's `ubuntu-24.04` runners configure Linux's as 1048576.
+    let internal defaultUdpReceiveSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 786896
+
+    /// The UDP send buffer sysctl's default on each flavour, measured on the
+    /// probe machines (2026-10-18, `udp-transfer.c` section H0 in
+    /// docs/plans/2026-10-18-udp-data-path): `net.core.wmem_default` reads
+    /// 212992 on the Linux 6.18.5 container, and `net.inet.udp.maxdgram` 9216
+    /// on Darwin 27.0.0, as a fresh UDP socket's `SO_SNDBUF` reports.
+    let internal defaultUdpSendSpace (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 212992
+        | SimulatedUnixFlavour.Darwin -> 9216
 
     /// The TCP receive buffer sysctl's default on each flavour, measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072
@@ -1223,6 +1396,32 @@ module UnixMachineState =
             (bootSeconds + sinceBoot / UnixTimestamp.nanosecondsPerSecond + carry)
             (int (nanoseconds % UnixTimestamp.nanosecondsPerSecond))
 
+    /// `machine` with the pipe `pipeId`, one the process made, reporting
+    /// `status`. Loudly partial: this kernel holds no status for a pipe the
+    /// process was launched with.
+    let internal withMadePipeStatus
+        (pipeId : PipeId)
+        (status : PipeStatus)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        let piped = pipe pipeId machine
+
+        match piped.Origin with
+        | PipeOrigin.Launched (endpoint, _) ->
+            failwith
+                $"UnixMachineState.withMadePipeStatus: pipe %O{pipeId} was launched as %O{endpoint}, and this kernel holds no status for it (this is a bug in the caller)."
+        | PipeOrigin.Made _ ->
+            { machine with
+                Pipes =
+                    Map.add
+                        pipeId
+                        { piped with
+                            Origin = PipeOrigin.Made status
+                        }
+                        machine.Pipes
+            }
+
     /// `machine` with the timestamps of the pipe `pipeId` passed through
     /// `touch`, if this kernel holds them: it holds none for a pipe the process
     /// was launched with, whose timestamps are the launcher's.
@@ -1232,24 +1431,15 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        let piped = pipe pipeId machine
-
-        match piped.Origin with
+        match (pipe pipeId machine).Origin with
         | PipeOrigin.Launched _ -> machine
         | PipeOrigin.Made status ->
-            { machine with
-                Pipes =
-                    Map.add
-                        pipeId
-                        { piped with
-                            Origin =
-                                PipeOrigin.Made
-                                    { status with
-                                        Times = touch status.Times
-                                    }
-                        }
-                        machine.Pipes
-            }
+            withMadePipeStatus
+                pipeId
+                { status with
+                    Times = touch status.Times
+                }
+                machine
 
     /// What a read reaching `pipeId`'s read operation, or ending a sleep on it,
     /// does to its timestamps: on Darwin, moves the read end's `st_atime` to

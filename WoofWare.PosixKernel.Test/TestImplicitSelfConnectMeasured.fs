@@ -20,8 +20,7 @@ open WoofWare.PosixKernel
 /// simultaneous open this library does not model, so there each row is
 /// checked to be the self-connect the kernel made, and the model to refuse it.
 /// Darwin's rows H and Hr, where another socket holds the port at another
-/// address, are checked to pass the port over, and the model, whose search
-/// does not, to refuse.
+/// address, replay connect by connect: the search passes the port over.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestImplicitSelfConnectMeasured =
@@ -95,7 +94,7 @@ module TestImplicitSelfConnectMeasured =
                 | Ok (BindAnswer.Bound _, system) -> system
                 | other -> failwith $"binding the listener: %A{other}"
 
-            match UnixSocket.tryListen fd 64 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 64 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -106,14 +105,14 @@ module TestImplicitSelfConnectMeasured =
 
         if nonBlocking then
             fd,
-            UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            Lone.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
         else
             fd, system
 
     let private bindOrFail (fd : int) (at : Ipv4Endpoint) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform at) system with
+        match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) at) system with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"bind %s{Ipv4Endpoint.toString at}: %A{other}"
 
@@ -123,7 +122,7 @@ module TestImplicitSelfConnectMeasured =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, ConnectRefusal>
         =
-        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform destination) system
+        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) destination) system
 
     /// What `getsockname(2)` (`peer` false) or `getpeername(2)` reports, as the
     /// probe prints it: `address:port`, or the errno's name.
@@ -134,9 +133,9 @@ module TestImplicitSelfConnectMeasured =
             else
                 UnixSocket.tryGetsockname
 
-        match call fd UserBuffer.Mapped 16u system with
+        match call (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
@@ -247,7 +246,7 @@ module TestImplicitSelfConnectMeasured =
             | Row @"^([DN]4) listen -> ([A-Z]+)$" [ row ; measured ] ->
                 let replay = rows.[row]
 
-                match UnixSocket.tryListen replay.Fd 8 replay.System with
+                match UnixSocket.tryListen (Callers.leader replay.System) replay.Fd 8 replay.System with
                 | Ok (ListenAnswer.Listening _, system) ->
                     check row "listen" measured "OK"
 
@@ -285,15 +284,17 @@ module TestImplicitSelfConnectMeasured =
             then
                 failwith $"row %s{row}: the ports taken, relative to T, were %A{taken}, which do not pass over T"
 
-            // The model's search, judging the port for 127.0.0.1, can take it,
-            // and so refuses rather than answer.
+            // The model's search passes over it as Darwin's did: six fresh
+            // sockets connecting in turn, each closed once refused, from a
+            // cursor one below T, take the ports the probe's took.
             let reuse = row = "Hr"
             let elsewhere = Ipv4Address 0x0A000005u
+            let target = 40001us
 
             let system =
                 UnixSystem.initial platform
                 |> UnixBootImage.withLocalIpv4Addresses [ Ipv4Address.loopback ; elsewhere ] []
-                |> UnixBootImage.tryWithEphemeralPortRange (40000us, 40000us)
+                |> UnixBootImage.tryWithEphemeralPortRange (target - 1us, target + 5us)
                 |> Configured.expectOk EphemeralPortRangeRefusal.describe
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
@@ -305,13 +306,26 @@ module TestImplicitSelfConnectMeasured =
                 else
                     system
 
-            let system = bindOrFail holder (Ipv4Endpoint.ofParts elsewhere 40000us) system
-            let fd, system = newSocket false system
-            let system = if reuse then ReuseAddress.set true fd system else system
+            let system = bindOrFail holder (Ipv4Endpoint.ofParts elsewhere target) system
 
-            match connect fd (loopback 40000us) system with
-            | Error (ConnectRefusal.DarwinImplicitBindHeld _) -> ()
-            | other -> failwith $"row %s{row}: the model answered %A{other}"
+            let modelTaken, _ =
+                (([], system), taken)
+                ||> List.fold (fun (modelTaken, system) _ ->
+                    let fd, system = newSocket false system
+                    let system = if reuse then ReuseAddress.set true fd system else system
+
+                    match connect fd (loopback target) system with
+                    | Ok (SyscallAnswer.Failed UnixError.ECONNREFUSED, system) ->
+                        let port = (endpoint (nameOf false fd system)).Port
+
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
+                        | Ok (SyscallAnswer.Completed 0L, system) -> modelTaken @ [ int port - int target ], system
+                        | other -> failwith $"row %s{row}: closing the refused socket answered %A{other}"
+                    | other -> failwith $"row %s{row}: the model answered %A{other}"
+                )
+
+            if modelTaken <> taken then
+                failwith $"row %s{row}: the model's connects took %A{modelTaken} relative to T, measured %A{taken}"
 
     [<Test>]
     let ``Linux connected each self-tuple to itself, which the model refuses`` () : unit =

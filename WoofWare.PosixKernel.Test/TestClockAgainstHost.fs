@@ -57,12 +57,13 @@ module TestClockAgainstHost =
             let disagreements =
                 sweptIds
                 |> List.choose (fun clockId ->
-                    match UnixClock.tryClockGettime clockId system, hostRead clockId with
+                    match UnixClock.tryClockGettime (Callers.leader system) clockId system, hostRead clockId with
                     // A refusal is this kernel declining to model a clock; the host may
                     // answer it or not, and either is consistent with declining.
                     | Error _, _ -> None
-                    | Ok (Error UnixError.EINVAL), HostOutcome.Failed errno when errno = EINVAL -> None
-                    | Ok (Ok _), HostOutcome.Read _ -> None
+                    | Ok (ClockGettimeAnswer.Failed UnixError.EINVAL), HostOutcome.Failed errno when errno = EINVAL ->
+                        None
+                    | Ok (ClockGettimeAnswer.Completed _), HostOutcome.Read _ -> None
                     | modelled, host -> Some $"id %d{clockId}: model %A{modelled}, host %A{host}"
                 )
 
@@ -106,8 +107,8 @@ module TestClockAgainstHost =
                 flavour = SimulatedUnixFlavour.Linux && clockId = 5
 
             for clockId in [ 0..16 ] |> List.filter (hostDependent >> not) do
-                match UnixClock.tryClockGettime clockId system with
-                | Ok (Ok reading) ->
+                match UnixClock.tryClockGettime (Callers.leader system) clockId system with
+                | Ok (ClockGettimeAnswer.Completed reading) ->
                     let modelKeepsNanoseconds = UnixTimestamp.nanoseconds reading % 1000 <> 0
 
                     // Probability of a false negative for a fine clock is nil; for a coarse
@@ -119,6 +120,6 @@ module TestClockAgainstHost =
                     if modelKeepsNanoseconds <> hostKeepsNanoseconds then
                         failwith
                             $"%O{flavour} clock id %d{clockId}: the model keeps sub-microsecond digits = %b{modelKeepsNanoseconds}, the host = %b{hostKeepsNanoseconds}"
-                | Ok (Error _)
+                | Ok (ClockGettimeAnswer.Failed _)
                 | Error _ -> ()
         )

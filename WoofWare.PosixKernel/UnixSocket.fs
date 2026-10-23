@@ -139,6 +139,9 @@ type internal BindRefusal =
     /// whose conflicts with other sockets Darwin decides differently from the
     /// IPv4 wildcard's (measured). `address` is `sin6_addr`.
     | UnmodelledIpv6Address of socket : SocketId * address : Ipv6Address
+    /// Whether an end in TIME_WAIT stands in the bind's way, or in the way of
+    /// the port its search would take, is unmeasured.
+    | TimeWait of refusal : TimeWaitRefusal
 
 [<RequireQualifiedAccess>]
 module internal BindRefusal =
@@ -150,9 +153,10 @@ module internal BindRefusal =
         | BindRefusal.UnmodelledMulticast (socket, address) ->
             $"socket %O{socket} asked to bind %s{Ipv4Address.toString address}, a broadcast or multicast address, and the bind would succeed. This kernel models no group membership and no interface to receive or broadcast on, so nothing could honour such a binding. Model multicast and broadcast before binding either."
         | BindRefusal.EphemeralPortsExhausted (low, high) ->
-            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a datagram socket's bind answers is unmeasured. Widen the range."
+            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a Darwin datagram socket's bind answers is unmeasured. Widen the range."
         | BindRefusal.UnmodelledIpv6Address (socket, address) ->
             $"IPv6 socket %O{socket} asked to bind [%s{Ipv6Address.toString address}]. This kernel has no IPv6 transport, so it binds an IPv6 socket only to a specific v4-mapped address (::ffff:a.b.c.d). A native address needs IPv6, and the mapped wildcard ::ffff:0.0.0.0 (and ::, which also takes it) conflicts with other sockets by rules Darwin does not share with the IPv4 wildcard."
+        | BindRefusal.TimeWait refusal -> TimeWaitRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : BindRefusal) : RefusalKind =
@@ -161,6 +165,7 @@ module internal BindRefusal =
         | BindRefusal.UnmodelledMulticast _ -> RefusalKind.Unmodelled
         | BindRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
         | BindRefusal.UnmodelledIpv6Address _ -> RefusalKind.Unmodelled
+        | BindRefusal.TimeWait refusal -> TimeWaitRefusal.kind refusal
 
 /// What a `listen(2)` answered.
 [<RequireQualifiedAccess>]
@@ -196,6 +201,9 @@ type internal ListenRefusal =
     /// models no IPv6 listener: no accepted IPv6 socket, and no implicit bind
     /// to `::`.
     | Ipv6Listener of socket : SocketId
+    /// Whether an end in TIME_WAIT stands in the listen's way, or in the way
+    /// of the port its search would take, is unmeasured.
+    | TimeWait of refusal : TimeWaitRefusal
 
 [<RequireQualifiedAccess>]
 module internal ListenRefusal =
@@ -213,6 +221,7 @@ module internal ListenRefusal =
             $"this socket holds no port, so `listen(2)` binds one, and every port in the ephemeral range %d{low}-%d{high} is taken. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take. Widen the range."
         | ListenRefusal.Ipv6Listener socket ->
             $"socket %O{socket} is an IPv6 socket, and this kernel models no IPv6 listener. A dual-mode listener's accepted sockets and the v4-mapped peers accept reports for them are measured but not modelled, and an unbound one would bind to ::, which takes IPv6 addresses this kernel has no transport for."
+        | ListenRefusal.TimeWait refusal -> TimeWaitRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ListenRefusal) : RefusalKind =
@@ -222,11 +231,12 @@ module internal ListenRefusal =
         | ListenRefusal.UnmeasuredPhase _ -> RefusalKind.Unmodelled
         | ListenRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
         | ListenRefusal.Ipv6Listener _ -> RefusalKind.Unmodelled
+        | ListenRefusal.TimeWait refusal -> TimeWaitRefusal.kind refusal
 
 /// What `getsockname(2)` reports about a socket's own address, or
 /// `getpeername(2)` about its peer's: the two share every rule past the choice
 /// of address.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type GetSockNameAnswer =
     /// The call succeeded: the kernel wrote `copiedOut` to the start of the
     /// caller's buffer and `reportedLength` to its length cell.
@@ -315,6 +325,15 @@ type internal SocketOptionRefusal =
     /// and its `TIME_WAIT` record holding the port, and with this refusal
     /// their flags agree; that is inferred from Linux's source, not measured.
     | LinuxReuseAddressInTimeWait of socket : SocketId
+    /// A Linux `IPV6_V6ONLY` set turning on a dual-mode socket whose refused
+    /// connect gave back a port no `bind(2)` chose.
+    ///
+    /// Linux takes it (measured, `docs/probes/v6only-after-refusal`), and the
+    /// socket it leaves is IPv6-only while it still reports, and keeps the
+    /// address of, the v4-mapped binding its connect resolved. This kernel
+    /// keeps an IPv6-only socket's binding only for an address it could bind,
+    /// so it cannot represent that socket.
+    | Ipv6OnlyOnGivenBackPort of socket : SocketId
 
 [<RequireQualifiedAccess>]
 module internal SocketOptionRefusal =
@@ -327,6 +346,8 @@ module internal SocketOptionRefusal =
             $"socket %O{socket} was asked about option %d{optionName} at level %d{level}. This kernel models SO_REUSEADDR, SO_LINGER (and Darwin's SO_LINGER_SEC) at SOL_SOCKET, TCP_NODELAY at IPPROTO_TCP and IPV6_V6ONLY at IPPROTO_IPV6 for setsockopt(2) and getsockopt(2), and SO_ERROR at SOL_SOCKET for getsockopt(2) alone. A real kernel either knows this option, in which case its value is socket state nothing here holds, or answers an errno nobody has measured for it; ENOPROTOOPT would be a guess either way. Model the option before asking for it."
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait socket ->
             $"socket %O{socket} is one end of a TCP connection in TIME_WAIT, and the call would change its SO_REUSEADDR. Measured on Linux, a bind of the endpoint is judged by the flag the end had when it entered TIME_WAIT, whether the socket stays open or closes, and a later change does not reach it. This kernel does not keep that copy: it judges the end by the socket's flag, which agrees only while the flag is unchanged."
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socket ->
+            $"socket %O{socket} is a dual-mode IPv6 socket whose refused connect gave back a port no bind(2) chose, and the call would set IPV6_V6ONLY. Linux takes it (measured), leaving an IPv6-only socket that still holds the v4-mapped address its connect resolved, which this kernel cannot represent."
         | SocketOptionRefusal.NegativeLingerTime (socket, seconds) ->
             $"socket %O{socket} was asked to linger for %d{seconds} seconds. Linux reads l_linger as unsigned and stores its largest timeout for this, and what getsockopt(2) then reads back is that timeout over the kernel's tick rate, CONFIG_HZ, which this library does not model."
 
@@ -337,6 +358,7 @@ module internal SocketOptionRefusal =
         | SocketOptionRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SocketOptionRefusal.NegativeLingerTime _ -> RefusalKind.Unmodelled
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait _ -> RefusalKind.Unmodelled
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort _ -> RefusalKind.Unmodelled
 
 /// Whether a `setsockopt(2)` reaches the point at which the kernel copies the
 /// option's value in, as `UnixSocket.tryAdmitSetSockOpt` answers it: the step
@@ -384,7 +406,7 @@ type internal GetSockOptAdmission =
     | SkipLength
 
 /// What a `getsockopt(2)` answered.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type GetSockOptAnswer =
     /// The call succeeded. The kernel wrote `copiedOut` to the start of the
     /// caller's value buffer, and then its length to the caller's length cell.
@@ -501,7 +523,7 @@ type PausedBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             Range : CopyRange
             /// The system the call was made in: everything a `bind` does before
             /// the copy is a question.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -532,7 +554,7 @@ type PausedSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler :
             Range : CopyRange
             /// The system the call was made in: everything a `setsockopt` does
             /// before the copy is a question.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -563,7 +585,7 @@ type PausedGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler :
             Length : UserBuffer
             /// The system the call was made in: everything a `getsockopt` does
             /// before reading the cell is a question.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -650,7 +672,7 @@ module UnixSocket =
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<SockaddrCopyAdmission, SockaddrCopyRefusal>
         =
         let answered (error : UnixError) : Result<SockaddrCopyAdmission, SockaddrCopyRefusal> =
@@ -1051,14 +1073,17 @@ module UnixSocket =
         (kind : SocketKind)
         (protocol : SocketProtocol)
         (nonBlocking : bool)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : int * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : int * ProcessView<'Thread, 'Handler>
         =
         let socketId = system.Machine.NextSocketId
         let (SocketId raw) = socketId
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             if nonBlocking then
@@ -1074,25 +1099,44 @@ module UnixSocket =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Drained = false
+                // Measured (`docs/probes/socket-creator-uid`, CREATE rows on
+                // Linux; `docs/probes/darwin-root/bind-uids.c`, CRED rows on
+                // Darwin): the effective uid at socket(2), which a later change
+                // of the process's credentials leaves alone.
+                Uid = system.Process.Credentials.EffectiveUser
             }
+
+        // A UDP socket's receive side is made with it.
+        let receivers =
+            if SocketTable.receivesDatagrams socket then
+                Map.add
+                    socketId
+                    (DatagramReceiver.create
+                        (SimulatedUnixPlatform.datagramReceiveRules system.Machine.UnixPlatform)
+                        system.Machine.UdpReceiveSpace)
+                    system.Machine.DatagramReceivers
+            else
+                system.Machine.DatagramReceivers
 
         fd,
         { system with
             Machine =
                 { system.Machine with
-                    Sockets = Map.add socketId socket system.Machine.Sockets
+                    Sockets = SocketTable.set socketId socket system.Machine.Sockets
+                    DatagramReceivers = receivers
                     NextSocketId = SocketId (raw + 1L)
                 }
         }
         |> UnixSystemState.withFileDescriptors registry
 
-    /// `socket`, with a refusal answered as the `Error` rather than raised.
-    let internal trySocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySocket` once `Entry` has admitted its caller.
+    let private trySocketIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : int)
         (socketType : int)
         (protocol : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, SocketRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * ProcessView<'Thread, 'Handler>, SocketRefusal>
         =
         // Measured (`fcntl-dup.c`, LIMIT rows): with no descriptor left below
         // the limit, Darwin answers EMFILE ahead of every screen of the three
@@ -1116,7 +1160,7 @@ module UnixSocket =
 
         match decoding with
         | SocketDecoding.Refused refusal -> Error refusal
-        | SocketDecoding.Fails error -> Ok (Error error)
+        | SocketDecoding.Fails error -> Ok (DescriptorAnswer.Failed error, system)
         | SocketDecoding.Creates (socketDomain, kind, socketProtocol, nonBlocking) ->
             match room with
             | Error refusal -> Error (SocketRefusal.DescriptorLimit refusal)
@@ -1135,14 +1179,29 @@ module UnixSocket =
                 let registry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = true
-                        }
+                        (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) true)
                         (UnixSystemState.fileDescriptors system)
 
-                Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
+                Ok (DescriptorAnswer.Returned fd, UnixSystemState.withFileDescriptors registry system)
             else
-                Ok (Ok (fd, system))
+                Ok (DescriptorAnswer.Returned fd, system)
+
+    /// `socket`, with a refusal answered as the `Error` rather than raised.
+    let internal trySocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (domain : int)
+        (socketType : int)
+        (protocol : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<DescriptorAnswer * UnixSystem<'Thread, 'Handler>, SocketRefusal>
+        =
+        Entry.call
+            "UnixSocket.socket"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (trySocketIn domain socketType protocol)
+            system
 
     /// `socket(2)`: create a socket in `domain`, of `socketType`, speaking
     /// `protocol`, and a descriptor onto it: the lowest one not in use.
@@ -1161,13 +1220,14 @@ module UnixSocket =
     /// refused where that answer depends on what this kernel does not model. A
     /// failure changes nothing.
     let socket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (domain : int)
         (socketType : int)
         (protocol : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
+        : DescriptorAnswer * UnixSystem<'Thread, 'Handler>
         =
-        trySocket domain socketType protocol system
+        trySocket caller domain socketType protocol system
         |> Refusal.orRaise "UnixSocket.socket" SocketRefusal.kind SocketRefusal.describe
 
     /// The errno `bind(2)` answers for `fault` on `platform`.
@@ -1273,18 +1333,57 @@ module UnixSocket =
                 || not (SimulatedUnixPlatform.bindJudgesHeldPort platform))
         )
 
+    /// Whether `bind(2)` keeps `port` from an unprivileged caller, at the
+    /// wildcard address or another (`wildcard`): a port below the machine's
+    /// unprivileged port start, measured on Linux at every value from 0 to
+    /// 32768 (`docs/probes/unprivileged-port-start`). Port 0 asks for an
+    /// allocation rather than a number, so no limit applies to it.
+    let private privilegedPortFault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        (port : uint16)
+        (wildcard : bool)
+        : bool
+        =
+        port > 0us
+        && port < system.Machine.UnprivilegedPortStart
+        && SimulatedUnixPlatform.privilegedPortGuards system.Machine.UnixPlatform wildcard
+        && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+
+    /// Whether anything else holding a port stands in the way of `socket`'s
+    /// `bind(2)` of `candidate`: never for port 0, whose search is what keeps
+    /// the port it picks free, nor for no address; a socket a Linux dissolve
+    /// left half-bound at `address:0` reserves no port, so comparing two zero
+    /// ports would refuse a bind that succeeds.
+    let private addressInUse<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        (socketId : SocketId)
+        (socket : SocketDescription)
+        (candidate : Ipv4Binding option)
+        : PortVerdict
+        =
+        match candidate with
+        | Some binding when binding.Endpoint.Port <> 0us ->
+            UnixMachineState.bindingConflicts
+                system.Scheduling.NanosecondsSinceBoot
+                socketId
+                socket
+                binding
+                system.Machine
+        | Some _
+        | None -> PortVerdict.Clear
+
     /// `bind(2)` once every fault has been ruled out: give `socketId` the IPv4
     /// `binding`, choosing a port for it if it asks for port 0.
     let private bindAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (socket : SocketDescription)
         (binding : Ipv4Binding)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<BindAnswer * ProcessView<'Thread, 'Handler>, BindRefusal>
         =
         match
             (if binding.Endpoint.Port > 0us then
-                 Some (binding, system.Machine)
+                 Ok (Some (binding, system.Machine))
              else
                  let candidate (port : uint16) : Ipv4Binding =
                      { binding with
@@ -1295,20 +1394,21 @@ module UnixSocket =
                      }
 
                  UnixMachineState.allocateEphemeralPort
+                     system.Scheduling.NanosecondsSinceBoot
                      EphemeralPortUse.Reserve
                      socketId
                      socket
                      candidate
                      system.Machine)
         with
-        | None ->
+        | Error refusal -> Error (BindRefusal.TimeWait refusal)
+        | Ok None ->
             match
-                socket.Kind,
                 SimulatedUnixPlatform.ephemeralPortsExhausted system.Machine.UnixPlatform EphemeralSearchCall.Bind
             with
-            | SocketKind.Stream, Some error -> Ok (BindAnswer.Failed error, system)
-            | _ -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
-        | Some (bound, machine) ->
+            | Some error -> Ok (BindAnswer.Failed error, system)
+            | None -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+        | Ok (Some (bound, machine)) ->
 
         // From `machine` rather than `system.Machine`: the ephemeral allocator
         // advanced the cursor, and that advance is part of this bind.
@@ -1321,7 +1421,7 @@ module UnixSocket =
                     Machine =
                         { system.Machine with
                             Sockets =
-                                Map.add
+                                SocketTable.set
                                     socketId
                                     { socket with
                                         Addressing = SocketAddressing.replaceBinding (Some bound) socket.Addressing
@@ -1339,8 +1439,8 @@ module UnixSocket =
         (fd : int)
         (declaredLength : uint32)
         (copied : CopiedInternetSockaddr)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<BindAnswer * ProcessView<'Thread, 'Handler>, BindRefusal>
         =
         let family = copied.Family
         let endpoint = copied.Endpoint
@@ -1356,11 +1456,11 @@ module UnixSocket =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
-        let withSocket (socket : SocketDescription) (system : UnixSystem<'Thread, 'Handler>) =
+        let withSocket (socket : SocketDescription) (system : ProcessView<'Thread, 'Handler>) =
             { system with
                 Machine =
                     { system.Machine with
-                        Sockets = Map.add socketId socket system.Machine.Sockets
+                        Sockets = SocketTable.set socketId socket system.Machine.Sockets
                     }
             }
 
@@ -1446,23 +1546,11 @@ module UnixSocket =
         let privilegedPortFault =
             match endpoint with
             | None -> false
-            | Some endpoint ->
-                endpoint.Port > 0us
-                && endpoint.Port < SimulatedUnixPlatform.privilegedPortCeiling
-                && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+            | Some endpoint -> privilegedPortFault system endpoint.Port (endpoint.Address = Ipv4Address.any)
 
-        let conflictsWith (binding : Ipv4Binding) : bool =
-            UnixMachineState.bindingConflicts socketId socket binding system.Machine
+        let inUse = addressInUse system socketId socket candidate
 
-        // A request for port 0 conflicts with nothing here: the allocator's
-        // own search is what keeps the port it picks free, and a socket a
-        // Linux dissolve left half-bound at `address:0` reserves no port, so
-        // comparing two zero ports would refuse a bind that succeeds.
-        let addressInUseFault =
-            match candidate with
-            | Some binding when binding.Endpoint.Port <> 0us -> conflictsWith binding
-            | Some _
-            | None -> false
+        let addressInUseFault = inUse <> PortVerdict.Clear
 
         let faults =
             [
@@ -1483,9 +1571,10 @@ module UnixSocket =
             Error (BindRefusal.UnmodelledMulticast (socketId, endpoint.Address))
         | fault, _ ->
 
-        match fault with
-        | Some fault -> Ok (BindAnswer.Failed (bindFaultError platform fault), system)
-        | None ->
+        match fault, inUse with
+        | Some BindFault.AddressInUse, PortVerdict.Undetermined refusal -> Error (BindRefusal.TimeWait refusal)
+        | Some fault, _ -> Ok (BindAnswer.Failed (bindFaultError platform fault), system)
+        | None, _ ->
 
         let binding =
             match candidate with
@@ -1506,8 +1595,8 @@ module UnixSocket =
         (socketId : SocketId)
         (declaredLength : uint32)
         (copied : CopiedInternetV6Sockaddr)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<BindAnswer * ProcessView<'Thread, 'Handler>, BindRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let platform = system.Machine.UnixPlatform
@@ -1518,12 +1607,6 @@ module UnixSocket =
             match copied.Destination with
             | Some (Ipv6Destination.V4Mapped endpoint) -> Some endpoint
             | Some (Ipv6Destination.Native _)
-            | None -> None
-
-        let port =
-            match copied.Destination with
-            | Some (Ipv6Destination.V4Mapped endpoint) -> Some endpoint.Port
-            | Some (Ipv6Destination.Native endpoint) -> Some endpoint.Port
             | None -> None
 
         let lengthFault =
@@ -1543,11 +1626,11 @@ module UnixSocket =
                    |> Option.exists (fun endpoint -> SimulatedUnixPlatform.isBroadcastOrMulticast endpoint.Address)
 
         let privilegedPortFault =
-            match port with
-            | Some port ->
-                port > 0us
-                && port < SimulatedUnixPlatform.privilegedPortCeiling
-                && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+            match copied.Destination with
+            | Some (Ipv6Destination.V4Mapped endpoint) ->
+                privilegedPortFault system endpoint.Port (endpoint.Address = Ipv4Address.any)
+            | Some (Ipv6Destination.Native endpoint) ->
+                privilegedPortFault system endpoint.Port (endpoint.Address = Ipv6Address.any)
             | None -> false
 
         let ipv6OnlyFault =
@@ -1581,12 +1664,8 @@ module UnixSocket =
                 }
             )
 
-        let addressInUseFault =
-            match candidate with
-            | Some binding when binding.Endpoint.Port <> 0us ->
-                UnixMachineState.bindingConflicts socketId socket binding system.Machine
-            | Some _
-            | None -> false
+        let inUse = addressInUse system socketId socket candidate
+        let addressInUseFault = inUse <> PortVerdict.Clear
 
         let faults =
             [
@@ -1627,6 +1706,11 @@ module UnixSocket =
         | Some fault, _ when judgedBeforeTheAddress fault ->
             Ok (BindAnswer.Failed (bindFaultError platform fault), system)
         | _, Some address -> Error (BindRefusal.UnmodelledIpv6Address (socketId, address))
+        | Some BindFault.AddressInUse, None ->
+            match inUse with
+            | PortVerdict.Undetermined refusal -> Error (BindRefusal.TimeWait refusal)
+            | PortVerdict.InTheWay
+            | PortVerdict.Clear -> Ok (BindAnswer.Failed (bindFaultError platform BindFault.AddressInUse), system)
         | Some fault, None -> Ok (BindAnswer.Failed (bindFaultError platform fault), system)
         | None, None ->
 
@@ -1649,8 +1733,8 @@ module UnixSocket =
         (destination : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<BindAnswer * ProcessView<'Thread, 'Handler>, BindRefusal>
         =
         match tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination declaredLength system with
         | Error refusal -> Error (BindRefusal.Copy refusal)
@@ -1684,12 +1768,12 @@ module UnixSocket =
                     (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform copied)
                     system
 
-    /// `listen`, with a refusal answered as the `Error` rather than raised.
-    let internal tryListen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryListen` once `Entry` has admitted its caller.
+    let private tryListenIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (backlog : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ListenAnswer * UnixSystem<'Thread, 'Handler>, ListenRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ListenAnswer * ProcessView<'Thread, 'Handler>, ListenRefusal>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (ListenAnswer.Failed UnixError.EBADF, system)
@@ -1740,26 +1824,32 @@ module UnixSocket =
         | None ->
 
         // On Linux two sockets carrying SO_REUSEADDR may share an endpoint until
-        // one of them listens, and the second `listen(2)` is then EADDRINUSE.
-        // Darwin asks nothing of a socket that already has a port; see
-        // `listenRescreensBinding` for why that is not a strictness difference
-        // to round in the safe direction. A socket already listening is not
+        // one of them listens, and the second `listen(2)` is then EADDRINUSE;
+        // Darwin asks nothing of a socket that already has a port
+        // (`PortHolderRules.listenMeets`). A socket already listening is not
         // screened again on either: its listen only updates the backlog, even
         // while a connection it accepted holds its port (`relisten-held.c` in
         // docs/plans/2026-10-08-tcp-shutdown-linger).
-        match binding with
-        | Some binding when
-            PortHold.isHeld binding.PortHold
-            && SimulatedUnixPlatform.listenRescreensBinding system.Machine.UnixPlatform
-            && not (SocketPhase.isListening socket.Phase)
-            && UnixMachineState.bindingConflicts socketId socket binding system.Machine
-            ->
-            Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
-        | _ ->
+        let rescreened =
+            match binding with
+            | Some binding when PortHold.isHeld binding.PortHold && not (SocketPhase.isListening socket.Phase) ->
+                UnixMachineState.listenConflicts
+                    system.Scheduling.NanosecondsSinceBoot
+                    socketId
+                    socket
+                    binding
+                    system.Machine
+            | Some _
+            | None -> PortVerdict.Clear
+
+        match rescreened with
+        | PortVerdict.InTheWay -> Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
+        | PortVerdict.Undetermined refusal -> Error (ListenRefusal.TimeWait refusal)
+        | PortVerdict.Clear ->
 
         match
             (match binding with
-             | Some binding when PortHold.isHeld binding.PortHold -> Some (binding, system.Machine)
+             | Some binding when PortHold.isHeld binding.PortHold -> Ok (Some (binding, system.Machine))
              | Some released ->
                  // A Linux refused connect gave the port back: listen binds a
                  // new one at the binding's address, as for a socket with no
@@ -1775,6 +1865,7 @@ module UnixSocket =
                      }
 
                  UnixMachineState.allocateEphemeralPort
+                     system.Scheduling.NanosecondsSinceBoot
                      EphemeralPortUse.Reserve
                      socketId
                      socket
@@ -1794,19 +1885,21 @@ module UnixSocket =
                      }
 
                  UnixMachineState.allocateEphemeralPort
+                     system.Scheduling.NanosecondsSinceBoot
                      EphemeralPortUse.Reserve
                      socketId
                      socket
                      candidate
                      system.Machine)
         with
-        | None ->
+        | Error refusal -> Error (ListenRefusal.TimeWait refusal)
+        | Ok None ->
             match
                 SimulatedUnixPlatform.ephemeralPortsExhausted system.Machine.UnixPlatform EphemeralSearchCall.Listen
             with
             | Some error -> Ok (ListenAnswer.Failed error, system)
             | None -> Error (ListenRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
-        | Some (bound, machine) ->
+        | Ok (Some (bound, machine)) ->
 
         let listenPhase =
             match socket.Phase with
@@ -1820,7 +1913,6 @@ module UnixSocket =
                     {
                         Backlog = backlog
                         Queue = []
-                        Drained = false
                     }
 
         let system =
@@ -1828,7 +1920,7 @@ module UnixSocket =
                 Machine =
                     { machine with
                         Sockets =
-                            Map.add
+                            SocketTable.set
                                 socketId
                                 { socket with
                                     Addressing = SocketAddressing.Inet (Some bound)
@@ -1839,6 +1931,22 @@ module UnixSocket =
             }
 
         Ok (ListenAnswer.Listening (answeredAddress "listen" system.Machine socketId bound.Endpoint), system)
+
+    /// `listen`, with a refusal answered as the `Error` rather than raised.
+    let internal tryListen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (backlog : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ListenAnswer * UnixSystem<'Thread, 'Handler>, ListenRefusal>
+        =
+        Entry.call
+            "UnixSocket.listen"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryListenIn fd backlog)
+            system
 
     /// `listen(2)`: make `fd` a passive socket, and give it an address if it has
     /// none.
@@ -1852,12 +1960,13 @@ module UnixSocket =
     /// A re-listen keeps the queue and updates the backlog, which is Linux's
     /// documented behaviour (`sk_max_ack_backlog` is simply re-assigned).
     let listen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (backlog : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : ListenAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryListen fd backlog system
+        tryListen caller fd backlog system
         |> Refusal.orRaise "UnixSocket.listen" ListenRefusal.kind ListenRefusal.describe
 
     /// The tail `getsockname(2)` and `getpeername(2)` share, once the call has
@@ -1871,7 +1980,7 @@ module UnixSocket =
         (whole : byte[])
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // Measured (`socket-address-length.c`): Linux's `move_addr_to_user`
@@ -1933,12 +2042,12 @@ module UnixSocket =
         | Ok (PresentedName.Ipv6 endpoint) ->
             Ok (SimulatedUnixPlatform.encodeInternetV6Sockaddr machine.UnixPlatform endpoint)
 
-    /// `getsockname`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetsockname` once `Entry` has admitted its caller.
+    let private tryGetsocknameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // The descriptor is classified before the destination is looked at, and
@@ -1978,6 +2087,23 @@ module UnixSocket =
         | Error refusal -> Error refusal
         | Ok whole -> reportAddress whole destination declaredLength system
 
+    /// `getsockname`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetSockNameAnswer, GetSockNameRefusal>
+        =
+        Entry.call
+            "UnixSocket.getsockname"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetsocknameIn fd destination declaredLength)
+            system
+
     /// `getsockname(2)`: report the local address the socket `fd` names.
     ///
     /// Answers the bytes the kernel copies out, laid out for the platform, and
@@ -1995,21 +2121,22 @@ module UnixSocket =
     ///
     /// Changes nothing and returns no system: a `getsockname` reads.
     let getsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetSockNameAnswer
         =
-        tryGetsockname fd destination declaredLength system
+        tryGetsockname caller fd destination declaredLength system
         |> Refusal.orRaise "UnixSocket.getsockname" GetSockNameRefusal.kind GetSockNameRefusal.describe
 
-    /// `getpeername`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetpeername` once `Entry` has admitted its caller.
+    let private tryGetpeernameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // EBADF and ENOTSOCK come first, the destination untouched, exactly as
@@ -2099,6 +2226,23 @@ module UnixSocket =
                 failwith
                     $"UnixSocket.getpeername: socket %O{socketId} is the %A{connectionEnd} end of %O{connectionId}, which the connection records as closed (this is a bug in this library: UnixSystem.checkInvariants reports it as ConnectionEndClosedUnderSocket)."
 
+    /// `getpeername`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetSockNameAnswer, GetSockNameRefusal>
+        =
+        Entry.call
+            "UnixSocket.getpeername"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetpeernameIn fd destination declaredLength)
+            system
+
     /// `getpeername(2)`: report the address of the peer the socket `fd` is
     /// connected to.
     ///
@@ -2122,13 +2266,14 @@ module UnixSocket =
     ///
     /// Changes nothing and returns no system: a `getpeername` reads.
     let getpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetSockNameAnswer
         =
-        tryGetpeername fd destination declaredLength system
+        tryGetpeername caller fd destination declaredLength system
         |> Refusal.orRaise "UnixSocket.getpeername" GetSockNameRefusal.kind GetSockNameRefusal.describe
 
     /// `sizeof(int)`: the size of every option's value here but `SO_LINGER`'s.
@@ -2254,7 +2399,7 @@ module UnixSocket =
     /// ENOTSOCK.
     let private socketOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<SocketId, UnixError>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
@@ -2278,7 +2423,7 @@ module UnixSocket =
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<SetSockOptAdmission, SocketOptionRefusal>
         =
         let platform = system.Machine.UnixPlatform
@@ -2414,8 +2559,8 @@ module UnixSocket =
         (value : UserBuffer)
         (optionLength : uint32)
         (supplied : ImmutableArray<byte> option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let neverRead (reason : string) =
             if supplied.IsSome then
@@ -2426,7 +2571,7 @@ module UnixSocket =
         // `None` where the kernel copies nothing.
         let proceed
             (copied : ImmutableArray<byte> option)
-            : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+            : Result<SetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
             =
             let platform = system.Machine.UnixPlatform
             let flavour = SimulatedUnixPlatform.flavour platform
@@ -2485,7 +2630,24 @@ module UnixSocket =
                            // A connect binds its source before it sends.
                            | SocketPhase.Connecting _ -> true
 
+                    // A port a refused connect gave back. Linux judges the
+                    // option by the port the socket holds (`inet_num`), so it
+                    // takes the option then (measured,
+                    // `docs/probes/v6only-after-refusal`); Darwin answers
+                    // EINVAL there too, but at the admission, which refuses
+                    // every option on a refused socket, so only a Linux
+                    // socket reaches here with such a port.
+                    let portGivenBack =
+                        socket.Ipv4Binding
+                        |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
+
                     match socket.Addressing with
+                    | SocketAddressing.Inet6DualMode _ when portGivenBack ->
+                        if field 0 <> 0 then
+                            Error (Error (SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socketId))
+                        else
+                            // Dual-mode it was, and dual-mode it stays.
+                            Ok socket
                     | SocketAddressing.Inet6DualMode _
                     | SocketAddressing.Inet6V6Only _ when hasAddress -> Error (Ok UnixError.EINVAL)
                     // Unbound, so the move between the two cases carries no
@@ -2578,7 +2740,7 @@ module UnixSocket =
                 { system with
                     Machine =
                         { system.Machine with
-                            Sockets = Map.add socketId updated system.Machine.Sockets
+                            Sockets = SocketTable.set socketId updated system.Machine.Sockets
                         }
                 }
 
@@ -2613,7 +2775,7 @@ module UnixSocket =
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetSockOptAdmission, SocketOptionRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -2669,8 +2831,8 @@ module UnixSocket =
         (value : UserBuffer)
         (length : UserBuffer)
         (declaredLength : uint32 option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<GetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let lengthNeverRead (reason : string) =
             if declaredLength.IsSome then
@@ -2681,7 +2843,7 @@ module UnixSocket =
         // out of its cell, or `None` where the kernel never reads the cell.
         let proceed
             (declaredLength : uint32 option)
-            : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+            : Result<GetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
             =
             let platform = system.Machine.UnixPlatform
             let flavour = SimulatedUnixPlatform.flavour platform
@@ -2787,7 +2949,7 @@ module UnixSocket =
                                 Machine =
                                     { system.Machine with
                                         Sockets =
-                                            Map.add
+                                            SocketTable.set
                                                 socketId
                                                 { socket with
                                                     Phase = SocketPhase.Refused RefusalError.Reported
@@ -2824,7 +2986,31 @@ module UnixSocket =
 
                             ints [ reported ],
                             { system with
-                                Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
+                                Machine =
+                                    UnixMachineState.withTransfer
+                                        system.Scheduling.NanosecondsSinceBoot
+                                        connectionId
+                                        transfer
+                                        system.Machine
+                            }
+                    // A UDP socket's pending error is an ICMP error's, which
+                    // the read takes before the copy-out as a refusal's is,
+                    // connected or not (measured, `udp-error.c` Y5 and Y7 in
+                    // docs/plans/2026-10-18-udp-data-path: ECONNREFUSED, then
+                    // 0, through a null value buffer and at length 0 too).
+                    | SocketPhase.Idle
+                    | SocketPhase.DatagramPeer _ when SocketTable.receivesDatagrams socket ->
+                        match
+                            DatagramReceiver.takeError (UnixMachineState.datagramReceiver socketId system.Machine)
+                        with
+                        | None, _ -> ints [ 0 ], system
+                        | Some error, after ->
+                            ints
+                                [
+                                    UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error
+                                ],
+                            { system with
+                                Machine = UnixMachineState.withDatagramReceiver socketId after system.Machine
                             }
                     | SocketPhase.Idle
                     | SocketPhase.Listening _
@@ -2886,13 +3072,13 @@ module UnixSocket =
                 failwith
                     "UnixSocket.getsockopt: the kernel reads the caller's length cell, but the caller supplied no length (this is a bug in the caller)."
 
-    /// `bind`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryBind` once `Entry` has admitted its caller.
+    let private tryBindIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * UnixSystem<'Thread, 'Handler>>, BindRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * ProcessView<'Thread, 'Handler>>, BindRefusal>
         =
         match tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd address declaredLength system with
         | Error refusal -> Error (BindRefusal.Copy refusal)
@@ -2913,6 +3099,23 @@ module UnixSocket =
             }
             |> CallProgress.NeedsCopyIn
             |> Ok
+
+    /// `bind`, with a refusal answered as the `Error` rather than raised.
+    let internal tryBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (address : UserBuffer)
+        (declaredLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * UnixSystem<'Thread, 'Handler>>, BindRefusal>
+        =
+        Entry.call
+            "UnixSocket.bind"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryBindIn fd address declaredLength)
+            system
 
     /// <summary>
     /// `bind(2)`: give `fd` the local address in the `struct sockaddr` the
@@ -2954,14 +3157,26 @@ module UnixSocket =
     /// port this kernel chose.
     /// </remarks>
     let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * UnixSystem<'Thread, 'Handler>>
         =
-        tryBind fd address declaredLength system
+        tryBind caller fd address declaredLength system
         |> Refusal.orRaise "UnixSocket.bind" BindRefusal.kind BindRefusal.describe
+
+    /// `tryBindWithAddress` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private tryBindWithAddressIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedBind<'Thread, 'Handler>)
+        : Result<BindAnswer * ProcessView<'Thread, 'Handler>, BindRefusal>
+        =
+        CallProgress.requirePaused "UnixSocket.bindWithAddress" "UnixSocket.bind" paused
+        CopyRange.require "UnixSocket.bindWithAddress" paused.Range copied
+        tryBindBytes paused.Fd paused.Address paused.DeclaredLength copied paused.System
 
     /// `bindWithAddress`, with a refusal answered as the `Error` rather than raised.
     let internal tryBindWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2969,9 +3184,7 @@ module UnixSocket =
         (paused : PausedBind<'Thread, 'Handler>)
         : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
-        CallProgress.requirePaused "UnixSocket.bindWithAddress" "UnixSocket.bind" paused
-        CopyRange.require "UnixSocket.bindWithAddress" paused.Range copied
-        tryBindBytes paused.Fd paused.Address paused.DeclaredLength copied paused.System
+        Entry.resume (Shape.result Shape.withSystem) (tryBindWithAddressIn copied paused)
 
     /// <summary>
     /// The rest of the `bind` `paused` stopped: `copied`, exactly the bytes
@@ -2987,16 +3200,16 @@ module UnixSocket =
         tryBindWithAddress copied paused
         |> Refusal.orRaise "UnixSocket.bindWithAddress" BindRefusal.kind BindRefusal.describe
 
-    /// `setsockopt`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySetsockopt` once `Entry` has admitted its caller.
+    let private trySetsockoptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * ProcessView<'Thread, 'Handler>>,
               SocketOptionRefusal
            >
         =
@@ -3018,6 +3231,28 @@ module UnixSocket =
             }
             |> CallProgress.NeedsCopyIn
             |> Ok
+
+    /// `setsockopt`, with a refusal answered as the `Error` rather than raised.
+    let internal trySetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (level : int)
+        (optionName : int)
+        (value : UserBuffer)
+        (optionLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
+              SocketOptionRefusal
+           >
+        =
+        Entry.call
+            "UnixSocket.setsockopt"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (trySetsockoptIn fd level optionName value optionLength)
+            system
 
     /// <summary>
     /// `setsockopt(2)`: set the socket option `optionName` at `level` to the
@@ -3077,6 +3312,7 @@ module UnixSocket =
     /// changed.
     /// </remarks>
     let setsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (level : int)
         (optionName : int)
@@ -3085,14 +3321,15 @@ module UnixSocket =
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * UnixSystem<'Thread, 'Handler>>
         =
-        trySetsockopt fd level optionName value optionLength system
+        trySetsockopt caller fd level optionName value optionLength system
         |> Refusal.orRaise "UnixSocket.setsockopt" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
-    /// `setsockoptWithValue`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetsockoptWithValue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySetsockoptWithValue` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private trySetsockoptWithValueIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
         (paused : PausedSetSockOpt<'Thread, 'Handler>)
-        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        : Result<SetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
         =
         CallProgress.requirePaused "UnixSocket.setsockoptWithValue" "UnixSocket.setsockopt" paused
         CopyRange.require "UnixSocket.setsockoptWithValue" paused.Range copied
@@ -3105,6 +3342,14 @@ module UnixSocket =
             paused.OptionLength
             (Some copied)
             paused.System
+
+    /// `setsockoptWithValue`, with a refusal answered as the `Error` rather than raised.
+    let internal trySetsockoptWithValue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedSetSockOpt<'Thread, 'Handler>)
+        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (trySetsockoptWithValueIn copied paused)
 
     /// <summary>
     /// The rest of the `setsockopt` `paused` stopped: `copied`, exactly the
@@ -3120,16 +3365,16 @@ module UnixSocket =
         trySetsockoptWithValue copied paused
         |> Refusal.orRaise "UnixSocket.setsockoptWithValue" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
-    /// `getsockopt`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetsockopt` once `Entry` has admitted its caller.
+    let private tryGetsockoptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * ProcessView<'Thread, 'Handler>>,
               SocketOptionRefusal
            >
         =
@@ -3150,6 +3395,28 @@ module UnixSocket =
             }
             |> CallProgress.NeedsCopyIn
             |> Ok
+
+    /// `getsockopt`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (level : int)
+        (optionName : int)
+        (value : UserBuffer)
+        (length : UserBuffer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
+              SocketOptionRefusal
+           >
+        =
+        Entry.call
+            "UnixSocket.getsockopt"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryGetsockoptIn fd level optionName value length)
+            system
 
     /// <summary>
     /// `getsockopt(2)`: read the socket option `optionName` at `level` into
@@ -3180,10 +3447,11 @@ module UnixSocket =
     ///   hundredths over 100, rounded toward zero).
     /// - `SO_ERROR` is the raw ECONNREFUSED of a refusal still pending
     ///   (`SocketPhase.Refused RefusalError.Pending`), the raw error a reset
-    ///   left pending on a connected socket, and 0
+    ///   left pending on a connected socket, the raw ECONNREFUSED an ICMP
+    ///   port-unreachable error left pending on a UDP socket, and 0
     ///   otherwise. Reading a pending error takes it: a refused socket is left
-    ///   `Refused RefusalError.Reported`, and a connected one with nothing
-    ///   pending, whether the copy-out then succeeds
+    ///   `Refused RefusalError.Reported`, and a connected or UDP one with
+    ///   nothing pending, whether the copy-out then succeeds
     ///   or not. Only a call that fails before reading the option leaves the
     ///   error pending: one answered before the cell is read, or a Linux one
     ///   declaring a negative length.
@@ -3191,6 +3459,7 @@ module UnixSocket =
     /// Reading any option but `SO_ERROR` changes nothing.
     /// </remarks>
     let getsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (level : int)
         (optionName : int)
@@ -3199,14 +3468,15 @@ module UnixSocket =
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * UnixSystem<'Thread, 'Handler>>
         =
-        tryGetsockopt fd level optionName value length system
+        tryGetsockopt caller fd level optionName value length system
         |> Refusal.orRaise "UnixSocket.getsockopt" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
-    /// `getsockoptWithLength`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockoptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetsockoptWithLength` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private tryGetsockoptWithLengthIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (declaredLength : uint32)
         (paused : PausedGetSockOpt<'Thread, 'Handler>)
-        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        : Result<GetSockOptAnswer * ProcessView<'Thread, 'Handler>, SocketOptionRefusal>
         =
         CallProgress.requirePaused "UnixSocket.getsockoptWithLength" "UnixSocket.getsockopt" paused
 
@@ -3218,6 +3488,14 @@ module UnixSocket =
             paused.Length
             (Some declaredLength)
             paused.System
+
+    /// `getsockoptWithLength`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetsockoptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (declaredLength : uint32)
+        (paused : PausedGetSockOpt<'Thread, 'Handler>)
+        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (tryGetsockoptWithLengthIn declaredLength paused)
 
     /// The rest of the `getsockopt` `paused` stopped: `declaredLength` is the
     /// `socklen_t` the caller's length cell holds. See `getsockopt`.

@@ -45,17 +45,20 @@ module TestWakeCondition =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                (Lone.fileDescriptors system)
 
-        let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
+        let blockedFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         // Two kqueues, for `KqueueDrained`'s two live answers: fds 5 and 6. The world is
         // Linux's, which has no kqueue; the primitive asks only of the description.
         let _, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let drainedFd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let registry =
             match FileDescriptorRegistry.tryFindId drainedFd registry with
@@ -86,7 +89,7 @@ module TestWakeCondition =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listenerFd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listenerFd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -137,9 +140,11 @@ module TestWakeCondition =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
+                            (Kernel.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -156,8 +161,8 @@ module TestWakeCondition =
         let system, _, _ = world
 
         let created (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match UnixInotify.tryInotifyInit1 0 system with
-            | Ok (Ok created) -> created
+            match UnixInotify.tryInotifyInit1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned fd, system) -> fd, system
             | other -> failwith $"creating an inotify instance: %A{other}"
 
         let queuedFd, system = created system
@@ -169,7 +174,7 @@ module TestWakeCondition =
             | other -> failwith $"watching the root: %A{other}"
 
         let system =
-            match UnixInotify.tryInotifyRmWatch queuedFd 1 system with
+            match UnixInotify.tryInotifyRmWatch (Callers.leader system) queuedFd 1 system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"removing the watch: %A{other}"
 
@@ -190,12 +195,12 @@ module TestWakeCondition =
     /// The open file description of the listener's connected client, the
     /// connection's client end: nothing has been written either way.
     let private connectedClient : OpenFileDescriptionId =
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.toList
         |> List.pick (fun (id, description) ->
             match description.Target with
             | OpenFileTarget.Socket socket ->
-                match SocketPhase.connectionEnd (UnixMachineState.socket socket system.Machine).Phase with
+                match SocketPhase.connectionEnd (UnixMachineState.socket socket (Kernel.machine system)).Phase with
                 | Some (_, ConnectionEnd.Client) -> Some id
                 | _ -> None
             | _ -> None
@@ -239,10 +244,7 @@ module TestWakeCondition =
             WakePrimitive.InotifyRecordQueued (let _, _, empty = withInotify in empty), false
         ]
 
-    let private at (clock : int64) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock clock system.Scheduling
-        }
+    let private at (clock : int64) : UnixSystem<int, string> = UnixSystem.advanceClock clock system
 
     /// The thread with a caught signal pending; the other, 0, has none.
     let private signalled : int = 1
@@ -269,7 +271,9 @@ module TestWakeCondition =
         | WakePrimitive.FifoPartnerOpened _
         | WakePrimitive.InotifyRecordQueued _
         | WakePrimitive.AwaitedSignalPending _
-        | WakePrimitive.AcceptQueueHasRoom _ ->
+        | WakePrimitive.AcceptQueueHasRoom _
+        | WakePrimitive.FutexWakeTaken
+        | WakePrimitive.DatagramReceivable _ ->
             match List.tryFind (fun (p, _) -> p = primitive) fixedTruths with
             | Some (_, truth) -> truth
             | None -> failwith $"the oracle's truth table has no row for %O{primitive}"
@@ -331,15 +335,15 @@ module TestWakeCondition =
         // below leans on them.
         for primitive, truth in fixedTruths do
             for waiter in [ 0 ; signalled ] do
-                WakeCondition.satisfied waiter (WakeCondition.Primitive primitive) system
+                Lone.WakeCondition.satisfied waiter (WakeCondition.Primitive primitive) system
                 |> shouldEqual (if truth then Set.singleton primitive else Set.empty)
 
         let signal = WakePrimitive.SignalDeliverable
 
-        WakeCondition.satisfied 0 (WakeCondition.Primitive signal) system
+        Lone.WakeCondition.satisfied 0 (WakeCondition.Primitive signal) system
         |> shouldEqual Set.empty
 
-        WakeCondition.satisfied signalled (WakeCondition.Primitive signal) system
+        Lone.WakeCondition.satisfied signalled (WakeCondition.Primitive signal) system
         |> shouldEqual (Set.singleton signal)
 
     [<Test>]
@@ -353,7 +357,7 @@ module TestWakeCondition =
             ] do
             let exn =
                 Assert.Throws<exn> (fun () ->
-                    WakeCondition.satisfied 0 (WakeCondition.Primitive primitive) system
+                    Lone.WakeCondition.satisfied 0 (WakeCondition.Primitive primitive) system
                     |> ignore<Set<WakePrimitive>>
                 )
 
@@ -368,7 +372,7 @@ module TestWakeCondition =
     [<Test>]
     let ``satisfied agrees with the flattening oracle`` () : unit =
         let property (cover : SatisfiedLabel -> unit) (waiter : int, clock : int64, condition : WakeCondition) : unit =
-            let actual = WakeCondition.satisfied waiter condition (at clock)
+            let actual = Lone.WakeCondition.satisfied waiter condition (at clock)
 
             if Set.isEmpty actual then
                 cover SatisfiedLabel.Empty
@@ -398,10 +402,10 @@ module TestWakeCondition =
             <| fun (clock, first, rest) ->
                 let system = at clock
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (first, rest)) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (first, rest)) system
                 |> shouldEqual (
                     first :: rest
-                    |> List.map (fun c -> WakeCondition.satisfied signalled c system)
+                    |> List.map (fun c -> Lone.WakeCondition.satisfied signalled c system)
                     |> Set.unionMany
                 )
 
@@ -417,11 +421,11 @@ module TestWakeCondition =
                 let right = WakeCondition.AnyOf (a, [ WakeCondition.AnyOf (b, [ c ]) ])
                 let flat = WakeCondition.AnyOf (a, [ b ; c ])
 
-                WakeCondition.satisfied signalled left system
-                |> shouldEqual (WakeCondition.satisfied signalled right system)
+                Lone.WakeCondition.satisfied signalled left system
+                |> shouldEqual (Lone.WakeCondition.satisfied signalled right system)
 
-                WakeCondition.satisfied signalled left system
-                |> shouldEqual (WakeCondition.satisfied signalled flat system)
+                Lone.WakeCondition.satisfied signalled left system
+                |> shouldEqual (Lone.WakeCondition.satisfied signalled flat system)
 
         Check.One (propertyConfig, property)
 
@@ -431,12 +435,12 @@ module TestWakeCondition =
             Prop.forAll (Arb.fromGen (Gen.zip clockGen sizedCondition))
             <| fun (clock, a) ->
                 let system = at clock
-                let alone = WakeCondition.satisfied signalled a system
+                let alone = Lone.WakeCondition.satisfied signalled a system
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [ a ])) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [ a ])) system
                 |> shouldEqual alone
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [])) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [])) system
                 |> shouldEqual alone
 
         Check.One (propertyConfig, property)
@@ -455,7 +459,7 @@ module TestWakeCondition =
 
             let primitive = WakePrimitive.DeadlinePassed deadline
 
-            WakeCondition.satisfied signalled (WakeCondition.Primitive primitive) (at clock)
+            Lone.WakeCondition.satisfied signalled (WakeCondition.Primitive primitive) (at clock)
             |> shouldEqual (
                 if clock >= deadline then
                     Set.singleton primitive
@@ -499,6 +503,8 @@ module TestWakeCondition =
                         | WakePrimitive.InotifyRecordQueued _
                         | WakePrimitive.AwaitedSignalPending _
                         | WakePrimitive.AcceptQueueHasRoom _
+                        | WakePrimitive.FutexWakeTaken
+                        | WakePrimitive.DatagramReceivable _
                         | WakePrimitive.SignalDeliverable -> None
                     )
                 )

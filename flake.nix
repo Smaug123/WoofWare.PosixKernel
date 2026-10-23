@@ -53,6 +53,11 @@
         root = ./WoofWare.PosixKernel;
         fileset = pkgs.lib.fileset.fileFilter (f: f.hasExt "fs") ./WoofWare.PosixKernel;
       };
+      # The test project's .fs files, without build output, as the test-boundaries check reads them.
+      testSources = pkgs.lib.fileset.toSource {
+        root = ./WoofWare.PosixKernel.Test;
+        fileset = pkgs.lib.fileset.fileFilter (f: f.hasExt "fs") ./WoofWare.PosixKernel.Test;
+      };
     in {
       packages = let
         deps = builtins.fromJSON (builtins.readFile ./nix/deps.json);
@@ -88,6 +93,36 @@
             ${pkgs.python3}/bin/python3 ${./scripts/check-client-references.py} ${librarySources}
             touch $out
           '';
+        # Fails `nix flake check` when a test file outside a rule's allowlist names a kernel
+        # internal that the test helpers hide: the thread table, which tests read through `Proc`
+        # and `Lone` and forge through `ForgedThread`; the process table, views and
+        # `UnixSystemState`, behind `Proc` and `Lone`; and the `UnixSystem` record's machine and
+        # scheduling, behind `Kernel` and the public queries. A test holding the representation must
+        # change whenever it does, though nothing the test asserts has. Runs the checker's own
+        # contract first, so that a change to the checker cannot quietly retire it.
+        test-boundaries =
+          pkgs.runCommand "test-boundaries" {
+            buildInputs = [pkgs.python3 pkgs.bash];
+          }
+          ''
+            ${pkgs.bash}/bin/bash ${./scripts/test-test-boundaries.sh} \
+              ${./scripts/check-test-boundaries.py}
+            ${pkgs.python3}/bin/python3 ${./scripts/check-test-boundaries.py} ${testSources}
+            touch $out
+          '';
+        # CI's `build` job fails when its test steps skipped a test that
+        # `.github/expected-skips.json` does not expect skipped. The check reads the TRX files
+        # those steps write, so only its contract runs here: so that a change to the checker
+        # cannot quietly retire it.
+        skipped-tests =
+          pkgs.runCommand "skipped-tests" {
+            buildInputs = [pkgs.python3 pkgs.bash];
+          }
+          ''
+            ${pkgs.bash}/bin/bash ${./scripts/test-skipped-tests.sh} \
+              ${./scripts/check-skipped-tests.py}
+            touch $out
+          '';
         # The docstring-attachment check is the oracle a definition-moving commit is held
         # to, and it is only as good as its own contract: thirty-six shapes in a throwaway
         # repository, eighteen of which must be reported and eighteen of which must not. The
@@ -113,6 +148,9 @@
         # mkShell's stdenv puts `cc` on the path. TestSignalFuzz builds its harness with it,
         # and fails rather than skips when this says a compiler was promised.
         POSIXKERNEL_REQUIRE_C_COMPILER = "1";
+        # Likewise for the python3 in `packages` below, which
+        # TestVirtualFileSystemAgainstHost starts.
+        POSIXKERNEL_REQUIRE_PYTHON3 = "1";
         packages = [
           pkgs.alejandra
           pkgs.shellcheck
@@ -123,7 +161,8 @@
           # in the test host, and Python is the only thing to hand that reports
           # errno numerically. Declared here rather than relied on from the
           # ambient system, so that CI -- which runs `nix develop --command
-          # dotnet test` -- runs that comparison instead of skipping it.
+          # dotnet test` -- runs that comparison instead of skipping it, and
+          # POSIXKERNEL_REQUIRE_PYTHON3 above fails it if python3 is missing.
           pkgs.python3
         ];
       };

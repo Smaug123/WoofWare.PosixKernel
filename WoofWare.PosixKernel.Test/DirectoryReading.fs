@@ -18,6 +18,7 @@ module internal DirectoryReading =
             CloseOnExec = true
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = true
         }
 
@@ -27,9 +28,9 @@ module internal DirectoryReading =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<int, UnixError> * UnixSystem<'Thread, 'Handler>
         =
-        match Answered.openPath flags path 0 system with
-        | SyscallAnswer.Completed fd, system -> Ok (int fd), system
-        | SyscallAnswer.Failed error, system -> Error error, system
+        match Answered.openPath path flags 0 system with
+        | DescriptorAnswer.Returned fd, system -> Ok fd, system
+        | DescriptorAnswer.Failed error, system -> Error error, system
 
     /// Every entry `fd` yields until end-of-directory. A failure or a refusal
     /// fails the fixture, as does a position that never reaches the end.
@@ -42,7 +43,7 @@ module internal DirectoryReading =
             if fuel <= 0 then
                 failwith $"fd %d{fd} did not reach end-of-directory after %d{List.length acc} entries"
 
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> List.rev acc, system
             | Ok (ReadDirectoryAnswer.Entry record, system) -> go (fuel - 1) (record :: acc) system
             | Ok (ReadDirectoryAnswer.Failed error, _) -> failwith $"reading fd %d{fd} failed with %O{error}"

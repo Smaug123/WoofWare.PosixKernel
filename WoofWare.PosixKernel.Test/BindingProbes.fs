@@ -122,6 +122,7 @@ module BindingProbes =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -141,24 +142,50 @@ module BindingProbes =
         | SyscallAnswer.Failed error -> Some error
         | SyscallAnswer.Completed _ -> None
 
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : UnixError option =
+        match answer with
+        | DescriptorAnswer.Failed error -> Some error
+        | DescriptorAnswer.Returned _ -> None
+
     /// What the model answers to `call`: its errno, or `None` for success.
     let runModel (call : BindingProbeCall) (system : UnixSystem<int, string>) : UnixError option =
         match call with
-        | BindingProbeCall.Mkdir path -> Answered.mkdir (PathArg.ofPath (rooted path)) 0o777 system |> fst |> ofAnswer
-        | BindingProbeCall.OpenCreate path -> Answered.openPath creating (rooted path) 0o666 system |> fst |> ofAnswer
-        | BindingProbeCall.OpenRead path -> Answered.openPath reading (rooted path) 0 system |> fst |> ofAnswer
+        | BindingProbeCall.Mkdir path ->
+            Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o777 system
+            |> fst
+            |> ofAnswer
+        | BindingProbeCall.OpenCreate path ->
+            Answered.openPath (rooted path) creating 0o666 system
+            |> fst
+            |> ofDescriptorAnswer
+        | BindingProbeCall.OpenRead path ->
+            Answered.openPath (rooted path) reading 0 system |> fst |> ofDescriptorAnswer
         | BindingProbeCall.Exists path ->
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted path)) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (rooted path))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported _) -> None
             | Ok (FileStatusAnswer.Failed error) -> Some error
             | Error refusal -> failwith $"stat refused: %s{StatRefusal.describe refusal}"
         | BindingProbeCall.ReadLink path ->
-            match UnixNamespace.tryReadlink (PathArg.ofPath (rooted path)) UserBuffer.Mapped 8192 system with
+            match
+                UnixNamespace.tryReadlink
+                    (Callers.leader system)
+                    (PathArg.ofPath (rooted path))
+                    UserBuffer.Mapped
+                    8192
+                    system
+            with
             | Ok (ReadLinkAnswer.Reported _) -> None
             | Ok (ReadLinkAnswer.Failed error) -> Some error
             | Error refusal -> failwith $"readlink refused its buffer: %A{refusal}"
-        | BindingProbeCall.Unlink path -> Answered.unlink (rooted path) system |> fst |> ofAnswer
-        | BindingProbeCall.RmDir path -> Answered.rmdir (rooted path) system |> fst |> ofAnswer
+        | BindingProbeCall.Unlink path ->
+            Answered.unlink (Callers.leader system) (rooted path) system |> fst |> ofAnswer
+        | BindingProbeCall.RmDir path -> Answered.rmdir (Callers.leader system) (rooted path) system |> fst |> ofAnswer
         | BindingProbeCall.Rename (source, destination) ->
             let argument (path : byte list) =
                 PathArg.ofBytes (UnixPathText.separatorByte :: path)

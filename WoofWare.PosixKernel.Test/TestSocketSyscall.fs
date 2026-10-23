@@ -72,14 +72,18 @@ module TestSocketSyscall =
                 disagreements.Add
                     $"socket(%d{domain}, 0x%x{socketType}, %d{protocol}): measured %A{answer}, %s{message}"
 
-            match UnixSocket.trySocket domain socketType protocol system, answer with
-            | Ok (Error error), MeasuredSocketAnswer.Failed measured ->
+            match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system, answer with
+            | Ok (DescriptorAnswer.Failed error, after), MeasuredSocketAnswer.Failed measured ->
                 if errno error <> measured then
                     describe $"library %O{error}"
-            | Ok (Ok (fd, after)), MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
+
+                if after <> system then
+                    describe $"library %O{error}, changing the system"
+            | Ok (DescriptorAnswer.Returned fd, after),
+              MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
-                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId after.Machine
+                    | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId (Kernel.machine after)
                     | other -> failwith $"socket(%A{arguments}) made descriptor %d{fd} onto %A{other}"
 
                 if soType socket.Kind <> measuredType then
@@ -88,8 +92,11 @@ module TestSocketSyscall =
                 if domainNumber platform socket.Domain <> domain then
                     describe $"library domain %O{socket.Domain}"
 
-                if UnixDescriptor.isNonBlocking fd after <> Some measuredNonBlocking then
-                    describe $"library non-blocking %A{UnixDescriptor.isNonBlocking fd after}"
+                if
+                    UnixDescriptor.isNonBlocking (Callers.leader after) fd after
+                    <> Some measuredNonBlocking
+                then
+                    describe $"library non-blocking %A{UnixDescriptor.isNonBlocking (Callers.leader after) fd after}"
 
                 // Linux reports the protocol it resolved; a protocol the caller
                 // named must be that one.
@@ -149,8 +156,8 @@ module TestSocketSyscall =
 
                 if not consistent then
                     describe $"library refused: %s{SocketRefusal.describe refusal}"
-            | Ok (Ok _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
-            | Ok (Error error), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
+            | Ok (DescriptorAnswer.Returned _, _), MeasuredSocketAnswer.Failed _ -> describe "library created a socket"
+            | Ok (DescriptorAnswer.Failed error, _), MeasuredSocketAnswer.Created _ -> describe $"library %O{error}"
 
         List.ofSeq disagreements, refusals
 
@@ -271,28 +278,29 @@ module TestSocketSyscall =
 
             second |> shouldEqual (first + 1)
 
-            match UnixDescriptor.tryClose first system with
+            match UnixDescriptor.tryClose (Callers.leader system) first system with
             | Ok (SyscallAnswer.Completed _, system) -> first, system
             | Ok (answer, _) -> failwith $"closing descriptor %d{first} answered %A{answer}"
             | Error _ -> failwith $"closing descriptor %d{first} was refused"
 
         let property (domain : int, socketType : int, protocol : int) : unit =
-            match UnixSocket.trySocket domain socketType protocol before with
-            | Ok (Ok (fd, after)) ->
+            match UnixSocket.trySocket (Callers.leader before) domain socketType protocol before with
+            | Ok (DescriptorAnswer.Returned fd, after) ->
                 fd |> shouldEqual hole
 
-                let socketId = before.Machine.NextSocketId
+                let socketId = (Kernel.machine before).NextSocketId
 
                 FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after)
                 |> shouldEqual (Some (OpenFileTarget.Socket socketId))
 
-                let socket = UnixMachineState.socket socketId after.Machine
+                let socket = UnixMachineState.socket socketId (Kernel.machine after)
                 socket.Ipv4Binding |> shouldEqual None
                 socket.Phase |> shouldEqual SocketPhase.Idle
                 socket.ReuseAddress |> shouldEqual false
 
-                Map.remove socketId after.Machine.Sockets |> shouldEqual before.Machine.Sockets
-            | Ok (Error _)
+                SocketTable.all (SocketTable.remove socketId (Kernel.machine after).Sockets)
+                |> shouldEqual (SocketTable.all (Kernel.machine before).Sockets)
+            | Ok (DescriptorAnswer.Failed _, after) -> after |> shouldEqual before
             | Error _ -> ()
 
         Prop.forAll (Arb.fromGen arguments) property |> Check.QuickThrowOnFailure
@@ -307,9 +315,10 @@ module TestSocketSyscall =
             let baseType = baseType &&& 0xf
 
             let answer (socketType : int) =
-                match UnixSocket.trySocket domain socketType protocol system with
-                | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking fd after))
-                | Ok (Error error) -> Ok (Error error)
+                match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system with
+                | Ok (DescriptorAnswer.Returned fd, after) ->
+                    Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
+                | Ok (DescriptorAnswer.Failed error, _) -> Ok (Error error)
                 | Error refusal -> Error (refusalKind refusal)
 
             let plain = answer baseType

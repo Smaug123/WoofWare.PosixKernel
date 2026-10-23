@@ -24,6 +24,10 @@ open WoofWare.PosixKernel
 /// handler.
 /// `TestSignal` pins that set from a probe instead.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestSignalAgainstHost =
 
     /// `Some name` when `kill -l signo` names a signal, `None` when the shell
@@ -93,8 +97,7 @@ module TestSignalAgainstHost =
     [<Test>]
     let ``toRawSignoUnder agrees with this host's kill -l about every signal`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             // Both directions: the host's name for each number must be the one
             // this library gives the signal it parses that number as, and the
@@ -139,8 +142,7 @@ module TestSignalAgainstHost =
     [<Test>]
     let ``highestSignoUnder is the last number this host's kill -l accepts`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let modelled = Signal.highestSignoUnder numbering
 

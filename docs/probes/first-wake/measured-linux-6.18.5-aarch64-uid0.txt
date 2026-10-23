@@ -1,0 +1,419 @@
+# Linux 6.18.5 aarch64, uid 0
+linux call=accept sleepers=1 order=own,signal trial=0 first-at=7ms woken-by=8ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=8 first-at=8ms woken-by=8ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=own,signal summary held=10/10 [front=accepted]x10 unheld:
+linux call=accept sleepers=1 order=signal,own trial=0 first-at=9ms woken-by=9ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=2 first-at=9ms woken-by=9ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=accepted h1=1
+linux call=accept sleepers=1 order=signal,own summary held=10/10 [front=accepted]x10 unheld:
+linux call=flock sleepers=1 order=own,signal trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=1 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=4 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=8 first-at=9ms woken-by=9ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=own,signal summary held=10/10 [front=0]x10 unheld:
+linux call=flock sleepers=1 order=signal,own trial=0 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=flock sleepers=1 order=signal,own summary held=10/10 [front=0]x10 unheld:
+linux call=read sleepers=1 order=own,signal trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=8 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=own,signal summary held=10/10 [front=1]x10 unheld:
+linux call=read sleepers=1 order=signal,own trial=0 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=1 first-at=9ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=3 first-at=9ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=6 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=7 first-at=9ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own trial=9 first-at=9ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=read sleepers=1 order=signal,own summary held=10/10 [front=1]x10 unheld:
+linux call=write sleepers=1 order=own,signal trial=0 first-at=6ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=1 first-at=8ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=2 first-at=9ms woken-by=10ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=3 first-at=7ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=4 first-at=9ms woken-by=10ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=6 first-at=8ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=7 first-at=9ms woken-by=10ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=8 first-at=6ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal trial=9 first-at=8ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=own,signal summary held=10/10 [front=1]x10 unheld:
+linux call=write sleepers=1 order=signal,own trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=7 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=write sleepers=1 order=signal,own summary held=10/10 [front=1]x10 unheld:
+linux call=tcp-read sleepers=1 order=own,signal trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=8 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=own,signal summary held=10/10 [front=1]x10 unheld:
+linux call=tcp-read sleepers=1 order=signal,own trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=tcp-read sleepers=1 order=signal,own summary held=10/10 [front=1]x10 unheld:
+linux call=tcp-write sleepers=1 order=own,signal trial=0 first-at=9ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=1 first-at=7ms woken-by=38ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=2 first-at=9ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=3 first-at=8ms woken-by=38ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=4 first-at=9ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=5 first-at=9ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=6 first-at=8ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=7 first-at=7ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=8 first-at=9ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal trial=9 first-at=7ms woken-by=38ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=own,signal summary held=10/10 [front=EINTR]x10 unheld:
+linux call=tcp-write sleepers=1 order=signal,own trial=0 first-at=9ms woken-by=9ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=4 first-at=9ms woken-by=9ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=7 first-at=9ms woken-by=9ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=EINTR h1=1
+linux call=tcp-write sleepers=1 order=signal,own summary held=10/10 [front=EINTR]x10 unheld:
+linux call=poll sleepers=1 order=own,signal trial=0 first-at=6ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=own,signal summary held=10/10 [front=1]x10 unheld:
+linux call=poll sleepers=1 order=signal,own trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=6 first-at=9ms woken-by=9ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=poll sleepers=1 order=signal,own summary held=10/10 [front=1]x10 unheld:
+linux call=events sleepers=1 order=own,signal trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal trial=9 first-at=6ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=own,signal summary held=10/10 [front=1]x10 unheld:
+linux call=events sleepers=1 order=signal,own trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=6 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=8 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1
+linux call=events sleepers=1 order=signal,own summary held=10/10 [front=1]x10 unheld:
+linux call=read sleepers=1 order=close,signal trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=1 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=4 first-at=9ms woken-by=9ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=8 first-at=9ms woken-by=9ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=close,signal summary held=10/10 [front=0]x10 unheld:
+linux call=read sleepers=1 order=signal,close trial=0 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=1 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=2 first-at=9ms woken-by=9ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=3 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=6 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=8 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=read sleepers=1 order=signal,close summary held=10/10 [front=0]x10 unheld:
+linux call=write sleepers=1 order=close,signal trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=3 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=4 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=7 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=8 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal trial=9 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=close,signal summary held=10/10 [front=EPIPE]x10 unheld:
+linux call=write sleepers=1 order=signal,close trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=1 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=3 first-at=8ms woken-by=8ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=5 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=8 first-at=8ms woken-by=8ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close trial=9 first-at=9ms woken-by=9ms woken=1 held=1 front=EPIPE h1=1
+linux call=write sleepers=1 order=signal,close summary held=10/10 [front=EPIPE]x10 unheld:
+linux call=tcp-read sleepers=1 order=close,signal trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=4 first-at=6ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=close,signal summary held=10/10 [front=0]x10 unheld:
+linux call=tcp-read sleepers=1 order=signal,close trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=1 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=2 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close trial=9 first-at=8ms woken-by=8ms woken=1 held=1 front=0 h1=1
+linux call=tcp-read sleepers=1 order=signal,close summary held=10/10 [front=0]x10 unheld:
+linux call=tcp-write sleepers=1 order=close,signal trial=0 first-at=9ms woken-by=9ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=2 first-at=9ms woken-by=9ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=3 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=4 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=8 first-at=9ms woken-by=9ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=close,signal summary held=10/10 [front=ECONNRESET]x10 unheld:
+linux call=tcp-write sleepers=1 order=signal,close trial=0 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=1 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=3 first-at=9ms woken-by=9ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=4 first-at=8ms woken-by=8ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=5 first-at=7ms woken-by=7ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=7 first-at=9ms woken-by=9ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=ECONNRESET h1=1
+linux call=tcp-write sleepers=1 order=signal,close summary held=10/10 [front=ECONNRESET]x10 unheld:
+linux call=poll sleepers=1 order=deadline,own trial=0 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=1 first-at=5ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=2 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=3 first-at=8ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=4 first-at=9ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=5 first-at=7ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=6 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=7 first-at=7ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=8 first-at=5ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own trial=9 first-at=5ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=deadline,own summary held=10/10 [front=1]x10 unheld:
+linux call=poll sleepers=1 order=own,deadline trial=0 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=1 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=2 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=5 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=7 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline trial=9 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=poll sleepers=1 order=own,deadline summary held=10/10 [front=1]x10 unheld:
+linux call=poll sleepers=1 order=deadline,signal trial=0 first-at=5ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=1 first-at=7ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=2 first-at=5ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=3 first-at=5ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=4 first-at=9ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=5 first-at=6ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=6 first-at=5ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=7 first-at=6ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=8 first-at=7ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal trial=9 first-at=7ms woken-by=100ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=deadline,signal summary held=10/10 [front=EINTR]x10 unheld:
+linux call=poll sleepers=1 order=signal,deadline trial=0 first-at=9ms woken-by=9ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=1 first-at=5ms woken-by=5ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=4 first-at=5ms woken-by=5ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=6 first-at=5ms woken-by=5ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=8 first-at=5ms woken-by=5ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline trial=9 first-at=8ms woken-by=8ms woken=1 held=1 front=EINTR h1=1
+linux call=poll sleepers=1 order=signal,deadline summary held=10/10 [front=EINTR]x10 unheld:
+linux call=events sleepers=1 order=deadline,own trial=0 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=1 first-at=5ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=2 first-at=7ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=3 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=4 first-at=7ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=5 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=6 first-at=5ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=7 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=8 first-at=6ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own trial=9 first-at=8ms woken-by=100ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=deadline,own summary held=10/10 [front=1]x10 unheld:
+linux call=events sleepers=1 order=own,deadline trial=0 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=1 first-at=5ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=2 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=4 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=7 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=8 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline trial=9 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=0
+linux call=events sleepers=1 order=own,deadline summary held=10/10 [front=1]x10 unheld:
+linux call=events sleepers=1 order=deadline,signal trial=0 first-at=6ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=1 first-at=5ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=2 first-at=7ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=3 first-at=5ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=4 first-at=8ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=5 first-at=6ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=6 first-at=6ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=7 first-at=5ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=8 first-at=6ms woken-by=100ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal trial=9 first-at=5ms woken-by=265ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=deadline,signal summary held=10/10 [front=0]x10 unheld:
+linux call=events sleepers=1 order=signal,deadline trial=0 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=1 first-at=5ms woken-by=5ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=2 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=3 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=4 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=5 first-at=5ms woken-by=5ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=6 first-at=7ms woken-by=7ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=8 first-at=6ms woken-by=6ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline trial=9 first-at=5ms woken-by=5ms woken=1 held=1 front=0 h1=1
+linux call=events sleepers=1 order=signal,deadline summary held=10/10 [front=0]x10 unheld:
+linux call=accept sleepers=2 order=signal,own trial=0 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=1 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=2 first-at=14ms woken-by=14ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=3 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=4 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=5 first-at=16ms woken-by=16ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=6 first-at=13ms woken-by=13ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=7 first-at=15ms woken-by=15ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=8 first-at=12ms woken-by=12ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own trial=9 first-at=16ms woken-by=16ms woken=1 held=1 front=accepted h1=1 other-woken=1 other=asleep
+linux call=accept sleepers=2 order=signal,own summary held=10/10 [front=accepted other-woken=1 other=asleep]x10 unheld:
+linux call=accept sleepers=2 order=own,signal trial=0 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=1 first-at=12ms woken-by=12ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=2 first-at=12ms woken-by=12ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=3 first-at=12ms woken-by=12ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=4 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=5 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=6 first-at=12ms woken-by=12ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=7 first-at=11ms woken-by=11ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=8 first-at=16ms woken-by=16ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal trial=9 first-at=12ms woken-by=13ms woken=1 held=1 front=accepted h1=1 other-woken=0 other=asleep
+linux call=accept sleepers=2 order=own,signal summary held=10/10 [front=accepted other-woken=0 other=asleep]x10 unheld:
+linux call=read sleepers=2 order=signal,own trial=0 first-at=10ms woken-by=10ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=1 first-at=10ms woken-by=10ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=2 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=3 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=4 first-at=16ms woken-by=16ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=5 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=6 first-at=16ms woken-by=16ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=7 first-at=11ms woken-by=11ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=8 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own trial=9 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=1 other=asleep
+linux call=read sleepers=2 order=signal,own summary held=10/10 [front=1 other-woken=1 other=asleep]x10 unheld:
+linux call=read sleepers=2 order=own,signal trial=0 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=1 first-at=11ms woken-by=11ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=2 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=3 first-at=11ms woken-by=11ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=4 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=5 first-at=11ms woken-by=11ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=6 first-at=11ms woken-by=11ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=7 first-at=14ms woken-by=14ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=8 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal trial=9 first-at=12ms woken-by=12ms woken=1 held=1 front=1 h1=1 other-woken=0 other=asleep
+linux call=read sleepers=2 order=own,signal summary held=10/10 [front=1 other-woken=0 other=asleep]x10 unheld:
+linux call=events sleepers=2 order=signal,own trial=0 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=2 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=3 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=4 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=7 first-at=8ms woken-by=8ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own trial=9 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+linux call=events sleepers=2 order=signal,own summary held=10/10 [front=1 other-woken=1 other=1]x10 unheld:
+linux call=events sleepers=2 order=own,signal trial=0 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=1 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=2 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=3 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=4 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=5 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=6 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=7 first-at=6ms woken-by=6ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=8 first-at=7ms woken-by=7ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal trial=9 first-at=5ms woken-by=5ms woken=1 held=1 front=1 h1=1 other-woken=0 other=1
+linux call=events sleepers=2 order=own,signal summary held=10/10 [front=1 other-woken=0 other=1]x10 unheld:

@@ -51,7 +51,7 @@ module TestKqueueTimerReserved =
              let idle, system = KeventWorld.stream true system
 
              let (readEnd, writeEnd), system =
-                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                 match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                  | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                  | other -> failwith $"pipe did not make a pipe: %A{other}"
 
@@ -77,7 +77,7 @@ module TestKqueueTimerReserved =
             holdsTimer (Map.keys state.Registrations) |> shouldEqual false
             holdsTimer state.Active |> shouldEqual false
 
-        for KeyValue (_, queue) in system.Machine.PollQueues do
+        for KeyValue (_, queue) in PollQueueTable.all (Kernel.machine system).PollQueues do
             holdsTimer (Map.keys queue.Registrations) |> shouldEqual false
             holdsTimer queue.Active |> shouldEqual false
 
@@ -110,7 +110,19 @@ module TestKqueueTimerReserved =
                     }
                 ] do
                 match
-                    UnixKqueue.tryKevent 4 kq 1 [ change ] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.tryKevent
+                        (Callers.thread 4 system)
+                        kq
+                        1
+                        [ change ]
+                        1
+                        UserBuffer.Mapped
+                        (TimespecArgument.Readable
+                            {
+                                Seconds = 0L
+                                Nanoseconds = 0L
+                            })
+                        system
                 with
                 | Error (KeventRefusal.UnmodelledFilter refused) -> refused |> shouldEqual change
                 | other -> failwith $"%A{change}: expected UnmodelledFilter, got %A{other}"
@@ -162,13 +174,17 @@ module TestKqueueTimerReserved =
                 let after =
                     match
                         UnixKqueue.tryKevent
-                            4
+                            (Callers.thread 4 system)
                             kq
                             (List.length changes)
                             changes
                             room
                             UserBuffer.Mapped
-                            (KeventTimeout.Readable (0L, 0L))
+                            (TimespecArgument.Readable
+                                {
+                                    Seconds = 0L
+                                    Nanoseconds = 0L
+                                })
                             system
                     with
                     | Ok (KeventOutcome.Answered events, after) ->
@@ -238,18 +254,18 @@ module TestKqueueTimerReserved =
         let mutable slept = 0
 
         let property (entries : PollEntry list) (connect : bool) : unit =
-            match UnixPoll.tryPoll 2 entries 1000 system with
+            match UnixPoll.tryPoll (Callers.thread 2 system) entries 1000 system with
             | Ok (PollOutcome.WouldBlock _, parked) ->
                 slept <- slept + 1
                 noTimerAnywhere parked
-                Map.iter (fun _ queue -> queries queue) parked.Machine.PollQueues
+                Map.iter (fun _ queue -> queries queue) (PollQueueTable.all (Kernel.machine parked).PollQueues)
 
                 if connect then
                     // A connection activates the listener's read filter, if the poll
                     // registered one.
                     let _, connected = KeventWorld.client 5300us parked
                     noTimerAnywhere connected
-                    Map.iter (fun _ queue -> queries queue) connected.Machine.PollQueues
+                    Map.iter (fun _ queue -> queries queue) (PollQueueTable.all (Kernel.machine connected).PollQueues)
             | Ok (_, after) -> noTimerAnywhere after
             | Error _ -> ()
 
@@ -270,7 +286,7 @@ module TestKqueueTimerReserved =
         // of the listener alone sleeps, registers its read filter, and a connection queues it.
         match
             UnixPoll.tryPoll
-                2
+                (Callers.thread 2 system)
                 [
                     {
                         Fd = listener
@@ -281,11 +297,16 @@ module TestKqueueTimerReserved =
                 system
         with
         | Ok (PollOutcome.WouldBlock _, parked) ->
-            let queue = Seq.exactlyOne parked.Machine.PollQueues.Values
+            let queue =
+                Seq.exactlyOne (PollQueueTable.all (Kernel.machine parked).PollQueues).Values
+
             PollQueue.registered queue |> shouldEqual [ listener, KqueueFilter.Read ]
             PollQueue.entry listener KqueueFilter.Read queue |> shouldEqual (Some 0)
             PollQueue.activated queue |> shouldEqual []
             let _, connected = KeventWorld.client 5300us parked
-            let queue = Seq.exactlyOne connected.Machine.PollQueues.Values
+
+            let queue =
+                Seq.exactlyOne (PollQueueTable.all (Kernel.machine connected).PollQueues).Values
+
             PollQueue.activated queue |> shouldEqual [ listener, KqueueFilter.Read ]
         | other -> failwith $"a poll of the idle listener did not sleep: %A{other}"

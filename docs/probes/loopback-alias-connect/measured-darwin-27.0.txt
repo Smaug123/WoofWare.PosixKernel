@@ -1,0 +1,36 @@
+net.inet.tcp.keepinit: 75000
+Darwin 27.0.0 arm64
+uid=501
+SWf connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SWb connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SWw connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SLf connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SLb connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SLw connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SNf connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK
+SNb connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK
+SNw connect 127.0.0.2:P=EINTR local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK
+BWf connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BWb connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BWw connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BLf connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BLb connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BLw connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY | accept: nothing queued
+BNf connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY
+BNb connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY
+BNw connect=EINPROGRESS poll=0/0x0 SO_ERROR=OK local=127.0.0.1:eph again=EALREADY
+CWf connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CWb connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CWw connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLf connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLb connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLw connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+DWc 127.0.0.2:P connect=OK send=OK local=127.0.0.1:eph recvfrom=EAGAIN
+DWt 127.0.0.2:P sendto=OK local=0.0.0.0:eph recvfrom=EAGAIN
+DLc 127.0.0.2:P connect=OK send=OK local=127.0.0.1:eph recvfrom=EAGAIN
+DLt 127.0.0.2:P sendto=OK local=0.0.0.0:eph recvfrom=EAGAIN
+DCWc 127.0.0.1:P connect=OK send=OK local=127.0.0.1:eph recvfrom=OK from=127.0.0.1:eph
+DCWt 127.0.0.1:P sendto=OK local=0.0.0.0:eph recvfrom=OK from=127.0.0.1:eph
+DCLc 127.0.0.1:P connect=OK send=OK local=127.0.0.1:eph recvfrom=OK from=127.0.0.1:eph
+DCLt 127.0.0.1:P sendto=OK local=0.0.0.0:eph recvfrom=OK from=127.0.0.1:eph
+TWf connect 127.0.0.2:P=ETIMEDOUT after 170s local=127.0.0.1:eph

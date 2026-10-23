@@ -27,12 +27,6 @@ module TestUserBufferCheckAgainstHost =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private openFile(string path, int flags)
 
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private readFd(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private closeFd(int fd)
-
     [<Literal>]
     let private O_RDONLY = 0
 
@@ -42,8 +36,8 @@ module TestUserBufferCheckAgainstHost =
     /// A machine on `platform`, to apply this host's measured facts to.
     let private machineOn (platform : SimulatedUnixPlatform) : UnixMachineState =
         (UnixSystem.initial<int, string> platform
-         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-            .Machine
+         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+         |> Kernel.machine)
 
     /// Whether the host refuses `length` bytes at `address` on a descriptor with
     /// nothing to transfer.
@@ -56,7 +50,9 @@ module TestUserBufferCheckAgainstHost =
     /// hard failure rather than a probe result.
     let private faultsAt (fd : int) (address : uint64) (length : uint64) : bool =
         Marshal.SetLastPInvokeError 0
-        let transferred = readFd (fd, nativeint (int64 address), unativeint length)
+
+        let transferred =
+            HostCalls.readPointer (fd, nativeint (int64 address), unativeint length)
 
         if transferred > 0n then
             failwith
@@ -116,7 +112,7 @@ module TestUserBufferCheckAgainstHost =
             try
                 action fd
             finally
-                closeFd fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         finally
             File.Delete path
 
@@ -168,8 +164,8 @@ module TestUserBufferCheckAgainstHost =
                         (UnixSystem.initial<int, string> platform
                          |> UnixBootImage.tryWithUserAddressLimit limit
                          |> Configured.expectOk UserAddressLimitRefusal.describe
-                         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-                            .Machine
+                         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                         |> Kernel.machine)
                         |> UnixMachineState.userBufferCheck
 
                 let describe (refuses : bool) : string =

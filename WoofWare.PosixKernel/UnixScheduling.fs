@@ -59,34 +59,27 @@ module internal GetCpuRefusal =
 [<RequireQualifiedAccess>]
 module UnixScheduling =
 
-    /// `thread` is now running on the logical processor `cpu`: the client's
-    /// report of a dispatch.
-    ///
-    /// `thread`'s processor becomes `cpu`. Whichever thread `cpu` was running,
-    /// in this process or another on the machine, stops running there and
-    /// keeps `cpu` as its processor, as a preempted thread does. If `thread` was
-    /// running on another processor, that one is now idle. Dispatching a thread
-    /// to the processor it is already running on changes nothing, and answers
-    /// `system` itself.
-    ///
-    /// A parked thread may be dispatched. Whether it was woken is the client's
-    /// record (`UnixWait.wakes`), so this library does not refuse one that was
-    /// not.
-    ///
-    /// Fails loudly if `thread` names no thread, or if `cpu` is not one of the
-    /// machine's processors (`UnixSystem.processorCount`): each is a bug in
-    /// the client.
-    let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `dispatch` of `thread` of the process `pid`, whose slot is `slot`, once
+    /// `Entry` has admitted it. Works on the kernel and the one slot, rather
+    /// than on a view of the process, and allocates nothing when the thread is
+    /// already running on `cpu`.
+    let private dispatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (slot : ProcessSlot<'Thread, 'Handler>)
         (thread : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let state = UnixThreadTable.get thread system.Threads
+        let state = UnixThreadTable.get thread slot.Threads
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
-            failwith
-                $"UnixScheduling.dispatch: %O{thread} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            raise (
+                Refusal.exceptionOf
+                    "UnixScheduling.dispatch"
+                    (RefusalKind.OutOfRange "cpu")
+                    $"%O{thread} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+            )
 
         if
             state.Cpu = cpu
@@ -103,40 +96,82 @@ module UnixScheduling =
                 Occupants = Map.add cpu state.OsThreadId vacated.Occupants
             }
 
-        let threads =
+        let processes =
             if state.Cpu = cpu then
-                system.Threads
+                system.Processes
             else
-                Map.add
-                    thread
-                    { state with
-                        Cpu = cpu
+                let threads = UnixThreadTable.withCpu thread cpu slot.Threads
+
+                ProcessTable.add
+                    (ProcessId.toInt32 pid)
+                    { slot with
+                        Threads = threads
                     }
-                    system.Threads
+                    system.Processes
 
         { system with
             Scheduling = scheduling
-            Threads = threads
+            Processes = processes
         }
 
-    /// The logical processor `thread` is running on: `None` if it is not
-    /// running, because the client has not dispatched it since it was created
-    /// or since it last parked, or has dispatched another thread to its
-    /// processor since, and `None` if `thread` names no thread.
-    let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    /// The thread `caller` names is now running on the logical processor `cpu`:
+    /// the client's report of a dispatch.
+    ///
+    /// The thread's processor becomes `cpu`. Whichever thread `cpu` was running,
+    /// in this process or another on the machine, stops running there and
+    /// keeps `cpu` as its processor, as a preempted thread does. If the thread was
+    /// running on another processor, that one is now idle. Dispatching a thread
+    /// to the processor it is already running on changes nothing, and answers
+    /// `system` itself.
+    ///
+    /// A parked thread may be dispatched, whether or not `UnixWait.wake` has
+    /// woken it.
+    ///
+    /// Throws `InvalidOperationException` if `caller` names no thread, and
+    /// `ArgumentOutOfRangeException` if `cpu` is not one of the machine's
+    /// processors (`UnixSystem.processorCount`): each is a bug in the client.
+    let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        // `Entry.call` with `Shape.system`, written out on the kernel: a client
+        // reports the thread it runs before every instruction, and the closure
+        // `call` takes, and the view it focuses, would make each report
+        // allocate.
+        let slot =
+            Entry.admitted "UnixScheduling.dispatch" CallerRequirement.Exists caller system
+
+        dispatchIn (Caller.processId caller) slot (Caller.thread caller) cpu system
+
+    /// `runningOn` once `Entry` has admitted the process.
+    let private runningOnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
         : CpuId option
         =
-        match Map.tryFind thread system.Threads with
+        match UnixThreadTable.tryFind thread system.Threads with
         | Some state when UnixSchedulingState.runs state.Cpu state.OsThreadId system.Scheduling -> Some state.Cpu
         | Some _
         | None -> None
 
-    /// `getcpu`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    /// The logical processor the thread `caller` names is running on: `None` if
+    /// it is not running, because the client has not dispatched it since it
+    /// was created or since it last parked, or has dispatched another thread to
+    /// its processor since, and `None` if its process has no thread by that
+    /// name.
+    let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
+        : CpuId option
+        =
+        Entry.query "UnixScheduling.runningOn" (Caller.processId caller) (runningOnIn (Caller.thread caller)) system
+
+    /// `tryGetcpu` once `Entry` has admitted its caller.
+    let private tryGetcpuIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetCpuAnswer, GetCpuRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -144,12 +179,6 @@ module UnixScheduling =
         | SimulatedUnixFlavour.Linux ->
 
         let state = UnixThreadTable.get thread system.Threads
-
-        match state.Parked with
-        | Some park ->
-            failwith
-                $"UnixScheduling.getcpu: thread %O{thread} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
-        | None ->
 
         match Map.tryFind state.Cpu system.Scheduling.Occupants with
         | Some running when running = state.OsThreadId ->
@@ -164,8 +193,22 @@ module UnixScheduling =
                 | Some other -> $"%O{state.Cpu} is running the thread with thread ID %O{other}"
                 | None -> $"%O{state.Cpu} is idle"
 
-            failwith
+            invalidOp
                 $"UnixScheduling.getcpu: thread %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each thread the client runs with UnixScheduling.dispatch (this is a bug in the client)."
+
+    /// `getcpu`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetCpuAnswer, GetCpuRefusal>
+        =
+        Entry.call
+            "UnixScheduling.getcpu"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetcpuIn (Caller.thread caller))
+            system
 
     /// <summary>
     /// `getcpu(2)`, made by `thread`: the processor it is running on, and that
@@ -178,11 +221,12 @@ module UnixScheduling =
     /// means the client's record of what it runs disagrees with this
     /// library's, which is a bug in the client.
     /// </summary>
+    /// <exception cref="T:System.InvalidOperationException">The thread is not running: the client has not dispatched it, or has dispatched another thread to its processor since.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let getcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetCpuAnswer
         =
-        tryGetcpu thread system
+        tryGetcpu caller system
         |> Refusal.orRaise "UnixScheduling.getcpu" GetCpuRefusal.kind GetCpuRefusal.describe

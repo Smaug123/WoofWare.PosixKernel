@@ -16,6 +16,7 @@ open WoofWare.PosixKernel
 /// A public record that is new since the baseline, or a field a committed record gains, may not
 /// reuse a field label that another committed record has, which a third test checks.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSurface =
 
     let private assembly = typeof<UnixError>.Assembly

@@ -15,20 +15,20 @@ module ReuseAddress =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
         let level = SimulatedUnixPlatform.socketOptionLevel platform
         let optionName = SimulatedUnixPlatform.reuseAddressOption platform
         let optionLength = 4u
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level optionName UserBuffer.Mapped optionLength system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level optionName UserBuffer.Mapped optionLength system with
             | Ok (SetSockOptAdmission.Transfer _) -> Some (OptionValue.ofInt (if value then 1 else 0))
             | Ok SetSockOptAdmission.NoCopy -> failwith "ReuseAddress.set: SO_REUSEADDR is always copied"
             | Ok (SetSockOptAdmission.Answered error) ->
                 failwith $"ReuseAddress.set: fd %d{fd} answered %O{error} before the value was read"
             | Error refusal -> failwith $"ReuseAddress.set: %s{SocketOptionRefusal.describe refusal}"
 
-        match UnixSocket.trySetsockoptBytes fd level optionName UserBuffer.Mapped optionLength supplied system with
+        match Lone.UnixSocket.trySetsockoptBytes fd level optionName UserBuffer.Mapped optionLength supplied system with
         | Ok (SetSockOptAnswer.Set, system) -> system
         | Ok (SetSockOptAnswer.Failed error, _) -> failwith $"ReuseAddress.set: fd %d{fd} answered %O{error}"
         | Error refusal -> failwith $"ReuseAddress.set: %s{SocketOptionRefusal.describe refusal}"

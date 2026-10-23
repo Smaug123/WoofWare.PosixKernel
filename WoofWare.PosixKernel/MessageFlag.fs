@@ -228,7 +228,7 @@ module MessageFlag =
             | Some word, flag -> number flavour flag |> Option.map (fun bit -> word ||| bit)
         )
 
-/// The flags of a `recv(2)` this kernel models.
+/// The flags of a `recv(2)` or `recvfrom(2)` this kernel models.
 type internal ReceiveFlags =
     {
         /// `MSG_PEEK`: the bytes stay queued.
@@ -236,12 +236,15 @@ type internal ReceiveFlags =
         /// `MSG_DONTWAIT`: the call answers `EAGAIN` rather than sleeping,
         /// whatever the description says.
         DontWait : bool
+        /// `MSG_TRUNC`: Linux returns a datagram's whole length, however
+        /// little of it the buffer takes. Only `recvfrom(2)` models it.
+        Truncate : bool
     }
 
 [<RequireQualifiedAccess>]
 module internal ReceiveFlags =
     /// The flags of `word`, in `flavour`'s numbering; or every flag in it this
-    /// kernel does not model for `recv(2)`. `MSG_NOSIGNAL` is taken and
+    /// kernel does not model for a receive. `MSG_NOSIGNAL` is taken and
     /// changes nothing: measured on both (`tcp-recv-send.c` section N-recv),
     /// a receive with it answers as one without.
     let decode (flavour : SimulatedUnixFlavour) (word : int) : Result<ReceiveFlags, MessageFlag list> =
@@ -253,6 +256,7 @@ module internal ReceiveFlags =
                 match flag with
                 | MessageFlag.Peek
                 | MessageFlag.DontWait
+                | MessageFlag.Truncate
                 | MessageFlag.NoSignal -> false
                 | _ -> true
             )
@@ -262,6 +266,7 @@ module internal ReceiveFlags =
                 {
                     Peek = List.contains MessageFlag.Peek flags
                     DontWait = List.contains MessageFlag.DontWait flags
+                    Truncate = List.contains MessageFlag.Truncate flags
                 }
         else
             Error unmodelled

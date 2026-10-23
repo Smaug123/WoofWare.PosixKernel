@@ -37,14 +37,18 @@ module UserId =
         else
             Some (UserId candidate)
 
-    /// As `parse`, but failing with `context` in the message if `candidate` is
-    /// `(uid_t)-1`.
+    /// As `parse`, but throwing `ArgumentException`, with `context` in the
+    /// message, if `candidate` is `(uid_t)-1`.
     let parseOrFail (context : string) (candidate : uint32) : UserId =
         match parse candidate with
         | Some uid -> uid
         | None ->
-            failwith
-                $"%s{context}: %d{candidate} is (uid_t)-1, which is not a user ID a process can hold; setresuid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%d{candidate} is (uid_t)-1, which is not a user ID a process can hold; setresuid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            )
 
 /// A group ID: a `gid_t` a process can hold.
 ///
@@ -78,14 +82,18 @@ module GroupId =
         else
             Some (GroupId candidate)
 
-    /// As `parse`, but failing with `context` in the message if `candidate` is
-    /// `(gid_t)-1`.
+    /// As `parse`, but throwing `ArgumentException`, with `context` in the
+    /// message, if `candidate` is `(gid_t)-1`.
     let parseOrFail (context : string) (candidate : uint32) : GroupId =
         match parse candidate with
         | Some gid -> gid
         | None ->
-            failwith
-                $"%s{context}: %d{candidate} is (gid_t)-1, which is not a group ID a process can hold; setresgid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%d{candidate} is (gid_t)-1, which is not a group ID a process can hold; setresgid(2) and chown(2) read it as \"leave this ID unchanged\"."
+            )
 
 /// Who a process is: the IDs a kernel consults when it decides what the
 /// process may do.
@@ -102,12 +110,15 @@ type Credentials =
         RealGroup : GroupId
         EffectiveGroup : GroupId
         SavedGroup : GroupId
-        /// The groups `setgroups(2)` was given, in the order it was given
-        /// them, duplicates and all.
+        /// On Linux, the groups `setgroups(2)` was given, in the order it was
+        /// given them, duplicates and all. On Darwin, which keeps one list
+        /// whose first group is the effective group, the rest of that list:
+        /// the groups `setgroups(2)` was given after its first, which became
+        /// `EffectiveGroup`.
         ///
         /// Not necessarily what `getgroups(2)` reports
-        /// (`UnixDescriptor.getgroups`): Linux reports these sorted, and a
-        /// Darwin process's list usually starts with its effective group.
+        /// (`UnixCredentials.getgroups`): Linux reports these sorted, and Darwin
+        /// reports the effective group and then these.
         SupplementaryGroups : GroupId list
     }
 
@@ -120,17 +131,15 @@ type GroupListReport =
     ///
     /// This is Linux, which sorts the list when `setgroups(2)` installs it.
     | SortedSupplementaryGroups
-    /// Not measured. Which list this flavour reports depends on what its
-    /// `setgroups(2)` does with the list it is given, and setting that needs
-    /// root.
+    /// The effective group, then the supplementary groups as they are held,
+    /// duplicates kept.
     ///
-    /// This is Darwin. A login process there reports its effective group
-    /// first and the rest in directory-service order, not sorted (measured
-    /// `20,12,61,100,701` at effective group 20), which is what either of two
-    /// rules would give: the effective group added in front of the
-    /// supplementary groups, or a `setgroups` list that already began with it
-    /// reported as given. The two disagree for any other list.
-    | Unmeasured
+    /// This is Darwin, which keeps one list whose first group is the
+    /// effective group: `setgroups(2)` installs the list it is given as it
+    /// is, its first group becoming the effective group, and `getgroups(2)`
+    /// reports it unchanged (`30,10,20` as `30,10,20` with effective group 30;
+    /// `7,7,3,7` as given).
+    | EffectiveGroupThenSupplementaryGroups
 
 [<RequireQualifiedAccess>]
 module Credentials =
@@ -203,13 +212,19 @@ module Credentials =
         }
 
     /// The groups `getgroups(2)` reports for a process with these credentials,
-    /// under `report`, or `None` where `report` is `GroupListReport.Unmeasured`.
-    let internal reportedGroups (report : GroupListReport) (credentials : Credentials) : GroupId list option =
+    /// under `report`.
+    let internal reportedGroups (report : GroupListReport) (credentials : Credentials) : GroupId list =
         match report with
         | GroupListReport.SortedSupplementaryGroups ->
             // Measured on Linux 6.18.5 (`getgroups.c`): `setgroups(30,10,20)`
             // reports `10,20,30`; `(7,7,3,7)` reports `3,7,7,7`; an effective
             // group of 4242 that is not in the list is not reported; and IDs
             // above 2^31 sort as unsigned (`0,65536,2147483648,4294967294`).
-            credentials.SupplementaryGroups |> List.sortBy GroupId.toUInt32 |> Some
-        | GroupListReport.Unmeasured -> None
+            credentials.SupplementaryGroups |> List.sortBy GroupId.toUInt32
+        | GroupListReport.EffectiveGroupThenSupplementaryGroups ->
+            // Measured on Darwin 27.0 as root (`setresid.c`,
+            // `docs/probes/darwin-root/credentials.c`): every list setgroups
+            // installed was reported as given, its first group the effective
+            // group; and at uid 501 (`getgroups.c`) a login process reports
+            // its effective group first.
+            credentials.EffectiveGroup :: credentials.SupplementaryGroups

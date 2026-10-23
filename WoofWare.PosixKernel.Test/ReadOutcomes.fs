@@ -17,12 +17,12 @@ module internal ReadOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        UnixReadWrite.tryRead (Proc.leader pid system) fd buffer count system
+        UnixReadWrite.tryRead (Caller.make pid (Proc.leader pid system)) fd buffer count system
         |> Result.map (fun (outcome, after) ->
             match outcome with
             | ReadOutcome.Answered answer -> answer, after
             | ReadOutcome.WouldBlock _
-            | ReadOutcome.Restarts -> failwith $"expected a read that returns, got %A{outcome}"
+            | ReadOutcome.Interrupted -> failwith $"expected a read that returns, got %A{outcome}"
         )
 
     /// `readIn` the only process on the machine.

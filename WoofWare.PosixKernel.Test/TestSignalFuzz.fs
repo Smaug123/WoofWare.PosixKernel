@@ -19,6 +19,10 @@ open WoofWare.PosixKernel
 /// host and checks that host's flavour; the corpus replays transcripts measured
 /// on both flavours everywhere.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestSignalFuzz =
 
     let private harnessResource = "WoofWare.PosixKernel.Test.signalFuzz.harness.c"

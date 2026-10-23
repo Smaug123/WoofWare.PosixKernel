@@ -47,18 +47,75 @@ module TestMachineSetterRefusals =
     let private anyPort : Gen<uint16> =
         Gen.oneof
             [
-                Gen.elements [ 0us ; 1us ; 2us ; UInt16.MaxValue - 1us ; UInt16.MaxValue ]
+                Gen.elements [ 0us ; 1us ; 2us ; 1023us ; 1024us ; UInt16.MaxValue - 1us ; UInt16.MaxValue ]
                 ArbMap.defaults |> ArbMap.generate<uint16>
             ]
 
     // ------------------------------------------------------------ somaxconn
+
+    // ------------------------------------------------------------ UDP receive space
+
+    /// The smallest and largest `withUdpReceiveSpace` admits on `platform`.
+    let private udpReceiveSpaceBounds (platform : SimulatedUnixPlatform) : int * int =
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> 212992, Int32.MaxValue >>> 1
+        | SimulatedUnixFlavour.Darwin -> 786896, 1048576
+
+    /// The receive buffer of a UDP socket made on `image` once it is booted.
+    let private udpSocketBuffer (image : UnixBootImage<int, string>) : int =
+        let fd, system =
+            Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
+            |> NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp
+
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
+        | Some (OpenFileTarget.Socket socketId) ->
+            match (Kernel.machine system).DatagramReceivers.[socketId] with
+            | DatagramReceiver.Linux linux -> linux.ReceiveBuffer
+            | DatagramReceiver.Darwin darwin -> darwin.ReceiveSpace
+        | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
+
+    [<Test>]
+    let ``withUdpReceiveSpace admits exactly the values from its flavour's default to its ceiling`` () : unit =
+        let property (platform : SimulatedUnixPlatform, value : int) : unit =
+            let floor, ceiling = udpReceiveSpaceBounds platform
+
+            match UnixBootImage.tryWithUdpReceiveSpace (Some value) (imageOn platform) with
+            | Ok image when floor <= value && value <= ceiling -> udpSocketBuffer image |> shouldEqual value
+            | Error refusal when value < floor ->
+                refusal |> shouldEqual (UdpReceiveSpaceRefusal.BelowMeasured (value, floor))
+            | Error refusal when value > ceiling ->
+                refusal |> shouldEqual (UdpReceiveSpaceRefusal.AboveMeasured (value, ceiling))
+            | Ok _ -> failwith $"%d{value} was admitted on %O{platform}"
+            | Error refusal -> failwith $"%d{value} was refused on %O{platform}: %A{refusal}"
+
+        let value =
+            Gen.oneof
+                [
+                    anyInt
+                    Gen.elements [ 212991 ; 212992 ; 786895 ; 786896 ; 1048576 ; 1048577 ]
+                    Gen.elements [ (Int32.MaxValue >>> 1) ; (Int32.MaxValue >>> 1) + 1 ]
+                    Gen.choose (200000, 1100000)
+                ]
+
+        Check.One (propertyConfig, Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) value)) property)
+
+    [<Test>]
+    let ``withUdpReceiveSpace's default is its flavour's, and its bounds are admitted`` () : unit =
+        for platform in platforms do
+            let floor, ceiling = udpReceiveSpaceBounds platform
+
+            for value in [ None ; Some floor ; Some ceiling ] do
+                UnixBootImage.tryWithUdpReceiveSpace value (imageOn platform)
+                |> Configured.expectOk UdpReceiveSpaceRefusal.describe
+                |> udpSocketBuffer
+                |> shouldEqual (Option.defaultValue floor value)
 
     [<Test>]
     let ``withSoMaxConn admits exactly the positive values, and refuses the rest as not positive`` () : unit =
         let property (platform : SimulatedUnixPlatform, value : int) : unit =
             match UnixBootImage.tryWithSoMaxConn (Some value) (imageOn platform), value >= 1 with
             | Ok image, true ->
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.SoMaxConn
+                UnixSystem.soMaxConn (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
                 |> shouldEqual value
             | Error refusal, false -> refusal |> shouldEqual (SoMaxConnRefusal.NotPositive value)
             | Ok _, false -> failwith $"%d{value} was admitted on %O{platform}"
@@ -75,8 +132,8 @@ module TestMachineSetterRefusals =
 
             (UnixBootImage.tryWithSoMaxConn (Some 1) (imageOn platform)
              |> Configured.expectOk SoMaxConnRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.SoMaxConn
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> UnixSystem.soMaxConn)
             |> shouldEqual 1
 
     // ------------------------------------------------------ processor count
@@ -86,8 +143,9 @@ module TestMachineSetterRefusals =
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
             match UnixBootImage.tryWithProcessorCount count (imageOn platform), count >= 1 with
             | Ok image, true ->
-                UnixMachineState.processorCount
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine
+                UnixMachineState.processorCount (
+                    Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
+                )
                 |> shouldEqual count
             | Error refusal, false -> refusal |> shouldEqual (ProcessorCountRefusal.NotPositive count)
             | Ok _, false -> failwith $"%d{count} was admitted on %O{platform}"
@@ -105,32 +163,34 @@ module TestMachineSetterRefusals =
             UnixBootImage.tryWithProcessorCount 1 (imageOn platform)
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual 1
 
     // ------------------------------------------------ ephemeral port range
 
     [<Test>]
-    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0`` () : unit =
+    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and on Darwin keep within 1024 to 65535``
+        ()
+        : unit
+        =
         let property (platform : SimulatedUnixPlatform, low : uint16, high : uint16) : unit =
+            let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+
             let expected : Result<unit, EphemeralPortRangeRefusal> =
                 if low = 0us then
                     Error (EphemeralPortRangeRefusal.LowIsZero high)
+                elif darwin && (low < 1024us || high < 1024us) then
+                    Error (EphemeralPortRangeRefusal.BelowDarwinFloor (low, high))
                 elif low > high then
-                    Error (EphemeralPortRangeRefusal.Empty (low, high))
+                    if darwin then
+                        Error (EphemeralPortRangeRefusal.Descending (low, high))
+                    else
+                        Error (EphemeralPortRangeRefusal.Empty (low, high))
                 else
                     Ok ()
 
             match UnixBootImage.tryWithEphemeralPortRange (low, high) (imageOn platform) with
-            | Ok image ->
-                expected |> shouldEqual (Ok ())
-
-                let machine =
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine
-
-                machine.EphemeralPortRange |> shouldEqual (low, high)
-                // Rewound into the range, so the first ephemeral port is its low end.
-                machine.NextEphemeralPort |> shouldEqual low
+            | Ok _ -> expected |> shouldEqual (Ok ())
             | Error refusal -> Error refusal |> shouldEqual expected
 
         let gen =
@@ -144,26 +204,149 @@ module TestMachineSetterRefusals =
                         let! port = anyPort
                         return platform, port, port
                     }
+                    // Around Darwin's floor.
+                    gen {
+                        let! platform = Gen.elements platforms
+                        let! low = Gen.elements [ 1022us ; 1023us ; 1024us ; 1025us ]
+                        let! high = Gen.elements [ 1022us ; 1023us ; 1024us ; 1025us ; 65535us ]
+                        return platform, low, high
+                    }
                 ]
+
+        Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
+
+    /// The range and, under Linux, the unprivileged port start constrain
+    /// each other (`docs/probes/local-port-range`): a machine boots only with
+    /// a range starting at or above the start, whichever setter ran first,
+    /// and the setters' order changes nothing else.
+    [<Test>]
+    let ``boot admits exactly a range starting at or above the unprivileged port start, in either order`` () : unit =
+        let property
+            (platform : SimulatedUnixPlatform, (low : uint16, high : uint16), start : uint16 option, rangeFirst : bool)
+            : unit
+            =
+            let withRange (image : UnixBootImage<int, string>) : Result<UnixBootImage<int, string>, string> =
+                UnixBootImage.tryWithEphemeralPortRange (low, high) image
+                |> Result.mapError (fun refusal -> $"%A{refusal}")
+
+            let withStart (image : UnixBootImage<int, string>) : Result<UnixBootImage<int, string>, string> =
+                match start with
+                | None -> Ok image
+                | Some start ->
+                    UnixBootImage.tryWithUnprivilegedPortStart start image
+                    |> Result.mapError (fun refusal -> $"%A{refusal}")
+
+            let configured =
+                if rangeFirst then
+                    imageOn platform |> withRange |> Result.bind withStart
+                else
+                    imageOn platform |> withStart |> Result.bind withRange
+
+            let effectiveStart =
+                start |> Option.defaultValue UnixSystem.defaultUnprivilegedPortStart
+
+            let booted =
+                configured
+                |> Result.bind (fun image ->
+                    UnixBootImage.tryBoot (Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
+                    |> Result.mapError (fun refusal -> $"%A{refusal}")
+                )
+
+            // Darwin refuses whichever setter ran first and refused: the start
+            // always, and a range with an end below its floor.
+            let darwinRefusal : string option =
+                let fromRange =
+                    if low < 1024us then
+                        Some $"%A{EphemeralPortRangeRefusal.BelowDarwinFloor (low, high)}"
+                    else
+                        None
+
+                let fromStart =
+                    start
+                    |> Option.map (fun _ ->
+                        $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}"
+                    )
+
+                if rangeFirst then
+                    Option.orElse fromStart fromRange
+                else
+                    Option.orElse fromRange fromStart
+
+            match SimulatedUnixPlatform.flavour platform, booted with
+            | SimulatedUnixFlavour.Darwin, Error refusal when darwinRefusal.IsSome ->
+                Some refusal |> shouldEqual darwinRefusal
+            | SimulatedUnixFlavour.Darwin, Ok system ->
+                darwinRefusal |> shouldEqual None
+                UnixSystem.unprivilegedPortStart system |> shouldEqual 1024us
+            | SimulatedUnixFlavour.Linux, Ok system ->
+                low >= effectiveStart |> shouldEqual true
+                UnixSystem.ephemeralPortRange system |> shouldEqual (low, high)
+                UnixSystem.unprivilegedPortStart system |> shouldEqual effectiveStart
+                // Rewound into the range, so the first ephemeral port is its low end.
+                (Kernel.machine system).NextEphemeralPort |> shouldEqual low
+            | SimulatedUnixFlavour.Linux, Error refusal ->
+                refusal
+                |> shouldEqual $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, effectiveStart)}"
+            | _, other -> failwith $"%A{other}"
+
+        let range : Gen<uint16 * uint16> =
+            gen {
+                let! low = Gen.oneof [ anyPort ; Gen.elements [ 1023us ; 1024us ; 1025us ] ]
+                let low = if low = 0us then 1us else low
+                let! width = Gen.oneof [ Gen.choose (0, 3) ; Gen.choose (0, 65535) ]
+                return low, uint16 (min 65535 (int low + width))
+            }
+
+        let gen =
+            gen {
+                let! platform = Gen.elements platforms
+                let! low, high = range
+                // Around the range's low end, where the rule turns, as well as
+                // anywhere.
+                let! start =
+                    Gen.oneof
+                        [
+                            Gen.constant None
+                            anyPort |> Gen.map Some
+                            Gen.choose (-2, 2)
+                            |> Gen.map (fun d -> Some (uint16 (max 0 (min 65535 (int low + d)))))
+                        ]
+
+                let! rangeFirst = ArbMap.defaults |> ArbMap.generate<bool>
+                return platform, (low, high), start, rangeFirst
+            }
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
     [<Test>]
     let ``withEphemeralPortRange's boundaries`` () : unit =
-        let outcome (low : uint16, high : uint16) : Result<unit, EphemeralPortRangeRefusal> =
+        let outcome (low : uint16, high : uint16) : Result<unit, string> =
             UnixBootImage.tryWithEphemeralPortRange (low, high) (imageOn SimulatedUnixPlatform.linuxX64)
+            |> Result.mapError (fun refusal -> $"%A{refusal}")
+            |> Result.bind (fun image ->
+                UnixBootImage.tryBoot
+                    (Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                    image
+                |> Result.mapError (fun refusal -> $"%A{refusal}")
+            )
             |> Result.map (fun _ -> ())
 
         outcome (0us, 0us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.LowIsZero 0us))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.LowIsZero 0us}")
 
         outcome (0us, 10us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.LowIsZero 10us))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.LowIsZero 10us}")
 
         outcome (2us, 1us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.Empty (2us, 1us)))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.Empty (2us, 1us)}")
 
-        outcome (1us, 1us) |> shouldEqual (Ok ())
+        outcome (1us, 1us)
+        |> shouldEqual (Error $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (1us, 1024us)}")
+
+        outcome (1023us, 2000us)
+        |> shouldEqual (Error $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (1023us, 1024us)}")
+
+        outcome (1024us, 1024us) |> shouldEqual (Ok ())
         outcome (UInt16.MaxValue, UInt16.MaxValue) |> shouldEqual (Ok ())
 
     // ------------------------------------------------------------ pipe device
@@ -183,7 +366,7 @@ module TestMachineSetterRefusals =
             | Ok image ->
                 expected |> shouldEqual (Ok ())
 
-                (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.PipeDevice
+                (Kernel.machine (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).PipeDevice
                 |> shouldEqual device
             | Error refusal -> Error refusal |> shouldEqual expected
 
@@ -213,8 +396,9 @@ module TestMachineSetterRefusals =
         for platform in platforms do
             (UnixBootImage.tryWithPipeDevice None (imageOn platform)
              |> Configured.expectOk PipeDeviceRefusal.describe
-             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                .Machine.PipeDevice
+             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+             |> Kernel.machine)
+                .PipeDevice
             |> shouldEqual (UnixMachineState.defaultPipeDevice (SimulatedUnixPlatform.flavour platform))
 
     // -------------------------------------------------------------- describe
@@ -245,6 +429,10 @@ module TestMachineSetterRefusals =
                 ProcessorCountRefusal.describe (ProcessorCountRefusal.NotPositive -7), "-7"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.LowIsZero 77us), "0-77"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Empty (9us, 8us)), "9-8"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.BelowDarwinFloor (77us, 2000us)),
+                "77-2000"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Descending (40003us, 40000us)),
+                "40003-40000"
                 BootTimeRefusal.describe (BootTimeRefusal.BeforeEpoch timestamp), string<UnixTimestamp> timestamp
                 BootTimeRefusal.describe (BootTimeRefusal.PastMaxBootTime (timestamp, 42L)), "42"
                 BootTimeRefusal.describe (BootTimeRefusal.FinerThanMicrosecond timestamp),
@@ -265,6 +453,8 @@ module TestMachineSetterRefusals =
                 PipeDeviceRefusal.describe (PipeDeviceRefusal.DarwinReportsZero 31L), "31"
                 PipeDeviceRefusal.describe (PipeDeviceRefusal.Negative -31L), "-31"
                 SoMaxConnRefusal.describe (SoMaxConnRefusal.NotPositive -9), "-9"
+                UdpReceiveSpaceRefusal.describe (UdpReceiveSpaceRefusal.BelowMeasured (4321, 212992)), "4321"
+                UdpReceiveSpaceRefusal.describe (UdpReceiveSpaceRefusal.AboveMeasured (4321, 97)), "97"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.NotReadOn (SimulatedUnixFlavour.Linux, 4321)), "4321"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.AboveSocketBufferMax (4321, 99)), "99"
                 TcpSendSpaceRefusal.describe (TcpSendSpaceRefusal.BelowLoopbackSendPipe (4321, 98)), "98"

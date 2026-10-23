@@ -13,7 +13,10 @@ open WoofWare.PosixKernel
 /// `SO_LINGER_SEC` -- put to the kernel running the suite and to the model of
 /// the same flavour, on the same random inputs.
 ///
-/// Each host falsifies its own column: macOS locally, Linux in CI. The inputs
+/// Each host falsifies its own column live: macOS locally, Linux in CI. A Mac's
+/// answers are recorded in `hostCorpus/setsockoptSequence.darwin.txt` and
+/// `hostCorpus/getsockopt.darwin.txt`, which every host replays (see
+/// `HostCorpus`), so CI holds the Darwin column too. The inputs
 /// cover the descriptor kinds, value buffers and lengths the model
 /// distinguishes -- a closed descriptor, a pipe, a fresh socket of every
 /// domain and kind the flavour creates; real storage, a null pointer, and a
@@ -26,30 +29,8 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSockOptAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
     extern int private hostSetSockOpt(int fd, int level, int optionName, nativeint value, uint32 optionLength)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
 
     [<Literal>]
     let private PROT_NONE = 0
@@ -74,7 +55,8 @@ module TestSockOptAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestSockOptAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
+                let page =
+                    HostCalls.mmap (0n, 4096un, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestSockOptAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -202,54 +184,64 @@ module TestSockOptAgainstHost =
             intGen
             intGen
 
+    /// The address the model is given for a faulting buffer. The host's own is
+    /// `faultingPage`, which differs between hosts; the model decides only by
+    /// whether an address is below the user-address limit, as both are, so a
+    /// recorded answer replays the same against either.
+    [<Literal>]
+    let private ModelFaultingAddress = 0x10000UL
+
     let private userBuffer (buffer : Buffer) : UserBuffer =
         match buffer with
         | Buffer.Real -> UserBuffer.Mapped
         | Buffer.Null -> UserBuffer.Unmapped 0UL
-        | Buffer.Faulting -> UserBuffer.Unmapped faultingPage.Value
+        | Buffer.Faulting -> UserBuffer.Unmapped ModelFaultingAddress
 
     let private fresh (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         UnixSystem.initial platform
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    /// A host descriptor for `target`, and a matching model descriptor on
-    /// `system`. The model's pipe is standard input, which it models as one.
-    let private withTarget
-        (target : Target)
-        (system : UnixSystem<int, string>)
-        (action : int -> int -> UnixSystem<int, string> -> 'a)
-        : 'a
-        =
+    /// A host descriptor for `target`, for the duration of `action`.
+    let private withHostTarget (platform : SimulatedUnixPlatform) (target : Target) (action : int -> 'a) : 'a =
         match target with
-        | Target.Closed -> action ClosedFd ClosedFd system
+        | Target.Closed -> action ClosedFd
         | Target.Pipe ->
             let fds = Array.zeroCreate<int> 2
 
-            if hostPipe fds <> 0 then
+            if HostCalls.pipe fds <> 0 then
                 failwith $"pipe failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             try
-                action fds.[0] 0 system
+                action fds.[0]
             finally
-                hostClose fds.[0] |> ignore<int>
-                hostClose fds.[1] |> ignore<int>
+                HostCalls.close fds.[0] |> ignore<int>
+                HostCalls.close fds.[1] |> ignore<int>
         | Target.Socket (domain, kind) ->
             let rawDomain, rawKind, _ =
-                NewSocket.arguments system.Machine.UnixPlatform domain kind SocketProtocol.Default
+                NewSocket.arguments platform domain kind SocketProtocol.Default
 
-            let fd = hostSocket (rawDomain, rawKind, 0)
+            let fd = HostCalls.socket (rawDomain, rawKind, 0)
 
             if fd < 0 then
                 failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             try
-                let modelFd, system = NewSocket.create domain kind SocketProtocol.Default system
-                action fd modelFd system
+                action fd
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
-    /// Real storage holding `bytes`, or the address `buffer` names, for the
-    /// duration of `action`.
+    /// A model descriptor for `target` on a fresh system. The model's pipe is
+    /// standard input, which it models as one.
+    let private modelTarget (platform : SimulatedUnixPlatform) (target : Target) : int * UnixSystem<int, string> =
+        let system = fresh platform
+
+        match target with
+        | Target.Closed -> ClosedFd, system
+        | Target.Pipe -> 0, system
+        | Target.Socket (domain, kind) -> NewSocket.create domain kind SocketProtocol.Default system
+
+    /// Real storage holding `bytes`, or the host address `buffer` names, for
+    /// the duration of `action`.
     let private withBuffer (buffer : Buffer) (bytes : byte[]) (action : nativeint -> 'a) : 'a =
         match buffer with
         | Buffer.Null -> action 0n
@@ -291,13 +283,13 @@ module TestSockOptAgainstHost =
         (system : UnixSystem<int, string>)
         =
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name (userBuffer buffer) length system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name (userBuffer buffer) length system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | Ok SetSockOptAdmission.NoCopy
             | Ok (SetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        UnixSocket.trySetsockoptBytes fd level name (userBuffer buffer) length supplied system
+        Lone.UnixSocket.trySetsockoptBytes fd level name (userBuffer buffer) length supplied system
 
     /// What a read through real buffers of the option's size answers, on the
     /// host: the errno, and the bytes and length on success.
@@ -311,7 +303,7 @@ module TestSockOptAgainstHost =
             Marshal.WriteInt32 (storage, 8, 8)
             Marshal.SetLastPInvokeError 0
 
-            if hostGetSockOpt (fd, level, name, storage, storage + 8n) <> 0 then
+            if HostCalls.getSockOptPointer (fd, level, name, storage, storage + 8n) <> 0 then
                 Marshal.GetLastPInvokeError (), [||]
             else
                 let length = Marshal.ReadInt32 (storage, 8)
@@ -322,14 +314,14 @@ module TestSockOptAgainstHost =
             Marshal.FreeHGlobal storage
 
     let private modelReadBack (fd : int) (level : int) (name : int) (system : UnixSystem<int, string>) : int * byte[] =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
             | Ok GetSockOptAdmission.ReadLength -> Some 8u
             | _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read system with
         | Ok (GetSockOptAnswer.Reported copied, _) -> 0, Seq.toArray copied
         | Ok (GetSockOptAnswer.Failed (error, _), _) -> errnoOf platform error, [||]
         | Error refusal -> failwith $"reading the model back was refused: %s{SocketOptionRefusal.describe refusal}"
@@ -350,125 +342,404 @@ module TestSockOptAgainstHost =
         | SocketOptionRefusal.NegativeLingerTime _ -> true
         | SocketOptionRefusal.UnmodelledOption _
         | SocketOptionRefusal.Buffer _
-        | SocketOptionRefusal.LinuxReuseAddressInTimeWait _ -> false
+        | SocketOptionRefusal.LinuxReuseAddressInTimeWait _
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort _ -> false
+
+    // ------------------------------------------------------------ the corpus text
+
+    let private writeTarget (target : Target) : string =
+        let domain (domain : SocketDomain) : string =
+            match domain with
+            | SocketDomain.Inet -> "inet"
+            | SocketDomain.Inet6 -> "inet6"
+            | SocketDomain.Unix -> "unix"
+
+        let kind (kind : SocketKind) : string =
+            match kind with
+            | SocketKind.Stream -> "stream"
+            | SocketKind.Datagram -> "dgram"
+            | SocketKind.SeqPacket -> "seqpacket"
+
+        match target with
+        | Target.Closed -> "closed"
+        | Target.Pipe -> "pipe"
+        | Target.Socket (d, k) -> $"%s{domain d}/%s{kind k}"
+
+    let private parseTarget (text : string) : Target =
+        let domain (text : string) : SocketDomain =
+            match text with
+            | "inet" -> SocketDomain.Inet
+            | "inet6" -> SocketDomain.Inet6
+            | "unix" -> SocketDomain.Unix
+            | other -> failwith $"not a socket domain: %s{other}"
+
+        let kind (text : string) : SocketKind =
+            match text with
+            | "stream" -> SocketKind.Stream
+            | "dgram" -> SocketKind.Datagram
+            | "seqpacket" -> SocketKind.SeqPacket
+            | other -> failwith $"not a socket kind: %s{other}"
+
+        match text.Split '/' with
+        | [| "closed" |] -> Target.Closed
+        | [| "pipe" |] -> Target.Pipe
+        | [| d ; k |] -> Target.Socket (domain d, kind k)
+        | _ -> failwith $"not a target: %s{text}"
+
+    let private writeOption (option : Option) : string =
+        match option with
+        | Option.ReuseAddress -> "reuseaddr"
+        | Option.NoDelay -> "nodelay"
+        | Option.Ipv6Only -> "v6only"
+        | Option.Linger -> "linger"
+        | Option.LingerSeconds -> "lingersec"
+
+    let private parseOption (text : string) : Option =
+        match text with
+        | "reuseaddr" -> Option.ReuseAddress
+        | "nodelay" -> Option.NoDelay
+        | "v6only" -> Option.Ipv6Only
+        | "linger" -> Option.Linger
+        | "lingersec" -> Option.LingerSeconds
+        | other -> failwith $"not an option: %s{other}"
+
+    let private writeBuffer (buffer : Buffer) : string =
+        match buffer with
+        | Buffer.Real -> "real"
+        | Buffer.Null -> "null"
+        | Buffer.Faulting -> "fault"
+
+    let private parseBuffer (text : string) : Buffer =
+        match text with
+        | "real" -> Buffer.Real
+        | "null" -> Buffer.Null
+        | "fault" -> Buffer.Faulting
+        | other -> failwith $"not a buffer: %s{other}"
+
+    /// Bytes as lowercase hex, `-` for none.
+    let private writeBytes (bytes : byte[]) : string =
+        if bytes.Length = 0 then
+            "-"
+        else
+            Convert.ToHexString(bytes).ToLowerInvariant ()
+
+    let private parseBytes (text : string) : byte[] =
+        if text = "-" then [||] else Convert.FromHexString text
+
+    let private writeOptional (write : 'a -> string) (value : 'a option) : string =
+        match value with
+        | None -> "~"
+        | Some value -> write value
+
+    let private parseOptional (parse : string -> 'a) (text : string) : 'a option =
+        if text = "~" then None else Some (parse text)
+
+    // ------------------------------------------------------------ setsockopt sequences
+
+    /// One `setsockopt` call of a sequence: the value buffer, the declared
+    /// length, and the bytes the buffer holds.
+    type private SetStep =
+        {
+            Buffer : Buffer
+            Length : uint32
+            Value : byte[]
+        }
+
+    type private SetSequence =
+        {
+            Target : Target
+            Option : Option
+            Steps : SetStep list
+        }
+
+    /// What the kernel answered to one step: the set's errno, then a read back
+    /// through real buffers: its errno, and the bytes it reported.
+    type private SetAnswer =
+        {
+            SetErrno : int
+            ReadErrno : int
+            Read : byte[]
+        }
+
+    let private setSequences : HostComparison<SetSequence, SetAnswer list> =
+        {
+            Name = "setsockoptSequence"
+            Inputs =
+                fun platform ->
+                    let step =
+                        Gen.map3
+                            (fun buffer length value ->
+                                {
+                                    Buffer = buffer
+                                    Length = length
+                                    Value = value
+                                }
+                            )
+                            bufferGen
+                            lengthGen
+                            valueGen
+
+                    Gen.map3
+                        (fun target option steps ->
+                            {
+                                Target = target
+                                Option = option
+                                Steps = steps
+                            }
+                        )
+                        (Gen.elements (targets platform))
+                        (Gen.elements (options platform))
+                        (Gen.listOf step |> Gen.resize 4)
+            Count = 2000
+            WriteInput =
+                fun sequence ->
+                    [
+                        yield writeTarget sequence.Target
+                        yield writeOption sequence.Option
+                        for step in sequence.Steps do
+                            yield $"%s{writeBuffer step.Buffer},%d{step.Length},%s{writeBytes step.Value}"
+                    ]
+                    |> String.concat " "
+            ParseInput =
+                fun text ->
+                    match text.Split ' ' |> Array.toList with
+                    | target :: option :: steps ->
+                        {
+                            Target = parseTarget target
+                            Option = parseOption option
+                            Steps =
+                                steps
+                                |> List.map (fun step ->
+                                    match step.Split ',' with
+                                    | [| buffer ; length ; value |] ->
+                                        {
+                                            Buffer = parseBuffer buffer
+                                            Length = UInt32.Parse length
+                                            Value = parseBytes value
+                                        }
+                                    | _ -> failwith $"not a setsockopt step: %s{step}"
+                                )
+                        }
+                    | _ -> failwith $"not a setsockopt sequence: %s{text}"
+            WriteAnswer =
+                fun answers ->
+                    answers
+                    |> List.map (fun answer -> $"%d{answer.SetErrno},%d{answer.ReadErrno},%s{writeBytes answer.Read}")
+                    |> String.concat " "
+            ParseAnswer =
+                fun text ->
+                    if text = "" then
+                        []
+                    else
+                        text.Split ' '
+                        |> Array.toList
+                        |> List.map (fun answer ->
+                            match answer.Split ',' with
+                            | [| set ; read ; bytes |] ->
+                                {
+                                    SetErrno = int set
+                                    ReadErrno = int read
+                                    Read = parseBytes bytes
+                                }
+                            | _ -> failwith $"not a setsockopt answer: %s{answer}"
+                        )
+            Host =
+                fun platform sequence ->
+                    let level, name = numbered platform sequence.Option
+
+                    withHostTarget
+                        platform
+                        sequence.Target
+                        (fun fd ->
+                            sequence.Steps
+                            |> List.map (fun step ->
+                                let setErrno = hostSet fd level name step.Buffer step.Length step.Value
+                                let readErrno, read = hostReadBack fd level name
+
+                                {
+                                    SetErrno = setErrno
+                                    ReadErrno = readErrno
+                                    Read = read
+                                }
+                            )
+                        )
+            Disagreement =
+                fun platform sequence answers ->
+                    let level, name = numbered platform sequence.Option
+                    let modelFd, system = modelTarget platform sequence.Target
+
+                    let rec go
+                        (index : int)
+                        (pairs : (SetStep * SetAnswer) list)
+                        (system : UnixSystem<int, string>)
+                        : string option
+                        =
+                        match pairs with
+                        | [] -> None
+                        | (step, answer) :: rest ->
+
+                        let describe =
+                            $"%A{sequence.Target} %A{sequence.Option}, step %d{index} of %A{sequence.Steps}: %A{step.Buffer} length %d{step.Length} value %A{step.Value}"
+
+                        match modelSet modelFd level name step.Buffer step.Length step.Value system with
+                        | Error refusal when isStatedRefusal refusal -> None
+                        | Error refusal ->
+                            Some
+                                $"%s{describe}: the model refused (%s{SocketOptionRefusal.describe refusal}) where this kernel answered errno %d{answer.SetErrno}"
+                        | Ok (set, system) ->
+
+                        let modelErrno =
+                            match set with
+                            | SetSockOptAnswer.Set -> 0
+                            | SetSockOptAnswer.Failed error -> errnoOf platform error
+
+                        if modelErrno <> answer.SetErrno then
+                            Some $"%s{describe}: the model answered %d{modelErrno}, this kernel %d{answer.SetErrno}"
+                        else
+
+                        let modelRead = modelReadBack modelFd level name system
+                        let hostRead = answer.ReadErrno, answer.Read
+
+                        if modelRead <> hostRead then
+                            Some $"%s{describe}: the model reads back %A{modelRead}, this kernel %A{hostRead}"
+                        else
+                            go (index + 1) rest system
+
+                    if answers.Length <> sequence.Steps.Length then
+                        Some $"%d{sequence.Steps.Length} steps, but %d{answers.Length} answers"
+                    else
+                        go 0 (List.zip sequence.Steps answers) system
+        }
 
     [<Test>]
     let ``a sequence of setsockopt calls answers and reads back as this kernel does`` () : unit =
-        onHost (fun platform ->
-            let step = Gen.zip (Gen.zip bufferGen lengthGen) valueGen
-
-            let gen =
-                Gen.zip
-                    (Gen.zip (Gen.elements (targets platform)) (Gen.elements (options platform)))
-                    (Gen.listOf step |> Gen.resize 4)
-
-            let property ((target : Target, option : Option), steps : ((Buffer * uint32) * byte[]) list) : unit =
-                let level, name = numbered platform option
-
-                withTarget
-                    target
-                    (fresh platform)
-                    (fun hostFd modelFd system ->
-                        let rec go (index : int) steps system =
-                            match steps with
-                            | [] -> ()
-                            | ((buffer, length), value) :: rest ->
-
-                            let describe =
-                                $"%A{target} %A{option}, step %d{index} of %A{steps}: %A{buffer} length %d{length} value %A{value}"
-
-                            match modelSet modelFd level name buffer length value system with
-                            | Error refusal when isStatedRefusal refusal -> ()
-                            | Error refusal ->
-                                failwith
-                                    $"%s{describe}: the model refused (%s{SocketOptionRefusal.describe refusal}) where this kernel answered errno %d{hostSet hostFd level name buffer length value}"
-                            | Ok (answer, system) ->
-
-                            let hostErrno = hostSet hostFd level name buffer length value
-
-                            let modelErrno =
-                                match answer with
-                                | SetSockOptAnswer.Set -> 0
-                                | SetSockOptAnswer.Failed error -> errnoOf platform error
-
-                            if modelErrno <> hostErrno then
-                                failwith $"%s{describe}: the model answered %d{modelErrno}, this kernel %d{hostErrno}"
-
-                            let modelRead = modelReadBack modelFd level name system
-                            let hostRead = hostReadBack hostFd level name
-
-                            if modelRead <> hostRead then
-                                failwith $"%s{describe}: the model reads back %A{modelRead}, this kernel %A{hostRead}"
-
-                            go (index + 1) rest system
-
-                        go 0 steps system
-                    )
-
-            Check.One (Config.QuickThrowOnFailure.WithMaxTest 2000, Prop.forAll (Arb.fromGen gen) property)
-        )
+        onHost (HostCorpus.live setSequences)
 
     [<Test>]
-    let ``getsockopt answers as this kernel does`` () : unit =
-        onHost (fun platform ->
-            let sentinel = 0x5auy
+    let ``a sequence of setsockopt calls answers and reads back as Darwin's kernel did`` () : unit =
+        HostCorpus.replay setSequences SimulatedUnixPlatform.macOsArm64
 
-            let gen =
-                Gen.zip
-                    (Gen.zip (Gen.elements (targets platform)) (Gen.elements (options platform)))
-                    (Gen.zip (Gen.zip bufferGen bufferGen) (Gen.zip lengthGen (Gen.optionOf valueGen)))
+    // ------------------------------------------------------------ getsockopt
 
-            let property
-                (
-                    (target : Target, option : Option),
-                    ((valueBuffer : Buffer, lengthBuffer : Buffer), (declaredLength : uint32, prior : byte[] option))
-                )
-                : unit
-                =
-                let level, name = numbered platform option
+    /// One `getsockopt` call: where its value and length go, the length it
+    /// declares, and the value, if any, set through real storage beforehand,
+    /// so that the read has something other than the default to report.
+    type private GetCall =
+        {
+            Target : Target
+            Option : Option
+            ValueBuffer : Buffer
+            LengthBuffer : Buffer
+            DeclaredLength : uint32
+            Prior : byte[] option
+        }
 
-                withTarget
-                    target
-                    (fresh platform)
-                    (fun hostFd modelFd system ->
-                        // Set the option first through real storage at its size,
-                        // where both sides take it, so the read has something
-                        // other than the default to report.
-                        let system =
-                            match prior with
-                            | None -> Some system
-                            | Some value ->
-                                let size = uint32 (valueSize option)
+    /// What the kernel answered: the prior set's errno, if there was one; the
+    /// read's errno; and, where each buffer was real storage, the sixteen bytes
+    /// the value buffer then held and the length it reported.
+    type private GetAnswer =
+        {
+            PriorErrno : int option
+            Errno : int
+            Value : byte[] option
+            Length : uint32 option
+        }
 
-                                match modelSet modelFd level name Buffer.Real size value system with
-                                | Ok (SetSockOptAnswer.Set, system) ->
-                                    if hostSet hostFd level name Buffer.Real size value <> 0 then
-                                        failwith
-                                            $"%A{target} %A{option}: the model took %A{value}, this kernel did not"
+    /// What a value buffer holds before the call.
+    [<Literal>]
+    let private Sentinel = 0x5auy
 
-                                    Some system
-                                | Ok (SetSockOptAnswer.Failed _, _)
-                                | Error _ -> None
+    let private getCalls : HostComparison<GetCall, GetAnswer> =
+        {
+            Name = "getsockopt"
+            Inputs =
+                fun platform ->
+                    Gen.zip
+                        (Gen.zip (Gen.elements (targets platform)) (Gen.elements (options platform)))
+                        (Gen.zip (Gen.zip bufferGen bufferGen) (Gen.zip lengthGen (Gen.optionOf valueGen)))
+                    |> Gen.map (fun ((target, option), ((valueBuffer, lengthBuffer), (declaredLength, prior))) ->
+                        {
+                            Target = target
+                            Option = option
+                            ValueBuffer = valueBuffer
+                            LengthBuffer = lengthBuffer
+                            DeclaredLength = declaredLength
+                            Prior = prior
+                        }
+                    )
+            Count = 2000
+            WriteInput =
+                fun call ->
+                    [
+                        writeTarget call.Target
+                        writeOption call.Option
+                        writeBuffer call.ValueBuffer
+                        writeBuffer call.LengthBuffer
+                        string<uint32> call.DeclaredLength
+                        writeOptional writeBytes call.Prior
+                    ]
+                    |> String.concat " "
+            ParseInput =
+                fun text ->
+                    match text.Split ' ' with
+                    | [| target ; option ; valueBuffer ; lengthBuffer ; declaredLength ; prior |] ->
+                        {
+                            Target = parseTarget target
+                            Option = parseOption option
+                            ValueBuffer = parseBuffer valueBuffer
+                            LengthBuffer = parseBuffer lengthBuffer
+                            DeclaredLength = UInt32.Parse declaredLength
+                            Prior = parseOptional parseBytes prior
+                        }
+                    | _ -> failwith $"not a getsockopt call: %s{text}"
+            WriteAnswer =
+                fun answer ->
+                    [
+                        writeOptional string<int> answer.PriorErrno
+                        string<int> answer.Errno
+                        writeOptional writeBytes answer.Value
+                        writeOptional string<uint32> answer.Length
+                    ]
+                    |> String.concat " "
+            ParseAnswer =
+                fun text ->
+                    match text.Split ' ' with
+                    | [| priorErrno ; errno ; value ; length |] ->
+                        {
+                            PriorErrno = parseOptional int priorErrno
+                            Errno = int errno
+                            Value = parseOptional parseBytes value
+                            Length = parseOptional UInt32.Parse length
+                        }
+                    | _ -> failwith $"not a getsockopt answer: %s{text}"
+            Host =
+                fun platform call ->
+                    let level, name = numbered platform call.Option
 
-                        match system with
-                        | None -> ()
-                        | Some system ->
+                    withHostTarget
+                        platform
+                        call.Target
+                        (fun fd ->
+                            let priorErrno =
+                                call.Prior
+                                |> Option.map (fun value ->
+                                    hostSet fd level name Buffer.Real (uint32 (valueSize call.Option)) value
+                                )
 
-                        let hostErrno, hostValue, hostLength =
                             withBuffer
-                                valueBuffer
-                                (Array.create 16 sentinel)
+                                call.ValueBuffer
+                                (Array.create 16 Sentinel)
                                 (fun valueAddress ->
                                     withBuffer
-                                        lengthBuffer
-                                        (BitConverter.GetBytes declaredLength)
+                                        call.LengthBuffer
+                                        (BitConverter.GetBytes call.DeclaredLength)
                                         (fun lengthAddress ->
                                             Marshal.SetLastPInvokeError 0
 
                                             let errno =
                                                 if
-                                                    hostGetSockOpt (
-                                                        hostFd,
+                                                    HostCalls.getSockOptPointer (
+                                                        fd,
                                                         level,
                                                         name,
                                                         valueAddress,
@@ -480,7 +751,7 @@ module TestSockOptAgainstHost =
                                                     Marshal.GetLastPInvokeError ()
 
                                             let value =
-                                                match valueBuffer with
+                                                match call.ValueBuffer with
                                                 | Buffer.Real ->
                                                     let bytes = Array.zeroCreate<byte> 16
                                                     Marshal.Copy (valueAddress, bytes, 0, 16)
@@ -489,67 +760,116 @@ module TestSockOptAgainstHost =
                                                 | Buffer.Faulting -> None
 
                                             let length =
-                                                match lengthBuffer with
+                                                match call.LengthBuffer with
                                                 | Buffer.Real -> Some (uint32 (Marshal.ReadInt32 lengthAddress))
                                                 | Buffer.Null
                                                 | Buffer.Faulting -> None
 
-                                            errno, value, length
+                                            {
+                                                PriorErrno = priorErrno
+                                                Errno = errno
+                                                Value = value
+                                                Length = length
+                                            }
                                         )
                                 )
+                        )
+            Disagreement =
+                fun platform call answer ->
+                    let level, name = numbered platform call.Option
+                    let modelFd, system = modelTarget platform call.Target
 
-                        let modelLength = userBuffer lengthBuffer
+                    let describe =
+                        $"%A{call.Target} %A{call.Option} prior %A{call.Prior} value %A{call.ValueBuffer} length %A{call.LengthBuffer} = %d{call.DeclaredLength}"
 
-                        let read =
-                            match
-                                UnixSocket.tryAdmitGetSockOpt
-                                    modelFd
-                                    level
-                                    name
-                                    (userBuffer valueBuffer)
-                                    modelLength
-                                    system
-                            with
-                            | Ok GetSockOptAdmission.ReadLength -> Some declaredLength
-                            | _ -> None
+                    // The model judges the read only where it, too, took the
+                    // prior value; where it took it and the kernel did not, the
+                    // two already disagree.
+                    let prior : Result<UnixSystem<int, string> option, string> =
+                        match call.Prior with
+                        | None -> Ok (Some system)
+                        | Some value ->
+                            let size = uint32 (valueSize call.Option)
 
-                        let describe =
-                            $"%A{target} %A{option} prior %A{prior} value %A{valueBuffer} length %A{lengthBuffer} = %d{declaredLength}"
+                            match modelSet modelFd level name Buffer.Real size value system with
+                            | Ok (SetSockOptAnswer.Set, system) ->
+                                if answer.PriorErrno <> Some 0 then
+                                    Error
+                                        $"%s{describe}: the model took the prior value, this kernel answered %A{answer.PriorErrno}"
+                                else
+                                    Ok (Some system)
+                            | Ok (SetSockOptAnswer.Failed _, _)
+                            | Error _ -> Ok None
 
-                        let untouched (buffer : Buffer) (contents : 'a) : 'a option =
-                            match buffer with
-                            | Buffer.Real -> Some contents
-                            | Buffer.Null
-                            | Buffer.Faulting -> None
+                    match prior with
+                    | Error disagreement -> Some disagreement
+                    | Ok None -> None
+                    | Ok (Some system) ->
 
-                        let model =
-                            match
-                                UnixSocket.tryGetsockoptLength
-                                    modelFd
-                                    level
-                                    name
-                                    (userBuffer valueBuffer)
-                                    modelLength
-                                    read
-                                    system
-                            with
-                            | Error refusal ->
-                                failwith
-                                    $"%s{describe}: the model refused (%s{SocketOptionRefusal.describe refusal}) where this kernel answered errno %d{hostErrno}"
-                            | Ok (GetSockOptAnswer.Failed (error, overwritten), _) ->
+                    let modelLength = userBuffer call.LengthBuffer
+
+                    let read =
+                        match
+                            Lone.UnixSocket.tryAdmitGetSockOpt
+                                modelFd
+                                level
+                                name
+                                (userBuffer call.ValueBuffer)
+                                modelLength
+                                system
+                        with
+                        | Ok GetSockOptAdmission.ReadLength -> Some call.DeclaredLength
+                        | _ -> None
+
+                    let untouched (buffer : Buffer) (contents : 'a) : 'a option =
+                        match buffer with
+                        | Buffer.Real -> Some contents
+                        | Buffer.Null
+                        | Buffer.Faulting -> None
+
+                    let model =
+                        match
+                            Lone.UnixSocket.tryGetsockoptLength
+                                modelFd
+                                level
+                                name
+                                (userBuffer call.ValueBuffer)
+                                modelLength
+                                read
+                                system
+                        with
+                        | Error refusal ->
+                            Error
+                                $"%s{describe}: the model refused (%s{SocketOptionRefusal.describe refusal}) where this kernel answered errno %d{answer.Errno}"
+                        | Ok (GetSockOptAnswer.Failed (error, overwritten), _) ->
+                            Ok (
                                 errnoOf platform error,
-                                untouched valueBuffer (Array.create 16 sentinel),
-                                untouched lengthBuffer (Option.defaultValue declaredLength overwritten)
-                            | Ok (GetSockOptAnswer.Reported copied, _) ->
-                                let bytes = Array.create 16 sentinel
-                                copied.CopyTo bytes
-                                0, untouched valueBuffer bytes, untouched lengthBuffer (uint32 copied.Length)
+                                untouched call.ValueBuffer (Array.create 16 Sentinel),
+                                untouched call.LengthBuffer (Option.defaultValue call.DeclaredLength overwritten)
+                            )
+                        | Ok (GetSockOptAnswer.Reported copied, _) ->
+                            let bytes = Array.create 16 Sentinel
+                            copied.CopyTo bytes
+                            Ok (0, untouched call.ValueBuffer bytes, untouched call.LengthBuffer (uint32 copied.Length))
 
-                        let host = hostErrno, hostValue, hostLength
+                    let host = answer.Errno, answer.Value, answer.Length
 
-                        if model <> host then
-                            failwith $"%s{describe}: the model predicts %A{model}, this kernel did %A{host}"
-                    )
+                    match model with
+                    | Error disagreement -> Some disagreement
+                    | Ok model when model <> host ->
+                        Some $"%s{describe}: the model predicts %A{model}, this kernel did %A{host}"
+                    | Ok _ -> None
+        }
 
-            Check.One (Config.QuickThrowOnFailure.WithMaxTest 2000, Prop.forAll (Arb.fromGen gen) property)
-        )
+    [<Test>]
+    let ``getsockopt answers as this kernel does`` () : unit = onHost (HostCorpus.live getCalls)
+
+    [<Test>]
+    let ``getsockopt answers as Darwin's kernel did`` () : unit =
+        HostCorpus.replay getCalls SimulatedUnixPlatform.macOsArm64
+
+    [<Test>]
+    let ``every generated call reads back as itself`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            HostCorpus.inputsRoundTrip setSequences platform
+            HostCorpus.inputsRoundTrip getCalls platform

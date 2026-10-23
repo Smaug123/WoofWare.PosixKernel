@@ -39,9 +39,12 @@ module TestUnixWait =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                (Lone.fileDescriptors system)
 
-        let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
+        let blockedFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let registry =
             match FileDescriptorRegistry.flock lockerFd (FlockRequest.Acquire FlockMode.Exclusive) registry with
@@ -118,18 +121,25 @@ module TestUnixWait =
 
     let private apply (op : Op) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match op with
-        | Op.Park thread -> UnixWait.park thread (parkOfThread thread) system
-        | Op.Unpark thread -> UnixParkState.unpark thread system
-        | Op.AdvanceClock nanoseconds ->
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-            }
+        | Op.Park thread ->
+            // A re-park is a woken thread's.
+            let system =
+                match Lone.parkOf thread system with
+                | Some _ -> ForgedPark.woken thread system
+                | None -> system
+
+            Lone.Parking.park thread (parkOfThread thread) system
+        | Op.Unpark thread -> Lone.UnixParkState.unpark thread system
+        | Op.AdvanceClock nanoseconds -> UnixSystem.advanceClock nanoseconds system
         | Op.CreateEpoll ->
-            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            let _, registry =
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    (Lone.fileDescriptors system)
 
             withRegistry registry system
         | Op.Register thread ->
-            if Map.containsKey thread (Lone.threads system) then
+            if Map.containsKey thread (Lone.threadMap system) then
                 system
             else
                 withThread thread system
@@ -156,22 +166,22 @@ module TestUnixWait =
                     | Op.Register _ -> None
 
                 // Every other thread keeps its park, ordinal and all.
-                for thread in Map.keys (Lone.threads before) do
+                for thread in Map.keys (Lone.threadMap before) do
                     if Some thread <> subject then
-                        UnixThreadTable.parkOf thread (Lone.threads after)
-                        |> shouldEqual (UnixThreadTable.parkOf thread (Lone.threads before))
+                        Lone.parkOf thread after |> shouldEqual (Lone.parkOf thread before)
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
                 match op with
                 | Op.Park thread ->
-                    if (UnixThreadTable.parkOf thread (Lone.threads before)).IsSome then
+                    if (Lone.parkOf thread before).IsSome then
                         cover ParkLabel.Repark
 
-                    match UnixThreadTable.parkOf thread (Lone.threads after) with
+                    match Lone.parkOf thread after with
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
                         park.Syscall |> shouldEqual (parkOfThread thread)
+                        park.State |> shouldEqual ParkState.Asleep
 
                         match lastMinted with
                         | Some last -> park.Ordinal |> shouldBeGreaterThan last
@@ -179,7 +189,7 @@ module TestUnixWait =
 
                         after, Some park.Ordinal
                 | Op.Unpark thread ->
-                    UnixThreadTable.parkOf thread (Lone.threads after) |> shouldEqual None
+                    Lone.parkOf thread after |> shouldEqual None
                     after, lastMinted
                 | Op.AdvanceClock _
                 | Op.CreateEpoll
@@ -197,82 +207,287 @@ module TestUnixWait =
     let ``a released lock wakes every waiter, in the order they parked`` () : unit =
         // Parked against the table's own key order, so that park order is told apart from it.
         let parked =
-            system |> UnixWait.park 4 (parkOfThread 4) |> UnixWait.park 3 (parkOfThread 3)
-
-        let asleep = Set.ofList [ 3 ; 4 ]
+            system
+            |> Lone.Parking.park 4 (parkOfThread 4)
+            |> Lone.Parking.park 3 (parkOfThread 3)
 
         let fired =
             Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
 
-        UnixWait.wakes asleep parked |> shouldEqual []
+        Lone.wakes parked |> shouldEqual []
 
-        UnixWait.wakes asleep (releaseLock parked)
-        |> shouldEqual [ 4, fired ; 3, fired ]
+        Lone.wakes (releaseLock parked) |> shouldEqual [ 4, fired ; 3, fired ]
 
-        // A re-park moves the waiter behind every park already made.
-        let reparked = parked |> UnixWait.park 4 (parkOfThread 4)
+        // A re-park, a woken waiter's, moves the waiter behind every park already made.
+        let reparked = parked |> ForgedPark.woken 4 |> Lone.Parking.park 4 (parkOfThread 4)
 
-        UnixWait.wakes asleep (releaseLock reparked)
-        |> shouldEqual [ 3, fired ; 4, fired ]
+        Lone.wakes (releaseLock reparked) |> shouldEqual [ 3, fired ; 4, fired ]
 
     [<Test>]
-    let ``only the threads the client holds asleep are woken`` () : unit =
-        // A woken thread keeps its park until its call finishes, so the park alone would wake
-        // it a second time.
-        let released =
+    let ``a woken thread keeps its park, records what woke it, and is not woken again`` () : unit =
+        let fired =
+            Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
+
+        let parked =
             system
-            |> UnixWait.park 3 (parkOfThread 3)
-            |> UnixWait.park 4 (parkOfThread 4)
-            |> releaseLock
+            |> Lone.Parking.park 3 (parkOfThread 3)
+            |> Lone.Parking.park 4 (parkOfThread 4)
 
-        UnixWait.wakes (Set.singleton 4) released
-        |> shouldEqual (
-            [
-                4, Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
-            ]
-        )
+        let released = releaseLock parked
+        let woken, after = Lone.wake released
+        woken |> shouldEqual [ 3, fired ; 4, fired ]
+
+        for thread in [ 3 ; 4 ] do
+            let before = Lone.parkOf thread released |> Option.get
+            before.State |> shouldEqual ParkState.Asleep
+
+            Lone.parkOf thread after
+            |> shouldEqual (
+                Some
+                    { before with
+                        State = ParkState.Woken fired
+                    }
+            )
+
+        // Nothing else moved.
+        after
+        |> ForgedThread.threadsAsIn (Lone.pid released) released
+        |> shouldEqual released
+
+        Lone.wake after |> fst |> shouldEqual []
+        UnixWait.satisfied (Callers.thread 3 after) after |> shouldEqual (Some fired)
 
     [<Test>]
-    let ``a thread held asleep with no park is a client bug`` () : unit =
-        let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.wakes (Set.singleton 1) system |> ignore)
+    let ``a sweep that wakes nobody answers a system equal to the one it was given, which answers itself after``
+        ()
+        : unit
+        =
+        let parked =
+            system
+            |> Lone.Parking.park 3 (parkOfThread 3)
+            |> Lone.Parking.park 1 (parkOfThread 1)
 
-        exn.Message |> shouldContainText "records no park"
+        let woken, after = UnixWait.wake parked
+        woken |> shouldEqual []
+        after |> shouldEqual parked
 
-        let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.deadlines (Set.singleton 1) system |> ignore)
+        obj.ReferenceEquals (Kernel.machine after, Kernel.machine parked)
+        |> shouldEqual true
 
-        exn.Message |> shouldContainText "records no park"
+        obj.ReferenceEquals (Kernel.scheduling after, Kernel.scheduling parked)
+        |> shouldEqual true
+
+        obj.ReferenceEquals (after.Processes, parked.Processes) |> shouldEqual true
+
+        let woken, again = UnixWait.wake after
+        woken |> shouldEqual []
+        obj.ReferenceEquals (again, after) |> shouldEqual true
+
+    /// Under Linux, a pipe's readers queue exclusively. Two readers sleep on an
+    /// empty pipe, and the client names neither of them to the kernel: the
+    /// kernel's own parks say who sleeps and who has been woken.
+    [<Test>]
+    let ``a woken waiter holds its exclusive queue until it finishes, whatever the client remembers`` () : unit =
+        let system =
+            UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            |> Threads.ensure 1
+            |> Threads.ensure 2
+
+        let readFd, writeFd, system =
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
+            | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
+            | other -> failwith $"pipe2 did not make a pipe: %A{other}"
+
+        let reads (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match UnixReadWrite.tryRead (Callers.thread thread system) readFd UserBuffer.Mapped 1UL system with
+            | Ok (ReadOutcome.WouldBlock _, system) -> system
+            | other -> failwith $"expected thread %d{thread}'s read to sleep, got %A{other}"
+
+        let writesOne (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match
+                WriteOutcomes.admitThenWrite
+                    0
+                    writeFd
+                    UserBuffer.Mapped
+                    (System.Collections.Immutable.ImmutableArray.Create 7uy)
+                    system
+            with
+            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, system)) -> system
+            | other -> failwith $"expected the write to complete, got %A{other}"
+
+        let system = system |> reads 1 |> reads 2 |> writesOne
+
+        // The byte wakes the reader that parked first.
+        let system = Lone.waking [ 1 ] system
+
+        // Woken and not yet finished, thread 1 stands for the byte: a second sweep, and one
+        // after another byte, wake nobody else.
+        Lone.wakes system |> shouldEqual []
+        let system = writesOne system
+        Lone.wakes system |> shouldEqual []
+
+        // Thread 1 takes a byte, and then thread 2 wakes for the other.
+        let system =
+            match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
+            | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.Length = 1 -> system
+            | other -> failwith $"expected thread 1's read to take a byte, got %A{other}"
+
+        Lone.waking [ 2 ] system |> ignore<UnixSystem<int, string>>
+
+    [<Test>]
+    let ``deadlines are those of the sleeping threads, not of the woken`` () : unit =
+        let waitUntil (deadline : int64) : ParkedSyscall =
+            ParkedSyscall.EpollWait
+                {
+                    Epoll = blocked
+                    MaxEvents = 1
+                    Buffer = UserBuffer.Mapped
+                    Deadline = Some deadline
+                }
+
+        let parked =
+            system
+            |> Lone.Parking.park 1 (waitUntil 5L)
+            |> Lone.Parking.park 2 (waitUntil 9L)
+
+        Lone.deadlines parked |> shouldEqual [ 5L ; 9L ]
+
+        let woken = UnixSystem.advanceClock 5L parked |> Lone.waking [ 1 ]
+
+        Lone.deadlines woken |> shouldEqual [ 9L ]
 
     [<Test>]
     let ``a quiet epoll instance wakes none of its waiters, however many there are`` () : unit =
         // An exclusive wake is about a deliverable event, not about sharing an epoll instance.
         let parked =
-            system |> UnixWait.park 1 (parkOfThread 1) |> UnixWait.park 2 (parkOfThread 2)
+            system
+            |> Lone.Parking.park 1 (parkOfThread 1)
+            |> Lone.Parking.park 2 (parkOfThread 2)
 
-        UnixWait.wakes (Set.ofList [ 1 ; 2 ]) parked |> shouldEqual []
+        Lone.wakes parked |> shouldEqual []
 
     [<Test>]
     let ``clearing a park lets another syscall park`` () : unit =
         // The refusal below is about an *unclosed* park, not about a thread's history: a
         // completion that clears its record leaves the thread free to block in anything.
         let cleared =
-            let parked = system |> UnixWait.park 1 (parkOfThread 1)
+            let parked = system |> Lone.Parking.park 1 (parkOfThread 1)
 
-            UnixParkState.unpark 1 parked
+            Lone.UnixParkState.unpark 1 parked
 
-        UnixWait.park 1 (parkOfThread 3) cleared
-        |> fun system -> UnixThreadTable.parkedFor 1 (Lone.threads system)
+        Lone.Parking.park 1 (parkOfThread 3) cleared
+        |> Lone.parkedIn 1
         |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]
     let ``a park of a different syscall over an existing one is refused`` () : unit =
-        let parked = system |> UnixWait.park 1 (parkOfThread 1)
+        let parked = system |> Lone.Parking.park 1 (parkOfThread 1)
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.park 1 (parkOfThread 3) parked |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.Parking.park 1 (parkOfThread 3) parked |> ignore)
 
         exn.Message |> shouldContainText "without clearing the first"
+
+    [<Test>]
+    let ``a park's state moves only by a wake and a woken thread's re-park`` () : unit =
+        let parked = system |> Lone.Parking.park 1 (parkOfThread 1)
+        let park = Lone.parkOf 1 parked |> Option.get
+        park.State |> shouldEqual ParkState.Asleep
+
+        let woken =
+            { park with
+                State = ParkState.Woken (Set.singleton WakePrimitive.SignalDeliverable)
+            }
+
+        // A re-park of a thread nothing has woken.
+        let exn =
+            Assert.Throws<exn> (fun () -> Lone.Parking.park 1 (parkOfThread 1) parked |> ignore)
+
+        exn.Message |> shouldContainText "made only of a woken park"
+
+        // A park that starts woken.
+        let exn =
+            Assert.Throws<exn> (fun () -> ForgedThread.parked (Callers.thread 2 system) woken system |> ignore)
+
+        exn.Message |> shouldContainText "woken already"
+
+        // A rewrite in place that changes the state.
+        let exn =
+            Assert.Throws<exn> (fun () -> ForgedThread.parked (Callers.thread 1 parked) woken parked |> ignore)
+
+        exn.Message |> shouldContainText "changes its state"
+
+        // A woken thread's re-park, asleep again; and a rewrite in place that keeps the
+        // state.
+        let wokenSystem = ForgedPark.woken 1 parked
+        let reparked = Lone.Parking.park 1 (parkOfThread 1) wokenSystem
+
+        (Lone.parkOf 1 reparked |> Option.get).State |> shouldEqual ParkState.Asleep
+
+        let wokenPark = Lone.parkOf 1 wokenSystem |> Option.get
+
+        ForgedThread.parked (Callers.thread 1 wokenSystem) wokenPark wokenSystem
+        |> Lone.parkOf 1
+        |> shouldEqual (Some wokenPark)
+
+        // A park is woken once.
+        let exn =
+            Assert.Throws<exn> (fun () ->
+                ForgedThread.woken
+                    (Callers.thread 1 wokenSystem)
+                    (Set.singleton WakePrimitive.SignalDeliverable)
+                    wokenSystem
+                |> ignore
+            )
+
+        exn.Message |> shouldContainText "woken already"
+
+    /// Every park the library makes goes through `Parking.parkWaiting`, which
+    /// a Debug build holds to the call's having nothing to wake it yet, a
+    /// signal aside.
+    [<Test>]
+    let ``parkWaiting refuses a park whose own condition already holds, a signal aside`` () : unit =
+#if DEBUG
+        // The lock the call waits for is free.
+        let exn =
+            Assert.Throws<exn> (fun () -> Lone.Parking.parkWaiting 3 (parkOfThread 3) (releaseLock system) |> ignore)
+
+        exn.Message |> shouldContainText "FlockGrantable"
+
+        // Held, it parks.
+        Lone.Parking.parkWaiting 3 (parkOfThread 3) system
+        |> Lone.parkedIn 3
+        |> shouldEqual (Some (parkOfThread 3))
+
+        // A signal deliverable to the thread is the finishing call's to
+        // answer, not a reason to refuse the park.
+        let signalled =
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition
+                            (Kernel.signalNumbering system)
+                            Signal.SIGUSR1
+                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                        |> SignalState.enqueue
+                            (Kernel.signalNumbering system)
+                            {
+                                Signal = Signal.SIGUSR1
+                                Target = ValueSome 1
+                            }
+                }
+            )
+
+        let parked = Lone.Parking.parkWaiting 1 (parkOfThread 1) signalled
+
+        UnixWait.satisfied (Callers.thread 1 parked) parked
+        |> shouldEqual (Some (Set.singleton WakePrimitive.SignalDeliverable))
+#else
+        Assert.Ignore "parkWaiting checks a park's condition only in a Debug build."
+#endif
 
     /// The exclusive queue each park waits on, as `UnixWait.wakes` states it: an
     /// `epoll_wait` on its epoll instance, an `accept` on its listener, and under
@@ -316,7 +531,8 @@ module TestUnixWait =
         | ParkedSyscall.Select _
         | ParkedSyscall.DatagramReceive _
         | ParkedSyscall.DatagramSend _
-        | ParkedSyscall.Connect _ -> []
+        | ParkedSyscall.Connect _
+        | ParkedSyscall.Futex _ -> []
 
     /// A park of every kind, waiting on `description` wherever a park waits on
     /// one, with and without a deadline where it may have one, and each call a
@@ -372,6 +588,38 @@ module TestUnixWait =
                         Destination = None
                     }
 
+                for taken in [ false ; true ] do
+                    ParkedSyscall.Futex
+                        {
+                            FutexAddress = 0x1000UL
+                            FutexTimeout =
+                                match deadline with
+                                | None -> FutexTimeout.Untimed
+                                | Some deadline -> FutexTimeout.Until deadline
+                            FutexBitset = UnixFutex.FutexBitsetMatchAny
+                            TakenByWake = taken
+                        }
+
+                    match deadline with
+                    | None -> ()
+                    | Some deadline ->
+                        ParkedSyscall.Futex
+                            {
+                                FutexAddress = 0x1000UL
+                                FutexTimeout = FutexTimeout.At deadline
+                                FutexBitset = 1u
+                                TakenByWake = taken
+                            }
+
+            for taken in [ false ; true ] do
+                ParkedSyscall.Futex
+                    {
+                        FutexAddress = 0x1000UL
+                        FutexTimeout = FutexTimeout.Unbounded
+                        FutexBitset = UnixFutex.FutexBitsetMatchAny
+                        TakenByWake = taken
+                    }
+
             for mode in [ FlockMode.Shared ; FlockMode.Exclusive ] do
                 ParkedSyscall.Flock
                     {
@@ -390,7 +638,9 @@ module TestUnixWait =
                     {
                         Listener = target (SocketId 0L)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = 16u
+                        DeclaredLength = (Some 16u)
+                        NewSocketNonBlocking = false
+                        NewSocketCloseOnExec = false
                     }
 
                 ParkedSyscall.PipeRead
@@ -450,7 +700,11 @@ module TestUnixWait =
 
             ParkedSyscall.DatagramReceive
                 {
-                    Socket = description
+                    ParkedDatagramReceive.Socket = SleepTarget.Waiting (description, 0)
+                    Buffer = UserBuffer.Mapped
+                    Count = 16
+                    Call = ParkedDatagramReceiveCall.Receive false
+                    Chosen = false
                 }
 
             ParkedSyscall.DatagramSend
@@ -492,19 +746,21 @@ module TestUnixWait =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let readFd, writeFd, system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
                 | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
             let socketFd, system =
-                match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 system with
-                | Ok (fd, system) -> fd, system
-                | Error error -> failwith $"socket failed with %O{error}"
+                match
+                    UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system
+                with
+                | DescriptorAnswer.Returned fd, system -> fd, system
+                | DescriptorAnswer.Failed error, _ -> failwith $"socket failed with %O{error}"
 
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
             let pipeOf (description : OpenFileDescriptionId) : PipeId option =
-                match OpenFileTable.tryFind description system.Machine.OpenFiles with
+                match OpenFileTable.tryFind description (UnixSystem.openFiles system) with
                 | Some {
                            Target = OpenFileTarget.Pipe (pipeId, _)
                        } -> Some pipeId
@@ -527,7 +783,12 @@ module TestUnixWait =
                 parks
                 |> List.choose (fun parked ->
                     let stated = statedQueues linux pipeOf parked
-                    let derived = UnixWait.exclusiveQueuesOfPark system.Machine parked
+
+                    let derived =
+                        WakeCondition.ofPark parked
+                        |> WakeCondition.primitives
+                        |> List.choose (Parking.exclusiveQueueOf (Kernel.machine system))
+                        |> List.distinct
 
                     if derived <> stated then
                         Some $"%O{platform}: %A{parked} waits on %A{derived}, where wakes states %A{stated}"

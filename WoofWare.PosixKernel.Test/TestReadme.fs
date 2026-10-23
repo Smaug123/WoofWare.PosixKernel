@@ -17,6 +17,10 @@ open WoofWare.PosixKernel
 /// `describe` it promises, and every F# code block runs and prints what its
 /// `// Prints:` trailer says.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestReadme =
 
     let private readme : Lazy<string> =
@@ -69,6 +73,7 @@ module TestReadme =
                 "ImmutableArray"
                 "ArgumentException"
                 "ArgumentOutOfRangeException"
+                "ArgumentNullException"
                 "InvalidOperationException"
                 "PlatformNotSupportedException"
             ]
@@ -113,7 +118,7 @@ module TestReadme =
 
         // Controls, so that this cannot pass by reading nothing: the README names
         // these, and a name the library lacks is caught.
-        spans |> shouldContain "UnixWait.wakes"
+        spans |> shouldContain "UnixWait.wake"
         nameFaults names lastParts "UnixWait.wakez" |> List.length |> shouldEqual 1
 
         nameFaults names lastParts "UnixMachineState.processorCount"
@@ -296,18 +301,18 @@ module TestReadme =
     [<Test>]
     let ``every call the README shows has the arguments it shows`` () : unit =
         // Controls: a right shape, a wrong order, and a wrong type.
-        matchCall "UnixReadWrite.read" [ "thread", None ; "fd", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "caller", None ; "fd", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual true
 
-        matchCall "UnixReadWrite.read" [ "fd", None ; "thread", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "fd", None ; "caller", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual false
 
         matchCall
             "UnixReadWrite.read"
             [
-                "thread", Some "'Thread"
+                "caller", Some "Caller"
                 "fd", Some "int64"
                 "buffer", None
                 "count", None
@@ -404,6 +409,7 @@ module TestReadme =
             "UnixPoll"
             "UnixKqueue"
             "UnixInotify"
+            "UnixFutex"
             "UnixSignal"
             "UnixClock"
             "UnixEntropy"
@@ -411,7 +417,6 @@ module TestReadme =
             "UnixThreadLifecycle"
             "UnixScheduling"
             "UnixWait"
-            "SimulatedMachine"
             "EndedProcess"
         ]
 

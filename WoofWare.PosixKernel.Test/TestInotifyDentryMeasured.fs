@@ -89,7 +89,7 @@ module TestInotifyDentryMeasured =
         =
         let bytes = ImmutableArray.CreateRange (Encoding.ASCII.GetBytes text)
 
-        match UnixReadWrite.tryPwriteBytes 0 fd bytes offset system with
+        match WriteOutcomes.admitThenPwrite 0 fd bytes offset system with
         | Ok (WriteAnswer.Completed count, system) -> $"%d{count}", system
         | other -> failwith $"pwrite(%d{fd}): %A{other}"
 
@@ -125,8 +125,8 @@ module TestInotifyDentryMeasured =
             |> link "h/a" "h/other/c"
 
         let fd, s = init1 nonblock system
-        let wh, s = watch fd "h" modelledEvents s
-        let wo, s = watch fd "h/other" modelledEvents s
+        let wh, s = watch fd "h" closeEvents s
+        let wo, s = watch fd "h/other" closeEvents s
         let _, s = drain fd s
         system <- s
         let produced = ResizeArray<string * string> ()
@@ -174,8 +174,8 @@ module TestInotifyDentryMeasured =
                 ]
 
         let fd, s = init1 nonblock system
-        let p, s = watch fd "dd" modelledEvents s
-        let sub, s = watch fd "dd/sub" modelledEvents s
+        let p, s = watch fd "dd" closeEvents s
+        let sub, s = watch fd "dd/sub" closeEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"parent=%d{p} sub=%d{sub}")
@@ -197,7 +197,7 @@ module TestInotifyDentryMeasured =
         system <- s
         produced.Add ("rm-after-ignored", $"rm sub's wd=%s{rc answer}")
         system <- mkdir "dd/sub2" 0o755 system
-        let s2, s = watch fd "dd/sub2" modelledEvents system
+        let s2, s = watch fd "dd/sub2" closeEvents system
         system <- s
         produced.Add ("new-watch-wd", $"sub2=%d{s2}")
         row "mkdir-sub2-events"
@@ -211,7 +211,7 @@ module TestInotifyDentryMeasured =
         row "unlink-open-file"
         system <- write f "y" system
         row "write-unlinked-no-excl"
-        let p2, s = watch fd "dd" (modelledEvents ||| exclUnlink) system
+        let p2, s = watch fd "dd" (closeEvents ||| exclUnlink) system
         system <- write f "z" s
         let drained, s = drain fd system
         system <- s
@@ -233,7 +233,7 @@ module TestInotifyDentryMeasured =
         let f, s = openFd readWrite "e/f" 0 system
         let src, s = openFd readOnly "e/src" 0 s
         let instance, s = init1 nonblock s
-        let mask = modelledEvents ||| (if excl then exclUnlink else 0u)
+        let mask = graphEvents ||| (if excl then exclUnlink else 0u)
         let s = if parent then snd (watch instance "e" mask s) else s
         let s = if self then snd (watch instance "e/f" mask s) else s
         system <- unlink "e/f" s
@@ -256,15 +256,29 @@ module TestInotifyDentryMeasured =
 
         op
             "copy_file_range"
-            (fun system -> UnixReadWrite.tryCopyFileRange src f 3UL 0 system |> answered "copy_file_range")
+            (fun system ->
+                UnixReadWrite.tryCopyFileRange (Callers.leader system) src f 3UL 0 system
+                |> answered "copy_file_range"
+            )
 
-        op "ftruncate" (fun system -> UnixDescriptor.tryFtruncate f 2L system |> answered "ftruncate")
-        op "fchmod" (fun system -> UnixPathResolution.tryFchmod f 0o600 system |> answered "fchmod")
+        op
+            "ftruncate"
+            (fun system ->
+                UnixDescriptor.tryFtruncate (Callers.leader system) f 2L system
+                |> answered "ftruncate"
+            )
+
+        op
+            "fchmod"
+            (fun system ->
+                UnixPathResolution.tryFchmod (Callers.leader system) f 0o600 system
+                |> answered "fchmod"
+            )
 
         op
             "fchown"
             (fun system ->
-                UnixPathResolution.tryFchown f (Some UserId.root) (Some (group 0u)) system
+                UnixPathResolution.tryFchown (Callers.leader system) f (Some UserId.root) (Some (group 0u)) system
                 |> answered "fchown"
             )
 
@@ -272,6 +286,7 @@ module TestInotifyDentryMeasured =
             "futimens"
             (fun system ->
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     f
                     NullablePathArgument.Null
                     (TimesArgument.Fields (timespec 1000L 0L, timespec 2000L 0L))
@@ -284,6 +299,7 @@ module TestInotifyDentryMeasured =
             "utimensat-empty-path"
             (fun system ->
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     f
                     (NullablePathArgument.NotNull (PathArg.ofText ""))
                     TimesArgument.Null
@@ -295,7 +311,7 @@ module TestInotifyDentryMeasured =
         op
             "fchmodat-empty-path"
             (fun system ->
-                UnixPathResolution.tryFchmodat f (PathArg.ofText "") 0o644 atEmptyPath system
+                UnixPathResolution.tryFchmodat (Callers.leader system) f (PathArg.ofText "") 0o644 atEmptyPath system
                 |> answered "fchmodat"
             )
 
@@ -303,6 +319,7 @@ module TestInotifyDentryMeasured =
             "fchownat-empty-path"
             (fun system ->
                 UnixPathResolution.tryFchownat
+                    (Callers.leader system)
                     f
                     (PathArg.ofText "")
                     (Some UserId.root)
@@ -343,7 +360,7 @@ module TestInotifyDentryMeasured =
             let instance, system = init1 nonblock system
 
             let _, system =
-                watch instance "l" (modelledEvents ||| (if excl then exclUnlink else 0u)) system
+                watch instance "l" (graphEvents ||| (if excl then exclUnlink else 0u)) system
 
             let _, system = system |> unlink "l/b" |> link "l/a" "l/b" |> drain instance
             let drained, system = system |> write fb "1" |> drain instance
@@ -382,7 +399,7 @@ module TestInotifyDentryMeasured =
             let fs, s = openFd writeOnly $"%s{d}/s" 0 s
             let instance, s = init1 nonblock s
 
-            let _, s = watch instance d (modelledEvents ||| (if excl then exclUnlink else 0u)) s
+            let _, s = watch instance d (graphEvents ||| (if excl then exclUnlink else 0u)) s
 
             let drained, s = s |> rename $"%s{d}/s" $"%s{d}/t" |> drain instance
             produced.Add ($"%s{config}-rename-over", drained)
@@ -412,7 +429,7 @@ module TestInotifyDentryMeasured =
 
             let dfd, s = openFd readOnly "q/d" 0 system
             let instance, s = init1 nonblock s
-            let mask = modelledEvents ||| (if excl then exclUnlink else 0u)
+            let mask = graphEvents ||| (if excl then exclUnlink else 0u)
             let wq, s = watch instance "q" mask s
             let wo, s = watch instance "q/other" mask s
             system <- s
@@ -433,13 +450,18 @@ module TestInotifyDentryMeasured =
             row "fchmod-after-move"
             system <- rmdir "q/other/d3" system
             row "rmdir"
-            let result, s = UnixPathResolution.tryFchmod dfd 0o755 system |> answered "fchmod"
+
+            let result, s =
+                UnixPathResolution.tryFchmod (Callers.leader system) dfd 0o755 system
+                |> answered "fchmod"
+
             let drained, s = drain instance s
             system <- s
             produced.Add ($"%s{config}-fchmod-after-rmdir", $"%s{result}: %s{drained}")
 
             let result, s =
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     dfd
                     NullablePathArgument.Null
                     (TimesArgument.Fields (timespec 1000L 0L, timespec 2000L 0L))
@@ -462,8 +484,8 @@ module TestInotifyDentryMeasured =
 
         let f, s = openFd writeOnly "u/sub/f" 0 system
         let instance, s = init1 nonblock s
-        let wu, s = watch instance "u" modelledEvents s
-        let ws, s = watch instance "u/sub" modelledEvents s
+        let wu, s = watch instance "u" graphEvents s
+        let ws, s = watch instance "u/sub" graphEvents s
         system <- s
         let produced = ResizeArray<string * string> ()
         produced.Add ("wds", $"u=%d{wu} sub=%d{ws}")
@@ -513,7 +535,7 @@ module TestInotifyDentryMeasured =
     let ``dentry section V: a write to /dev/null is heard at no watch on /dev`` () : unit =
         let system = boot root []
         let instance, system = init1 nonblock system
-        let wd, system = watch instance "/dev" modelledEvents system
+        let wd, system = watch instance "/dev" graphEvents system
         let null', system = openFd writeOnly "/dev/null" 0 system
         let _, system = drain instance system
         let count, system = writeCounted null' "x" system

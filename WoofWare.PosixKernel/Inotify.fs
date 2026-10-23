@@ -94,15 +94,17 @@ module InotifyEvent =
 
     /// Whether this kernel models the event, so that a watch may ask for it.
     ///
-    /// `IN_ACCESS`, `IN_OPEN` and the two `IN_CLOSE_*` events are raised by
-    /// opening, reading and releasing a file, which this kernel does not
-    /// report to watches; nothing here unmounts a filesystem, so `IN_UNMOUNT`
-    /// is never raised. `UnixInotify.inotifyAddWatch` refuses a watch asking
-    /// for any of them rather than storing an event it would never raise.
+    /// `IN_ACCESS` and `IN_OPEN` are raised by reading and opening a file,
+    /// which this kernel does not report to watches; nothing here unmounts a
+    /// filesystem, so `IN_UNMOUNT` is never raised.
+    /// `UnixInotify.inotifyAddWatch` refuses a watch asking for any of them
+    /// rather than storing an event it would never raise.
     let modelled (event : InotifyEvent) : bool =
         match event with
         | InotifyEvent.Modify
         | InotifyEvent.Attrib
+        | InotifyEvent.CloseWrite
+        | InotifyEvent.CloseNoWrite
         | InotifyEvent.MovedFrom
         | InotifyEvent.MovedTo
         | InotifyEvent.Create
@@ -110,8 +112,6 @@ module InotifyEvent =
         | InotifyEvent.DeleteSelf
         | InotifyEvent.MoveSelf -> true
         | InotifyEvent.Access
-        | InotifyEvent.CloseWrite
-        | InotifyEvent.CloseNoWrite
         | InotifyEvent.Open
         | InotifyEvent.Unmount -> false
 

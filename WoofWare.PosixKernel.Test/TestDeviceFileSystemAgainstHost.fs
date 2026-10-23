@@ -9,31 +9,20 @@ open WoofWare.PosixKernel
 
 /// Measures the host's `/dev` and checks the model's device filesystem against
 /// it: the device nodes' stat fields, the filesystem type `/dev` reports, and
-/// `EXDEV` for a rename across it.
-///
-/// Only a Linux host can falsify anything here: Darwin's devfs is not modelled,
-/// and on a macOS host each test checks only that the model refuses.
+/// `EXDEV` for a rename across it (on a Linux host; a Darwin host's rename row
+/// checks only the model, whose replays of measured rows are `TestDevfs`').
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestDeviceFileSystemAgainstHost =
 
     let private context : string = "TestDeviceFileSystemAgainstHost"
 
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(string source, string destination)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     let private booted (flavour : SimulatedUnixFlavour) : UnixSystem<int, string> =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private modelStatus (system : UnixSystem<int, string>) (path : string) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
 
     [<Test>]
     let ``each device node's link count, device number and mode are the host's`` () : unit =
@@ -41,11 +30,8 @@ module TestDeviceFileSystemAgainstHost =
             let system = booted flavour
 
             for path in [ "/dev/null" ; "/dev/urandom" ] do
-                match flavour, modelStatus system path with
-                | SimulatedUnixFlavour.Darwin, Error (StatRefusal.Path (PathRefusal.UnmodelledFileSystem _)) -> ()
-                | SimulatedUnixFlavour.Darwin, other ->
-                    failwith $"%s{path} on Darwin: expected a refusal, got %A{other}"
-                | SimulatedUnixFlavour.Linux, Ok (FileStatusAnswer.Reported status) ->
+                match modelStatus system path with
+                | Ok (FileStatusAnswer.Reported status) ->
                     HostStat.ofModel status |> shouldEqual (HostStat.lstat flavour path)
 
                     let hostMode = int (File.GetUnixFileMode path)
@@ -53,7 +39,7 @@ module TestDeviceFileSystemAgainstHost =
                     if status.Mode &&& 0o7777 <> hostMode then
                         failwith
                             $"%s{path}: the model's permission bits are 0o%o{status.Mode &&& 0o7777}, the host's 0o%o{hostMode}"
-                | SimulatedUnixFlavour.Linux, other -> failwith $"%s{path} on Linux: expected a status, got %A{other}"
+                | other -> failwith $"%s{path} on %O{flavour}: expected a status, got %A{other}"
         )
 
     [<Test>]
@@ -61,12 +47,10 @@ module TestDeviceFileSystemAgainstHost =
         HostStat.onMeasuredHost (fun flavour ->
             let system = booted flavour
 
-            match flavour, UnixPathResolution.tryStatfs (PathArg.ofText "/dev/null") system with
-            | SimulatedUnixFlavour.Darwin, Error (PathRefusal.UnmodelledFileSystem _) -> ()
-            | SimulatedUnixFlavour.Darwin, other -> failwith $"statfs on Darwin: expected a refusal, got %A{other}"
-            | SimulatedUnixFlavour.Linux, Ok (FileSystemStatisticsAnswer.Reported statistics) ->
+            match UnixPathResolution.tryStatfs (Callers.leader system) (PathArg.ofText "/dev/null") system with
+            | Ok (FileSystemStatisticsAnswer.Reported statistics) ->
                 // O_RDONLY: the host's /dev/null is readable by everyone.
-                let fd = hostOpen ("/dev/null", 0, 0)
+                let fd = HostCalls.openFile ("/dev/null", 0, 0)
 
                 if fd < 0 then
                     failwith $"opening the host's /dev/null failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -75,8 +59,8 @@ module TestDeviceFileSystemAgainstHost =
                     HostFileSystemType.typeFieldsFor flavour fd
                     |> shouldEqual (Ok (FileSystemStatistics.typeFields statistics))
                 finally
-                    hostClose fd |> ignore<int>
-            | SimulatedUnixFlavour.Linux, other -> failwith $"statfs on Linux: expected an answer, got %A{other}"
+                    HostCalls.close fd |> ignore<int>
+            | other -> failwith $"statfs on %O{flavour}: expected an answer, got %A{other}"
         )
 
     [<Test>]
@@ -107,7 +91,7 @@ module TestDeviceFileSystemAgainstHost =
 
             try
                 Marshal.SetLastPInvokeError 0
-                let result = hostRename (source, destination)
+                let result = HostCalls.rename (source, destination)
                 let errno = Marshal.GetLastPInvokeError ()
 
                 if result = 0 then

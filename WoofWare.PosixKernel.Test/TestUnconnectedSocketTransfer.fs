@@ -291,7 +291,12 @@ module TestUnconnectedSocketTransfer =
 
         let connectTo (endpoint : Ipv4Endpoint) (family : int) (system : UnixSystem<int, string>) =
             match
-                CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.blob system.Machine.UnixPlatform family endpoint) system
+                CopyIn.connect
+                    fd
+                    UserBuffer.Mapped
+                    16u
+                    (CopyIn.blob (UnixSystem.platform system) family endpoint)
+                    system
             with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"connect did not complete: %A{other}"
@@ -301,7 +306,7 @@ module TestUnconnectedSocketTransfer =
 
         let system =
             match
-                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet system.Machine.UnixPlatform (loopbackAt 0us)) system
+                CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopbackAt 0us)) system
             with
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"bind failed: %A{other}"
@@ -316,7 +321,7 @@ module TestUnconnectedSocketTransfer =
         // endpoint.
         let system =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     socketId
                     false
                     16u
@@ -329,18 +334,18 @@ module TestUnconnectedSocketTransfer =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"the dissolve did not complete: %A{other}"
 
-        let before = system.Machine.Sockets.[socketId]
+        let before = (UnixMachineState.socket socketId (Kernel.machine system))
         before.Phase |> shouldEqual SocketPhase.Idle
 
         before.Ipv4Binding
         |> Option.map _.Endpoint
         |> shouldEqual (Some (loopbackAt 0us))
 
-        match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
+        match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
         | Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EDESTADDRREQ), after)) ->
-            let low, high = system.Machine.EphemeralPortRange
+            let low, high = UnixSystem.ephemeralPortRange system
 
-            match after.Machine.Sockets.[socketId].Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine after)).Ipv4Binding with
             | Some binding ->
                 binding.Endpoint.Address |> shouldEqual Ipv4Address.loopback
 
@@ -366,6 +371,7 @@ module TestUnconnectedSocketTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
                         proc.Signals
@@ -391,14 +397,14 @@ module TestUnconnectedSocketTransfer =
                         fd
                         UserBuffer.Mapped
                         16u
-                        (CopyIn.inet system.Machine.UnixPlatform loopbackAnyPort)
+                        (CopyIn.inet (UnixSystem.platform system) loopbackAnyPort)
                         system
                 with
                 | Ok (BindAnswer.Bound _, system) -> Some system
                 | other -> failwith $"the kernel would not bind %A{row}: %A{other}"
 
         let listening (system : UnixSystem<int, string>) =
-            match UnixSocket.tryListen fd 4 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 4 system with
             | Ok (ListenAnswer.Listening _, system) -> Some system
             | Ok (ListenAnswer.Failed _, _)
             | Error _ -> None
@@ -413,9 +419,7 @@ module TestUnconnectedSocketTransfer =
         built
         |> Option.map (fun system ->
             if row.NonBlocking then
-                match UnixDescriptor.setNonBlocking fd true system with
-                | SetNonBlockingAnswer.Set, system -> fd, system
-                | other, _ -> failwith $"the kernel would not set O_NONBLOCK: %A{other}"
+                fd, NonBlocking.set fd system
             else
                 fd, system
         )
@@ -441,32 +445,58 @@ module TestUnconnectedSocketTransfer =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-        let socketBefore = before.Machine.Sockets.[socketId]
-        let socketAfter = after.Machine.Sockets.[socketId]
+        let socketBefore = (UnixMachineState.socket socketId (Kernel.machine before))
+        let socketAfter = (UnixMachineState.socket socketId (Kernel.machine after))
 
-        if
-            socketBefore.Ipv4Binding.IsNone
-            && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
-        then
-            let low, high = before.Machine.EphemeralPortRange
+        // A write is a send call, which marks a UDP socket's receive side
+        // (`DatagramReceiver.sent`, a change on Darwin only) whatever it
+        // answers; with that put back, the write changes only what binding it
+        // makes.
+        let receiversBefore = (Kernel.machine before).DatagramReceivers
+        let receiversAfter = (Kernel.machine after).DatagramReceivers
 
-            match socketAfter.Ipv4Binding with
-            | Some binding ->
-                binding.Endpoint.Address = Ipv4Address.any
-                && binding.Endpoint.Port >= low
-                && binding.Endpoint.Port <= high
-                && binding.LockedAddress = None
-                && not binding.LockedPort
-                && { after with
-                       Machine =
-                           { after.Machine with
-                               NextEphemeralPort = before.Machine.NextEphemeralPort
-                               Sockets = before.Machine.Sockets
-                           }
-                   } = before
-            | None -> false
-        else
-            after = before
+        let receiverMarked =
+            match Map.tryFind socketId receiversBefore with
+            | Some receiver -> Map.tryFind socketId receiversAfter = Some (DatagramReceiver.sent receiver)
+            | None -> receiversAfter = receiversBefore
+
+        let after =
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        DatagramReceivers = receiversBefore
+                    }
+                )
+                after
+
+        // What the write did to the binding, with the receive side put back.
+        let bindingRight =
+            if
+                socketBefore.Ipv4Binding.IsNone
+                && UnconnectedSocketRules.writeBindsFirst row.Flavour row.Domain row.Kind
+            then
+                let low, high = UnixSystem.ephemeralPortRange before
+
+                match socketAfter.Ipv4Binding with
+                | Some binding ->
+                    binding.Endpoint.Address = Ipv4Address.any
+                    && binding.Endpoint.Port >= low
+                    && binding.Endpoint.Port <= high
+                    && binding.LockedAddress = None
+                    && not binding.LockedPort
+                    && Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
+                                NextEphemeralPort = (Kernel.machine before).NextEphemeralPort
+                                Sockets = (Kernel.machine before).Sockets
+                            }
+                        )
+                        after = before
+                | None -> false
+            else
+                after = before
+
+        receiverMarked && bindingRight
 
     /// Whether the kernel's answer for `row`'s call on `fd` is the one the probe
     /// saw, or the refusal the rules call for where the answer is a sleep, a
@@ -474,23 +504,24 @@ module TestUnconnectedSocketTransfer =
     let private kernelAgrees (row : Row) (fd : int) (system : UnixSystem<int, string>) : bool =
         match row.Call with
         | Call.Read count ->
-            match UnixReadWrite.tryRead 1 fd UserBuffer.Mapped count system, row.Seen with
+            match UnixReadWrite.tryRead (Callers.thread 1 system) fd UserBuffer.Mapped count system, row.Seen with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after), Seen.ReturnedZero ->
                 bytes.IsEmpty && after = system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after), Seen.Failed seen ->
                 error = seen && after = system
-            | Error (ReadRefusal.DatagramSleep _), Seen.Sleeps -> true
+            | Ok (ReadOutcome.WouldBlock _, _), Seen.Sleeps -> true
+            | Error (ReadRefusal.UnixDomainDatagramSleep _), Seen.Sleeps -> true
             | _ -> false
         | Call.Write count ->
-            let admitted = UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system
+            let admitted = Lone.UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system
 
-            // `write` without the admission, as a caller holding the bytes may
-            // make it, answers the same, but only for a count the caller could
-            // hold in one call.
+            // The whole `write`, through its paused call and a step at a time,
+            // answers as its admission does, for a count the caller could hold
+            // in one call.
             let written =
                 if count <= uint64 (1 <<< 20) then
                     Some (
-                        UnixReadWrite.tryWriteBytes
+                        WriteOutcomes.writeBytes
                             1
                             fd
                             (ImmutableArray.Create<byte> (Array.zeroCreate (int count)))
@@ -577,32 +608,6 @@ module TestUnconnectedSocketTransfer =
     // The host the suite runs on
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably, so this goes
-    // through the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
     [<Test>]
     let ``this host's failed write binds an unbound socket exactly when the rules say`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
@@ -615,17 +620,17 @@ module TestUnconnectedSocketTransfer =
                             let rawDomain, rawKind, protocol =
                                 NewSocket.arguments platform domain kind SocketProtocol.Default
 
-                            let fd = hostSocket (rawDomain, rawKind, protocol)
+                            let fd = HostCalls.socket (rawDomain, rawKind, protocol)
 
                             if fd >= 0 then
                                 try
-                                    hostWrite (fd, [| 0uy |], 1un) |> ignore<nativeint>
+                                    HostCalls.write (fd, [| 0uy |], 1un) |> ignore<nativeint>
                                     // sin_port and sin6_port are both at offset 2, in
                                     // network order, on both flavours.
                                     let name = Array.zeroCreate<byte> 128
                                     let mutable length = 128u
 
-                                    if hostGetSockName (fd, name, &length) <> 0 then
+                                    if HostCalls.getSockName (fd, name, &length) <> 0 then
                                         failwith $"getsockname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                                     let bound = name.[2] <> 0uy || name.[3] <> 0uy
@@ -633,7 +638,7 @@ module TestUnconnectedSocketTransfer =
                                     if bound <> UnconnectedSocketRules.writeBindsFirst flavour domain kind then
                                         yield $"%O{domain} %O{kind}: this host bound it %b{bound}"
                                 finally
-                                    hostClose fd |> ignore<int>
+                                    HostCalls.close fd |> ignore<int>
                 ]
 
             disagreeing |> shouldEqual []
@@ -646,7 +651,7 @@ module TestUnconnectedSocketTransfer =
         let domain, kind, protocol =
             NewSocket.arguments platform row.Domain row.Kind SocketProtocol.Default
 
-        let fd = hostSocket (domain, kind, protocol)
+        let fd = HostCalls.socket (domain, kind, protocol)
         let socketErrno = Marshal.GetLastPInvokeError ()
 
         let noIpv6 =
@@ -662,11 +667,11 @@ module TestUnconnectedSocketTransfer =
             let address = SimulatedUnixPlatform.encodeInternetSockaddr platform loopbackAnyPort
 
             let bind () =
-                if hostBind (fd, address, uint32 address.Length) <> 0 then
+                if HostCalls.bind (fd, address, uint32 address.Length) <> 0 then
                     failwith $"the host would not bind %A{row}: errno %d{Marshal.GetLastPInvokeError ()}"
 
             let listen () =
-                if hostListen (fd, 4) <> 0 then
+                if HostCalls.listen (fd, 4) <> 0 then
                     failwith $"the host would not listen on %A{row}: errno %d{Marshal.GetLastPInvokeError ()}"
 
             match row.Phase with
@@ -677,21 +682,21 @@ module TestUnconnectedSocketTransfer =
                 bind ()
                 listen ()
 
-            if row.NonBlocking && hostSetNonBlocking (nativeint fd, 1) <> 0 then
+            if row.NonBlocking && HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                 failwith $"the host would not set O_NONBLOCK on %A{row}"
 
             Marshal.SetLastPInvokeError 0
 
             let returned =
                 match row.Call with
-                | Call.Read count -> hostRead (fd, Array.zeroCreate (int count), unativeint count)
-                | Call.Write count -> hostWrite (fd, Array.zeroCreate (int count), unativeint count)
+                | Call.Read count -> HostCalls.read (fd, Array.zeroCreate (int count), unativeint count)
+                | Call.Write count -> HostCalls.write (fd, Array.zeroCreate (int count), unativeint count)
 
             let errno = if returned = -1n then Marshal.GetLastPInvokeError () else 0
 
             Some (int64 returned, errno)
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``this host answers every row the kernel can build as the kernel does`` () : unit =

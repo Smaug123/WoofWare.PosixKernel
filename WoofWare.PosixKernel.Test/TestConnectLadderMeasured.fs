@@ -194,18 +194,18 @@ module TestConnectLadderMeasured =
         | _ -> false
 
     /// What this kernel answers for `call`, in the probe's words.
-    let private replay (platform : SimulatedUnixPlatform) (call : Call) : string =
+    let private replay (routes : Routes) (platform : SimulatedUnixPlatform) (call : Call) : string =
         if call.Kind = SocketKind.Datagram && call.State = State.Listening then
             failwith "a datagram socket does not listen"
 
-        let fd, system = setUp platform call.Kind call.State
+        let fd, system = setUp routes platform call.Kind call.State
         let before = local (socketOf fd system)
 
         match
             CopyIn.connect fd UserBuffer.Mapped call.Length (CopyIn.blob platform call.Family call.Endpoint) system
         with
         | Error refusal ->
-            let name = (sprintf "%A" refusal).Split([| ' ' ; '\n' |]).[0]
+            let name = UnionCaseName.ofValue refusal
             $"refused:%s{name}"
         | Ok (outcome, after) ->
             let answer =
@@ -239,7 +239,7 @@ module TestConnectLadderMeasured =
     /// came from: every call that line stands for is refused, with the case
     /// named. Each is a state whose consequences beyond the call's own answer
     /// are not measured.
-    let private refusedOnPurpose (flavour : string) : (string * string) list =
+    let private refusedOnPurpose (_ : Routes) (flavour : string) : (string * string) list =
         match flavour with
         | "linux" ->
             [
@@ -262,9 +262,14 @@ module TestConnectLadderMeasured =
 
     /// Every mismatch, one per probe line, with the distinct answers this
     /// kernel gave across the calls that line stands for.
-    let private mismatches (platform : SimulatedUnixPlatform) (all : Call list) : (string * string) list =
+    let private mismatches
+        (routes : Routes)
+        (platform : SimulatedUnixPlatform)
+        (all : Call list)
+        : (string * string) list
+        =
         all
-        |> List.map (fun call -> call, replay platform call)
+        |> List.map (fun call -> call, replay routes platform call)
         |> List.filter (fun (call, actual) -> actual <> expected call)
         |> List.groupBy (fun (call, _) -> call.Source)
         |> List.map (fun (source, rows) ->
@@ -276,11 +281,11 @@ module TestConnectLadderMeasured =
             key, (rows |> List.map snd |> List.distinct |> String.concat " | ")
         )
 
-    let private check (flavour : string) (platform : SimulatedUnixPlatform) (all : Call list) : unit =
-        let actual = mismatches platform all |> Set.ofList
+    let private check (routes : Routes) (flavour : string) (platform : SimulatedUnixPlatform) (all : Call list) : unit =
+        let actual = mismatches routes platform all |> Set.ofList
 
         let allowed =
-            refusedOnPurpose flavour
+            refusedOnPurpose routes flavour
             |> List.map (fun (line, answer) -> Regex.Replace (line, " +", " "), answer)
             |> Set.ofList
 
@@ -294,14 +299,18 @@ module TestConnectLadderMeasured =
                 |> String.concat "\n"
 
             failwith
-                $"%s{flavour}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} listed lines now answered as measured or differently:\n%s{show missing}"
+                $"%s{flavour}, routes %A{routes}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} listed lines now answered as measured or differently:\n%s{show missing}"
 
-    [<Test>]
-    let ``every Linux row is answered as measured`` () : unit =
+    /// Each replay runs on the machine `UnixSystem.initial` boots, and on one
+    /// with no local routes.
+    let private routeConfigurations : Routes list = allRoutes
+
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Linux row is answered as measured`` (routes : Routes) : unit =
         linuxCalls |> List.isEmpty |> shouldEqual false
-        check "linux" SimulatedUnixPlatform.linuxX64 linuxCalls
+        check routes "linux" SimulatedUnixPlatform.linuxX64 linuxCalls
 
-    [<Test>]
-    let ``every Darwin row is answered as measured`` () : unit =
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Darwin row is answered as measured`` (routes : Routes) : unit =
         darwinCalls |> List.isEmpty |> shouldEqual false
-        check "darwin" SimulatedUnixPlatform.macOsArm64 darwinCalls
+        check routes "darwin" SimulatedUnixPlatform.macOsArm64 darwinCalls

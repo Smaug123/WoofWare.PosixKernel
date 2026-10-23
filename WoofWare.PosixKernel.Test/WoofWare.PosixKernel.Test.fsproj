@@ -13,12 +13,28 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="HostCalls.fs" />
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
+    <Compile Include="HostCorpus.fs" />
+    <Compile Include="TestOrder.fs" />
+    <Compile Include="Expect.fs" />
+    <Compile Include="UnionCaseName.fs" />
     <Compile Include="GraphMutators.fs" />
     <Compile Include="Configured.fs" />
+    <Compile Include="Kernel.fs" />
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
+    <Compile Include="QueueAccounts.fs" />
+    <Compile Include="Callers.fs" />
+    <Compile Include="ForgedThread.fs" />
+    <Compile Include="ForgedSocket.fs" />
+    <Compile Include="Stepped.fs" />
+    <Compile Include="ParkedCall.fs" />
+    <Compile Include="IlCalls.fs" />
+    <Compile Include="Woken.fs" />
+    <Compile Include="Interruptions.fs" />
+    <Compile Include="AnswersBeforeInterrupted.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />
@@ -35,6 +51,8 @@
     <Compile Include="ReuseAddress.fs" />
     <Compile Include="PathText.fs" />
     <Compile Include="OpenFlagWords.fs" />
+    <Compile Include="MaskHow.fs" />
+    <Compile Include="NonBlocking.fs" />
     <Compile Include="Answered.fs" />
     <Compile Include="Eager.fs" />
     <Compile Include="PReadUnchanged.fs" />
@@ -48,6 +66,8 @@
     <Compile Include="EndedMachine.fs" />
     <Compile Include="ForgedPark.fs" />
     <Compile Include="Machines.fs" />
+    <Compile Include="ReferenceWake.fs" />
+    <Compile Include="FinishOracle.fs" />
     <Compile Include="ForgedConnection.fs" />
     <Compile Include="FcntlWorld.fs" />
     <Compile Include="PendingSignal.fs" />
@@ -55,17 +75,21 @@
     <Compile Include="Interruptible.fs" />
     <Compile Include="TestUnixThreadTable.fs" />
     <Compile Include="CredentialsGen.fs" />
+    <Compile Include="DarwinRootFiles.fs" />
     <Compile Include="TestCredentials.fs" />
     <Compile Include="TestInodeOwner.fs" />
     <Compile Include="TestPermissionStanding.fs" />
     <Compile Include="TestGetGroups.fs" />
     <Compile Include="TestCredentialChange.fs" />
+    <Compile Include="TestCredentialThreadsMeasured.fs" />
+    <Compile Include="TestCredentialSetxid.fs" />
     <Compile Include="TestModeChange.fs" />
     <Compile Include="TestUmask.fs" />
     <Compile Include="TestAccess.fs" />
     <Compile Include="TestStartingDirectory.fs" />
     <Compile Include="TestAttributeChangeAt.fs" />
     <Compile Include="TestUTimensAt.fs" />
+    <Compile Include="TestAccessTime.fs" />
     <Compile Include="TestMkNod.fs" />
     <Compile Include="TestSymlinkMode.fs" />
     <Compile Include="TestReadLinkMode.fs" />
@@ -98,10 +122,12 @@
     <Compile Include="TestSocketAddress.fs" />
     <Compile Include="TestUnixSystemInvariants.fs" />
     <Compile Include="TestSocketTable.fs" />
+    <Compile Include="TestSocketTableIndex.fs" />
     <Compile Include="TestSocketEventDelivery.fs" />
     <Compile Include="SocketFuzz.fs" />
     <Compile Include="TestSocketFuzz.fs" />
     <Compile Include="TestNoPawPrintReference.fs" />
+    <Compile Include="TestTotalComparison.fs" />
     <Compile Include="TestPublicSurface.fs" />
     <Compile Include="TestTotalQueries.fs" />
     <Compile Include="LibraryNames.fs" />
@@ -113,6 +139,8 @@
     <Compile Include="TestUnionCaseOrder.fs" />
     <Compile Include="RecordLabels.fs" />
     <Compile Include="TestSurface.fs" />
+    <Compile Include="TestSyscall.fs" />
+    <Compile Include="TestStepOracle.fs" />
     <Compile Include="TestRecordLabels.fs" />
     <Compile Include="TestPathArgument.fs" />
     <Compile Include="TestPathCopyIn.fs" />
@@ -132,10 +160,15 @@
     <Compile Include="TestFileSystemType.fs" />
     <Compile Include="TestDirectorySize.fs" />
     <Compile Include="TestLinkCount.fs" />
+    <Compile Include="TestStatBlocks.fs" />
     <Compile Include="TestWithFileSystemAndCurrentDirectory.fs" />
+    <Compile Include="TestSeedSymlinkTarget.fs" />
     <Compile Include="TestInodeLifetime.fs" />
     <Compile Include="ErrnoHeaders.fs" />
     <Compile Include="TestUnixError.fs" />
+    <Compile Include="TestUnionCaseName.fs" />
+    <Compile Include="TestExpect.fs" />
+    <Compile Include="TestFixtureParallelism.fs" />
     <Compile Include="TestUnixByteString.fs" />
     <Compile Include="TestUnixPath.fs" />
     <Compile Include="TestUnixPathBytes.fs" />
@@ -144,6 +177,7 @@
     <Compile Include="TestFileSystemSeed.fs" />
     <Compile Include="TestFileDescriptorRegistry.fs" />
     <Compile Include="TestProcessId.fs" />
+    <Compile Include="TestForgedValues.fs" />
     <Compile Include="TestSignal.fs" />
     <Compile Include="TestSignalMask.fs" />
     <Compile Include="TestSignalAgainstHost.fs" />
@@ -156,6 +190,8 @@
     <Compile Include="TestSigprocmask.fs" />
     <Compile Include="TestSigsuspend.fs" />
     <Compile Include="TestSleepPark.fs" />
+    <Compile Include="TestFutex.fs" />
+    <Compile Include="TestFutexBitset.fs" />
     <Compile Include="TestFifoOpenPark.fs" />
     <Compile Include="TestSelectPark.fs" />
     <Compile Include="TestSignalWaitPark.fs" />
@@ -165,16 +201,21 @@
     <Compile Include="TestUnblockForAnotherThread.fs" />
     <Compile Include="TestSignalPickOrder.fs" />
     <Compile Include="TestSignalReceiver.fs" />
+    <Compile Include="TestKillTargetsMeasured.fs" />
+    <Compile Include="TestProcessSignalPair.fs" />
+    <Compile Include="TestPendingSignalLimit.fs" />
     <Compile Include="SignalFuzz.fs" />
     <Compile Include="TestSignalFuzz.fs" />
     <Compile Include="TestDirectoryEnumeration.fs" />
     <Compile Include="TestDirectoryDescription.fs" />
     <Compile Include="TestDeviceFileSystem.fs" />
     <Compile Include="TestDeviceFileSystemAgainstHost.fs" />
+    <Compile Include="TestDevfs.fs" />
     <Compile Include="TestDeviceDescriptors.fs" />
     <Compile Include="TestDeviceDescriptorsAgainstHost.fs" />
     <Compile Include="TestDirectoryReadAgainstHost.fs" />
     <Compile Include="TestPathCursor.fs" />
+    <Compile Include="TestFileContents.fs" />
     <Compile Include="TestVirtualFileSystem.fs" />
     <Compile Include="TestFsChange.fs" />
     <Compile Include="TestBindingCount.fs" />
@@ -184,11 +225,14 @@
     <Compile Include="TestPosixFadvise.fs" />
     <Compile Include="TestUnlinkRules.fs" />
     <Compile Include="TestRenameRules.fs" />
+    <Compile Include="TestRenameAncestorTrap.fs" />
     <Compile Include="TestResolutionSplit.fs" />
     <Compile Include="TestVirtualFileSystemAgainstHost.fs" />
     <Compile Include="TestBindingAgainstHost.fs" />
     <Compile Include="TestArchitectureFacts.fs" />
     <Compile Include="TestArchitectureAgainstHost.fs" />
+    <Compile Include="HashedValues.fs" />
+    <Compile Include="TestHashAcrossProcesses.fs" />
     <Compile Include="SocketSweep.fs" />
     <Compile Include="TestSocketSyscall.fs" />
     <Compile Include="TestSocketSyscallAgainstHost.fs" />
@@ -199,6 +243,10 @@
     <Compile Include="TestSockOptAgainstHost.fs" />
     <Compile Include="TestSocketOptions.fs" />
     <Compile Include="TestCallProgress.fs" />
+    <Compile Include="TestEntry.fs" />
+    <Compile Include="TestShape.fs" />
+    <Compile Include="TestCallerChecks.fs" />
+    <Compile Include="TestSignalDue.fs" />
     <Compile Include="TestSocketAddressing.fs" />
     <Compile Include="TestSocketErrorOption.fs" />
     <Compile Include="TestSocketErrorAgainstHost.fs" />
@@ -209,11 +257,25 @@
     <Compile Include="TestConnectedTransferAgainstHost.fs" />
     <Compile Include="TestTcpTransfer.fs" />
     <Compile Include="TestTcpTransferMeasured.fs" />
+    <Compile Include="TestDatagramReceiver.fs" />
+    <Compile Include="TestDatagramTransfer.fs" />
+    <Compile Include="TestDatagramSendToProbe.fs" />
+    <Compile Include="TestDatagramSleepersProbe.fs" />
+    <Compile Include="TestDatagramSendMsgProbe.fs" />
+    <Compile Include="TestDatagramBlockingReceive.fs" />
+    <Compile Include="TestDatagramTransferAgainstHost.fs" />
+    <Compile Include="TestDatagramErrorAgainstHost.fs" />
     <Compile Include="TestTcpShutdownMeasured.fs" />
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
     <Compile Include="TestEphemeralPorts.fs" />
+    <Compile Include="TestPortHolders.fs" />
     <Compile Include="TestEphemeralSearchMeasured.fs" />
+    <Compile Include="TestConnectSearchHoldersMeasured.fs" />
+    <Compile Include="TestV6OnlyAfterRefusalMeasured.fs" />
+    <Compile Include="TestPortSharingMeasured.fs" />
+    <Compile Include="TestLocalPortRangeMeasured.fs" />
+    <Compile Include="TestUnprivilegedPortStartMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -224,10 +286,15 @@
     <Compile Include="SocketLadder.fs" />
     <Compile Include="DualModeProbe.fs" />
     <Compile Include="TestDualModeMeasured.fs" />
+    <Compile Include="TestPrivilegedPortMeasured.fs" />
+    <Compile Include="TestPortRangeSysctlsMeasured.fs" />
+    <Compile Include="TestBindUidsMeasured.fs" />
+    <Compile Include="TestSocketUid.fs" />
     <Compile Include="TestDualMode.fs" />
     <Compile Include="TestConnectLadderMeasured.fs" />
     <Compile Include="TestBindLadderMeasured.fs" />
     <Compile Include="TestConnectDestinationMeasured.fs" />
+    <Compile Include="TestLoopbackAliasConnectMeasured.fs" />
     <Compile Include="TestCopyOutMeasured.fs" />
     <Compile Include="TestSockNameFaultLength.fs" />
     <Compile Include="TestPoll.fs" />
@@ -242,40 +309,66 @@
     <Compile Include="TestInotifyMeasured.fs" />
     <Compile Include="TestInotifyAgainstHost.fs" />
     <Compile Include="TestInotifyInvariants.fs" />
+    <Compile Include="TestFaultingFileWrite.fs" />
+    <Compile Include="TestFileContentsCost.fs" />
     <Compile Include="TestInotifyDeliveryMeasured.fs" />
+    <Compile Include="TestInotifyRemovedDirectoryMeasured.fs" />
+    <Compile Include="TestInotifyCloseMeasured.fs" />
+    <Compile Include="TestInotifyDeviceWriteMeasured.fs" />
     <Compile Include="TestInotifyDentryMeasured.fs" />
     <Compile Include="TestInotifySelfMeasured.fs" />
+    <Compile Include="InotifyDeliveryOps.fs" />
     <Compile Include="TestInotifyDelivery.fs" />
     <Compile Include="TestInotifyDeliveryAgainstHost.fs" />
-    <Compile Include="TestInotifyRefusals.fs" />
+    <Compile Include="TestInotifyRemovedDirectory.fs" />
     <Compile Include="TestKqueue.fs" />
     <Compile Include="KeventWorld.fs" />
+    <Compile Include="TestDispositionBeforeReturn.fs" />
+    <Compile Include="TestFirstWake.fs" />
     <Compile Include="TestKeventMeasured.fs" />
     <Compile Include="TestKeventRegistration.fs" />
     <Compile Include="TestKqueueOwner.fs" />
-    <Compile Include="TestSimulatedMachine.fs" />
+    <Compile Include="TestProcessView.fs" />
     <Compile Include="TestMultiProcess.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
     <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
-    <Compile Include="TestWakeSweepMemo.fs" />
+    <Compile Include="TestWakeMemo.fs" />
+    <Compile Include="TestWakeSweepCost.fs" />
+    <Compile Include="TestDatagramDeliveryCost.fs" />
+    <Compile Include="TestCloseCost.fs" />
+    <Compile Include="TestOpenFileIndex.fs" />
+    <Compile Include="TestCloseRegistrationCost.fs" />
+    <Compile Include="TestWakeSignalCost.fs" />
+    <Compile Include="TestPollQueueIndex.fs" />
+    <Compile Include="TestSleeperIndex.fs" />
+    <Compile Include="TestFileSystemCommitCost.fs" />
+    <Compile Include="TestFileSystemIndex.fs" />
+    <Compile Include="TestUnixWaitFinish.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
+    <Compile Include="TestTimeWait.fs" />
+    <Compile Include="TestTimeWaitMeasured.fs" />
     <Compile Include="TestListenerTeardown.fs" />
     <Compile Include="TestQueuedOptions.fs" />
     <Compile Include="TestShutdownAgainstHost.fs" />
     <Compile Include="TestKeventWriteData.fs" />
     <Compile Include="TestDarwinPoll.fs" />
+    <Compile Include="TestHugeTimeoutMeasured.fs" />
+    <Compile Include="TestPollEntryCount.fs" />
     <Compile Include="TestKqueueTimerReserved.fs" />
     <Compile Include="TestPipeBuffer.fs" />
     <Compile Include="TestPipeBufferCorpus.fs" />
     <Compile Include="TestPipeBufferAgainstHost.fs" />
     <Compile Include="TestPipe.fs" />
-    <Compile Include="TestDeliveryLog.fs" />
+    <Compile Include="TestDeliveries.fs" />
     <Compile Include="TestLaunchedStreams.fs" />
     <Compile Include="TestSuppliedPipe.fs" />
     <Compile Include="TestBlockingPipe.fs" />
     <Compile Include="TestBlockingConnection.fs" />
+    <Compile Include="TestCloseDrainMeasured.fs" />
     <Compile Include="TestNonBlockingAsleepMeasured.fs" />
+    <Compile Include="TestAccept4FlagsMeasured.fs" />
+    <Compile Include="TestConnectionWriteResetMeasured.fs" />
     <Compile Include="TestReceiveSendMeasured.fs" />
     <Compile Include="TestStreamReaderGone.fs" />
     <Compile Include="TestPipeAgainstHost.fs" />
@@ -284,6 +377,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The source `TestHashAcrossProcesses` runs in a child process. -->
+    <EmbeddedResource Include="HashedValues.fs" LogicalName="WoofWare.PosixKernel.Test.HashedValues.fs" />
     <!-- What `socket(2)` answered for raw arguments, measured per flavour by
          docs/plans/2026-08-23-posix-kernel-extraction/socket-arguments.c.
          `TestSocketSyscall` holds `UnixSocket.socket` to it. -->
@@ -298,11 +393,47 @@
          `SignalState` to them. -->
     <EmbeddedResource Include="signalOrder\*.txt" />
     <EmbeddedResource Include="signalReceiver\*.txt" />
+    <!-- st_blksize and st_blocks, measured per flavour by docs/probes/stat-blocks.
+         `TestStatBlocks` replays its rows. -->
+    <EmbeddedResource Include="..\docs\probes\stat-blocks\measured-linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.stat-blocks.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\stat-blocks\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.stat-blocks.darwin.txt" />
     <!-- What a signal sent to the process, which every thread blocked, did
          once a thread unblocked it, measured per flavour by
          docs/probes/non-leader-unblock. `TestSignalReceiver` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.darwin.txt" />
+    <!-- docs/probes/kill-targets. `TestKillTargetsMeasured` replays every `target` row. -->
+    <EmbeddedResource Include="..\docs\probes\kill-targets\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.kill-targets.linux-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\kill-targets\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.kill-targets.linux-uid1000.txt" />
+    <EmbeddedResource Include="..\docs\probes\kill-targets\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.kill-targets.darwin.txt" />
+    <!-- docs/probes/process-signal-pair. `TestProcessSignalPair` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\process-signal-pair\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.process-signal-pair.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\process-signal-pair\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.process-signal-pair.darwin.txt" />
+    <!-- docs/probes/rt-queue-limit. `TestPendingSignalLimit` replays its Linux rows. -->
+    <EmbeddedResource Include="..\docs\probes\rt-queue-limit\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.rt-queue-limit.linux-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rt-queue-limit\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.rt-queue-limit.linux-uid1000.txt" />
+    <!-- docs/probes/disposition-before-return. `TestDispositionBeforeReturn` replays every held row. -->
+    <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.darwin.txt" />
+    <!-- docs/probes/poll-entry-count. `TestPollEntryCount` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-aarch64-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-aarch64-uid1000.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.12.113-x86_64-uid0-qemu.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-x86_64-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid0.txt" />
+    <!-- docs/probes/first-wake. `TestFirstWake` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\first-wake\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\first-wake\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.darwin.txt" />
+    <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
+    <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
+    <!-- docs/probes/futex-bitset. `TestFutexBitset` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\futex-bitset\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex-bitset.linux.txt" />
+    <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.darwin.txt" />
+    <!-- docs/probes/huge-timeout. `TestHugeTimeoutMeasured` replays every row whose call the model makes. -->
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\huge-timeout\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.huge-timeout.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -320,6 +451,18 @@
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-delivery-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDelivery.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-dentry-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDentry.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-11-inotify\inotify-self-probe.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifySelf.linux.txt" />
+    <!-- What Linux 6.18.5 reported of a change to a removed directory.
+         `TestInotifyRemovedDirectoryMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-removed-directory\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyRemovedDirectory.linux.txt" />
+    <!-- What Linux 6.18.5 answered of the release of a description under a
+         watch, measured by docs/probes/inotify-close/inotify-close-probe.c.
+         `TestInotifyCloseMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-close\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyClose.linux.txt" />
+    <!-- What Linux 6.18.5 answered of a write to a character device under a
+         watch, measured by
+         docs/probes/inotify-device-write/inotify-device-write-probe.c.
+         `TestInotifyDeviceWriteMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\inotify-device-write\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.inotifyDeviceWrite.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -329,6 +472,13 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.darwin.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Where Linux's accept4(2) screens its flags and what they do, measured
+         by docs/probes/accept4-flags. `TestAccept4FlagsMeasured` replays every
+         row. -->
+    <EmbeddedResource Include="..\docs\probes\accept4-flags\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.accept4Flags.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -365,8 +515,67 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.darwin.txt" />
+    <!-- Which ports a TCP connect's implicit bind passed over, for each kind of
+         thing that held a port, measured per flavour by
+         docs/probes/connect-search-holders. `TestConnectSearchHoldersMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.darwin.txt" />
+    <!-- What setsockopt(IPV6_V6ONLY) answered on a dual-mode socket whose
+         connect was refused, measured per flavour by
+         docs/probes/v6only-after-refusal. `TestV6OnlyAfterRefusalMeasured`
+         replays the rows the model can make. -->
+    <EmbeddedResource Include="..\docs\probes\v6only-after-refusal\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.v6only-after-refusal.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\v6only-after-refusal\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.v6only-after-refusal.darwin.txt" />
+    <!-- Which binds two processes' sockets shared a port through, by
+         SO_REUSEADDR and SO_REUSEPORT, and which ports a datagram socket's
+         search took beside them, measured per flavour by
+         docs/probes/port-sharing. `TestPortSharingMeasured` replays every row
+         the model can make. -->
+    <EmbeddedResource Include="..\docs\probes\port-sharing\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\port-sharing\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.darwin.txt" />
+    <!-- Which values Linux's ip_local_port_range and
+         ip_unprivileged_port_start accepted, measured by
+         docs/probes/local-port-range. `TestLocalPortRangeMeasured` replays the
+         ranges. -->
+    <EmbeddedResource Include="..\docs\probes\local-port-range\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.local-port-range.linux.txt" />
+    <!-- Which ports an unprivileged process bound under each value of Linux's
+         ip_unprivileged_port_start, and which values it took against the
+         range, measured by docs/probes/unprivileged-port-start.
+         `TestUnprivilegedPortStartMeasured` and `TestLocalPortRangeMeasured`
+         replay it. -->
+    <EmbeddedResource Include="..\docs\probes\unprivileged-port-start\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.unprivileged-port-start.linux.txt" />
+    <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
+         connect took its four-tuple over, measured per flavour by
+         docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-boot.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.boot-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
+    <!-- What connect(2) to 127.0.0.2 answered, an address on loopback's route
+         that Darwin does not hold, measured per flavour by
+         docs/probes/loopback-alias-connect. `TestLoopbackAliasConnectMeasured`
+         replays its connects. -->
+    <EmbeddedResource Include="..\docs\probes\loopback-alias-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.loopback-alias-connect.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\loopback-alias-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.loopback-alias-connect.darwin.txt" />
+    <!-- Which addresses an unprivileged bind(2) to a port below 1024 was refused
+         for, measured per flavour by docs/probes/privileged-port.
+         `TestPrivilegedPortMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.darwin-root.txt" />
+    <!-- docs/probes/darwin-root/port-range.c, as root. `TestPortRangeSysctlsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\port-range.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.port-range.txt" />
+    <!-- docs/probes/darwin-root/bind-uids.c, as root. `TestBindUidsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\bind-uids.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.bind-uids.txt" />
+    <!-- docs/probes/socket-creator-uid: which uid a TCP socket carries, made and accepted. `TestSocketUid` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.darwin-root.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
          name another way, measured by docs/probes/name-equivalence/name-equivalence.c
          on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.
@@ -396,8 +605,30 @@
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.17.13-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.17.13-x86_64.txt" />
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.18.5-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.18.5-x86_64.txt" />
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.18.5-aarch64.txt" />
+    <!-- What a write or pwrite to a regular file leaves behind when the copy
+         from the caller's buffer faults, measured by
+         docs/probes/faulting-file-write. `TestFaultingFileWrite` replays every
+         row. -->
+    <EmbeddedResource Include="..\docs\probes\faulting-file-write\darwin-27.0.0-arm64-apfs.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.darwin-27.0.0-arm64-apfs.txt" />
+    <EmbeddedResource Include="..\docs\probes\faulting-file-write\darwin-27.0.0-arm64-apfs-root.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.darwin-27.0.0-arm64-apfs-root.txt" />
+    <EmbeddedResource Include="..\docs\probes\faulting-file-write\linux-6.18.5-aarch64-ext4.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.linux-6.18.5-aarch64-ext4.txt" />
+    <EmbeddedResource Include="..\docs\probes\faulting-file-write\linux-6.18.5-aarch64-tmpfs.txt" LogicalName="WoofWare.PosixKernel.Test.faulting-file-write.linux-6.18.5-aarch64-tmpfs.txt" />
+    <!-- What Darwin answers root and uid 501 about another user's files,
+         measured as root by docs/probes/darwin-root/root-files.c.
+         `DarwinRootFiles` reads its MAP rows for the fixtures that replay
+         them. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\root-files.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.root-files.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.darwin-root.txt" />
+    <!-- docs/probes/darwin-root/credentials.c, as root. `TestCredentialChange` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\credentials.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.credentials.txt" />
+    <!-- What a blocking write to a connected socket answers when its own bytes
+         reset the connection, measured per flavour by
+         docs/probes/connection-write-reset. `TestConnectionWriteResetMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\connection-write-reset\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connection-write-reset.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\connection-write-reset\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connection-write-reset.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -412,6 +643,10 @@
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\open-flags.linux-6.12.111-x86_64-root.txt" LogicalName="WoofWare.PosixKernel.Test.openFlags.linuxX64.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\open-flags.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.openFlags.linuxArm64.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\open-flags.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.openFlags.darwin.txt" />
+    <!-- The word opendir(3) passes to open(2), measured per flavour by
+         docs/probes/opendir-word. `TestOpenFlagWord` replays its rows. -->
+    <EmbeddedResource Include="..\docs\probes\opendir-word\measured-linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.opendirWord.linuxArm64.txt" />
+    <EmbeddedResource Include="..\docs\probes\opendir-word\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.opendirWord.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\fcntl-dup.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.fcntlDup.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\fcntl-dup.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.fcntlDup.linuxRoot.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\fcntl-dup.linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.fcntlDup.linuxUser.txt" />
@@ -437,6 +672,14 @@
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\mkdirat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.mkdiratRules.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\unlinkat-rules.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.unlinkatRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\unlinkat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.unlinkatRules.darwin.txt" />
+    <!-- docs/probes/rename/ancestor-trap.py. `TestRenameAncestorTrap` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.18-uid1000.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.18-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-6.17-uid1001.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.17-uid1001.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-6.17-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-6.17-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-7.0-uid1001.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-7.0-uid1001.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-linux-7.0-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.linux-7.0-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\rename\measured-ancestor-trap-darwin-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.ancestor-trap.darwin-uid501.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\renameat-rules.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.renameatRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\renameat-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.renameatRules.darwin.txt" />
     <!-- Whether `readlink(2)` consults a symbolic link's own mode, measured per
@@ -464,6 +707,33 @@
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-rules.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.linkRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.linkRules.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-empty-path.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.linkEmptyPath.linux.txt" />
+    <!-- The longest target symlink(2) and symlinkat(2) store, on tmpfs and ext4
+         under Linux and on APFS and HFS+ under Darwin, measured by
+         docs/probes/symlink-target-length. `TestSeedSymlinkTarget` replays
+         every row against the syscall and the boot filesystem's seed. -->
+    <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.darwin.txt" />
+    <!-- The times a Linux devtmpfs reported for /dev and its nodes over three
+         boots, measured by docs/probes/devtmpfs-times. `TestDeviceFileSystem`
+         replays them. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-times\measured-linux-6.18.5-aarch64-3-boots.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-times.linux.txt" />
+    <!-- Every entry of a Linux devtmpfs, measured by docs/probes/devtmpfs-contents.
+         `TestDeviceFileSystem` holds the default contents' nodes to their rows. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-contents\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-contents.linux.txt" />
+    <!-- What a devtmpfs listing reports for `.` and `..`, and when it moves a
+         directory's atime, measured by docs/probes/devtmpfs-listing.
+         `TestDeviceFileSystem` replays both. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-listing\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-listing.linux.txt" />
+    <!-- Darwin's devfs as uid 501 sees it: stat, statfs and listing rows, when
+         a time moves, and every namespace and attribute call's errno,
+         measured by docs/probes/devfs-darwin. `TestDevfs` replays them. -->
+    <EmbeddedResource Include="..\docs\probes\devfs-darwin\measured-darwin-27.0-arm64-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.devfs-darwin.txt" />
+    <!-- docs/probes/atime. `TestAccessTime` replays the rows of the mounts the
+         model claims: a noatime tmpfs on Linux, and APFS with its default
+         options on Darwin. -->
+    <EmbeddedResource Include="..\docs\probes\atime\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.atime.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\atime\measured-darwin-27.0-apfs-data.txt" LogicalName="WoofWare.PosixKernel.Test.atime.darwin-data.txt" />
+    <EmbeddedResource Include="..\docs\probes\atime\measured-darwin-27.0-apfs-image-default.txt" LogicalName="WoofWare.PosixKernel.Test.atime.darwin-image-default.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -501,6 +771,12 @@
          output is embedded from beside it rather than copied.
          `TestCopyFileSyscalls` replays both matrices. -->
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\copy-file-syscalls.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.copyFileSyscalls.linux.txt" />
+    <!-- What `copy_file_range(2)` answered for offsets near 0 and INT64_MAX
+         summed with lengths near SSIZE_MAX and SIZE_MAX, and where its
+         EOVERFLOW falls among its other checks, measured on Linux by
+         docs/probes/copy-file-range-overflow/copy-file-range-overflow.c.
+         `TestCopyFileSyscalls` replays its GRID and ORDER rows. -->
+    <EmbeddedResource Include="..\docs\probes\copy-file-range-overflow\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.copy-file-range-overflow.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -522,6 +798,35 @@
          host to its flavour's rows. -->
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-transfer.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpTransfer.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-transfer.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpTransfer.darwin.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- What the UDP probes of docs/plans/2026-10-18-udp-data-path measured:
+         every call's answers (udp-transfer.c), what each call does with a
+         pending ICMP error (udp-error.c), how many datagrams an unread
+         receiver holds (udp-capacity.c), what Linux charges for each and when
+         it gives the charge back (udp-truesize.c, udp-release.c), and what
+         Darwin charges in bytes and mbufs (udp-mbufs.c), and which failure
+         wins in sendto and recvfrom (udp-sendto.c). `TestDatagramReceiver`,
+         `TestDatagramTransfer` and `TestDatagramSendToProbe` replay them. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-transfer.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTransfer.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-transfer.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpTransfer.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-error.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpError.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-error.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpError.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sendto.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpSendto.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sendto.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpSendto.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sleepers.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpSleepers.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sleepers.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpSleepers.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-msg.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpMsg.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-msg.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpMsg.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-truesize.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTruesize.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-release.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpRelease.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-mbufs.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpMbufs.darwin.txt" />
+    <!-- The same probes on GitHub's Azure runners, 6.17 and 7.0, each
+         architecture, at the runners' rmem_default and at the stock one. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\runners\udp-*.txt" LogicalName="WoofWare.PosixKernel.Test.udpRunners.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -564,6 +869,12 @@
          is embedded from beside it. `TestReceiveSendMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-recv-send.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpRecvSend.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-recv-send.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpRecvSend.darwin.txt" />
+    <!-- What a close does to calls asleep through a dup of the descriptor it
+         closes, and to later calls through the dup:
+         docs/plans/2026-10-07-tcp-byte-transfer/tcp-close-drain.c, whose output
+         TestCloseDrainMeasured replays row by row. -->
+    <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-close-drain.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.tcpCloseDrain.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-07-tcp-byte-transfer\tcp-close-drain.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.tcpCloseDrain.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -580,6 +891,10 @@
     <!-- What a real pipe answered to random non-blocking reads and writes,
          measured per flavour; `TestPipeBufferCorpus` holds `PipeBuffer` to it. -->
     <EmbeddedResource Include="pipeBuffer\*.txt" />
+    <!-- What a kernel answered to a `HostComparison`'s generated inputs, recorded by
+         `HostCorpus.live` on a host of that flavour; each comparison's replay test
+         holds the model to it on every host. -->
+    <EmbeddedResource Include="hostCorpus\*.txt" />
     <!-- What a real pipe held as a reader drained it while one blocking write was
          still filling it, measured per flavour; `TestSuppliedPipe` replays it. -->
     <EmbeddedResource Include="suppliedPipe\*.txt" />
@@ -600,6 +915,7 @@
     <EmbeddedResource Include="socketFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzzCorpus\*.txt" />
+    <EmbeddedResource Include="multiProcessOracle\*.txt" />
     <EmbeddedResource Include="socketFuzzCorpus\*.txt" />
   </ItemGroup>
 

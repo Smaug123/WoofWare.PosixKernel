@@ -54,7 +54,7 @@ module TestUmask =
             masks
             |> List.fold
                 (fun (answers, system) mask ->
-                    let previous, system = UnixSystem.umask mask system
+                    let previous, system = UnixSystem.umask (Callers.leader system) mask system
                     PermissionBits.toInt previous :: answers, system
                 )
                 ([], system)
@@ -189,14 +189,15 @@ module TestUmask =
     [<Test>]
     let ``step answers umask as the function does`` () : unit =
         let property (platformIndex : int, earlier : int, mask : int) : unit =
-            let _, system = UnixSystem.umask earlier (fresh platforms.[platformIndex])
-            let previous, expected = UnixSystem.umask mask system
+            let fresh = fresh platforms.[platformIndex]
+            let _, system = UnixSystem.umask (Callers.leader fresh) earlier fresh
+            let previous, expected = UnixSystem.umask (Callers.leader system) mask system
 
-            match UnixSystem.tryStep 0 (Syscall.UMask mask) system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed answer), after) ->
-                answer |> shouldEqual (int64 (PermissionBits.toInt previous))
+            match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.UMask mask) system with
+            | Ok (SteppedCall.UMask (answer, after)) ->
+                answer |> shouldEqual previous
                 after |> shouldEqual expected
-            | other -> failwith $"unexpected: %A{other}"
+            | other -> failwith $"unexpected: %A{Result.map Stepped.view other}"
 
         let gen =
             gen {
@@ -255,7 +256,9 @@ module TestUmask =
                     if bits &&& ~~~(measuredWidth platform) = 0 then
                         []
                     else
-                        [ UnixSystemDefect.UmaskNotOfPlatform (mode bits, platform) ]
+                        [
+                            UnixSystemDefect.UmaskNotOfPlatform (UnixSystem.defaultProcessId, mode bits, platform)
+                        ]
 
                 UnixSystem.checkInvariants forged |> shouldEqual expected
 
@@ -271,12 +274,14 @@ module TestUmask =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private created (p : string) (system : UnixSystem<int, string>) : int =
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context p))
                 system
@@ -306,11 +311,12 @@ module TestUmask =
 
         for platform in platforms do
             for mask in 0..0o7777 do
-                let _, system = UnixSystem.umask mask (fresh platform)
+                let fresh = fresh platform
+                let _, system = UnixSystem.umask (Callers.leader fresh) mask fresh
                 let stored = mask &&& measuredWidth platform
 
                 for requested in [ 0o7777 ; 0o666 ; 0o2775 ; 0o4755 ] do
-                    let _, afterOpen = Answered.openPath creatingOpen target requested system
+                    let _, afterOpen = Answered.openPath target creatingOpen requested system
                     let opened = created "/e" afterOpen
                     let expectedOpen = requested &&& openMask platform &&& ~~~stored
 
@@ -318,7 +324,7 @@ module TestUmask =
                         failwith
                             $"%O{platform}: umask(0o%04o{mask}), open(0o%04o{requested}) created 0o%04o{opened}, measured 0o%04o{expectedOpen}"
 
-                    match Answered.mkdir (PathArg.ofPath target) requested system with
+                    match Answered.mkdir (Callers.leader system) (PathArg.ofPath target) requested system with
                     | SyscallAnswer.Completed _, afterMkdir ->
                         let made = created "/e" afterMkdir
                         let expectedMkdir = requested &&& mkdirMask platform &&& ~~~stored

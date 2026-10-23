@@ -48,7 +48,7 @@ module TestPeerName =
     let private endpointOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
             | Some binding -> binding.Endpoint
             | None -> failwith $"fd %d{fd} is not bound"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
@@ -72,26 +72,21 @@ module TestPeerName =
     let private connect (fd : int) (destination : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         connectBlob fd (CopyIn.inet (UnixSystem.platform system) destination) system
 
-    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking fd true system with
-        | SetNonBlockingAnswer.Set, system -> system
-        | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
-
     let private listening (address : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         let fd, system = stream system
         let system = bindAt fd address system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | other -> failwith $"listen answered %A{other}"
 
     let private accept (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept answered %A{other}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"close of fd %d{fd} answered %A{other}"
 
@@ -105,7 +100,7 @@ module TestPeerName =
         listener, client, system
 
     let private ask (fd : int) (declared : uint32) (system : UnixSystem<int, string>) =
-        UnixSocket.tryGetpeername fd UserBuffer.Mapped declared system
+        UnixSocket.tryGetpeername (Callers.leader system) fd UserBuffer.Mapped declared system
 
     let private reported
         (platform : SimulatedUnixPlatform)
@@ -159,7 +154,7 @@ module TestPeerName =
 
         // Non-blocking: the refusal pending, then taken by an SO_ERROR read.
         let fd, system = stream (fresh platform)
-        let system = nonBlocking fd system
+        let system = NonBlocking.set fd system
         let outcome, system = connect fd nobody system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         ask fd 16u system |> shouldEqual expected
@@ -169,7 +164,14 @@ module TestPeerName =
 
         let system =
             match
-                UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
+                Lone.UnixSocket.tryGetsockoptLength
+                    fd
+                    level
+                    optionName
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    (Some 4u)
+                    system
             with
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int error), system) when error <> 0 -> system
             | other -> failwith $"SO_ERROR answered %A{other}"
@@ -189,16 +191,16 @@ module TestPeerName =
         =
         let system = fresh platform
 
-        UnixSocket.tryGetpeername 99 UserBuffer.Opaque 16u system
+        UnixSocket.tryGetpeername (Callers.leader system) 99 UserBuffer.Opaque 16u system
         |> shouldEqual (failed UnixError.EBADF)
 
         // Descriptor 0 is a pipe end in a booted system.
-        UnixSocket.tryGetpeername 0 UserBuffer.Opaque 16u system
+        UnixSocket.tryGetpeername (Callers.leader system) 0 UserBuffer.Opaque 16u system
         |> shouldEqual (failed UnixError.ENOTSOCK)
 
         let fd, system = stream system
 
-        UnixSocket.tryGetpeername fd UserBuffer.Opaque 16u system
+        UnixSocket.tryGetpeername (Callers.leader system) fd UserBuffer.Opaque 16u system
         |> shouldEqual (failed UnixError.ENOTCONN)
 
     // ------------------------------------------------------------------
@@ -255,7 +257,7 @@ module TestPeerName =
 
         let system =
             match
-                UnixSocket.tryGetsockoptLength
+                Lone.UnixSocket.tryGetsockoptLength
                     client
                     level
                     optionName
@@ -275,7 +277,7 @@ module TestPeerName =
         // after the EINPROGRESS; this kernel completes it inside the connect.
         let _, system = listening (loopback listenerPort) (fresh platform)
         let fd, system = stream system
-        let system = nonBlocking fd system
+        let system = NonBlocking.set fd system
         let outcome, system = connect fd (loopback listenerPort) system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         ask fd 16u system |> shouldEqual (reported platform (loopback listenerPort))
@@ -299,7 +301,7 @@ module TestPeerName =
         ask client 128u system
         |> shouldEqual (Ok (GetSockNameAnswer.Reported (whole, 16)))
 
-        UnixSocket.tryGetpeername client (UserBuffer.Unmapped 0UL) 0u system
+        UnixSocket.tryGetpeername (Callers.leader system) client (UserBuffer.Unmapped 0UL) 0u system
         |> shouldEqual (Ok (GetSockNameAnswer.Reported (ImmutableArray.Empty, 16)))
 
         // Linux reads the cell as an `int`, Darwin as the `socklen_t` it is.
@@ -324,13 +326,13 @@ module TestPeerName =
         =
         let _, client, system = queued platform
 
-        UnixSocket.tryGetpeername client (UserBuffer.Unmapped 0x1000UL) 13u system
+        UnixSocket.tryGetpeername (Callers.leader system) client (UserBuffer.Unmapped 0x1000UL) 13u system
         |> shouldEqual (Ok (GetSockNameAnswer.Failed (UnixError.EFAULT, lengthAfterFault)))
 
-        UnixSocket.tryGetpeername client UserBuffer.Opaque 16u system
+        UnixSocket.tryGetpeername (Callers.leader system) client UserBuffer.Opaque 16u system
         |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        UnixSocket.tryGetpeername client UserBuffer.Addressless 16u system
+        UnixSocket.tryGetpeername (Callers.leader system) client UserBuffer.Addressless 16u system
         |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     // ------------------------------------------------------------------

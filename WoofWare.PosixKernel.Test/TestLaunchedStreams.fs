@@ -52,13 +52,12 @@ module TestLaunchedStreams =
 
     [<RequireQualifiedAccess>]
     type private Op =
-        | Write of fd : int * count : int
-        | Read of fd : int * count : int
-        | Dup of fd : int
-        | Close of fd : int
+        /// A call made through `UnixSystem.step`.
+        | Call of Syscall<int, string>
+        /// `UnixDescriptor.setNonBlocking`: `fcntl(F_GETFL)`, then `fcntl(F_SETFL)`.
         | SetNonBlocking of fd : int * value : bool
+        /// The readiness Linux's `poll(2)` reports for the description `fd` names.
         | Poll of fd : int
-        | Pipe2
 
     /// What one operation answered, in terms both sides share.
     [<RequireQualifiedAccess>]
@@ -68,6 +67,7 @@ module TestLaunchedStreams =
         | ReadBytes of int
         | ReadFailed of UnixError
         | Syscall of SyscallAnswer
+        | Descriptor of DescriptorAnswer
         | NonBlocking of SetNonBlockingAnswer
         | Level of uint32
 
@@ -92,11 +92,6 @@ module TestLaunchedStreams =
         Map.tryFind fd reference.Fds
         |> Option.map (fun id -> reference.Descriptions.[id])
 
-    let private flavourNonBlock (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> 0x800
-        | SimulatedUnixFlavour.Darwin -> 0x4
-
     let private payload (seed : int) (count : int) : ImmutableArray<byte> =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte ((seed * 31 + i) % 251)))
 
@@ -108,11 +103,9 @@ module TestLaunchedStreams =
         | other ->
             failwith $"a delivery reached %O{other}, which pipedStandardStreams does not drain for process %O{pid}"
 
-    let private deliveredLog (system : UnixSystem<int, string>) : (Stream * byte list) list =
-        DeliveryLog.toList system.Machine.Delivered
-        |> List.map (fun delivery ->
-            streamOf (UnixSystem.processId system) delivery.Endpoint, List.ofSeq delivery.Bytes
-        )
+    /// What the client received from `delivery`, as the earlier model logged it.
+    let private logged (pid : ProcessId) (delivery : Delivery) : Stream * byte list =
+        streamOf pid delivery.Endpoint, List.ofSeq delivery.Bytes
 
     /// One write as a client issues it: admitted, and then given the bytes the
     /// admission asked for. A pipe the process made can lose its reader, and a
@@ -132,20 +125,22 @@ module TestLaunchedStreams =
         | Ok (WriteStep.ProcessEnded _ as outcome) ->
             failwith $"a write ended the process, whose SIGPIPE is ignored: %A{outcome}"
         | Ok (WriteStep.WouldBlock _) -> Error None
-        | Ok (WriteStep.Restarts _ as outcome) -> failwith $"a write that never slept restarted: %A{outcome}"
+        | Ok (WriteStep.Interrupted _ as outcome) -> failwith $"a write that never slept restarted: %A{outcome}"
 
     /// What the earlier standard streams answered, if the descriptor named one
     /// (`None` for a descriptor the reference does not model), and the
     /// reference afterwards. `Error ()` is the earlier model's refusal: a
     /// non-blocking write longer than an empty pipe holds.
-    let private referenceStep
-        (index : int)
-        (op : Op)
-        (reference : Reference)
-        : Result<Answer option * Reference, unit>
-        =
+    let private referenceStep (op : Op) (reference : Reference) : Result<Answer option * Reference, unit> =
         match op with
-        | Op.Write (fd, count) ->
+        | Op.Call (Syscall.Write (fd, buffer, count)) ->
+            let bytes =
+                match buffer with
+                | CopiedArgument.Readable bytes -> bytes
+                | CopiedArgument.Unmapped _
+                | CopiedArgument.Opaque
+                | CopiedArgument.Addressless -> failwith $"the property makes no such buffer: %A{buffer}"
+
             match referenceDescription fd reference with
             | None -> Ok (Some (Answer.WriteFailed UnixError.EBADF), reference)
             | Some {
@@ -158,18 +153,18 @@ module TestLaunchedStreams =
                        Kind = ReferenceKind.Stream stream
                        NonBlocking = nonBlocking
                    } ->
-                if count = 0 then
+                if count = 0UL then
                     Ok (Some (Answer.Wrote 0L), reference)
-                elif nonBlocking && count > 65536 then
+                elif nonBlocking && count > 65536UL then
                     Error ()
                 else
                     Ok (
                         Some (Answer.Wrote (int64 count)),
                         { reference with
-                            Log = (stream, List.ofSeq (payload index count)) :: reference.Log
+                            Log = (stream, List.ofSeq bytes) :: reference.Log
                         }
                     )
-        | Op.Read (fd, _) ->
+        | Op.Call (Syscall.Read (fd, _, _)) ->
             match referenceDescription fd reference with
             | None -> Ok (Some (Answer.ReadFailed UnixError.EBADF), reference)
             | Some {
@@ -181,19 +176,19 @@ module TestLaunchedStreams =
             | Some {
                        Kind = ReferenceKind.Stream _
                    } -> Ok (Some (Answer.ReadFailed UnixError.EBADF), reference)
-        | Op.Dup fd ->
+        | Op.Call (Syscall.Dup fd) ->
             match Map.tryFind fd reference.Fds with
-            | None -> Ok (Some (Answer.Syscall (SyscallAnswer.Failed UnixError.EBADF)), reference)
+            | None -> Ok (Some (Answer.Descriptor (DescriptorAnswer.Failed UnixError.EBADF)), reference)
             | Some id ->
                 let newFd = lowestFree reference.Fds
 
                 Ok (
-                    Some (Answer.Syscall (SyscallAnswer.Completed (int64 newFd))),
+                    Some (Answer.Descriptor (DescriptorAnswer.Returned newFd)),
                     { reference with
                         Fds = Map.add newFd id reference.Fds
                     }
                 )
-        | Op.Close fd ->
+        | Op.Call (Syscall.Close fd) ->
             match Map.tryFind fd reference.Fds with
             | None -> Ok (Some (Answer.Syscall (SyscallAnswer.Failed UnixError.EBADF)), reference)
             | Some id ->
@@ -247,7 +242,7 @@ module TestLaunchedStreams =
                        Kind = ReferenceKind.Other
                    }
             | None -> Ok (None, reference)
-        | Op.Pipe2 ->
+        | Op.Call (Syscall.Pipe2 _) ->
             let readFd = lowestFree reference.Fds
             let fds = Map.add readFd reference.NextId reference.Fds
             let writeFd = lowestFree fds
@@ -269,6 +264,8 @@ module TestLaunchedStreams =
                     NextId = reference.NextId + 2
                 }
             )
+        | Op.Call other ->
+            failwith $"Syscall.%s{UnionCaseName.ofValue other} is not generated by the launched streams' property"
 
     /// A process launched with `UnixSystem.pipedStandardStreams`, ignoring
     /// SIGPIPE.
@@ -280,55 +277,153 @@ module TestLaunchedStreams =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (Kernel.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
+    /// What the `write(2)` of `bytes` through `fd` by the only process's
+    /// leader answers through the call's own functions, held to the same
+    /// write made a step at a time (`WriteOutcomes.admitThenWriteDeliveringAs`),
+    /// in the shape `UnixSystem.step` answers it.
+    let private writtenThroughSteps
+        (fd : int)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<int, string>)
+        : Result<ProcessFate<WriteOutcome<int>, int, string> * Delivery option, WriteRefusal>
+        =
+        WriteOutcomes.admitThenWriteDeliveringAs (Callers.leader system) fd UserBuffer.Mapped bytes system
+        |> Result.map (fun (step, delivery) ->
+            let fate =
+                match step with
+                | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+                | WriteStep.ReturnsRaising (answer, signal, after) ->
+                    ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+                | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+                | WriteStep.WouldBlock (condition, after) ->
+                    ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+                | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+
+            fate, delivery
+        )
+
+    /// What a write's `fate` says, without the system it holds, and the
+    /// delivery beside it.
+    let private outcomeOf
+        (fate : ProcessFate<WriteOutcome<int>, int, string>, delivery : Delivery option)
+        : Choice<WriteOutcome<int>, EndedProcess> * Delivery option
+        =
+        match fate with
+        | ProcessFate.Continues (outcome, _) -> Choice1Of2 outcome, delivery
+        | ProcessFate.ProcessEnded (ended, _) -> Choice2Of2 ended, delivery
+
     /// What the launched streams answer, or `None` where the system refused or
-    /// the call would sleep, and the system afterwards.
+    /// the call would sleep, the system afterwards, and what the operation
+    /// delivered to the client.
     let private systemStep
-        (index : int)
         (op : Op)
         (system : UnixSystem<int, string>)
-        : (Answer * UnixSystem<int, string>) option
+        : (Answer * UnixSystem<int, string> * Delivery option) option
         =
+        let stepped (call : Syscall<int, string>) : Result<SteppedCall<int, string>, SyscallRefusal<int>> =
+            UnixSystem.tryStep (Callers.leader system) call system
+
+        let unexpected
+            (call : Syscall<int, string>)
+            (answered : SteppedCall<int, string>)
+            : (Answer * UnixSystem<int, string> * Delivery option) option
+            =
+            failwith $"Syscall.%s{UnionCaseName.ofValue call} answered SteppedCall.%s{UnionCaseName.ofValue answered}"
+
         match op with
-        | Op.Write (fd, count) ->
-            match write fd (payload index count) system with
-            | Ok (WriteAnswer.Completed written, after) -> Some (Answer.Wrote written, after)
-            | Ok (WriteAnswer.Failed error, after) -> Some (Answer.WriteFailed error, after)
+        | Op.Call (Syscall.Write (fd, buffer, _) as call) ->
+            let answered = stepped call
+
+            let bytes =
+                match buffer with
+                | CopiedArgument.Readable bytes -> bytes
+                | CopiedArgument.Unmapped _
+                | CopiedArgument.Opaque
+                | CopiedArgument.Addressless -> failwith $"the property makes no such buffer: %A{buffer}"
+
+            // The same write through the call's own functions, held to it made
+            // a step at a time, answers alike and leaves the same system.
+            let throughSteps = writtenThroughSteps fd bytes system
+
+            match answered, throughSteps with
+            | Ok (SteppedCall.Write (fate, delivery)), Ok steps when (fate, delivery) = steps -> ()
+            | Error (SyscallRefusal.Write refusal), Error steps when refusal = steps -> ()
+            | Ok (SteppedCall.Write (fate, delivery)), _ ->
+                failwith
+                    $"%A{call}: UnixSystem.tryStep answered %A{outcomeOf (fate, delivery)}, and the call's own functions %A{Result.map outcomeOf throughSteps}, or left another system"
+            | Error refusal, _ ->
+                failwith
+                    $"%A{call}: UnixSystem.tryStep refused it (%s{SyscallRefusal.describe refusal}), and the call's own functions answered %A{Result.map outcomeOf throughSteps}"
+            | Ok other, _ -> unexpected call other |> ignore
+
+            match answered with
+            | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after), delivery))
+            | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after), delivery)) ->
+                // A pipe the process made can lose its reader, and a write
+                // into it then raises SIGPIPE, which the process ignores here
+                // (`initialSystem`), so the write answers EPIPE.
+                match answer with
+                | WriteAnswer.Completed written -> Some (Answer.Wrote written, after, delivery)
+                | WriteAnswer.Failed error -> Some (Answer.WriteFailed error, after, delivery)
+            | Ok (SteppedCall.Write (ProcessFate.ProcessEnded _ as fate, _)) ->
+                failwith $"a write ended the process, whose SIGPIPE is ignored: %A{fate}"
+            | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.WouldBlock _, _), _)) -> None
+            | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Interrupted, _) as fate, _)) ->
+                failwith $"a write that never slept restarted: %A{fate}"
+            | Ok other -> unexpected call other
             | Error _ -> None
-        | Op.Read (fd, count) ->
-            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped (uint64 count) system with
-            | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
-                Some (Answer.ReadBytes bytes.Length, after)
-            | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Some (Answer.ReadFailed error, after)
-            | Ok (ReadOutcome.Answered (ReadAnswer.Drawn _), _) ->
+        | Op.Call (Syscall.Read _ as call) ->
+            match stepped call with
+            | Ok (SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Completed bytes), after)) ->
+                Some (Answer.ReadBytes bytes.Length, after, None)
+            | Ok (SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Failed error), after)) ->
+                Some (Answer.ReadFailed error, after, None)
+            | Ok (SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Drawn _), _)) ->
                 failwith "a read of a stream drew from the entropy pool"
             // A read that sleeps, on a pipe the process made, which the
             // earlier streams had no notion of.
-            | Ok (ReadOutcome.WouldBlock _, _) -> None
-            | Ok (ReadOutcome.Restarts, _) -> failwith "a read that never slept restarted"
+            | Ok (SteppedCall.Read (ReadOutcome.WouldBlock _, _)) -> None
+            | Ok (SteppedCall.Read (ReadOutcome.Interrupted, _)) -> failwith "a read that never slept was interrupted"
+            | Ok other -> unexpected call other
             | Error _ -> None
-        | Op.Dup fd ->
-            let answer, after = Answered.dup fd system
-            Some (Answer.Syscall answer, after)
-        | Op.Close fd ->
-            match UnixDescriptor.tryClose fd system with
-            | Ok (answer, after) -> Some (Answer.Syscall answer, after)
+        | Op.Call (Syscall.Dup _ as call) ->
+            match stepped call with
+            | Ok (SteppedCall.Dup (answer, after)) -> Some (Answer.Descriptor answer, after, None)
+            | Ok other -> unexpected call other
+            | Error refusal -> failwith $"dup was refused: %s{SyscallRefusal.describe refusal}"
+        | Op.Call (Syscall.Close _ as call) ->
+            match stepped call with
+            | Ok (SteppedCall.Close (answer, after)) -> Some (Answer.Syscall answer, after, None)
+            | Ok other -> unexpected call other
             | Error _ -> None
+        | Op.Call (Syscall.Pipe2 _ as call) ->
+            match stepped call with
+            | Ok (SteppedCall.Pipe2 (Pipe2Answer.Created _, after)) ->
+                Some (Answer.Syscall (SyscallAnswer.Completed 0L), after, None)
+            | Ok (SteppedCall.Pipe2 (Pipe2Answer.Failed error, after)) ->
+                Some (Answer.Syscall (SyscallAnswer.Failed error), after, None)
+            | Ok other -> unexpected call other
+            | Error _ -> None
+        | Op.Call other ->
+            failwith $"Syscall.%s{UnionCaseName.ofValue other} is not generated by the launched streams' property"
         | Op.SetNonBlocking (fd, value) ->
-            let answer, after = UnixDescriptor.setNonBlocking fd value system
-            Some (Answer.NonBlocking answer, after)
+            let answer, after =
+                UnixDescriptor.setNonBlocking (Callers.leader system) fd value system
+
+            Some (Answer.NonBlocking answer, after, None)
         | Op.Poll fd ->
             match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
-            | None -> Some (Answer.Level 0u, system)
-            | Some id -> Some (Answer.Level (LinuxReadiness.ofDescription id system), system)
-        | Op.Pipe2 ->
-            match UnixPipe.tryPipe2 (flavourNonBlock system.Machine.UnixPlatform) UserBuffer.Mapped system with
-            | Ok (Pipe2Answer.Created _, after) -> Some (Answer.Syscall (SyscallAnswer.Completed 0L), after)
-            | Ok (Pipe2Answer.Failed error, after) -> Some (Answer.Syscall (SyscallAnswer.Failed error), after)
-            | Error _ -> None
+            | None -> Some (Answer.Level 0u, system, None)
+            | Some id -> Some (Answer.Level (Lone.LinuxReadiness.ofDescription id system), system, None)
 
     let private platforms : SimulatedUnixPlatform list =
         [
@@ -337,7 +432,8 @@ module TestLaunchedStreams =
             SimulatedUnixPlatform.macOsArm64
         ]
 
-    let private opGen : Gen<Op> =
+    /// An operation of a process on `platform`.
+    let private opGen (platform : SimulatedUnixPlatform) : Gen<Op> =
         let fd = Gen.choose (0, 6)
 
         let count =
@@ -350,13 +446,20 @@ module TestLaunchedStreams =
 
         Gen.frequency
             [
-                6, Gen.map2 (fun fd count -> Op.Write (fd, count)) fd count
-                2, Gen.map2 (fun fd count -> Op.Read (fd, count)) fd count
-                2, Gen.map Op.Dup fd
-                2, Gen.map Op.Close fd
+                6,
+                gen {
+                    let! fd = fd
+                    let! count = count
+                    let! seed = Gen.choose (0, 250)
+
+                    return Op.Call (Syscall.Write (fd, CopiedArgument.Readable (payload seed count), uint64 count))
+                }
+                2, Gen.map2 (fun fd count -> Op.Call (Syscall.Read (fd, UserBuffer.Mapped, uint64 count))) fd count
+                2, Gen.map (fun fd -> Op.Call (Syscall.Dup fd)) fd
+                2, Gen.map (fun fd -> Op.Call (Syscall.Close fd)) fd
                 2, Gen.map2 (fun fd value -> Op.SetNonBlocking (fd, value)) fd (Gen.elements [ true ; false ])
                 1, Gen.map Op.Poll fd
-                1, Gen.constant Op.Pipe2
+                1, Gen.constant (Op.Call (Syscall.Pipe2 (UserBuffer.Mapped, OpenFlagWords.nonBlock platform)))
             ]
 
     [<Test>]
@@ -367,47 +470,63 @@ module TestLaunchedStreams =
                 | SimulatedUnixFlavour.Linux -> true
                 | SimulatedUnixFlavour.Darwin -> false
 
-            let rec run (index : int) (ops : Op list) (reference : Reference) (system : UnixSystem<int, string>) =
+            // `delivered` is what the client has received, newest first, as
+            // the reference's log is.
+            let rec run
+                (index : int)
+                (ops : Op list)
+                (reference : Reference)
+                (delivered : (Stream * byte list) list)
+                (system : UnixSystem<int, string>)
+                =
                 UnixSystem.checkInvariants system |> shouldEqual []
-                let delivered = deliveredLog system
-                let logged = List.rev reference.Log
 
                 // NUnit's comparison walks each byte reflectively, and the log
                 // grows every step, so it is asked only to describe a mismatch.
-                if delivered <> logged then
-                    delivered |> shouldEqual logged
+                if delivered <> reference.Log then
+                    List.rev delivered |> shouldEqual (List.rev reference.Log)
 
                 match ops with
                 | [] -> ()
                 // Darwin's readiness is not modelled, by either side.
-                | Op.Poll _ :: rest when not linux -> run (index + 1) rest reference system
+                | Op.Poll _ :: rest when not linux -> run (index + 1) rest reference delivered system
                 | op :: rest ->
 
-                match referenceStep index op reference with
+                match referenceStep op reference with
                 // The earlier process ended here, refused; nothing after it
                 // happened, so nothing after it can be compared.
                 | Error () -> ()
                 | Ok (expected, reference) ->
 
-                match systemStep index op system, expected with
+                match systemStep op system, expected with
                 | None, Some expected ->
                     failwith
                         $"step %d{index}, %A{op}: the reference answered %A{expected}, the launched streams refused"
                 // Both refuse an operation on a pipe the process made where a
                 // real kernel would wait or signal, and the process ends there.
                 | None, None -> ()
-                | Some (answer, after), expected ->
+                | Some (answer, after, delivery), expected ->
                     match expected with
                     | Some expected when answer <> expected ->
                         failwith
                             $"step %d{index}, %A{op}: the reference answered %A{expected}, the launched streams %A{answer}"
                     | Some _
-                    | None -> run (index + 1) rest reference after
+                    | None ->
+                        let delivered =
+                            match delivery with
+                            | Some delivery -> logged (Lone.pid after) delivery :: delivered
+                            | None -> delivered
 
-            run 0 ops initialReference (initialSystem platform)
+                        run (index + 1) rest reference delivered after
+
+            run 0 ops initialReference [] (initialSystem platform)
 
         let gen =
-            Gen.zip (Gen.elements platforms) (Gen.listOf opGen |> Gen.map (List.truncate 60))
+            gen {
+                let! platform = Gen.elements platforms
+                let! ops = Gen.listOf (opGen platform) |> Gen.map (List.truncate 60)
+                return platform, ops
+            }
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 400, Prop.forAll (Arb.fromGen gen) property)
 
@@ -421,8 +540,8 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
-            | Ok (Ok (epoll, system)) -> epoll, system
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let queueId =
@@ -433,6 +552,7 @@ module TestLaunchedStreams =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     1
@@ -443,7 +563,7 @@ module TestLaunchedStreams =
             | other -> failwith $"%A{other}"
 
         let reported (system : UnixSystem<int, string>) : bool * UnixSystem<int, string> =
-            let rows, system = EpollReadyList.drain queueId 4 system
+            let rows, system = Lone.EpollReadyList.drain queueId 4 system
             not rows.IsEmpty, system
 
         let atAdd, system = reported system
@@ -476,23 +596,27 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
-            | Ok (Ok (epoll, system)) -> epoll, system
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
+            | Ok (DescriptorAnswer.Returned epoll, system) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.Out ||| EpollEvents.EdgeTriggered
 
         for fd in [ 0 ; 1 ; 2 ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Changed, _) -> ()
             | other -> failwith $"fd %d{fd}: %A{other}"
 
         let readFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%A{other}"
 
-        match UnixPoll.tryEpollCtl epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system with
+        match
+            UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system
+        with
         | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual readFd
         | other -> failwith $"%A{other}"
 
@@ -516,17 +640,17 @@ module TestLaunchedStreams =
             let closed =
                 (system, [ 0 ; 1 ; 2 ])
                 ||> List.fold (fun system fd ->
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (SyscallAnswer.Completed 0L, system) -> system
                     | other -> failwith $"close %d{fd}: %A{other}"
                 )
 
-            closed.Machine.Pipes
+            UnixSystem.pipes closed
             |> Map.keys
             |> Set.ofSeq
             |> shouldEqual (Set.ofList [ output ; error ])
 
-            Map.containsKey input closed.Machine.Pipes |> shouldEqual false
+            Map.containsKey input (UnixSystem.pipes closed) |> shouldEqual false
             UnixSystem.checkInvariants closed |> shouldEqual []
 
     [<Test>]
@@ -537,21 +661,22 @@ module TestLaunchedStreams =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let output = pipeOf 1 system
-            let pipe = UnixMachineState.pipe output system.Machine
+            let pipe = UnixMachineState.pipe output (Kernel.machine system)
 
             let forged =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Pipes =
                                 Map.add
                                     output
                                     { pipe with
                                         Buffer = snd (PipeBuffer.write (payload 0 5) pipe.Buffer)
                                     }
-                                    system.Machine.Pipes
+                                    machine.Pipes
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants forged
             |> shouldEqual [ UnixSystemDefect.DrainedPipeHoldsBytes (output, 5) ]

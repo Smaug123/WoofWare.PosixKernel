@@ -9,6 +9,10 @@ open WoofWare.PosixKernel
 /// exit, or kill themselves, as `wait-status.c` swept, read back by .NET's
 /// `Process.ExitCode` and by a shell's own `$?`.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestProcessTerminationAgainstHost =
 
     /// Run `/bin/sh -c script` and return its exit code as .NET reports it, and its
@@ -40,8 +44,7 @@ module TestProcessTerminationAgainstHost =
         (cases : (string * ProcessTermination) list)
         : unit
         =
-        let numbering =
-            SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+        let numbering = HostPlatform.signalNumberingOf flavour
 
         let expected =
             cases
@@ -100,8 +103,7 @@ module TestProcessTerminationAgainstHost =
     [<Test>]
     let ``a death by signal renders as this host reports it`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             [ 1 .. Signal.highestSignoUnder numbering ]
             |> List.choose (fun signo ->

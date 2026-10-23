@@ -45,9 +45,9 @@ module TestEpollCreate1 =
         ]
 
     let private created (flags : int) (system : UnixSystem<int, string>) : bool =
-        match UnixPoll.tryEpollCreate1 flags system with
-        | Ok (Ok _) -> true
-        | Ok (Error UnixError.EINVAL) -> false
+        match UnixPoll.tryEpollCreate1 (Callers.leader system) flags system with
+        | Ok (DescriptorAnswer.Returned _, _) -> true
+        | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) when after = system -> false
         | other -> failwith $"flags 0x%x{flags}: expected an epoll instance or EINVAL, got %A{other}"
 
     [<Test>]
@@ -77,9 +77,12 @@ module TestEpollCreate1 =
     let ``an epoll instance is created exactly for 0 and EPOLL_CLOEXEC, on the lowest free descriptor`` () : unit =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
+                (Lone.fileDescriptors linux)
 
-        let _, withTwo = FileDescriptorRegistry.createEpoll queueSystem
+        let _, withTwo =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux queueSystem
 
         let holed =
             Lone.withFileDescriptors
@@ -89,13 +92,15 @@ module TestEpollCreate1 =
                 linux
 
         let property (flags : int) : unit =
-            match UnixPoll.tryEpollCreate1 flags holed with
-            | Ok (Ok (fd, after)) ->
+            match UnixPoll.tryEpollCreate1 (Callers.leader holed) flags holed with
+            | Ok (DescriptorAnswer.Returned fd, after) ->
                 (flags = 0 || flags = cloExec) |> shouldEqual true
                 fd |> shouldEqual epoll
 
                 let expectedFd, expectedRegistry =
-                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors holed)
+                    FileDescriptorRegistry.createEpoll
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
+                        (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
 
@@ -104,15 +109,16 @@ module TestEpollCreate1 =
                 let expectedRegistry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = (flags = cloExec)
-                        }
+                        (DescriptorFlags.closingOnExec
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform holed))
+                            (flags = cloExec))
                         expectedRegistry
 
                 after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)
-            | Ok (Error error) ->
+            | Ok (DescriptorAnswer.Failed error, after) ->
                 error |> shouldEqual UnixError.EINVAL
                 (flags = 0 || flags = cloExec) |> shouldEqual false
+                after |> shouldEqual holed
             | Error refusal -> failwith $"unexpected refusal %s{EpollCreateRefusal.describe refusal}"
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 500, Prop.forAll (Arb.fromGen flagsGen) property)
@@ -120,16 +126,10 @@ module TestEpollCreate1 =
     [<Test>]
     let ``Darwin has no epoll, so every call is refused`` () : unit =
         let property (flags : int) : unit =
-            UnixPoll.tryEpollCreate1 flags darwin
+            UnixPoll.tryEpollCreate1 (Callers.leader darwin) flags darwin
             |> shouldEqual (Error (EpollCreateRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 200, Prop.forAll (Arb.fromGen flagsGen) property)
-
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<Test>]
     let ``the flag screen is this Linux host's`` () : unit =
@@ -143,11 +143,11 @@ module TestEpollCreate1 =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             for flags, _ in measured do
-                let fd = hostEpollCreate1 flags
+                let fd = HostCalls.epollCreate1 flags
 
                 let hostCreated =
                     if fd >= 0 then
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
                         true
                     else
                         let errno = Marshal.GetLastPInvokeError ()

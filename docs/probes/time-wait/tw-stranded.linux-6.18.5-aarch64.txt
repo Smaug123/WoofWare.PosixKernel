@@ -1,0 +1,8 @@
+Linux 6.18.5 aarch64
+C wrote nothing; client SO_ERROR after the server's close -> OK; then bind T -> EADDRINUSE, Z -> OK; after 1 s T -> EADDRINUSE, Z -> OK; after 5 s T -> EADDRINUSE, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> ECONNRESET; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK

@@ -123,12 +123,13 @@ module TestSymlinkMode =
             | Ok (_, vfs) -> vfs
             | Error error -> failwith $"%s{context}: could not create l: %O{error}"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = root
@@ -137,7 +138,9 @@ module TestSymlinkMode =
         |> Lone.restand
 
     let private lstatMode (system : UnixSystem<int, string>) : int =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode
         | other -> failwith $"%s{context}: lstat(/l) did not report: %A{other}"
 
@@ -153,9 +156,9 @@ module TestSymlinkMode =
         // caller is neither the link's owner nor in its group, so "other"
         // decides.
         let ask (linkBits : int) : SyscallAnswer =
-            match
-                UnixPathResolution.tryFaccessatEager -2 (PathArg.ofText "/l") 4 0x20 (systemWithLink darwin linkBits)
-            with
+            let system = systemWithLink darwin linkBits
+
+            match Eager.tryFaccessatAs (Callers.leader system) -2 (PathArg.ofText "/l") 4 0x20 system with
             | Ok answer -> answer
             | Error refusal -> failwith $"%s{context}: faccessat was refused: %s{AccessRefusal.describe refusal}"
 
@@ -243,7 +246,7 @@ module TestSymlinkMode =
                                     (Lone.proc system).CurrentDirectoryInode
                                     SymlinkPolicy.NoFollowFinal
                                     (UnixPath.parseOrFail context "/l")
-                                    system.Machine.FileSystem
+                                    (UnixSystem.fileSystem system)
                             with
                             | Ok inode -> inode
                             | Error failure -> failwith $"%s{context}: /l does not resolve: %A{failure}"

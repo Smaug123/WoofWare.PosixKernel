@@ -42,7 +42,7 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Machine.SoMaxConn |> shouldEqual expected
+        UnixSystem.soMaxConn system |> shouldEqual expected
 
     [<TestCase("linux")>]
     [<TestCase("darwin")>]
@@ -57,14 +57,14 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Machine.Mount |> shouldEqual expected
+        UnixSystem.mount system |> shouldEqual expected
 
         // The rule the pair exists to satisfy, asserted directly: a machine
         // claiming a type its flavour never mounts would hand a process a fact
         // no real system could tell it.
         EmulatedFileSystemType.isReportableUnder
-            (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
-            (EmulatedMount.fileSystemType system.Machine.Mount)
+            (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+            (EmulatedMount.fileSystemType (UnixSystem.mount system))
         |> shouldEqual true
 
     /// `somaxconn` left unconfigured is the machine's own flavour's default,
@@ -81,15 +81,15 @@ module TestUnixSystemInitial =
             |> UnixBootImage.tryWithSoMaxConn (Some 7)
             |> Configured.expectOk SoMaxConnRefusal.describe
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) configured).Machine.SoMaxConn
+        UnixSystem.soMaxConn (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) configured)
         |> shouldEqual 7
 
         // Back to the default, from an image that no longer carries it.
         (configured
          |> UnixBootImage.tryWithSoMaxConn None
          |> Configured.expectOk SoMaxConnRefusal.describe
-         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-            .Machine.SoMaxConn
+         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+         |> UnixSystem.soMaxConn)
         |> shouldEqual (UnixMachineState.defaultSoMaxConn flavour)
 
     /// The platform is fixed at construction and nothing validates it later,
@@ -97,7 +97,7 @@ module TestUnixSystemInitial =
     [<Test>]
     let ``a forged platform is refused by the constructor`` () : unit =
         let exn =
-            Assert.Throws<System.Exception> (fun () ->
+            Assert.Throws<System.ArgumentNullException> (fun () ->
                 UnixSystem.initial<int, string> Unchecked.defaultof<SimulatedUnixPlatform>
                 |> ignore<UnixBootImage<int, string>>
             )
@@ -110,7 +110,7 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Machine.UnixPlatform |> shouldEqual platform
+        UnixSystem.platform system |> shouldEqual platform
 
     // ------------------------------------------------------------------
     // What it deliberately does not fix
@@ -124,8 +124,8 @@ module TestUnixSystemInitial =
     let ``the buffer check follows the platform's architecture`` () : unit =
         let checkOn (platform : SimulatedUnixPlatform) : UserBufferCheck =
             (UnixSystem.initial<int, string> platform
-             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-                .Machine.UserBufferCheck
+             |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
+             |> UnixSystem.userBufferCheck)
 
         checkOn SimulatedUnixPlatform.linuxX64
         |> shouldEqual (UserBufferCheck.BeforeOperation 0x0000_7FFF_FFFF_F000UL)
@@ -157,8 +157,8 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Machine.EphemeralPortRange |> shouldEqual (uint16 low, uint16 high)
-        system.Machine.NextEphemeralPort |> shouldEqual (uint16 low)
+        UnixSystem.ephemeralPortRange system |> shouldEqual (uint16 low, uint16 high)
+        (Kernel.machine system).NextEphemeralPort |> shouldEqual (uint16 low)
 
         (Lone.proc system).Credentials
         |> shouldEqual (
@@ -178,8 +178,8 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Scheduling.NanosecondsSinceBoot |> shouldEqual 0L
-        system.Machine.BootTime |> shouldEqual UnixTimestamp.epoch
+        UnixSystem.nanosecondsSinceBoot system |> shouldEqual 0L
+        (Kernel.machine system).BootTime |> shouldEqual UnixTimestamp.epoch
 
     /// The cursor is where `bind(2)` for port 0 begins its sweep, and
     /// `allocateEphemeralPort` walks *upward* from it, wrapping at the top. A
@@ -202,6 +202,8 @@ module TestUnixSystemInitial =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Drained = false
+                Uid = UserId.root
             }
 
         let candidate (port : uint16) : Ipv4Binding =
@@ -214,18 +216,20 @@ module TestUnixSystemInitial =
 
         match
             UnixMachineState.allocateEphemeralPort
+                0L
                 EphemeralPortUse.Reserve
                 (SocketId 0L)
                 socket
                 candidate
-                system.Machine
+                (Kernel.machine system)
         with
-        | None -> failwith "a fresh machine could allocate no ephemeral port at all"
-        | Some (bound, machine) ->
-            bound.Endpoint.Port |> shouldEqual (fst system.Machine.EphemeralPortRange)
+        | Ok None -> failwith "a fresh machine could allocate no ephemeral port at all"
+        | Error refusal -> failwith $"a fresh machine's search met %A{refusal}"
+        | Ok (Some (bound, machine)) ->
+            bound.Endpoint.Port |> shouldEqual (fst (UnixSystem.ephemeralPortRange system))
             // ...and the cursor advances by one, so the next draw is not the same port.
             machine.NextEphemeralPort
-            |> shouldEqual (fst system.Machine.EphemeralPortRange + 1us)
+            |> shouldEqual (fst (UnixSystem.ephemeralPortRange system) + 1us)
 
     // ------------------------------------------------------------------
     // The pairs that must start consistent
@@ -245,9 +249,9 @@ module TestUnixSystemInitial =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         (Lone.proc system).CurrentDirectoryInode
-        |> shouldEqual (VirtualFileSystem.root system.Machine.FileSystem)
+        |> shouldEqual (VirtualFileSystem.root (UnixSystem.fileSystem system))
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some AbsoluteUnixPath.root)
 
     /// Every rule at once, which is the cheapest statement that a fresh system
@@ -279,15 +283,14 @@ module TestUnixSystemInitial =
             | Some (OpenFileTarget.Pipe (pipeId, actualEnd)) ->
                 actualEnd |> shouldEqual pipeEnd
 
-                (UnixMachineState.pipe pipeId system.Machine).Origin
-                |> shouldEqual (PipeOrigin.Launched (ExternalEndpoint (UnixSystem.processId system, fd), client))
+                (UnixMachineState.pipe pipeId (Kernel.machine system)).Origin
+                |> shouldEqual (PipeOrigin.Launched (ExternalEndpoint (Lone.pid system, fd), client))
             | other -> failwith $"fd %d{fd} is %A{other}, not the %O{pipeEnd} end of a launched pipe"
 
         FileDescriptorRegistry.tryFind 3 (Lone.fileDescriptors system)
         |> shouldEqual None
 
-        system.Machine.Pipes |> Map.count |> shouldEqual 3
-        DeliveryLog.count system.Machine.Delivered |> shouldEqual 0
+        (Kernel.machine system).Pipes |> Map.count |> shouldEqual 3
         UnixSystem.checkInvariants system |> shouldEqual []
 
     /// A launch table of any shape: the descriptors it names and no others,
@@ -354,16 +357,16 @@ module TestUnixSystemInitial =
                 | OpenFileTarget.Pipe (pipeId, pipeEnd) ->
                     pipeEnd |> shouldEqual expectedEnd
 
-                    let pipe = UnixMachineState.pipe pipeId system.Machine
+                    let pipe = UnixMachineState.pipe pipeId (Kernel.machine system)
 
                     match pipe.Origin, entry with
                     | PipeOrigin.Launched (endpoint, ClientEnd.Draining), LaunchDescriptor.Drained
                     | PipeOrigin.Launched (endpoint, ClientEnd.ReadEndClosed), LaunchDescriptor.Gone
                     | PipeOrigin.Launched (endpoint, ClientEnd.WriteEndClosed), LaunchDescriptor.Supplied _ ->
-                        endpoint |> shouldEqual (ExternalEndpoint (UnixSystem.processId system, fd))
+                        endpoint |> shouldEqual (ExternalEndpoint (Lone.pid system, fd))
                         expectedUnwritten |> shouldEqual 0
                     | PipeOrigin.Launched (endpoint, ClientEnd.Supplying unwritten), LaunchDescriptor.Supplied bytes ->
-                        endpoint |> shouldEqual (ExternalEndpoint (UnixSystem.processId system, fd))
+                        endpoint |> shouldEqual (ExternalEndpoint (Lone.pid system, fd))
                         unwritten.Length |> shouldEqual expectedUnwritten
 
                         unwritten.ToImmutableArray ()
@@ -374,14 +377,14 @@ module TestUnixSystemInitial =
                     PipeBuffer.held pipe.Buffer |> shouldEqual expectedHeld
                 | other -> failwith $"fd %d{fd} is %A{other}, not a pipe end"
 
-            system.Machine.Pipes |> Map.count |> shouldEqual launch.Count
-            system.Machine.NextPipeId |> shouldEqual (PipeId (int64 launch.Count))
+            UnixSystem.pipes system |> Map.count |> shouldEqual launch.Count
+            (Kernel.machine system).NextPipeId |> shouldEqual (PipeId (int64 launch.Count))
             UnixSystem.checkInvariants system |> shouldEqual []
 
             let lowestFree =
                 Seq.initInfinite id |> Seq.find (fun fd -> not (Map.containsKey fd launch))
 
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), _) -> readFd |> shouldEqual lowestFree
             | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 

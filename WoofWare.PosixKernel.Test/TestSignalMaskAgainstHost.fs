@@ -2,6 +2,8 @@ namespace WoofWare.PosixKernel.Test
 
 open System
 open System.Runtime.InteropServices
+open FsCheck
+open FsCheck.FSharp
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -26,6 +28,10 @@ open WoofWare.PosixKernel
 /// bit `signo - 1`, little-endian — is glibc's `unsigned long` array and
 /// Darwin's `uint32_t` alike, on every architecture .NET supports.
 [<TestFixture>]
+[<NonParallelizable>]
+// Blocks every signal in turn on its worker thread, Linux's SIGRTMIN among
+// them, which the runtime sends a thread to suspend it for a collection: a
+// collection that a test beside it starts would have to wait for the mask.
 module TestSignalMaskAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]
@@ -36,23 +42,17 @@ module TestSignalMaskAgainstHost =
     [<Literal>]
     let private sigsetBytes : int = 256
 
-    /// `SIG_BLOCK` and `SIG_SETMASK` for this host: 0 and 2 on Linux, 1 and 3
-    /// on Darwin (from each libc's `signal.h`).
-    let private howFor (flavour : SimulatedUnixFlavour) : int * int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 0, 2
-        | SimulatedUnixFlavour.Darwin -> 1, 3
-
     let private setBit (buffer : byte[]) (signo : int) : unit =
         buffer.[(signo - 1) / 8] <- buffer.[(signo - 1) / 8] ||| (1uy <<< ((signo - 1) % 8))
 
     let private getBit (buffer : byte[]) (signo : int) : bool =
         (buffer.[(signo - 1) / 8] >>> ((signo - 1) % 8)) &&& 1uy = 1uy
 
-    /// Whether this host lets the calling thread block `signo`: block it,
-    /// read the mask back, restore the original mask.
-    let private hostCanBlock (flavour : SimulatedUnixFlavour) (signo : int) : bool =
-        let sigBlock, sigSetMask = howFor flavour
+    /// Whether this host, whose signals `numbering` numbers, lets the calling
+    /// thread block `signo`: block it, read the mask back, restore the
+    /// original mask.
+    let private hostCanBlock (numbering : SignalNumbering) (signo : int) : bool =
+        let sigBlock = MaskHow.block numbering
         let one : byte[] = Array.zeroCreate sigsetBytes
         setBit one signo
         let original : byte[] = Array.zeroCreate sigsetBytes
@@ -71,13 +71,12 @@ module TestSignalMaskAgainstHost =
 
             getBit current signo
         finally
-            pthread_sigmask (sigSetMask, original, null) |> ignore<int>
+            pthread_sigmask (MaskHow.setMask numbering, original, null) |> ignore<int>
 
     [<Test>]
     let ``isUnblockableUnder agrees with this host's pthread_sigmask about every signo`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let disagreements =
                 [ 1 .. Signal.highestSignoUnder numbering ]
@@ -90,7 +89,7 @@ module TestSignalMaskAgainstHost =
                                 $"%O{numbering}: signo %d{signo} is within the model's range but ofRawSignoUnder refused it"
 
                     let modelled = not (Signal.isUnblockableUnder numbering signal)
-                    let measured = hostCanBlock flavour signo
+                    let measured = hostCanBlock numbering signo
 
                     if modelled = measured then
                         None
@@ -112,98 +111,229 @@ module TestSignalMaskAgainstHost =
         BitConverter.GetBytes(word).CopyTo (buffer, 0)
         buffer
 
-    [<Test>]
-    let ``UnixSignal.pthreadSigmask answers as this host's pthread_sigmask, call for call`` () : unit =
-        // Random sequences of calls on this thread, each made on the host and
-        // on the model, compared answer by answer and mask by mask. The sets
-        // name only signals the test host can leave blocked for a moment,
-        // SIGKILL's and SIGSTOP's bits, and the bits one flavour treats
-        // specially: Linux's 32 and 33, which glibc screens, and Darwin's bit
-        // 31, which names no signal and is kept.
-        HostPlatform.onUnixHost (fun flavour ->
-            let platform = HostPlatform.platformOf flavour
-            let numbering = SimulatedUnixPlatform.signalNumbering platform
-            let sigBlock, sigSetMask = howFor flavour
+    /// One `pthread_sigmask` call: its raw `how`, and the set's word, if it
+    /// passes one.
+    type private MaskCall =
+        {
+            How : int
+            Set : uint64 option
+        }
 
-            let bitOf (signal : Signal) : int =
-                Signal.toRawSignoUnder numbering signal - 1
+    /// What the kernel answered to one call: its return code, the old mask it
+    /// wrote, and the thread's mask after it.
+    type private MaskAnswer =
+        {
+            Code : int
+            Old : uint64
+            After : uint64
+        }
 
-            let bits =
-                [
-                    Signal.SIGHUP
-                    Signal.SIGINT
-                    Signal.SIGUSR2
-                    Signal.SIGTERM
-                    Signal.SIGALRM
-                    Signal.SIGKILL
-                    Signal.SIGSTOP
-                ]
-                |> List.map bitOf
-                |> List.append (
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> [ 31 ; 32 ]
-                    | SimulatedUnixFlavour.Darwin -> [ 31 ]
-                )
+    let private writeCall (call : MaskCall) : string =
+        match call.Set with
+        | None -> $"%d{call.How}:-"
+        | Some word -> $"%d{call.How}:%x{word}"
 
-            let hows = [ sigBlock ; sigBlock + 1 ; sigSetMask ; 100 ]
-            let rng = Random 20261008
-            let original : byte[] = Array.zeroCreate sigsetBytes
+    let private parseCall (text : string) : MaskCall =
+        match text.Split ':' with
+        | [| how ; "-" |] ->
+            {
+                How = int how
+                Set = None
+            }
+        | [| how ; word |] ->
+            {
+                How = int how
+                Set = Some (Convert.ToUInt64 (word, 16))
+            }
+        | _ -> failwith $"not a pthread_sigmask call: %s{text}"
 
-            if pthread_sigmask (sigBlock, null, original) <> 0 then
-                failwith "could not read this thread's mask"
+    let private writeAnswer (answer : MaskAnswer) : string =
+        $"%d{answer.Code}:%x{answer.Old}:%x{answer.After}"
 
-            try
-                for _ in 1..200 do
-                    if pthread_sigmask (sigSetMask, bufferOfWord 0UL, null) <> 0 then
-                        failwith "could not clear this thread's mask"
+    let private parseAnswer (text : string) : MaskAnswer =
+        match text.Split ':' with
+        | [| code ; old ; after |] ->
+            {
+                Code = int code
+                Old = Convert.ToUInt64 (old, 16)
+                After = Convert.ToUInt64 (after, 16)
+            }
+        | _ -> failwith $"not a pthread_sigmask answer: %s{text}"
 
-                    let mutable system : UnixSystem<int, unit> =
+    let private spaced (write : 'a -> string) (items : 'a list) : string =
+        items |> List.map write |> String.concat " "
+
+    let private unspaced (parse : string -> 'a) (text : string) : 'a list =
+        text.Split ' ' |> Array.toList |> List.map parse
+
+    /// Sequences of ten calls on a thread whose mask starts empty, each made on
+    /// the host and on the model, compared answer by answer and mask by mask.
+    /// A Mac's answers are recorded in `hostCorpus/pthreadSigmask.darwin.txt`,
+    /// which every host replays, so CI, which runs on Linux, holds the Darwin
+    /// column too.
+    /// The sets name only signals the test host can leave blocked for a moment,
+    /// SIGKILL's and SIGSTOP's bits, and the bits one flavour treats specially:
+    /// Linux's 32 and 33, which glibc screens, and Darwin's bit 31, which names
+    /// no signal and is kept. `how` is one of the three the flavour numbers, or
+    /// 100, which neither does.
+    let private callSequences : HostComparison<MaskCall list, MaskAnswer list> =
+        {
+            Name = "pthreadSigmask"
+            Inputs =
+                fun platform ->
+                    let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+                    let bitOf (signal : Signal) : int =
+                        Signal.toRawSignoUnder numbering signal - 1
+
+                    let bits =
+                        [
+                            Signal.SIGHUP
+                            Signal.SIGINT
+                            Signal.SIGUSR2
+                            Signal.SIGTERM
+                            Signal.SIGALRM
+                            Signal.SIGKILL
+                            Signal.SIGSTOP
+                        ]
+                        |> List.map bitOf
+                        |> List.append (
+                            match SimulatedUnixPlatform.flavour platform with
+                            | SimulatedUnixFlavour.Linux -> [ 31 ; 32 ]
+                            | SimulatedUnixFlavour.Darwin -> [ 31 ]
+                        )
+
+                    let setGen : Gen<uint64> =
+                        bits
+                        |> List.map (fun bit -> Gen.elements [ 0UL ; 1UL <<< bit ])
+                        |> Gen.sequenceToList
+                        |> Gen.map (List.fold (|||) 0UL)
+
+                    let callGen : Gen<MaskCall> =
+                        Gen.map2
+                            (fun how set ->
+                                {
+                                    How = how
+                                    Set = set
+                                }
+                            )
+                            (Gen.elements
+                                [
+                                    MaskHow.block numbering
+                                    MaskHow.unblock numbering
+                                    MaskHow.setMask numbering
+                                    100
+                                ])
+                            (Gen.frequency [ 1, Gen.constant None ; 5, Gen.map Some setGen ])
+
+                    Gen.listOfLength 10 callGen
+            Count = 200
+            WriteInput = spaced writeCall
+            ParseInput = unspaced parseCall
+            WriteAnswer = spaced writeAnswer
+            ParseAnswer = unspaced parseAnswer
+            Host =
+                fun platform calls ->
+                    let numbering = SimulatedUnixPlatform.signalNumbering platform
+                    let original : byte[] = Array.zeroCreate sigsetBytes
+
+                    if pthread_sigmask (MaskHow.block numbering, null, original) <> 0 then
+                        failwith "could not read this thread's mask"
+
+                    try
+                        if pthread_sigmask (MaskHow.setMask numbering, bufferOfWord 0UL, null) <> 0 then
+                            failwith "could not clear this thread's mask"
+
+                        calls
+                        |> List.map (fun call ->
+                            let old : byte[] = Array.zeroCreate sigsetBytes
+
+                            let code =
+                                pthread_sigmask (call.How, (call.Set |> Option.map bufferOfWord |> Option.toObj), old)
+
+                            let now : byte[] = Array.zeroCreate sigsetBytes
+                            pthread_sigmask (MaskHow.block numbering, null, now) |> ignore<int>
+
+                            {
+                                Code = code
+                                Old = wordOfBuffer old
+                                After = wordOfBuffer now
+                            }
+                        )
+                    finally
+                        pthread_sigmask (MaskHow.setMask numbering, original, null) |> ignore<int>
+            Disagreement =
+                fun platform calls answers ->
+                    let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+                    let system : UnixSystem<int, unit> =
                         UnixSystem.initial platform
                         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-                    for _ in 1..10 do
-                        let how = hows.[rng.Next hows.Length]
-
-                        let set =
-                            if rng.Next 6 = 0 then
-                                None
-                            else
-                                Some (
-                                    bits
-                                    |> List.filter (fun _ -> rng.Next 2 = 0)
-                                    |> List.fold (fun w b -> w ||| (1UL <<< b)) 0UL
-                                )
-
-                        let old : byte[] = Array.zeroCreate sigsetBytes
-
-                        let rc =
-                            pthread_sigmask (how, (set |> Option.map bufferOfWord |> Option.toObj), old)
+                    let rec go (system : UnixSystem<int, unit>) (pairs : (MaskCall * MaskAnswer) list) : string option =
+                        match pairs with
+                        | [] -> None
+                        | (call, answer) :: rest ->
 
                         let modelSet =
-                            set
+                            call.Set
                             |> Option.map (fun word ->
                                 match SignalMask.ofWord numbering word with
                                 | Ok mask -> mask
                                 | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
                             )
 
-                        match UnixSignal.pthreadSigmask 0 how modelSet system with
-                        | Ok (modelOld, after) ->
-                            (how, set, rc, SignalMask.toWord modelOld)
-                            |> shouldEqual (how, set, 0, wordOfBuffer old)
+                        let disagreement, system =
+                            match UnixSignal.pthreadSigmask (Callers.thread 0 system) call.How modelSet system with
+                            | SignalMaskAnswer.Completed modelOld, after ->
+                                let modelOld = SignalMask.toWord modelOld
 
-                            system <- after
-                        | Error errno ->
-                            let expected =
-                                UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno
+                                if answer.Code <> 0 || answer.Old <> modelOld then
+                                    Some
+                                        $"%s{writeCall call}: the model answered 0 with old mask %x{modelOld}, the kernel %d{answer.Code} with %x{answer.Old}",
+                                    after
+                                else
+                                    None, after
+                            | SignalMaskAnswer.Failed errno, after ->
+                                after |> shouldEqual system
 
-                            (how, set, rc) |> shouldEqual (how, set, expected)
+                                let expected =
+                                    UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno
 
-                        let now : byte[] = Array.zeroCreate sigsetBytes
-                        pthread_sigmask (sigBlock, null, now) |> ignore<int>
+                                if answer.Code <> expected then
+                                    Some
+                                        $"%s{writeCall call}: the model answered %d{expected}, the kernel %d{answer.Code}",
+                                    system
+                                else
+                                    None, system
 
-                        (how, set, SignalState.maskOf 0 (UnixSystem.signals system) |> SignalMask.toWord)
-                        |> shouldEqual (how, set, wordOfBuffer now)
-            finally
-                pthread_sigmask (sigSetMask, original, null) |> ignore<int>
-        )
+                        let modelAfter =
+                            SignalState.maskOf 0 (UnixSystem.signals (Lone.pid system) system)
+                            |> SignalMask.toWord
+
+                        match disagreement with
+                        | Some _ -> disagreement
+                        | None when modelAfter <> answer.After ->
+                            Some
+                                $"%s{writeCall call}: the model's mask is then %x{modelAfter}, the kernel's %x{answer.After}"
+                        | None -> go system rest
+
+                    if answers.Length <> calls.Length then
+                        Some $"%d{calls.Length} calls, but %d{answers.Length} answers"
+                    else
+                        go system (List.zip calls answers)
+                    |> Option.map (fun disagreement -> $"in [%s{spaced writeCall calls}], %s{disagreement}")
+        }
+
+    [<Test>]
+    let ``UnixSignal.pthreadSigmask answers as this host's pthread_sigmask, call for call`` () : unit =
+        HostPlatform.onUnixHost (fun flavour -> HostCorpus.live callSequences (HostPlatform.platformOf flavour))
+
+    [<Test>]
+    let ``UnixSignal.pthreadSigmask answers as Darwin's pthread_sigmask did, call for call`` () : unit =
+        HostCorpus.replay callSequences SimulatedUnixPlatform.macOsArm64
+
+    [<Test>]
+    let ``every pthread_sigmask sequence reads back as itself`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            HostCorpus.inputsRoundTrip callSequences platform

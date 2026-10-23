@@ -25,6 +25,10 @@ open WoofWare.PosixKernel
 /// Touching the real filesystem is fine in a *test*; the prohibition is on the
 /// product, which must never read the host.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestVirtualFileSystemAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]
@@ -36,42 +40,11 @@ module TestVirtualFileSystemAgainstHost =
     [<DllImport("libc", SetLastError = true)>]
     extern int private symlink(string target, string linkpath)
 
-    /// `open(2)`. Its C prototype is `int open(const char *, int, ...)`, so
-    /// `mode` is a *variadic* argument and a fixed-signature P/Invoke may pass
-    /// it somewhere the callee does not look — on Apple arm64 variadic arguments
-    /// go on the stack while fixed ones go in registers. `path` and `flags` are
-    /// fixed parameters and so are always correct, which is why nothing below
-    /// asserts on the *mode* a created file ends up with: only on whether the
-    /// call created, opened, or failed, none of which `mode` can change.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private ``open``(string path, int flags, int mode)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private close(int fd)
-
     [<DllImport("libc", SetLastError = true)>]
     extern nativeint private opendir(string path)
 
     [<DllImport("libc", SetLastError = true)>]
     extern int private closedir(nativeint dir)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private mkdir(string path, uint32 mode)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private unlink(string path)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private rmdir(string path)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private rename(string oldPath, string newPath)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private ftruncate(int fd, int64 length)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern nativeint private write(int fd, byte[] buf, nativeint count)
 
     /// `chown(2)`, used here only to hand a file to a group the caller belongs
     /// to. That is a precondition for setting `S_ISGID` at all: a non-root
@@ -80,12 +53,6 @@ module TestVirtualFileSystemAgainstHost =
     /// group under BSD semantics — `wheel` on macOS.
     [<DllImport("libc", SetLastError = true)>]
     extern int private chown(string path, uint32 owner, uint32 group)
-
-    [<DllImport("libc")>]
-    extern uint32 private getegid()
-
-    [<DllImport("libc")>]
-    extern uint32 private geteuid()
 
     /// The *real* uid, which is the one `access(2)` tests -- unlike almost
     /// everything else here, which the effective uid governs.
@@ -111,7 +78,9 @@ module TestVirtualFileSystemAgainstHost =
     let private R_OK = 4
 
     /// Which simulated platform this test host actually is, so the model is
-    /// asked to resolve as a kernel of the flavour it is being compared against.
+    /// asked to resolve as a kernel of the flavour it is being compared against,
+    /// at the host's own kernel version: `rename`'s refusal order changed
+    /// between Linux versions (`RenameAncestorCheck`).
     ///
     /// Classified by `HostPlatform`, so that what counts as "this host" is
     /// written down once; the refusal below is this fixture's own, and is not
@@ -127,7 +96,7 @@ module TestVirtualFileSystemAgainstHost =
     /// module initialisation on a host where every test here `Assert.Ignore`s.
     let private hostPlatform () : SimulatedUnixPlatform =
         match HostPlatform.flavour () with
-        | Some flavour -> HostPlatform.platformOf flavour
+        | Some flavour -> HostPlatform.runningHostKernel (HostPlatform.platformOf flavour)
         | None ->
             failwith
                 "TestVirtualFileSystemAgainstHost: this host is neither macOS nor Linux, so there is no SimulatedUnixPlatform to compare it against. The rows here skip on Windows only, so on any other unmodelled Unix this is where you land: give that flavour a preset, or widen the skip."
@@ -395,7 +364,7 @@ module TestVirtualFileSystemAgainstHost =
     /// bit, so under a root test host the corpus's EACCES rows go vacuous rather
     /// than red — the same choice `compareTruncationModes` makes.
     let private hostPrivilege () : CallerPrivilege =
-        if geteuid () = 0u then
+        if HostCalls.getEUid () = 0u then
             CallerPrivilege.Privileged
         else
             CallerPrivilege.Unprivileged
@@ -891,12 +860,13 @@ module TestVirtualFileSystemAgainstHost =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-            }
+                )
+                system
             |> Lone.mapProc (fun proc ->
                 { proc with
                     CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -906,6 +876,7 @@ module TestVirtualFileSystemAgainstHost =
 
         match
             UnixNamespace.tryReadlink
+                (Callers.leader system)
                 (PathArg.ofPath (UnixPath.parseOrFail "test" relative))
                 UserBuffer.Mapped
                 capacity
@@ -1019,7 +990,7 @@ module TestVirtualFileSystemAgainstHost =
             // and `buildHostTree` would have to have failed loudly for that to
             // happen, so this is the second line of defence rather than the
             // first. Root searches anything, so it cannot make the observation.
-            if geteuid () <> 0u then
+            if HostCalls.getEUid () <> 0u then
                 observed
                 |> List.contains (Outcome.Failed (hostErrno UnixError.EACCES))
                 |> shouldEqual true
@@ -1058,13 +1029,15 @@ module TestVirtualFileSystemAgainstHost =
         // which did not exist.
         let existedBefore = access (path, F_OK) = 0
 
-        let fd = ``open`` (path, flags, 0o666)
+        // Only the outcome is compared, never the created file's mode, which
+        // on Apple arm64 is not the one passed (see `HostCalls.openFile`).
+        let fd = HostCalls.openFile (path, flags, 0o666)
 
         if fd < 0 then
             CreatingOutcome.Failed (errno ())
         else
 
-        close fd |> ignore<int>
+        HostCalls.close fd |> ignore<int>
 
         if existedBefore then
             CreatingOutcome.Opened
@@ -1277,7 +1250,7 @@ module TestVirtualFileSystemAgainstHost =
         let rule = SimulatedUnixPlatform.setIdBitsOnTruncation (hostPlatform ())
 
         let privilege =
-            if geteuid () = 0u then
+            if HostCalls.getEUid () = 0u then
                 CallerPrivilege.Privileged
             else
                 CallerPrivilege.Unprivileged
@@ -1289,18 +1262,18 @@ module TestVirtualFileSystemAgainstHost =
             File.WriteAllBytes (path, [| 1uy ; 2uy ; 3uy ; 4uy |])
 
             // Hand it to a group we are in, or `chmod` will drop S_ISGID.
-            if chown (path, 0xFFFFFFFFu, getegid ()) <> 0 then
+            if chown (path, 0xFFFFFFFFu, HostCalls.getEGid ()) <> 0 then
                 failwith $"chown(%s{path}) failed: errno %d{errno ()}"
 
             if trySetMode path mode then
-                let fd = ``open`` (path, hostOWrOnly, 0)
+                let fd = HostCalls.openFile (path, hostOWrOnly, 0)
 
                 if fd < 0 then
                     failwith $"open(%s{path}, O_WRONLY) failed: errno %d{errno ()}"
 
-                let result = ftruncate (fd, 0L)
+                let result = HostCalls.ftruncate (fd, 0L)
                 let truncateErrno = errno ()
-                close fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
                 if result <> 0 then
                     failwith $"ftruncate(%s{path}, 0) failed: errno %d{truncateErrno}"
@@ -1310,7 +1283,6 @@ module TestVirtualFileSystemAgainstHost =
                 let modelSaid =
                     PermissionBits.parseOrFail "test" mode
                     |> PermissionBits.afterTruncation rule (Owners.owning privilege)
-                    |> Answered.unrefused
                     |> PermissionBits.toInt
 
                 if kernelSaid <> modelSaid then
@@ -1332,7 +1304,7 @@ module TestVirtualFileSystemAgainstHost =
         let rule = SimulatedUnixPlatform.setGroupIdOnWrite (hostPlatform ())
 
         let privilege =
-            if geteuid () = 0u then
+            if HostCalls.getEUid () = 0u then
                 CallerPrivilege.Privileged
             else
                 CallerPrivilege.Unprivileged
@@ -1344,18 +1316,18 @@ module TestVirtualFileSystemAgainstHost =
             File.WriteAllBytes (path, [| 1uy ; 2uy ; 3uy ; 4uy |])
 
             // Hand it to a group we are in, or `chmod` will drop S_ISGID.
-            if chown (path, 0xFFFFFFFFu, getegid ()) <> 0 then
+            if chown (path, 0xFFFFFFFFu, HostCalls.getEGid ()) <> 0 then
                 failwith $"chown(%s{path}) failed: errno %d{errno ()}"
 
             if trySetMode path mode then
-                let fd = ``open`` (path, hostOWrOnly, 0)
+                let fd = HostCalls.openFile (path, hostOWrOnly, 0)
 
                 if fd < 0 then
                     failwith $"open(%s{path}, O_WRONLY) failed: errno %d{errno ()}"
 
-                let written = write (fd, [| 0x78uy |], 1n)
+                let written = HostCalls.write (fd, [| 0x78uy |], 1un)
                 let writeErrno = errno ()
-                close fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
                 if written <> 1n then
                     failwith $"write(%s{path}, 1 byte) wrote %d{written}: errno %d{writeErrno}"
@@ -1365,7 +1337,6 @@ module TestVirtualFileSystemAgainstHost =
                 let modelSaid =
                     PermissionBits.parseOrFail "test" mode
                     |> PermissionBits.afterContentChangingWrite rule (Owners.owning privilege)
-                    |> Answered.unrefused
                     |> PermissionBits.toInt
 
                 if kernelSaid <> modelSaid then
@@ -1408,7 +1379,7 @@ module TestVirtualFileSystemAgainstHost =
         if RuntimeInformation.IsOSPlatform OSPlatform.Windows then
             Assert.Ignore "This oracle compares against a Unix kernel."
 
-        if geteuid () = 0u then
+        if HostCalls.getEUid () = 0u then
             // Root preserves every bit on both flavours, so the whole table
             // collapses to the identity and could not falsify anything. The
             // suite does not choose the uid it runs as, so this is a skip rather
@@ -1447,7 +1418,7 @@ module TestVirtualFileSystemAgainstHost =
         if RuntimeInformation.IsOSPlatform OSPlatform.Windows then
             Assert.Ignore "This oracle compares against a Unix kernel."
 
-        if geteuid () = 0u then
+        if HostCalls.getEUid () = 0u then
             // Root strips nothing on either flavour, so the whole table collapses
             // to the identity and could not falsify anything. The suite does not
             // choose the uid it runs as, so this is a skip rather than a failure.
@@ -1547,7 +1518,7 @@ module TestVirtualFileSystemAgainstHost =
         // about the effective one, so both are checked: root by either measure
         // is waved through every row, which would leave the sweep agreeing with
         // a kernel that had stopped discriminating.
-        if getuid () = 0u || geteuid () = 0u then
+        if getuid () = 0u || HostCalls.getEUid () = 0u then
             Assert.Ignore "Running as root, which bypasses every bit here, so no row could falsify anything."
 
         withModeProbeRoot (fun root ->
@@ -1578,7 +1549,7 @@ module TestVirtualFileSystemAgainstHost =
         | Failed of errno : int
 
     let private hostMkDirOutcome (root : string) (relative : string) : MkDirOutcome =
-        if mkdir (hostPath root relative, 0o777u) = 0 then
+        if HostCalls.mkdir (hostPath root relative, 0o777u) = 0 then
             MkDirOutcome.Created
         else
             MkDirOutcome.Failed (errno ())
@@ -1714,7 +1685,7 @@ module TestVirtualFileSystemAgainstHost =
     let private observedUmask (root : string) : PermissionBits =
         let path = Path.Combine (root, "umask-probe")
 
-        if mkdir (path, 0o777u) <> 0 then
+        if HostCalls.mkdir (path, 0o777u) <> 0 then
             failwith $"mkdir(%s{path}, 0o777) failed: errno %d{errno ()}"
 
         0o777 &&& ~~~(rawModeOf (File.GetUnixFileMode path))
@@ -1735,7 +1706,7 @@ module TestVirtualFileSystemAgainstHost =
         for mode in modes do
             let path = Path.Combine (parent, $"m%04o{mode}")
 
-            if mkdir (path, uint32 mode) <> 0 then
+            if HostCalls.mkdir (path, uint32 mode) <> 0 then
                 failwith $"mkdir(%s{path}, 0o%04o{mode}) failed: errno %d{errno ()}"
 
             let kernelSaid = rawModeOf (File.GetUnixFileMode path)
@@ -1790,13 +1761,13 @@ module TestVirtualFileSystemAgainstHost =
         try
             let parent = Path.Combine (root, "sgid")
 
-            if mkdir (parent, 0o777u) <> 0 then
+            if HostCalls.mkdir (parent, 0o777u) <> 0 then
                 failwith $"mkdir(%s{parent}) failed: errno %d{errno ()}"
 
             // Hand it to a group we are in, or `chmod` will drop S_ISGID —
             // silently, which is exactly how a probe of this shape reads as
             // "unsupported on this platform" when it is nothing of the kind.
-            if chown (parent, 0xFFFFFFFFu, getegid ()) <> 0 then
+            if chown (parent, 0xFFFFFFFFu, HostCalls.getEGid ()) <> 0 then
                 failwith $"chown(%s{parent}) failed: errno %d{errno ()}"
 
             if not (trySetMode parent 0o2777) then
@@ -1891,7 +1862,7 @@ module TestVirtualFileSystemAgainstHost =
         walk "" (VirtualFileSystem.root vfs) |> List.sort
 
     let private hostUnlinkOutcome (root : string) (relative : string) : UnlinkOutcome =
-        let result = unlink (hostPath root relative)
+        let result = HostCalls.unlink (hostPath root relative)
         let failure = errno ()
 
         // Widened before listing: three corpus directories cannot be
@@ -1938,7 +1909,6 @@ module TestVirtualFileSystemAgainstHost =
                 (Owners.caller (hostPrivilege ()))
                 resolution
                 vfs
-            |> Answered.unrefused
         with
         | UnlinkVerdict.Refuse error -> UnlinkOutcome.Failed (hostErrno error)
         | UnlinkVerdict.Remove (directory, name) ->
@@ -2083,7 +2053,7 @@ module TestVirtualFileSystemAgainstHost =
         // The permission rows, which a root test host cannot reach: it ignores
         // every mode bit, and `hostPrivilege` asks the model the same way, so
         // they go vacuous rather than red.
-        if geteuid () <> 0u then
+        if HostCalls.getEUid () <> 0u then
             failedWith UnixError.EACCES |> shouldEqual true
 
         // The divergent verdicts, asserted per flavour so that the corpus cannot
@@ -2102,7 +2072,7 @@ module TestVirtualFileSystemAgainstHost =
     // --------------------------------------------------------------- rmdir
 
     let private hostRmDirOutcome (root : string) (relative : string) : UnlinkOutcome =
-        let result = rmdir (hostPath root relative)
+        let result = HostCalls.rmdir (hostPath root relative)
         let failure = errno ()
 
         // Widened before listing, exactly as the `unlink` half does and for the
@@ -2151,7 +2121,6 @@ module TestVirtualFileSystemAgainstHost =
                 (Owners.caller (hostPrivilege ()))
                 resolution
                 vfs
-            |> Answered.unrefused
         with
         | RmDirVerdict.Refuse error -> UnlinkOutcome.Failed (hostErrno error)
         | RmDirVerdict.Remove (directory, name) ->
@@ -2249,7 +2218,7 @@ module TestVirtualFileSystemAgainstHost =
         // The permission rows, which a root test host cannot reach: it ignores
         // every mode bit, and `hostPrivilege` asks the model the same way, so
         // they go vacuous rather than red.
-        if geteuid () <> 0u then
+        if HostCalls.getEUid () <> 0u then
             failedWith UnixError.EACCES |> shouldEqual true
 
         // The divergent verdicts, asserted per flavour so that the corpus cannot
@@ -2384,7 +2353,7 @@ module TestVirtualFileSystemAgainstHost =
             // ignores every mode bit, and `hostPrivilege` asks the model the
             // same way, so the row goes vacuous rather than red. The other
             // coverage assertions in this fixture carry the same guard.
-            if geteuid () <> 0u then
+            if HostCalls.getEUid () <> 0u then
                 if not (List.contains (hostErrno UnixError.EACCES) errnos) then
                     failwith "no probe path makes the model's opendir answer EACCES, so that arm is untested."
 
@@ -2433,7 +2402,7 @@ module TestVirtualFileSystemAgainstHost =
 
             match VirtualFileSystem.nextDirectoryEntry inode cursor vfs with
             | None -> acc
-            | Some (DirectoryStreamName.Entry name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
+            | Some (PathComponent.Name name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
             | Some (_, _, next) -> go next (fuel - 1) acc
 
         go DirectoryCursor.Start 1000 [] |> List.sort
@@ -2716,7 +2685,7 @@ module TestVirtualFileSystemAgainstHost =
                         buildRenameHostTree root
                         let vfs = buildRenameModel ()
 
-                        if rename (hostPath root source, hostPath root destination) <> 0 then
+                        if HostCalls.rename (hostPath root source, hostPath root destination) <> 0 then
                             yield
                                 $"rename %s{source} -> %s{destination}: the kernel refused with errno %d{errno ()}, and every row here is meant to succeed"
                         else
@@ -2769,7 +2738,10 @@ module TestVirtualFileSystemAgainstHost =
             buildRenameHostTree root
 
             let before = renameHostParents root |> Map.ofList
-            rename (hostPath root "d/sub", hostPath root "b/sub-moved") |> shouldEqual 0
+
+            HostCalls.rename (hostPath root "d/sub", hostPath root "b/sub-moved")
+            |> shouldEqual 0
+
             let after = renameHostParents root |> Map.ofList
 
             Map.tryFind "d/sub" before |> shouldEqual (Some "d")
@@ -2816,12 +2788,13 @@ module TestVirtualFileSystemAgainstHost =
                     0
                     (CpuId 0))
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -2842,7 +2815,7 @@ module TestVirtualFileSystemAgainstHost =
             buildHostTree root
 
             let hostSaid =
-                if rename (hostPath root source, hostPath root destination) = 0 then
+                if HostCalls.rename (hostPath root source, hostPath root destination) = 0 then
                     RenameRefusal.Succeeded
                 else
                     RenameRefusal.Refused (errno ())
@@ -2987,7 +2960,7 @@ module TestVirtualFileSystemAgainstHost =
                 yield "ENOENT", RenameRefusal.Refused (hostErrno UnixError.ENOENT)
                 yield "ENOTDIR", RenameRefusal.Refused (hostErrno UnixError.ENOTDIR)
 
-                if geteuid () <> 0u then
+                if HostCalls.getEUid () <> 0u then
                     yield "EACCES", RenameRefusal.Refused (hostErrno UnixError.EACCES)
 
                 yield "EISDIR", RenameRefusal.Refused (hostErrno UnixError.EISDIR)
@@ -3026,8 +2999,9 @@ module TestVirtualFileSystemAgainstHost =
     /// this comparison needs — a shell's `cd` reports a message instead. One
     /// invocation for the whole corpus rather than one per path, and the paths
     /// arrive on stdin NUL-separated so that none of them can be mistaken for an
-    /// argument. `python3` is in the flake devshell, which is how CI runs this
-    /// rather than skipping it.
+    /// argument. `python3` is in the flake devshell, which is how CI runs this,
+    /// and the devshell sets `POSIXKERNEL_REQUIRE_PYTHON3`, under which a
+    /// missing `python3` fails the test rather than skipping it.
     let private hostChDirOutcomes (root : string) (paths : string list) : ChDirOutcome list option =
         // The child refuses to leave the tree, in both directions: an operand
         // that is not under `root`, and a directory it somehow lands in that is
@@ -3073,7 +3047,12 @@ module TestVirtualFileSystemAgainstHost =
         let child =
             try
                 Some (Process.Start startInfo)
-            with _ ->
+            with :? ComponentModel.Win32Exception ->
+                // The devshell promises python3 by setting this, and there a
+                // run without it would silently compare nothing.
+                if Environment.GetEnvironmentVariable "POSIXKERNEL_REQUIRE_PYTHON3" = "1" then
+                    reraise ()
+
                 None
 
         match child with
@@ -3140,12 +3119,13 @@ module TestVirtualFileSystemAgainstHost =
                     (CpuId 0))
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-            }
+                )
+                system
             |> Lone.mapProc (fun proc ->
                 { proc with
                     CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -3153,9 +3133,9 @@ module TestVirtualFileSystemAgainstHost =
             )
             |> Lone.restand
 
-        match Answered.chdir (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
+        match Answered.chdir (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
         | SyscallAnswer.Completed 0L, moved ->
-            match UnixPathResolution.currentDirectoryPath moved with
+            match UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved with
             | Some path -> ChDirOutcome.Entered (PathText.ofAbsolute path)
             | None ->
                 // No operand in this fixture removes a directory, so nothing

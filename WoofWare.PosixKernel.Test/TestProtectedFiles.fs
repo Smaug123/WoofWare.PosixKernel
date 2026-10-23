@@ -458,12 +458,13 @@ module TestProtectedFiles =
             |> Configured.expectOk ProtectedFilesRefusal.describe
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -476,8 +477,16 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> "ok"
         | SyscallAnswer.Failed error -> $"%A{error}"
 
+    let private descriptorText (answer : DescriptorAnswer) : string =
+        match answer with
+        | DescriptorAnswer.Returned _ -> "ok"
+        | DescriptorAnswer.Failed error -> $"%A{error}"
+
     let private statText (policy : SymlinkPolicy) (p : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat policy (PathArg.ofPath (path p)) system |> ok with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofPath (path p)) system
+            |> ok
+        with
         | FileStatusAnswer.Reported _ -> "ok"
         | FileStatusAnswer.Failed error -> $"%A{error}"
 
@@ -491,6 +500,7 @@ module TestProtectedFiles =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -500,28 +510,30 @@ module TestProtectedFiles =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofPath (path p)) 0o644 system with
-        | Ok (answer, after) -> answerText answer, after
+        match OpenFlagWords.openPath (PathArg.ofPath (path p)) flags 0o644 system with
+        | Ok (answer, after) -> descriptorText answer, after
         | Error refusal -> failwith $"open(%s{p}) was refused: %A{refusal}"
 
     let private exists (p : string) (system : UnixSystem<int, string>) : bool =
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
-                (VirtualFileSystem.root system.Machine.FileSystem)
+                (VirtualFileSystem.root (UnixSystem.fileSystem system))
                 SymlinkPolicy.NoFollowFinal
                 (path p)
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
         with
         | Ok _ -> true
         | Error (PathFailure.Errno UnixError.ENOENT) -> false
         | Error error -> failwith $"%s{p}: %O{error}"
 
-    let private contentsOf (p : string) (system : UnixSystem<int, string>) : int =
-        match VirtualFileSystem.tryGetContent (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
-        | Some (InodeContent.RegularFile (contents, _)) -> contents.Length
+    let private contentsOf (p : string) (system : UnixSystem<int, string>) : int64 =
+        match
+            VirtualFileSystem.tryGetContent (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system)
+        with
+        | Some (InodeContent.RegularFile (contents, _)) -> FileContents.length contents
         | other -> failwith $"%s{p} is not a regular file: %A{other}"
 
     /// The probe's directories outside the sticky one: `/t` holding a file and
@@ -577,7 +589,12 @@ module TestProtectedFiles =
 
         let readlinkText =
             match
-                UnixNamespace.tryReadlink (PathArg.ofPath (path "/s/lf")) UserBuffer.Mapped 4096 system
+                UnixNamespace.tryReadlink
+                    (Callers.leader system)
+                    (PathArg.ofPath (path "/s/lf"))
+                    UserBuffer.Mapped
+                    4096
+                    system
                 |> ok
             with
             | ReadLinkAnswer.Reported _ -> "ok"
@@ -598,21 +615,25 @@ module TestProtectedFiles =
             )
             "readlink", readlinkText
             "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
-            "access-nofollow", accessText (UnixPathResolution.tryFaccessatEager -100 (bytes "/s/lf") 0 0x100 system)
+            "access-nofollow",
+            accessText (Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system)
             "chown",
-            UnixPathResolution.tryChown (PathArg.ofPath (path "/s/lf")) None None system
+            UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
             |> fst
             |> answerText
             "lchown",
-            UnixPathResolution.tryLchown (PathArg.ofPath (path "/s/lf")) None None system
+            UnixPathResolution.tryLchown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
             |> fst
             |> answerText
             "dir-slash", stat "/s/ld/"
             "dir-dot", stat "/s/ld/."
             "dir-child", stat "/s/ld/x"
-            "chdir", Answered.chdir (PathArg.ofPath (path "/s/ld")) system |> fst |> answerText
+            "chdir",
+            Answered.chdir (Callers.leader system) (PathArg.ofPath (path "/s/ld")) system
+            |> fst
+            |> answerText
             "opendir",
             fst (
                 openText
@@ -628,7 +649,7 @@ module TestProtectedFiles =
             "cycle-stat", stat "/s/lcyc"
             "via-chain", stat "/v/via"
             "unlink",
-            UnixNamespace.tryUnlink (PathArg.ofPath (path "/s/lf")) system
+            UnixNamespace.tryUnlink (Callers.leader system) (PathArg.ofPath (path "/s/lf")) system
             |> ok
             |> fst
             |> answerText
@@ -696,7 +717,7 @@ module TestProtectedFiles =
                         [
                             "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
-                            UnixPathResolution.tryFaccessatEager -100 (bytes "/ids/lf") 4 0x200 system
+                            Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/ids/lf") 4 0x200 system
                             |> ok
                             |> answerText
                             "stat", statText SymlinkPolicy.Follow "/ids/lf" system
@@ -751,7 +772,13 @@ module TestProtectedFiles =
                     // The kernel's answer here is EACCES or ELOOP by its cache.
                     [ "EACCES" ; "ELOOP" ] |> shouldContain row.["stat"]
 
-                    match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (path start)) system with
+                    match
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.Follow
+                            (PathArg.ofPath (path start))
+                            system
+                    with
                     | Error (StatRefusal.Path (PathRefusal.ProtectedSymlinkCacheDependent (_, _, refusedAt, limit))) ->
                         (n, refusedAt, limit) |> shouldEqual (n, traversal, linuxLimit)
                     | other -> failwith $"chain %d{n}: expected the cache-dependent refusal, got %A{other}"
@@ -772,15 +799,22 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> WalkOutcome.Answered None
         | SyscallAnswer.Failed error -> WalkOutcome.Answered (Some error)
 
-    let private ofStep (result : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) : WalkOutcome =
+    let private ofDescriptorAnswer (answer : DescriptorAnswer) : WalkOutcome =
+        match answer with
+        | DescriptorAnswer.Returned _ -> WalkOutcome.Answered None
+        | DescriptorAnswer.Failed error -> WalkOutcome.Answered (Some error)
+
+    let private ofStep (result : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : WalkOutcome =
         match result with
-        | Ok (SyscallOutcome.Answered answer, _) -> ofSyscallAnswer answer
-        | Ok (outcome, _) -> WalkOutcome.Unexpected $"%A{outcome}"
+        | Ok stepped ->
+            match Stepped.syscallAnswer stepped with
+            | Some (answer, _) -> ofSyscallAnswer answer
+            | None -> WalkOutcome.Unexpected $"%A{Stepped.view stepped}"
         | Error (SyscallRefusal.ChDir refusal)
         | Error (SyscallRefusal.FChModAt (FChModAtRefusal.ChMod (ChModRefusal.Path refusal)))
         | Error (SyscallRefusal.FChOwnAt (FChOwnAtRefusal.ChOwn (ChOwnRefusal.Path refusal)))
-        | Error (SyscallRefusal.Access (AccessRefusal.Path refusal))
-        | Error (SyscallRefusal.Link (LinkRefusal.Path refusal)) -> WalkOutcome.Refused refusal
+        | Error (SyscallRefusal.FAccessAt (AccessRefusal.Path refusal))
+        | Error (SyscallRefusal.LinkAt (LinkRefusal.Path refusal)) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
     let private ofStatus (result : Result<FileStatusAnswer, StatRefusal>) : WalkOutcome =
@@ -797,9 +831,9 @@ module TestProtectedFiles =
         | Error (ReadLinkRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
-    let private ofOpen (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
+    let private ofOpen (result : Result<DescriptorAnswer * UnixSystem<int, string>, OpenRefusal>) : WalkOutcome =
         match result with
-        | Ok (answer, _) -> ofSyscallAnswer answer
+        | Ok (answer, _) -> ofDescriptorAnswer answer
         | Error (OpenRefusal.Path refusal) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
@@ -817,9 +851,12 @@ module TestProtectedFiles =
         let linuxAtSymlinkNoFollow = 0x100
         let linuxAtEAccess = 0x200
 
-        let step (call : Syscall) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSystem.tryStep 0 call system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), after) -> after
+        let step (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match
+                UnixSystem.tryStep (Callers.thread 0 system) call system
+                |> Result.map Stepped.syscallAnswer
+            with
+            | Ok (Some (SyscallAnswer.Completed _, Some after)) -> after
             | other -> failwith $"setting up, %A{call}: %A{other}"
 
         let system : UnixSystem<int, string> =
@@ -850,21 +887,29 @@ module TestProtectedFiles =
                 step (Syscall.SymlinkAt (bytes target, atFdCwd, bytes $"/a/c%d{i}")) system
             )
 
-        let stickyDirectory = inodeAt system.Machine.FileSystem "/t"
-        let protectedLink = inodeAt system.Machine.FileSystem "/t/p"
+        let stickyDirectory = inodeAt (UnixSystem.fileSystem system) "/t"
+        let protectedLink = inodeAt (UnixSystem.fileSystem system) "/t/p"
 
         let calls : (string * (string -> WalkOutcome)) list =
             [
-                "stat", (fun p -> UnixPathResolution.tryStat SymlinkPolicy.Follow (bytes p) system |> ofStatus)
+                "stat",
+                (fun p ->
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (bytes p) system
+                    |> ofStatus
+                )
                 // A trailing separator follows the final link even for lstat.
                 "lstat of p/",
                 (fun p ->
-                    UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (bytes (p + "/")) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.NoFollowFinal
+                        (bytes (p + "/"))
+                        system
                     |> ofStatus
                 )
                 "fstatat",
                 (fun p ->
-                    match UnixPathResolution.tryFstatat atFdCwd (bytes p) 0 system with
+                    match UnixPathResolution.tryFstatat (Callers.leader system) atFdCwd (bytes p) 0 system with
                     | Ok (FileStatusAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileStatusAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error (FStatAtRefusal.Stat (StatRefusal.Path refusal)) -> WalkOutcome.Refused refusal
@@ -872,50 +917,66 @@ module TestProtectedFiles =
                 )
                 "statfs",
                 (fun p ->
-                    match UnixPathResolution.tryStatfs (bytes p) system with
+                    match UnixPathResolution.tryStatfs (Callers.leader system) (bytes p) system with
                     | Ok (FileSystemStatisticsAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileSystemStatisticsAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error refusal -> WalkOutcome.Refused refusal
                 )
-                "open", (fun p -> OpenOutcomes.openPath 0 (bytes p) 0 system |> ofOpen)
+                "open", (fun p -> OpenOutcomes.openPath (bytes p) 0 0 system |> ofOpen)
                 "openat", (fun p -> OpenOutcomes.openat atFdCwd (bytes p) 0 0 system |> ofOpen)
-                "chdir", (fun p -> UnixSystem.tryStep 0 (Syscall.ChDir (bytes p)) system |> ofStep)
+                "chdir",
+                (fun p ->
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.ChDir (bytes p)) system
+                    |> ofStep
+                )
                 "chmod",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FChModAt (atFdCwd, bytes p, 0o755, 0)) system
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FChModAt (atFdCwd, bytes p, 0o755, 0)) system
                     |> ofStep
                 )
                 "chown",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FChOwnAt (atFdCwd, bytes p, None, None, 0)) system
+                    UnixSystem.tryStep
+                        (Callers.thread 0 system)
+                        (Syscall.FChOwnAt (atFdCwd, bytes p, None, None, 0))
+                        system
                     |> ofStep
                 )
                 "access",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FAccessAt (atFdCwd, bytes p, 0, 0)) system
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (atFdCwd, bytes p, 0, 0)) system
                     |> ofStep
                 )
                 "faccessat(AT_EACCESS)",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FAccessAt (atFdCwd, bytes p, 0, linuxAtEAccess)) system
+                    UnixSystem.tryStep
+                        (Callers.thread 0 system)
+                        (Syscall.FAccessAt (atFdCwd, bytes p, 0, linuxAtEAccess))
+                        system
                     |> ofStep
                 )
                 // `readlink` reads a final link rather than following it,
                 // except through a trailing separator.
                 "readlink of p/",
                 (fun p ->
-                    UnixNamespace.tryReadlink (bytes (p + "/")) UserBuffer.Mapped 64 system
+                    UnixNamespace.tryReadlink (Callers.leader system) (bytes (p + "/")) UserBuffer.Mapped 64 system
                     |> ofReadLink
                 )
                 "readlinkat of p/",
                 (fun p ->
-                    UnixNamespace.tryReadlinkat atFdCwd (bytes (p + "/")) UserBuffer.Mapped 64 system
+                    UnixNamespace.tryReadlinkat
+                        (Callers.leader system)
+                        atFdCwd
+                        (bytes (p + "/"))
+                        UserBuffer.Mapped
+                        64
+                        system
                     |> ofReadLink
                 )
                 "linkat(AT_SYMLINK_FOLLOW)",
                 (fun p ->
                     UnixSystem.tryStep
-                        0
+                        (Callers.thread 0 system)
                         (Syscall.LinkAt (atFdCwd, bytes p, atFdCwd, bytes "/a/new", linuxAtSymlinkFollow))
                         system
                     |> ofStep
@@ -1010,7 +1071,7 @@ module TestProtectedFiles =
                     system
             )
             "creat-trunc", creatTrunc
-            "truncated", (if contentsOf "/s/o" afterTrunc = 0 then "EEXIST" else "ok")
+            "truncated", (if contentsOf "/s/o" afterTrunc = 0L then "EEXIST" else "ok")
             "excl",
             fst (
                 openText
@@ -1204,7 +1265,7 @@ module TestProtectedFiles =
 
         let system = Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
-        system.Machine.ProtectedFiles |> shouldEqual ProtectedFiles.off
+        UnixSystem.protectedFiles system |> shouldEqual ProtectedFiles.off
 
         UnixBootImage.tryWithProtectedFiles ProtectedFiles.off image
         |> Configured.expectOk ProtectedFilesRefusal.describe
@@ -1231,12 +1292,13 @@ module TestProtectedFiles =
                             )
 
                             let forged =
-                                { system with
-                                    Machine =
-                                        { system.Machine with
+                                Kernel.mapMachine
+                                    (fun machine ->
+                                        { machine with
                                             ProtectedFiles = protection
                                         }
-                                }
+                                    )
+                                    system
 
                             UnixSystem.checkInvariants forged
                             |> shouldContain (
@@ -1247,7 +1309,7 @@ module TestProtectedFiles =
     let ``a Linux machine starts with every sysctl Off and admits any setting`` () =
         let image : UnixBootImage<int, string> = UnixSystem.initial linux
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.ProtectedFiles
+        UnixSystem.protectedFiles (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
         |> shouldEqual ProtectedFiles.off
 
         for symlinks in allSymlinkProtections do
@@ -1267,5 +1329,5 @@ module TestProtectedFiles =
                             |> Configured.expectOk ProtectedFilesRefusal.describe
                             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-                        set.Machine.ProtectedFiles |> shouldEqual protection
+                        UnixSystem.protectedFiles set |> shouldEqual protection
                         UnixSystem.checkInvariants set |> shouldEqual []

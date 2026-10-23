@@ -115,7 +115,7 @@ module TestSockaddrDecoding =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let listen (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSocket.tryListen fd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"setUp: listen answered %O{other}"
 
@@ -148,7 +148,7 @@ module TestSockaddrDecoding =
                 fd, system |> bindTo fd 5000us |> listen fd
             | Socket.NonBlockingFresh kind ->
                 let fd, system = create kind system
-                fd, snd (UnixDescriptor.setNonBlocking fd true system)
+                fd, snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd true system)
 
         (if closedDescriptor then 99 else fd), system
 
@@ -294,7 +294,7 @@ module TestSockaddrDecoding =
             let fd, system = setUp case.Platform case.Socket case.Closed
 
             let throughBytes =
-                UnixSocket.tryBindBytes
+                Lone.UnixSocket.tryBindBytes
                     fd
                     case.Buffer
                     case.Length
@@ -302,11 +302,13 @@ module TestSockaddrDecoding =
                     system
 
             let throughOracle =
-                match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd case.Buffer case.Length system with
+                match
+                    Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd case.Buffer case.Length system
+                with
                 | Error refusal -> Error (BindRefusal.Copy refusal)
                 | Ok (SockaddrCopyAdmission.Answered error) -> Ok (BindAnswer.Failed error, system)
                 | Ok (SockaddrCopyAdmission.Transfer length) ->
-                    UnixSocket.bindDecoded fd case.Length (Oracle.decode case.Platform case.Blob length) system
+                    Lone.UnixSocket.bindDecoded fd case.Length (Oracle.decode case.Platform case.Blob length) system
 
             throughBytes |> shouldEqual throughOracle
 
@@ -318,7 +320,7 @@ module TestSockaddrDecoding =
             let fd, system = setUp case.Platform case.Socket case.Closed
 
             let throughBytes =
-                UnixConnection.tryConnectBytes
+                Lone.UnixConnection.tryConnectBytes
                     fd
                     case.Buffer
                     case.Length
@@ -326,7 +328,9 @@ module TestSockaddrDecoding =
                     system
 
             let throughOracle =
-                match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd case.Buffer case.Length system with
+                match
+                    Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd case.Buffer case.Length system
+                with
                 | Error refusal -> Error (ConnectRefusal.Copy refusal)
                 | Ok (SockaddrCopyAdmission.Answered error) -> Ok (SyscallAnswer.Failed error, system)
                 | Ok (SockaddrCopyAdmission.Transfer length) ->
@@ -338,7 +342,7 @@ module TestSockaddrDecoding =
                     let nonBlocking =
                         (FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system)).Value.NonBlocking
 
-                    UnixConnection.connectDecoded
+                    Lone.UnixConnection.connectDecoded
                         socketId
                         nonBlocking
                         case.Length
@@ -361,9 +365,9 @@ module TestSockaddrDecoding =
 
             let length = UnixSocket.mappedCopyLength case.Platform case.Length
 
-            UnixConnection.connectSocket socketId false case.Length (CopyIn.prefix case.Blob length) system
+            Lone.UnixConnection.connectSocket socketId false case.Length (CopyIn.prefix case.Blob length) system
             |> shouldEqual (
-                UnixConnection.connectDecoded
+                Lone.UnixConnection.connectDecoded
                     socketId
                     false
                     case.Length
@@ -420,26 +424,26 @@ module TestSockaddrDecoding =
 
             for passed in [ 15 ; 17 ; 0 ] do
                 (fun () ->
-                    UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
+                    Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore
                 )
                 |> shouldFail
 
                 (fun () ->
-                    UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
+                    Lone.UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore
                 )
                 |> shouldFail
 
             // A call the admission answers copies nothing, so it takes nothing.
             (fun () ->
-                UnixSocket.tryBindBytes 99 UserBuffer.Mapped 16u (CopyIn.prefix blob 16) system
+                Lone.UnixSocket.tryBindBytes 99 UserBuffer.Mapped 16u (CopyIn.prefix blob 16) system
                 |> ignore
             )
             |> shouldFail
 
             (fun () ->
-                UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u ImmutableArray<byte>.Empty system
+                Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u ImmutableArray<byte>.Empty system
                 |> ignore
             )
             |> shouldFail
@@ -462,3 +466,46 @@ module TestSockaddrDecoding =
         decode SimulatedUnixPlatform.macOsArm64 [ 16uy ; 2uy ] |> shouldEqual (Some 2)
         decode SimulatedUnixPlatform.macOsArm64 [ 0uy ; 30uy ] |> shouldEqual (Some 30)
         decode SimulatedUnixPlatform.macOsArm64 [ 2uy ] |> shouldEqual None
+
+    [<Test>]
+    let ``decoding bytes that hold no such field is the caller's mistake`` () : unit =
+        for platform in
+            [
+                SimulatedUnixPlatform.linuxX64
+                SimulatedUnixPlatform.linuxArm64
+                SimulatedUnixPlatform.macOsArm64
+            ] do
+            let width =
+                SockaddrFamilyField.width (SimulatedUnixPlatform.sockaddrFamilyField platform)
+
+            for field in
+                [
+                    ImmutableArray<byte>.Empty
+                    ImmutableArray.CreateRange (List.replicate (width - 1) 2uy)
+                    ImmutableArray.CreateRange (List.replicate (width + 1) 2uy)
+                    Unchecked.defaultof<ImmutableArray<byte>>
+                ] do
+                (Assert.Throws<ArgumentException> (fun () ->
+                    SimulatedUnixPlatform.decodeSockaddrFamily platform field |> ignore<int>
+                ))
+                    .ParamName
+                |> shouldEqual "field"
+
+            (Assert.Throws<ArgumentException> (fun () ->
+                SimulatedUnixPlatform.decodeCInt platform Unchecked.defaultof<ImmutableArray<byte>> 0
+                |> ignore<int>
+            ))
+                .ParamName
+            |> shouldEqual "bytes"
+
+            let eight = ImmutableArray.CreateRange [ 1uy .. 8uy ]
+
+            for offset in [ -1 ; 5 ; 8 ; Int32.MaxValue ; Int32.MaxValue - 3 ; Int32.MinValue ] do
+                (Assert.Throws<ArgumentOutOfRangeException> (fun () ->
+                    SimulatedUnixPlatform.decodeCInt platform eight offset |> ignore<int>
+                ))
+                    .ParamName
+                |> shouldEqual "offset"
+
+            SimulatedUnixPlatform.decodeCInt platform eight 4
+            |> shouldEqual (BinaryPrimitives.ReadInt32LittleEndian (ReadOnlySpan [| 5uy ; 6uy ; 7uy ; 8uy |]))

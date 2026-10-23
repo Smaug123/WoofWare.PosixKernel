@@ -26,53 +26,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestInotifyAgainstHost =
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
-    [<DllImport("libc", EntryPoint = "inotify_init1", SetLastError = true)>]
-    extern int private hostInit1(int flags)
-
-    [<DllImport("libc", EntryPoint = "inotify_add_watch", SetLastError = true)>]
-    extern int private hostAddWatch(int fd, byte[] path, uint32 mask)
-
-    [<DllImport("libc", EntryPoint = "inotify_rm_watch", SetLastError = true)>]
-    extern int private hostRmWatch(int fd, int wd)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "geteuid")>]
-    extern uint32 private hostGetEUid()
-
-    [<DllImport("libc", EntryPoint = "getegid")>]
-    extern uint32 private hostGetEGid()
-
-    // `ioctl(2)` is variadic, so FIONREAD goes through .NET's own fixed-arity
-    // wrapper in its `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
-
     let private context : string = "TestInotifyAgainstHost"
 
     let private onLinux (action : SimulatedUnixPlatform -> unit) : unit =
@@ -207,8 +160,8 @@ module TestInotifyAgainstHost =
     let ``a real inotify and the model answer every call alike, byte for byte`` () : unit =
         onLinux (fun platform ->
             let numbering = SimulatedUnixPlatform.rawErrnoNumbering platform
-            let uid = hostGetEUid ()
-            let gid = hostGetEGid ()
+            let uid = HostCalls.getEUid ()
+            let gid = HostCalls.getEGid ()
 
             let owner =
                 Credentials.ofIds (UserId.parseOrFail context uid) (GroupId.parseOrFail context gid) []
@@ -271,14 +224,16 @@ module TestInotifyAgainstHost =
                                 | None -> ()
                                 | Some free ->
                                     let flags = nonBlock ||| (if cloexecFlag then cloexec else 0)
-                                    let host = hostAnswer numbering (nativeint (hostInit1 flags))
+                                    let host = hostAnswer numbering (nativeint (HostCalls.inotifyInit1 flags))
 
                                     let model =
-                                        match UnixInotify.tryInotifyInit1 flags system with
-                                        | Ok (Ok (fd, after)) ->
+                                        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
+                                        | Ok (DescriptorAnswer.Returned fd, after) ->
                                             system <- after
                                             Ok (int64 fd)
-                                        | Ok (Error error) -> Error error
+                                        | Ok (DescriptorAnswer.Failed error, after) ->
+                                            after |> shouldEqual system
+                                            Error error
                                         | Error refusal -> failwith $"%A{refusal}"
 
                                     match host, model with
@@ -289,7 +244,11 @@ module TestInotifyAgainstHost =
                                 let hostPath = if relative = "" then "" else Path.Combine (root, relative)
                                 let hostBytes = Array.append (Encoding.UTF8.GetBytes hostPath) [| 0uy |]
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostAddWatch (hostFd, hostBytes, mask)))
+
+                                let host =
+                                    hostAnswer
+                                        numbering
+                                        (nativeint (HostCalls.inotifyAddWatch (hostFd, hostBytes, mask)))
 
                                 let model =
                                     match Eager.tryInotifyAddWatch modelFd (PathArg.ofText relative) mask system with
@@ -302,10 +261,10 @@ module TestInotifyAgainstHost =
                                 compare op host model
                             | Op.RmWatch (slot, wd) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostRmWatch (hostFd, wd)))
+                                let host = hostAnswer numbering (nativeint (HostCalls.inotifyRmWatch (hostFd, wd)))
 
                                 let model =
-                                    match UnixInotify.tryInotifyRmWatch modelFd wd system with
+                                    match UnixInotify.tryInotifyRmWatch (Callers.leader system) modelFd wd system with
                                     | Ok (answer, after) ->
                                         system <- after
                                         modelAnswer answer
@@ -318,14 +277,14 @@ module TestInotifyAgainstHost =
 
                                 let host =
                                     if mapped then
-                                        hostAnswer numbering (hostRead (hostFd, buffer, unativeint count))
+                                        hostAnswer numbering (HostCalls.read (hostFd, buffer, unativeint count))
                                     else
-                                        hostAnswer numbering (hostReadAt (hostFd, 0n, unativeint count))
+                                        hostAnswer numbering (HostCalls.readPointer (hostFd, 0n, unativeint count))
 
                                 let model =
                                     match
                                         UnixReadWrite.tryRead
-                                            0
+                                            (Callers.thread 0 system)
                                             modelFd
                                             (if mapped then
                                                  UserBuffer.Mapped
@@ -364,12 +323,12 @@ module TestInotifyAgainstHost =
                                 compare op host model
                             | Op.Poll (slot, events) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let fds = [| PollFd (Fd = hostFd, Events = events, Revents = 0s) |]
-                                let hostCount = hostPoll (fds, 1un, 0)
+                                let fds = [| HostCalls.PollFd (Fd = hostFd, Events = events, Revents = 0s) |]
+                                let hostCount = HostCalls.poll (fds, 1un, 0)
 
                                 match
                                     UnixPoll.tryPoll
-                                        0
+                                        (Callers.thread 0 system)
                                         [
                                             {
                                                 Fd = modelFd
@@ -390,18 +349,24 @@ module TestInotifyAgainstHost =
                                 | None -> ()
                                 | Some (hostFd, modelFd) ->
                                     let mutable available = 0
-                                    hostBytesAvailable (nativeint hostFd, &available) |> shouldEqual 0
+                                    HostCalls.bytesAvailable (nativeint hostFd, &available) |> shouldEqual 0
 
-                                    match UnixDescriptor.tryBytesAvailable modelFd UserBuffer.Mapped system with
-                                    | Ok (BytesAvailableAnswer.Reported count) -> count |> shouldEqual available
+                                    match
+                                        UnixDescriptor.tryBytesAvailable
+                                            (Callers.leader system)
+                                            modelFd
+                                            UserBuffer.Mapped
+                                            system
+                                    with
+                                    | Ok (BytesAvailableAnswer.Reported count, _) -> count |> shouldEqual available
                                     | other -> failwith $"%A{op}: %A{other}"
                             | Op.Close slot ->
                                 match slots.[slot] with
                                 | None -> ()
                                 | Some (hostFd, modelFd) ->
-                                    hostClose hostFd |> shouldEqual 0
+                                    HostCalls.close hostFd |> shouldEqual 0
 
-                                    match UnixDescriptor.tryClose modelFd system with
+                                    match UnixDescriptor.tryClose (Callers.leader system) modelFd system with
                                     | Ok (SyscallAnswer.Completed 0L, after) -> system <- after
                                     | other -> failwith $"%A{op}: %A{other}"
 
@@ -409,30 +374,34 @@ module TestInotifyAgainstHost =
                             | Op.Dup slot ->
                                 match slots.[slot], Array.tryFindIndex Option.isNone slots with
                                 | Some (hostFd, modelFd), Some free ->
-                                    let hostCopy = hostDup hostFd
+                                    let hostCopy = HostCalls.dup hostFd
 
                                     if hostCopy < 0 then
                                         failwith $"%A{op}: dup failed on the host"
 
-                                    match UnixDescriptor.tryDup modelFd system with
-                                    | Ok (SyscallAnswer.Completed copy, after) ->
+                                    match UnixDescriptor.tryDup (Callers.leader system) modelFd system with
+                                    | Ok (DescriptorAnswer.Returned copy, after) ->
                                         system <- after
-                                        slots.[free] <- Some (hostCopy, int copy)
+                                        slots.[free] <- Some (hostCopy, copy)
                                     | other -> failwith $"%A{op}: %A{other}"
                                 | _ -> ()
                             | Op.LSeek (slot, offset, whence) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostLSeek (hostFd, offset, whence)))
+
+                                let host =
+                                    hostAnswer numbering (nativeint (HostCalls.lseek (hostFd, offset, whence)))
 
                                 let model =
-                                    match UnixDescriptor.tryLseek modelFd offset whence system with
+                                    match
+                                        UnixDescriptor.tryLseek (Callers.leader system) modelFd offset whence system
+                                    with
                                     | Ok (answer, _) -> modelAnswer answer
                                     | Error refusal -> failwith $"%A{op}: %A{refusal}"
 
                                 compare op host model
                             | Op.Write slot ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (hostWrite (hostFd, [| 0x78uy |], 1un))
+                                let host = hostAnswer numbering (HostCalls.write (hostFd, [| 0x78uy |], 1un))
 
                                 let model =
                                     match
@@ -453,7 +422,7 @@ module TestInotifyAgainstHost =
                     finally
                         for slot in slots do
                             match slot with
-                            | Some (hostFd, _) -> hostClose hostFd |> ignore<int>
+                            | Some (hostFd, _) -> HostCalls.close hostFd |> ignore<int>
                             | None -> ()
 
                 let gen =
@@ -519,18 +488,18 @@ module TestInotifyAgainstHost =
                 ]
 
             for flags in flags do
-                let fd = hostInit1 flags
+                let fd = HostCalls.inotifyInit1 flags
                 let host = hostAnswer numbering (nativeint fd)
 
                 if fd >= 0 then
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
 
                 let model =
-                    match UnixInotify.tryInotifyInit1 flags system with
-                    | Ok (Ok _) -> true
-                    | Ok (Error UnixError.EINVAL) -> false
+                    match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
+                    | Ok (DescriptorAnswer.Returned _, _) -> true
+                    | Ok (DescriptorAnswer.Failed UnixError.EINVAL, after) when after = system -> false
                     | other -> failwith $"0x%x{flags}: %A{other}"
 
-                if host.IsOk <> model then
+                if Result.isOk host <> model then
                     failwith $"flags 0x%x{flags}: the host answered %A{host}, the model created %b{model}"
         )

@@ -12,7 +12,8 @@ open WoofWare.PosixKernel
 
 /// Whether `readlink(2)` and `readlinkat(2)` consult the symbolic link's own
 /// permission bits, held to `readlink-mode.c`'s rows end to end. Darwin answers
-/// EACCES to a caller whose standing selects a triple without the read bit,
+/// EACCES to an unprivileged caller whose standing selects a triple without the
+/// read bit, and root reads every link (`docs/probes/darwin-root/root-files.c`),
 /// once the path is known to name a link and before a size of zero or the
 /// buffer is looked at. Linux never looks, which links whose modes debugfs set
 /// on an ext4 image showed, since no syscall gives a Linux link any mode but
@@ -175,12 +176,13 @@ module TestReadLinkMode =
 
         let vfs = populate cellInode cellOwner entries vfs
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = cellInode
@@ -198,12 +200,13 @@ module TestReadLinkMode =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
     let private opened (path : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.openPath readOnly (UnixPath.parseOrFail context path) 0 system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
+        match Answered.openPath (UnixPath.parseOrFail context path) readOnly 0 system with
+        | DescriptorAnswer.Returned fd, system -> fd, system
         | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
     // ------------------------------------------------------------ what readlink answered
@@ -230,7 +233,7 @@ module TestReadLinkMode =
         (system : UnixSystem<int, string>)
         : Result<ReadLinkAnswer, ReadLinkRefusal>
         =
-        UnixNamespace.tryReadlink (PathArg.ofText path) buffer capacity system
+        UnixNamespace.tryReadlink (Callers.leader system) (PathArg.ofText path) buffer capacity system
 
     // ------------------------------------------------------------ Darwin: the owner
 
@@ -365,6 +368,7 @@ module TestReadLinkMode =
                     | other -> failwith $"%s{context}: the probe passed no dirfd %s{other}"
 
                 UnixNamespace.tryReadlinkat
+                    (Callers.leader system)
                     dirfd
                     (PathArg.ofText (pathArgument path))
                     (bufferArgument buffer)
@@ -381,7 +385,7 @@ module TestReadLinkMode =
         else
 
         let status (policy : SymlinkPolicy) : string =
-            match UnixPathResolution.tryStat policy (PathArg.ofText "l") system with
+            match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText "l") system with
             | Ok (FileStatusAnswer.Reported _) -> "ok"
             | Ok (FileStatusAnswer.Failed error) -> $"%A{error}"
             | Error refusal -> $"refused: %A{refusal}"
@@ -390,9 +394,9 @@ module TestReadLinkMode =
         | "lstat(l)" -> status SymlinkPolicy.NoFollowFinal
         | "stat(l)" -> status SymlinkPolicy.Follow
         | "open(l, O_RDONLY)" ->
-            match Answered.openPath readOnly (UnixPath.parseOrFail context "l") 0 system with
-            | SyscallAnswer.Completed _, _ -> "ok"
-            | SyscallAnswer.Failed error, _ -> $"%A{error}"
+            match Answered.openPath (UnixPath.parseOrFail context "l") readOnly 0 system with
+            | DescriptorAnswer.Returned _, _ -> "ok"
+            | DescriptorAnswer.Failed error, _ -> $"%A{error}"
         | other -> failwith $"%s{context}: the probe made no call %s{other}"
 
     [<Test>]
@@ -638,22 +642,21 @@ module TestReadLinkMode =
         match SimulatedUnixPlatform.flavour case.Platform with
         | SimulatedUnixFlavour.Linux -> if case.Capacity <= 0 then "EINVAL" else delivered ()
         | SimulatedUnixFlavour.Darwin ->
-            if case.Capacity < 0 then
-                "EINVAL"
-            elif case.User = 0u then
-                "refused"
-            else
-                let readBit =
-                    if case.LinkUser = case.User then
-                        0o400
-                    elif case.LinkGroup = case.Group || List.contains case.LinkGroup case.Supplementary then
-                        0o040
-                    else
-                        0o004
+            // Root reads every link (`docs/probes/darwin-root/root-files.c`).
+            let readBit =
+                if case.User = 0u then
+                    0
+                elif case.LinkUser = case.User then
+                    0o400
+                elif case.LinkGroup = case.Group || List.contains case.LinkGroup case.Supplementary then
+                    0o040
+                else
+                    0o004
 
-                if case.Mode &&& readBit = 0 then "EACCES"
-                elif case.Capacity = 0 then "ok:"
-                else delivered ()
+            if case.Capacity < 0 then "EINVAL"
+            elif case.Mode &&& readBit <> readBit then "EACCES"
+            elif case.Capacity = 0 then "ok:"
+            else delivered ()
 
     let private answered (case : Case) : string =
         let caller =
@@ -671,16 +674,18 @@ module TestReadLinkMode =
         let answer =
             if case.FromDescriptor then
                 let dirfd, system = opened "." system
-                UnixNamespace.tryReadlinkat dirfd (PathArg.ofText "l") case.Buffer case.Capacity system
+
+                UnixNamespace.tryReadlinkat
+                    (Callers.leader system)
+                    dirfd
+                    (PathArg.ofText "l")
+                    case.Buffer
+                    case.Capacity
+                    system
             else
                 readlink "l" case.Buffer case.Capacity system
 
-        match answer with
-        | Error (ReadLinkRefusal.UnmeasuredLinkRead (_, LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, linkBits))) when
-            standing = Standing.toward caller linkOwner && linkBits = bits case.Mode
-            ->
-            "refused"
-        | answer -> rendered answer
+        rendered answer
 
     [<Test>]
     let ``readlink and readlinkat answer every mode and caller as the probe's rule predicts`` () : unit =
@@ -706,14 +711,9 @@ module TestReadLinkMode =
 
                     for mode in 0..0o7777 do
                         PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule linux) standing (bits mode)
-                        |> shouldEqual (Ok false)
+                        |> shouldEqual false
 
-                        let expected =
-                            match privilege with
-                            | CallerPrivilege.Privileged ->
-                                Error (LinkReadRefusal.UnmeasuredPrivilegedCaller (standing, bits mode))
-                            | CallerPrivilege.Unprivileged ->
-                                Ok (PermissionBits.deniedTo standing AccessRequest.Read (bits mode))
+                        let expected = PermissionBits.deniedTo standing AccessRequest.Read (bits mode)
 
                         PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule darwin) standing (bits mode)
                         |> shouldEqual expected
