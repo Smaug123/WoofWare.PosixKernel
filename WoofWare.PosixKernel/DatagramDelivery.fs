@@ -200,6 +200,114 @@ module internal DatagramDelivery =
 
             Error (DeliveryRefusal.Tie (destination, unbeaten |> List.map (fun (socketId, _, _) -> socketId)))
 
+    /// Under Linux, `system` with one receive asleep on the UDP socket
+    /// `socket` chosen (`ParkedDatagramReceive.Chosen`): of those no arrival
+    /// has chosen yet, the one that parked first. Under Darwin, which wakes
+    /// every receive on the socket, `system` itself.
+    ///
+    /// What a datagram's arrival at the socket does, and the ICMP error's.
+    /// Measured on Linux 6.18.5 (`udp-sleepers.c` V1 to V7, in
+    /// docs/plans/2026-10-18-udp-data-path): each wakes the sleeper that
+    /// parked first, and no other, whether the one woken then takes what
+    /// woke it or peeks and leaves it; and two datagrams back to back wake
+    /// two. A receive a signal has woken, and that has not run yet, is not
+    /// asleep, so it is passed over, as Linux passes over a task already
+    /// woken.
+    ///
+    /// Reads the parked threads of every process with one, since the socket
+    /// may be another process's than the sender's: it takes time in the
+    /// number of parked threads, as a sweep does.
+    let private chooseSleeper<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (socket : SocketId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Darwin -> system
+        | SimulatedUnixFlavour.Linux ->
+
+        let openFiles = system.Machine.OpenFiles
+
+        let unchosen (park : ThreadPark) : ParkedDatagramReceive option =
+            match park with
+            | {
+                  Syscall = ParkedSyscall.DatagramReceive ({
+                                                               Socket = SleepTarget.Waiting (description, _)
+                                                               Chosen = false
+                                                           } as receive)
+                  State = ParkState.Asleep
+              } ->
+                match OpenFileTable.tryFind description openFiles with
+                | Some {
+                           Target = OpenFileTarget.Socket asleepOn
+                       } when asleepOn = socket -> Some receive
+                | Some _
+                | None -> None
+            | _ -> None
+
+        // The earliest unchosen receive asleep on the socket among `threads`.
+        let earliestIn
+            (threads : ThreadTable<'Thread>)
+            : (ParkOrdinal * 'Thread * ThreadPark * ParkedDatagramReceive) option
+            =
+            (None, UnixThreadTable.parked threads)
+            ||> Set.fold (fun earliest thread ->
+                match UnixThreadTable.parkOf thread threads with
+                | None -> earliest
+                | Some park ->
+                    match unchosen park, earliest with
+                    | None, _ -> earliest
+                    | Some _, Some (ordinal, _, _, _) when ordinal < park.Ordinal -> earliest
+                    | Some receive, _ -> Some (park.Ordinal, thread, park, receive)
+            )
+
+        let chosen (park : ThreadPark) (receive : ParkedDatagramReceive) : ThreadPark =
+            { park with
+                Syscall =
+                    ParkedSyscall.DatagramReceive
+                        { receive with
+                            Chosen = true
+                        }
+            }
+
+        let own = earliestIn system.Threads
+
+        let other =
+            (None, ProcessTable.withParks system.Others)
+            ||> Set.fold (fun earliest key ->
+                match
+                    earliestIn (ProcessTable.find "DatagramDelivery.deliver" key system.Others).Threads, earliest
+                with
+                | None, _ -> earliest
+                | Some (ordinal, _, _, _), Some (_, (sooner, _, _, _)) when sooner < ordinal -> earliest
+                | Some found, _ -> Some (key, found)
+            )
+
+        let inOther (key : int32) (thread : 'Thread) (park : ThreadPark) (receive : ParkedDatagramReceive) =
+            let slot = ProcessTable.find "DatagramDelivery.deliver" key system.Others
+
+            { system with
+                Others =
+                    ProcessTable.add
+                        key
+                        { slot with
+                            Threads = UnixThreadTable.withPark thread (chosen park receive) slot.Threads
+                        }
+                        system.Others
+            }
+
+        // Marking a park in place changes no hold: the park names the same
+        // description as before.
+        match own, other with
+        | None, None -> system
+        | None, Some (key, (_, thread, park, receive)) -> inOther key thread park receive
+        | Some (ordinal, _, _, _), Some (key, (sooner, thread, park, receive)) when sooner < ordinal ->
+            inOther key thread park receive
+        | Some (_, thread, park, receive), _ ->
+            { system with
+                Threads = UnixThreadTable.withPark thread (chosen park receive) system.Threads
+            }
+
     /// The datagram `payload` that the connected socket `sender` sends to its
     /// peer `destination`, delivered: what became of it, with the system
     /// after it and the wakes it raised.
@@ -320,6 +428,7 @@ module internal DatagramDelivery =
                                 system.Machine
                     }
                     |> SocketWake.signal erred SocketWake.ErrorRaised
+                    |> chooseSleeper erred
             | DatagramFate.Reaches receiver ->
                 let connected =
                     match (UnixMachineState.socket receiver system.Machine).Phase with
@@ -344,5 +453,6 @@ module internal DatagramDelivery =
                         Machine = UnixMachineState.withDatagramReceiver receiver after system.Machine
                     }
                     |> SocketWake.signal receiver SocketWake.DataArrived
+                    |> chooseSleeper receiver
 
         Ok (delivered, system)

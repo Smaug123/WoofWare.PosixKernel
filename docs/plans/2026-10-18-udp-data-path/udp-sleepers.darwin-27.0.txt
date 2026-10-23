@@ -1,0 +1,187 @@
+V1: sleepers take@fd take@fd take@fd; events datagram datagram
+V1 parked: 0 returned; [0 take asleep] [1 take asleep] [2 take asleep]
+V1 after datagram: 1 returned; [0 take 3 'one' #1] [1 take asleep] [2 take asleep]
+V1 after datagram: 2 returned; [0 take 3 'one' #1] [1 take 3 'two' #2] [2 take asleep]
+V1 after the signal: 3 returned; [0 take 3 'one' #1] [1 take 3 'two' #2] [2 take -1 EINTR #3]
+V1: then the socket holds none; SO_ERROR=0
+V2: sleepers peek@fd peek@fd peek@fd; events datagram datagram datagram
+V2 parked: 0 returned; [0 peek asleep] [1 peek asleep] [2 peek asleep]
+V2 after datagram: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #2] [2 peek 3 'one' #3]
+V2 after datagram: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #2] [2 peek 3 'one' #3]
+V2 after datagram: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #2] [2 peek 3 'one' #3]
+V2 after the signal: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #2] [2 peek 3 'one' #3]
+V2: then the socket holds one|two|three; SO_ERROR=0
+V3: sleepers peek@fd peek@fd peek@fd; events two
+V3 parked: 0 returned; [0 peek asleep] [1 peek asleep] [2 peek asleep]
+V3 after two: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #3] [2 peek 3 'one' #2]
+V3 after the signal: 3 returned; [0 peek 3 'one' #1] [1 peek 3 'one' #3] [2 peek 3 'one' #2]
+V3: then the socket holds one|two; SO_ERROR=0
+V4: sleepers peek@fd take@fd peek@fd; events datagram datagram
+V4 parked: 0 returned; [0 peek asleep] [1 take asleep] [2 peek asleep]
+V4 after datagram: 2 returned; [0 peek 3 'one' #1] [1 take 3 'one' #2] [2 peek asleep]
+V4 after datagram: 3 returned; [0 peek 3 'one' #1] [1 take 3 'one' #2] [2 peek 3 'two' #3]
+V4 after the signal: 3 returned; [0 peek 3 'one' #1] [1 take 3 'one' #2] [2 peek 3 'two' #3]
+V4: then the socket holds two; SO_ERROR=0
+V5: sleepers take@fd take@dup take@fd; events two
+V5 parked: 0 returned; [0 take asleep] [1 take asleep] [2 take asleep]
+V5 after two: 2 returned; [0 take 3 'one' #1] [1 take 3 'two' #2] [2 take asleep]
+V5 after the signal: 3 returned; [0 take 3 'one' #1] [1 take 3 'two' #2] [2 take -1 EINTR #3]
+V5: then the socket holds none; SO_ERROR=0
+V6: sleepers take@fd take@fd take@fd; events error peer peer
+V6 parked: 0 returned; [0 take asleep] [1 take asleep] [2 take asleep]
+V6 after error: 1 returned; [0 take -1 ECONNREFUSED #1] [1 take asleep] [2 take asleep]
+V6 after peer: 2 returned; [0 take -1 ECONNREFUSED #1] [1 take 3 'one' #2] [2 take asleep]
+V6 after peer: 3 returned; [0 take -1 ECONNREFUSED #1] [1 take 3 'one' #2] [2 take 3 'two' #3]
+V6 after the signal: 3 returned; [0 take -1 ECONNREFUSED #1] [1 take 3 'one' #2] [2 take 3 'two' #3]
+V6: then the socket holds none; SO_ERROR=0
+V7: sleepers peek@fd peek@fd peek@fd; events error peer
+V7 parked: 0 returned; [0 peek asleep] [1 peek asleep] [2 peek asleep]
+V7 after error: 3 returned; [0 peek -1 ECONNREFUSED #1] [1 peek -1 ECONNREFUSED #2] [2 peek -1 ECONNREFUSED #3]
+V7 after peer: 3 returned; [0 peek -1 ECONNREFUSED #1] [1 peek -1 ECONNREFUSED #2] [2 peek -1 ECONNREFUSED #3]
+V7 after the signal: 3 returned; [0 peek -1 ECONNREFUSED #1] [1 peek -1 ECONNREFUSED #2] [2 peek -1 ECONNREFUSED #3]
+V7: then the socket holds one|ECONNREFUSED; SO_ERROR=0
+V8: sleepers peek@fd take@fd; events error peer
+V8 parked: 0 returned; [0 peek asleep] [1 take asleep]
+V8 after error: 2 returned; [0 peek -1 ECONNREFUSED #1] [1 take -1 ECONNREFUSED #2]
+V8 after peer: 2 returned; [0 peek -1 ECONNREFUSED #1] [1 take -1 ECONNREFUSED #2]
+V8 after the signal: 2 returned; [0 peek -1 ECONNREFUSED #1] [1 take -1 ECONNREFUSED #2]
+V8: then the socket holds one; SO_ERROR=0
+V9: sleepers take@fd peek@fd; events error peer
+V9 parked: 0 returned; [0 take asleep] [1 peek asleep]
+V9 after error: 1 returned; [0 take -1 ECONNREFUSED #1] [1 peek asleep]
+V9 after peer: 2 returned; [0 take -1 ECONNREFUSED #1] [1 peek 3 'one' #2]
+V9 after the signal: 2 returned; [0 take -1 ECONNREFUSED #1] [1 peek 3 'one' #2]
+V9: then the socket holds one; SO_ERROR=0
+V10: sleepers from@fd zero@fd read@fd; events error error error
+V10 parked: 1 returned; [0 from asleep] [1 zero 0 #1] [2 read asleep]
+V10 after error: 2 returned; [0 from -1 ECONNREFUSED #2] [1 zero 0 #1] [2 read asleep]
+V10 after error: 3 returned; [0 from -1 ECONNREFUSED #2] [1 zero 0 #1] [2 read -1 ECONNREFUSED #3]
+V10 after error: 3 returned; [0 from -1 ECONNREFUSED #2] [1 zero 0 #1] [2 read -1 ECONNREFUSED #3]
+V10 after the signal: 3 returned; [0 from -1 ECONNREFUSED #2] [1 zero 0 #1] [2 read -1 ECONNREFUSED #3]
+V10: then the socket holds ECONNREFUSED; SO_ERROR=0
+V11: sleepers take@fd take@dup take@fd; events close datagram datagram
+V11 parked: 0 returned; [0 take asleep] [1 take asleep] [2 take asleep]
+V11: close answered 0
+V11 after close: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V11 after datagram: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V11 after datagram: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V11 after the signal: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V11: then the socket holds one|two; SO_ERROR=0
+V12: sleepers peek@fd peek@dup; events close datagram
+V12 parked: 0 returned; [0 peek asleep] [1 peek asleep]
+V12: close answered 0
+V12 after close: 2 returned; [0 peek -1 EBADF #1] [1 peek -1 EBADF #2]
+V12 after datagram: 2 returned; [0 peek -1 EBADF #1] [1 peek -1 EBADF #2]
+V12 after the signal: 2 returned; [0 peek -1 EBADF #1] [1 peek -1 EBADF #2]
+V12: then the socket holds one; SO_ERROR=0
+V13: sleepers zero@fd; events nothing datagram
+V13 parked: 1 returned; [0 zero 0 #1]
+V13 after nothing: 1 returned; [0 zero 0 #1]
+V13 after datagram: 1 returned; [0 zero 0 #1]
+V13 after the signal: 1 returned; [0 zero 0 #1]
+V13: then the socket holds one; SO_ERROR=0
+V14: sleepers read@fd; events datagram
+V14 parked: 0 returned; [0 read asleep]
+V14 after datagram: 1 returned; [0 read 3 'one' #1]
+V14 after the signal: 1 returned; [0 read 3 'one' #1]
+V14: then the socket holds none; SO_ERROR=0
+V15: sleepers waitall@fd; events datagram
+V15 parked: 0 returned; [0 waitall asleep]
+V15 after datagram: 1 returned; [0 waitall 3 'one' #1]
+V15 after the signal: 1 returned; [0 waitall 3 'one' #1]
+V15: then the socket holds none; SO_ERROR=0
+V16: sleepers badbuf@fd; events datagram
+V16 parked: 0 returned; [0 badbuf asleep]
+V16 after datagram: 1 returned; [0 badbuf -1 EFAULT #1]
+V16 after the signal: 1 returned; [0 badbuf -1 EFAULT #1]
+V16: then the socket holds one; SO_ERROR=0
+V17: sleepers from@fd; events datagram
+V17 parked: 0 returned; [0 from asleep]
+V17 after datagram: 1 returned; [0 from 3 'one' cell=16 source=sender #1]
+V17 after the signal: 1 returned; [0 from 3 'one' cell=16 source=sender #1]
+V17: then the socket holds none; SO_ERROR=0
+V18: sleepers fromtrunc@fd; events datagram
+V18 parked: 0 returned; [0 fromtrunc asleep]
+V18 after datagram: 1 returned; [0 fromtrunc 2 'on' cell=16 source=sender #1]
+V18 after the signal: 1 returned; [0 fromtrunc 2 'on' cell=16 source=sender #1]
+V18: then the socket holds none; SO_ERROR=0
+V19: sleepers cellnull@fd; events datagram
+V19 parked: 0 returned; [0 cellnull asleep]
+V19 after datagram: 1 returned; [0 cellnull 3 'one' source=unwritten #1]
+V19 after the signal: 1 returned; [0 cellnull 3 'one' source=unwritten #1]
+V19: then the socket holds none; SO_ERROR=0
+V20: sleepers cellbad@fd; events datagram
+V20 parked: 1 returned; [0 cellbad -1 EFAULT #1]
+V20 after datagram: 1 returned; [0 cellbad -1 EFAULT #1]
+V20 after the signal: 1 returned; [0 cellbad -1 EFAULT #1]
+V20: then the socket holds one; SO_ERROR=0
+V21: sleepers cellneg@fd; events datagram
+V21 parked: 0 returned; [0 cellneg asleep]
+V21 after datagram: 1 returned; [0 cellneg 3 'one' cell=16 source=sender #1]
+V21 after the signal: 1 returned; [0 cellneg 3 'one' cell=16 source=sender #1]
+V21: then the socket holds none; SO_ERROR=0
+V22: sleepers addrbad@fd; events datagram
+V22 parked: 0 returned; [0 addrbad asleep]
+V22 after datagram: 1 returned; [0 addrbad 3 'one' cell=16 #1]
+V22 after the signal: 1 returned; [0 addrbad 3 'one' cell=16 #1]
+V22: then the socket holds none; SO_ERROR=0
+V23: sleepers from@fd; events peer
+V23 parked: 0 returned; [0 from asleep]
+V23 after peer: 1 returned; [0 from 3 'one' cell=16 source=sender #1]
+V23 after the signal: 1 returned; [0 from 3 'one' cell=16 source=sender #1]
+V23: then the socket holds none; SO_ERROR=0
+V30: sleepers readzero@fd; events nothing datagram
+V30 parked: 1 returned; [0 readzero 0 #1]
+V30 after nothing: 1 returned; [0 readzero 0 #1]
+V30 after datagram: 1 returned; [0 readzero 0 #1]
+V30 after the signal: 1 returned; [0 readzero 0 #1]
+V30: then the socket holds one; SO_ERROR=0
+V24: sleepers take@dup take@latedup; events close park datagram
+V24 parked: 0 returned; [0 take asleep] [1 take unparked]
+V24: close answered 0
+V24 after close: 0 returned; [0 take asleep] [1 take unparked]
+V24 after park: 0 returned; [0 take asleep] [1 take asleep]
+V24 after datagram: 1 returned; [0 take 3 'one' #1] [1 take asleep]
+V24 after the signal: 2 returned; [0 take 3 'one' #1] [1 take -1 EINTR #2]
+V24: then the socket holds none; SO_ERROR=0
+V25: sleepers take@latedup; events close park datagram
+V25 parked: 0 returned; [0 take unparked]
+V25: close answered 0
+V25 after close: 0 returned; [0 take unparked]
+V25 after park: 0 returned; [0 take asleep]
+V25 after datagram: 1 returned; [0 take 3 'one' #1]
+V25 after the signal: 1 returned; [0 take 3 'one' #1]
+V25: then the socket holds none; SO_ERROR=0
+V26: sleepers peek@dup take@latedup; events close datagram park
+V26 parked: 0 returned; [0 peek asleep] [1 take unparked]
+V26: close answered 0
+V26 after close: 0 returned; [0 peek asleep] [1 take unparked]
+V26 after datagram: 1 returned; [0 peek 3 'one' #1] [1 take unparked]
+V26 after park: 2 returned; [0 peek 3 'one' #1] [1 take 3 'one' #2]
+V26 after the signal: 2 returned; [0 peek 3 'one' #1] [1 take 3 'one' #2]
+V26: then the socket holds none; SO_ERROR=0
+V27: sleepers take@fd take@latedup; events close park datagram
+V27 parked: 0 returned; [0 take asleep] [1 take unparked]
+V27: close answered 0
+V27 after close: 1 returned; [0 take -1 EBADF #1] [1 take unparked]
+V27 after park: 2 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2]
+V27 after datagram: 2 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2]
+V27 after the signal: 2 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2]
+V27: then the socket holds one; SO_ERROR=0
+V28: sleepers take@fd take@latedup; events close datagram park
+V28 parked: 0 returned; [0 take asleep] [1 take unparked]
+V28: close answered 0
+V28 after close: 1 returned; [0 take -1 EBADF #1] [1 take unparked]
+V28 after datagram: 1 returned; [0 take -1 EBADF #1] [1 take unparked]
+V28 after park: 2 returned; [0 take -1 EBADF #1] [1 take 3 'one' #2]
+V28 after the signal: 2 returned; [0 take -1 EBADF #1] [1 take 3 'one' #2]
+V28: then the socket holds none; SO_ERROR=0
+V29: sleepers take@fd take@latedup take@latedup; events close park park datagram
+V29 parked: 0 returned; [0 take asleep] [1 take unparked] [2 take unparked]
+V29: close answered 0
+V29 after close: 1 returned; [0 take -1 EBADF #1] [1 take unparked] [2 take unparked]
+V29 after park: 2 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take unparked]
+V29 after park: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V29 after datagram: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V29 after the signal: 3 returned; [0 take -1 EBADF #1] [1 take -1 EBADF #2] [2 take -1 EBADF #3]
+V29: then the socket holds one; SO_ERROR=0

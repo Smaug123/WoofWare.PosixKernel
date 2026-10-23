@@ -202,3 +202,20 @@ type WakePrimitive =
     /// waiters as it is made, so once this holds it holds until the wait
     /// returns.
     | FutexWakeTaken
+    /// The UDP socket the open file description `reader` names has woken the
+    /// blocking receive the waiting thread is asleep in.
+    ///
+    /// What a blocking `read(2)`, `recv(2)` or `recvfrom(2)` of a UDP socket
+    /// holding nothing waits for. Its flavours wake differently, as measured
+    /// (`udp-sleepers.c`, in docs/plans/2026-10-18-udp-data-path):
+    ///
+    /// - **Darwin** wakes every receive asleep on the socket while it holds a
+    ///   datagram or a pending error, and the first to run takes it; the rest
+    ///   wait again, but for peeks, which all answer it.
+    /// - **Linux** wakes one receive for each datagram that arrives and for
+    ///   the ICMP error, the one asleep on the socket that parked first, and
+    ///   no other, whatever the one woken then takes. So this holds of a
+    ///   receive once an arrival has chosen it, and until it runs: a second
+    ///   peek asleep beside a first sleeps on while the datagram the first
+    ///   woke for stays queued, until another arrives.
+    | DatagramReceivable of reader : OpenFileDescriptionId

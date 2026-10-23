@@ -290,9 +290,10 @@ type SleepTarget<'Object> =
     /// holds nothing, and its finishing call answers what the close left it.
     ///
     /// A pipe transfer is ended by a close of the descriptor it was made
-    /// through. An accept, or a connection transfer, is ended by a close of the
-    /// descriptor that any such call asleep on the same socket was made
-    /// through, which drains the socket (see `SocketDescription.Drained`).
+    /// through. An accept, a connection transfer or a UDP receive is ended by
+    /// a close of the descriptor that any such call asleep on the same socket
+    /// was made through, which drains the socket (see
+    /// `SocketDescription.Drained`).
     | EndedByClose of object : 'Object
 
 [<RequireQualifiedAccess>]
@@ -580,22 +581,50 @@ type ParkedSignalWait =
         Destination : UserBuffer option
     }
 
-/// One thread's in-flight blocking receive on a datagram socket that had
-/// nothing queued: a `read(2)`, `recv(2)`, `recvfrom(2)` or `recvmsg(2)`.
+/// Which receiving call a `ParkedDatagramReceive` is, with what of its
+/// arguments it still needs once it is woken.
+[<RequireQualifiedAccess>]
+type internal ParkedDatagramReceiveCall =
+    /// `read(2)`.
+    | Read
+    /// `recv(2)`, peeking or not.
+    | Receive of peek : bool
+    /// `recvfrom(2)`, peeking or not, with Linux's `MSG_TRUNC` or not, and
+    /// where its source goes: the source buffer, and the length cell, with
+    /// what the cell held if the call read it before it slept. Darwin reads
+    /// a cell that is not NULL before anything else, Linux only once it uses
+    /// it.
+    | ReceiveFrom of
+        peek : bool *
+        truncate : bool *
+        source : UserBuffer *
+        sourceLength : UserBuffer *
+        lengthRead : uint32 option
+
+/// One thread's in-flight blocking receive on a UDP socket that had nothing
+/// to answer: a `read(2)`, `recv(2)` or `recvfrom(2)`.
 ///
 /// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `ParkedSyscall.DatagramReceive`.
+/// holds without breaking a client; a client builds none.
 type ParkedDatagramReceive =
     internal
         {
-            // What else it must hold is the datagram data path's design: which
-            // call it is, where `recvfrom`'s address and `recvmsg`'s message
-            // header go, and, under Darwin, that a close of the descriptor has
-            // ended it (`docs/probes/datagram-park`, row R3).
             /// The open file description of the socket the call was made
-            /// through, which it holds while it sleeps.
-            Socket : OpenFileDescriptionId
+            /// through, which it holds while it sleeps, and the descriptor it
+            /// was made through; or the socket, once a Darwin close has ended
+            /// the call.
+            Socket : SleepTarget<SocketId>
+            /// Where the datagram's bytes are to be copied out to, as the
+            /// caller classified it when the call was entered.
+            Buffer : UserBuffer
+            /// The most bytes the call takes: its count, as at most one call's
+            /// worth.
+            Count : int
+            Call : ParkedDatagramReceiveCall
+            /// Under Linux, whether a datagram or the ICMP error arriving at
+            /// the socket has chosen this call as the one sleeper it wakes
+            /// (`WakePrimitive.DatagramReceivable`). Never under Darwin.
+            Chosen : bool
         }
 
 /// One thread's in-flight blocking send of a datagram on a Unix-domain socket
@@ -760,14 +789,14 @@ type ParkedSyscall =
     /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | SignalWait of ParkedSignalWait
-    /// A blocking receive on a datagram socket, UDP or Unix-domain, connected
-    /// or not, through `read(2)`, `recv(2)`, `recvfrom(2)` or `recvmsg(2)`:
-    /// it sleeps until a datagram arrives, on both flavours, or a signal with
-    /// a handler interrupts it. Holds the socket's open file description.
+    /// A blocking receive on a UDP socket, connected or not, through
+    /// `read(2)`, `recv(2)` or `recvfrom(2)`: it sleeps until a datagram or
+    /// the ICMP error arrives, on both flavours, or a signal with a handler
+    /// interrupts it, or, under Darwin, a close ends it. Holds the socket's
+    /// open file description until a close ends it.
     ///
-    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
-    /// defect.
+    /// A Unix-domain datagram socket's receive, and `recvmsg(2)`, park no
+    /// thread yet.
     | DatagramReceive of ParkedDatagramReceive
     /// A blocking send of a datagram on a Unix-domain socket, which under Linux
     /// sleeps while the receiver's queue or the sender's own buffer is full. A
@@ -842,7 +871,7 @@ module ParkedSyscall =
         | ParkedSyscall.SignalWait _ -> []
         // Measured under Linux (`docs/probes/datagram-park`, row R3): a close
         // of the descriptor leaves a sleeping receive holding the socket.
-        | ParkedSyscall.DatagramReceive receive -> [ receive.Socket ]
+        | ParkedSyscall.DatagramReceive receive -> SleepTarget.description receive.Socket |> Option.toList
         | ParkedSyscall.DatagramSend send -> [ send.Socket ]
         | ParkedSyscall.Connect connect -> [ connect.Socket ]
         | ParkedSyscall.Futex _ -> []

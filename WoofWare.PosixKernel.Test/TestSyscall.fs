@@ -146,6 +146,7 @@ module TestSyscall =
             "UnixPoll.finishEpollWait", finisher
             "UnixKqueue.finishKevent", finisher
             "UnixReadWrite.finishRead", finisher
+            "UnixReadWrite.finishRecvFrom", finisher
             "UnixReadWrite.finishWrite", finisher
             "UnixSignal.finishSigsuspend", finisher
             "UnixFutex.finishFutexWait", finisher

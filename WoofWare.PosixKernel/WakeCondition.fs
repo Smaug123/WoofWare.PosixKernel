@@ -115,6 +115,9 @@ module WakeCondition =
                                              })
         | Some (ParkedSyscall.ConnectionWrite {
                                                   Socket = SleepTarget.EndedByClose _
+                                              })
+        | Some (ParkedSyscall.DatagramReceive {
+                                                  Socket = SleepTarget.EndedByClose _
                                               }) -> true
         | Some (ParkedSyscall.Accept _)
         | Some (ParkedSyscall.PipeRead _)
@@ -270,6 +273,39 @@ module WakeCondition =
             | parked ->
                 failwith
                     $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, which only a futex wait waits for, but it is parked in %A{parked} (this is a bug in the caller that recorded the park)."
+        | WakePrimitive.DatagramReceivable reader ->
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux ->
+                match
+                    UnixThreadTable.tryFind thread system.Threads
+                    |> Option.bind UnixThreadState.parkedIn
+                with
+                | Some (ParkedSyscall.DatagramReceive receive) -> receive.Chosen
+                | parked ->
+                    failwith
+                        $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, which only a datagram receive waits for, but it is parked in %A{parked} (this is a bug in the caller that recorded the park)."
+            | SimulatedUnixFlavour.Darwin ->
+                match OpenFileTable.tryFind reader system.Machine.OpenFiles with
+                | None ->
+                    failwith
+                        $"WakeCondition.satisfied: open file description %O{reader} is not in the table, but a thread is parked in a receive on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                | Some description ->
+                    match description.Target with
+                    | OpenFileTarget.Socket socketId ->
+                        let receiver = UnixMachineState.datagramReceiver socketId system.Machine
+
+                        not (DatagramReceiver.isEmpty receiver)
+                        || DatagramReceiver.errorPending receiver
+                    | OpenFileTarget.File _
+                    | OpenFileTarget.Directory _
+                    | OpenFileTarget.CharacterDevice _
+                    | OpenFileTarget.Fifo _
+                    | OpenFileTarget.Pipe _
+                    | OpenFileTarget.Kqueue _
+                    | OpenFileTarget.Inotify _
+                    | OpenFileTarget.Epoll _ ->
+                        failwith
+                            $"WakeCondition.satisfied: a thread is parked in a receive on open file description %O{reader}, which names %A{description.Target} rather than a socket (this is a bug in the caller that recorded it)."
 
     /// The primitives of `condition`, the wake condition of `thread`, which hold of
     /// `system`: empty exactly when the syscall that parked on it would get no
@@ -357,7 +393,8 @@ module WakeCondition =
         | WakeCondition.Primitive (WakePrimitive.InotifyRecordQueued _)
         | WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending _)
         | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _)
-        | WakeCondition.Primitive WakePrimitive.FutexWakeTaken -> []
+        | WakeCondition.Primitive WakePrimitive.FutexWakeTaken
+        | WakeCondition.Primitive (WakePrimitive.DatagramReceivable _) -> []
         | WakeCondition.AnyOf (first, rest) -> deadlines first @ List.collect deadlines rest
 
     /// What the thread holding `parked` is waiting for: what its syscall waits
@@ -512,9 +549,14 @@ module WakeCondition =
 
                 WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending wait.Awaited)
                 :: deadline
-            // A signal alone, while they are reserved: what a datagram transfer
-            // waits for joins this when something parks a thread in one.
-            | ParkedSyscall.DatagramReceive _
+            | ParkedSyscall.DatagramReceive receive ->
+                match receive.Socket with
+                | SleepTarget.EndedByClose _ -> [ ended ]
+                | SleepTarget.Waiting (reader, _) ->
+                    // No deadline: `setsockopt` refuses to set `SO_RCVTIMEO`.
+                    [ WakeCondition.Primitive (WakePrimitive.DatagramReceivable reader) ; ended ]
+            // A signal alone, while it is reserved: what a datagram send waits
+            // for joins this when something parks a thread in one.
             | ParkedSyscall.DatagramSend _ -> []
             // A signal alone, while it is reserved: a retransmit deadline, or
             // room in the listener's queue, joins this when something parks a

@@ -246,7 +246,9 @@ type internal CloseRefusal<'Thread> =
     /// through, under the Darwin flavour, when the call has something besides
     /// the close to answer: bytes to read, room to write into, a FIN or a
     /// reset, a signal with a handler to take, or (a pipe write whose
-    /// description has become non-blocking) a read to give up at.
+    /// description has become non-blocking) a read to give up at. Or a close
+    /// that would drain a UDP socket on which `thread` is asleep in a receive
+    /// with a datagram, the error or a signal to take.
     ///
     /// Darwin's close ends such a call (a pipe read with end of file, a pipe
     /// write with `EPIPE`, a socket's either with `EBADF`), and which of the
@@ -1985,11 +1987,13 @@ module UnixDescriptor =
             | SleepTarget.EndedByClose _ -> false
 
         // Measured on Darwin 27.0.0 (`close-ends-call.c` sections A3, A4 and
-        // A7, and `tcp-close-drain.c`): closing the descriptor that an accept,
-        // or a read or write of a connection, sleeps through drains the
-        // socket. It ends every such call asleep on the socket, through that
-        // descriptor or a dup of it and in either direction, and leaves the
-        // socket drained (`SocketDescription.Drained`). A call asleep through a
+        // A7, `tcp-close-drain.c`, and `udp-sleepers.c` V11, V12 and V24 to
+        // V29 in docs/plans/2026-10-18-udp-data-path): closing the descriptor
+        // that an accept, a read or write of a connection, or a receive on a
+        // UDP socket sleeps through drains the socket. It ends every such call
+        // asleep on the socket, through that descriptor or a dup of it and in
+        // either direction, and leaves the socket drained
+        // (`SocketDescription.Drained`). A call asleep through a
         // dup alone drains nothing (`tcp-close-drain.c` T1, T13), and nor does
         // a poll through the descriptor closed (T19). Every call asleep on the
         // socket is this process's, since nothing passes a descriptor to
@@ -2002,6 +2006,7 @@ module UnixDescriptor =
                    | ParkedSyscall.Accept accept -> enteredHere accept.Listener
                    | ParkedSyscall.ConnectionRead read -> enteredHere read.Socket
                    | ParkedSyscall.ConnectionWrite write -> enteredHere write.Socket
+                   | ParkedSyscall.DatagramReceive receive -> enteredHere receive.Socket
                    // Reserved: nothing parks a thread in it yet. A Darwin select
                    // through the descriptor closed drains a socket too
                    // (`tcp-close-drain.c` T20), but holds no description, so
@@ -2017,7 +2022,6 @@ module UnixDescriptor =
                    | ParkedSyscall.SigSuspend
                    | ParkedSyscall.Sleep _
                    | ParkedSyscall.SignalWait _
-                   | ParkedSyscall.DatagramReceive _
                    | ParkedSyscall.DatagramSend _
                    | ParkedSyscall.Connect _
                    | ParkedSyscall.Futex _
@@ -2093,6 +2097,13 @@ module UnixDescriptor =
                         // W-close, `tcp-close-drain.c`): the drain ends the
                         // call with EBADF. Nothing else answers a transfer so,
                         // so any wake at all is one the close races.
+                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
+                            None
+                        else
+                            Some (CloseRefusal.DarwinWokenTransfer (closingId, thread))
+                    | ParkedSyscall.DatagramReceive receive when drainedHere receive.Socket ->
+                        // Measured (`udp-sleepers.c` V11, V12): the drain ends
+                        // the receive with EBADF, as above.
                         if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
                             None
                         else
@@ -2232,6 +2243,13 @@ module UnixDescriptor =
                             Socket = SleepTarget.EndedByClose (socketOfClosing ())
                         }
                 )
+            | ParkedSyscall.DatagramReceive receive when drainedHere receive.Socket ->
+                Some (
+                    ParkedSyscall.DatagramReceive
+                        { receive with
+                            Socket = SleepTarget.EndedByClose (socketOfClosing ())
+                        }
+                )
             | ParkedSyscall.Accept _
             | ParkedSyscall.PipeRead _
             | ParkedSyscall.PipeWrite _
@@ -2257,10 +2275,11 @@ module UnixDescriptor =
             // `parks` never shows it here: ending it needs another way to find
             // the selects watching `fd`.
             | ParkedSyscall.Select _
-            // Reserved too. Darwin's close will end a receive, with EBADF
-            // (measured, `docs/probes/datagram-park` row R3); Linux's leaves it
-            // asleep.
+            // Linux's close leaves a receive asleep (measured,
+            // `udp-sleepers.c` V11), and so does a Darwin one that drains
+            // nothing.
             | ParkedSyscall.DatagramReceive _
+            // Reserved: nothing parks a thread in it yet.
             | ParkedSyscall.DatagramSend _
             // Reserved: nothing parks a thread in it yet, and no Darwin connect
             // sleeps.
@@ -2587,11 +2606,12 @@ module UnixDescriptor =
     /// was made through ends every such call made through it, and none made
     /// through another descriptor: the read with end of file, the write with
     /// `EPIPE` and `SIGPIPE`, whatever it had put in. A close of the
-    /// descriptor that a sleeping `accept`, or a sleeping `read` or `write` of
-    /// a connected socket, was made through drains the socket
-    /// (`SocketDescription.Drained`): it ends every such call asleep on the
-    /// socket, through any descriptor, an accept with `ECONNABORTED` and a
-    /// transfer with `EBADF`, whatever it had taken, and no signal. A close
+    /// descriptor that a sleeping `accept`, a sleeping `read` or `write` of a
+    /// connected socket, or a sleeping receive on a UDP socket, was made
+    /// through drains the socket (`SocketDescription.Drained`): it ends every
+    /// such call asleep on the socket, through any descriptor, an accept with
+    /// `ECONNABORTED` and a transfer or receive with `EBADF`, whatever it had
+    /// taken, and no signal. A close
     /// with such a call asleep only through another descriptor drains
     /// nothing. Darwin's close returns only once
     /// such a call has, so an ended call holds nothing from the close on

@@ -48,17 +48,18 @@ type FinishedSignalWait<'Thread, 'Handler when 'Thread : comparison and 'Handler
     // (`docs/design/sigwait-options.md`).
     internal | FinishedSignalWait
 
-/// What finishing a woken blocking receive on a datagram socket answers: what
-/// `FinishedCall.DatagramReceive` holds.
-///
-/// Its representation is internal, so a later version may change what it
-/// holds without breaking a client; a client builds none. Nothing in this
-/// version makes one: see `ParkedSyscall.DatagramReceive`.
+/// What finishing a woken blocking receive on a UDP socket answers, by which
+/// call it is: what `FinishedCall.DatagramReceive` holds.
+[<RequireQualifiedAccess>]
 [<NoEquality ; NoComparison>]
 type FinishedDatagramReceive<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    // What it holds is the design of the datagram data path
-    // (`docs/design/datagram-park-options.md`).
-    internal | FinishedDatagramReceive
+    /// A `read(2)` or `recv(2)`, as `UnixReadWrite.finishRead` answers it.
+    | Read of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `recvfrom(2)`, as `UnixReadWrite.finishRecvFrom` answers it, or,
+    /// where that stops for the length cell (Linux), as
+    /// `UnixReadWrite.recvfromWithLength` then answers it, given what the cell
+    /// of the `Syscall.RecvFrom` that `UnixWait.finish` was given holds.
+    | RecvFrom of outcome : RecvFromOutcome * system : UnixSystem<'Thread, 'Handler>
 
 /// What finishing a woken blocking send of a datagram answers: what
 /// `FinishedCall.DatagramSend` holds.
@@ -97,9 +98,9 @@ type FinishedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : 
 /// (`Interrupted`), whose end the thread's return to user mode says.
 ///
 /// The cases of the reserved parks, `Sleep`, `FifoOpen`, `Select`,
-/// `SignalWait`, `DatagramReceive`, `DatagramSend` and `Connect`, hold types
-/// whose representations are internal. Nothing parks a thread in any of them
-/// yet, so `UnixWait.finish` answers none of them.
+/// `SignalWait`, `DatagramSend` and `Connect`, hold types whose
+/// representations are internal. Nothing parks a thread in any of them yet,
+/// so `UnixWait.finish` answers none of them.
 [<RequireQualifiedAccess>]
 [<NoEquality ; NoComparison>]
 type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
@@ -144,8 +145,8 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     /// A `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`. Reserved: see
     /// `FinishedSignalWait`.
     | SignalWait of finished : FinishedSignalWait<'Thread, 'Handler>
-    /// A blocking receive on a datagram socket. Reserved: see
-    /// `FinishedDatagramReceive`.
+    /// A blocking receive on a UDP socket, as the finishing function of the
+    /// call it is answers it.
     | DatagramReceive of finished : FinishedDatagramReceive<'Thread, 'Handler>
     /// A blocking send of a datagram. Reserved: see `FinishedDatagramSend`.
     | DatagramSend of finished : FinishedDatagramSend<'Thread, 'Handler>
@@ -172,6 +173,8 @@ type internal ViewFinishedCall<'View, 'Thread, 'Handler when 'Thread : compariso
     | ConnectionWrite of fate : ViewFate<WriteOutcome<'Thread>, 'View>
     | SigSuspend of outcome : SigsuspendOutcome * view : 'View
     | InotifyRead of outcome : ReadOutcome * view : 'View
+    | DatagramRead of outcome : ReadOutcome * view : 'View
+    | DatagramRecvFrom of outcome : RecvFromOutcome * view : 'View
     | Futex of outcome : SyscallOutcome * view : 'View
 
 /// Why this library will not finish a woken call (`UnixWait.finish`): the
@@ -185,6 +188,7 @@ type internal FinishRefusal =
     | EpollWait of EpollWaitRefusal
     | Kevent of KeventRefusal
     | Read of ReadRefusal
+    | Receive of ReceiveRefusal
     | Write of WriteRefusal
     | Sigsuspend of SigsuspendRefusal
     | Futex of FutexRefusal
@@ -194,9 +198,9 @@ type internal FinishRefusal =
     /// The thread is parked in `parked`, which no call of the `Syscall` case
     /// given parks a thread in.
     | NotTheParkedCall of parked : ParkedSyscall
-    /// The thread is parked in `parked`, a write that stopped to copy from a
-    /// buffer it was made with as readable, which the `Syscall` now gives as
-    /// `buffer`.
+    /// The thread is parked in `parked`, a write or a `recvfrom` that stopped
+    /// to copy from a buffer or a length cell it was made with as readable,
+    /// which the `Syscall` now gives as `buffer`.
     | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
 
 [<RequireQualifiedAccess>]
@@ -211,6 +215,7 @@ module internal FinishRefusal =
         | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.describe refusal
         | FinishRefusal.Kevent refusal -> KeventRefusal.describe refusal
         | FinishRefusal.Read refusal -> ReadRefusal.describe refusal
+        | FinishRefusal.Receive refusal -> ReceiveRefusal.describe refusal
         | FinishRefusal.Write refusal -> WriteRefusal.describe refusal
         | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.describe refusal
         | FinishRefusal.Futex refusal -> FutexRefusal.describe refusal
@@ -219,7 +224,7 @@ module internal FinishRefusal =
         | FinishRefusal.NotTheParkedCall parked ->
             $"the thread is parked in %A{parked}, which no call of the Syscall case given parks a thread in; pass the Syscall the thread made."
         | FinishRefusal.UnreadableBuffer (parked, buffer) ->
-            $"the thread is parked in %A{parked}, a write made with a readable buffer, which stopped to copy from it; the Syscall gives the buffer as %A{buffer}, and this library does not model a write's buffer ceasing to be readable while the call sleeps."
+            $"the thread is parked in %A{parked}, a call made with a readable buffer or length cell, which stopped to copy from it; the Syscall gives it as %A{buffer}, and this library does not model a call's buffer or cell ceasing to be readable while the call sleeps."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FinishRefusal) : RefusalKind =
@@ -230,6 +235,7 @@ module internal FinishRefusal =
         | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.kind refusal
         | FinishRefusal.Kevent refusal -> KeventRefusal.kind refusal
         | FinishRefusal.Read refusal -> ReadRefusal.kind refusal
+        | FinishRefusal.Receive refusal -> ReceiveRefusal.kind refusal
         | FinishRefusal.Write refusal -> WriteRefusal.kind refusal
         | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.kind refusal
         | FinishRefusal.Futex refusal -> FutexRefusal.kind refusal
@@ -560,6 +566,12 @@ module UnixWait =
     /// to report, or a close that drains a kqueue, wakes every waiter in
     /// `kevent` on it.
     ///
+    /// Under Linux, a datagram or the ICMP error arriving at a UDP socket
+    /// chooses, as it arrives, the one receive asleep on it that it wakes:
+    /// the one that parked first, of those no arrival has chosen yet
+    /// (`WakePrimitive.DatagramReceivable`). Under Darwin every receive asleep
+    /// on a UDP socket with a datagram or an error wakes.
+    ///
     /// Each thread's condition is asked of its own process, so a condition
     /// another process's call has made true (a connection queued on a
     /// listener, a peer's FIN, a lock let go of) wakes it here; and where a
@@ -656,6 +668,14 @@ module UnixWait =
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.SigSuspend
         | ViewFinishedCall.InotifyRead (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.InotifyRead
+        | ViewFinishedCall.DatagramRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view)
+            |> FinishedDatagramReceive.Read
+            |> FinishedCall.DatagramReceive
+        | ViewFinishedCall.DatagramRecvFrom (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view)
+            |> FinishedDatagramReceive.RecvFrom
+            |> FinishedCall.DatagramReceive
         | ViewFinishedCall.Futex (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Futex
 
     /// Whether a thread parked in `parked` could have parked there in a call
@@ -690,6 +710,12 @@ module UnixWait =
             // no connection.
             | TcpSendCall.Send _, Syscall.SendTo (_, _, _, _, destination, _) ->
                 destination = CopiedArgument.Unmapped 0UL
+            | _, _ -> false
+        | ParkedSyscall.DatagramReceive receive, (Syscall.Read _ | Syscall.Recv _ | Syscall.RecvFrom _) ->
+            match receive.Call, call with
+            | ParkedDatagramReceiveCall.Read, Syscall.Read _
+            | ParkedDatagramReceiveCall.Receive _, Syscall.Recv _
+            | ParkedDatagramReceiveCall.ReceiveFrom _, Syscall.RecvFrom _ -> true
             | _, _ -> false
         | _, _ -> false
 
@@ -734,6 +760,37 @@ module UnixWait =
             | CopiedArgument.Addressless ->
                 Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer buffer))
 
+    /// The woken `recvfrom` `thread` is parked in, finished by
+    /// `UnixReadWrite`'s finishing body, and, where that stops for its length
+    /// cell (Linux, which reads it once a datagram has come), resumed with
+    /// what the cell `call` gives holds.
+    let private tryFinishRecvFromIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<RecvFromOutcome * ProcessView<'Thread, 'Handler>, FinishRefusal>
+        =
+        match UnixReadWrite.tryFinishRecvFromIn thread system with
+        | Error refusal -> Error (FinishRefusal.Receive refusal)
+        | Ok (CallProgress.Answered answer) -> Ok answer
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let cell =
+                match call with
+                | Syscall.RecvFrom (_, _, _, _, _, sourceLength) -> sourceLength
+                | _ ->
+                    failwith
+                        $"UnixWait.finish: the thread is parked in %A{parked}, a recvfrom, but was admitted with a Syscall that is not a recvfrom (this is a bug in this library)."
+
+            match cell with
+            | CopiedArgument.Readable length ->
+                UnixReadWrite.tryRecvFromWithLengthIn length paused
+                |> Result.mapError FinishRefusal.Receive
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
+
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
     /// parked in, which `call` describes, finished by the finishing body of
     /// its family.
@@ -750,7 +807,6 @@ module UnixWait =
         | ParkedSyscall.FifoOpen _
         | ParkedSyscall.Select _
         | ParkedSyscall.SignalWait _
-        | ParkedSyscall.DatagramReceive _
         | ParkedSyscall.DatagramSend _
         | ParkedSyscall.Connect _ -> Error (FinishRefusal.Reserved parked)
         | _ when not (parksIn parked call) -> Error (FinishRefusal.NotTheParkedCall parked)
@@ -800,6 +856,16 @@ module UnixWait =
             UnixReadWrite.tryFinishReadIn thread system
             |> Result.map ViewFinishedCall.InotifyRead
             |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.DatagramReceive receive ->
+            match receive.Call with
+            | ParkedDatagramReceiveCall.Read
+            | ParkedDatagramReceiveCall.Receive _ ->
+                UnixReadWrite.tryFinishReadIn thread system
+                |> Result.map ViewFinishedCall.DatagramRead
+                |> Result.mapError FinishRefusal.Read
+            | ParkedDatagramReceiveCall.ReceiveFrom _ ->
+                tryFinishRecvFromIn parked call thread system
+                |> Result.map ViewFinishedCall.DatagramRecvFrom
         | ParkedSyscall.Futex _ ->
             UnixFutex.tryFinishFutexWaitIn thread system
             |> Result.map ViewFinishedCall.Futex
@@ -830,8 +896,11 @@ module UnixWait =
     /// of its bytes from its buffer as the buffer is when the call is
     /// finished, and `finish` hands the write's resumption, which
     /// `UnixReadWrite.writeWithBytes` is, the bytes of `call`'s buffer it
-    /// copies, so that it never stops partway. Every other call is finished
-    /// without reading `call`'s arguments.
+    /// copies, so that it never stops partway. A woken Linux `recvfrom` reads
+    /// its length cell once its datagram has come, and `finish` hands its
+    /// resumption, which `UnixReadWrite.recvfromWithLength` is, what `call`'s
+    /// cell holds. Every other call is finished without reading `call`'s
+    /// arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
@@ -843,16 +912,18 @@ module UnixWait =
     /// the system's processes, parked in a call and woken, and
     /// `UnmodelledException` for a thread parked in one of the reserved calls
     /// (`ParkedSyscall.Sleep`, `FifoOpen`, `Select`, `SignalWait`,
-    /// `DatagramReceive`, `DatagramSend` and `Connect`), which nothing parks a
-    /// thread in yet. Throws `ArgumentException` if `call`'s case is not one
-    /// that parks a thread where `caller` is parked (`Syscall.Write` for a
-    /// write to a pipe, and `Syscall.Write` for a write to a connected socket
-    /// and `Syscall.Send` for a send to one, or `Syscall.SendTo` with a NULL
-    /// destination, which is that send). For a write that copies, throws
-    /// `InvalidOperationException` if `call`'s buffer holds contents that end
-    /// before the bytes it copies, as `step` does, and `UnmodelledException`
-    /// if `call` gives the buffer as anything but readable, which it was when
-    /// the call was made. Otherwise it throws what the family's finishing
+    /// `DatagramSend` and `Connect`), which nothing parks a thread in yet.
+    /// Throws `ArgumentException` if `call`'s case is not one that parks a
+    /// thread where `caller` is parked (`Syscall.Write` for a write to a pipe,
+    /// and `Syscall.Write` for a write to a connected socket and `Syscall.Send`
+    /// for a send to one, or `Syscall.SendTo` with a NULL destination, which is
+    /// that send; and `Syscall.Read`, `Syscall.Recv` or `Syscall.RecvFrom` for
+    /// a receive on a UDP socket made by that call). For a write that copies,
+    /// throws `InvalidOperationException` if `call`'s buffer holds contents
+    /// that end before the bytes it copies, as `step` does, and
+    /// `UnmodelledException` if `call` gives the buffer as anything but
+    /// readable, which it was when the call was made; and likewise for a
+    /// `recvfrom`'s length cell. Otherwise it throws what the family's finishing
     /// function throws.
     let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
