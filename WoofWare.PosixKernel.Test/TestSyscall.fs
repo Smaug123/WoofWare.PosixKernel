@@ -79,6 +79,7 @@ module TestSyscall =
             "UnixReadWrite.write", "Write"
             "UnixReadWrite.send", "Send"
             "UnixReadWrite.sendto", "SendTo"
+            "UnixReadWrite.sendmsg", "SendMsg"
             "UnixReadWrite.pwrite", "PWrite"
             "UnixReadWrite.copyFileRange", "CopyFileRange"
             "UnixPipe.pipe2", "Pipe2"
@@ -173,7 +174,6 @@ module TestSyscall =
             "SigWaitInfo"
             "SigTimedWait"
             "RecvMsg"
-            "SendMsg"
         ]
 
     /// The cases `step` makes.
@@ -237,6 +237,7 @@ module TestSyscall =
             "Write"
             "Send"
             "SendTo"
+            "SendMsg"
             "PWrite"
             "CopyFileRange"
             "Pipe2"
@@ -356,8 +357,8 @@ module TestSyscall =
         let cases = caseOfFunction |> List.map snd
 
         cases |> List.distinct |> shouldEqual cases
-        List.length cases |> shouldEqual 108
-        List.length reserved |> shouldEqual 9
+        List.length cases |> shouldEqual 109
+        List.length reserved |> shouldEqual 8
 
         Set.intersect (Set.ofList cases) (Set.ofList reserved) |> shouldEqual Set.empty
 
@@ -458,15 +459,36 @@ module TestSyscall =
 
     /// What `m` answers, as its `SteppedCall` case holds it: where it answers a
     /// `CallProgress`, what the call's resumption answers, since `step`
-    /// resumes the call; and a tuple's parts as the case's fields.
+    /// resumes the call; and a tuple's parts as the case's fields. A call
+    /// whose next copy is one of several (`SendMsgCopy`) answers what the
+    /// resumption of each copy that stops at no other answers, which must
+    /// agree.
     let rec private steppedFields (m : MethodInfo) : Type list =
         let answer = m.ReturnType
 
-        if
-            answer.IsGenericType
-            && answer.GetGenericTypeDefinition () = typedefof<CallProgress<int, int>>
-        then
-            steppedFields (resumptionOf m (answer.GetGenericArguments().[0]))
+        let isProgress (t : Type) : bool =
+            t.IsGenericType
+            && t.GetGenericTypeDefinition () = typedefof<CallProgress<int, int>>
+
+        if isProgress answer then
+            let paused = answer.GetGenericArguments().[0]
+
+            if FSharpType.IsUnion (paused, BindingFlags.Public) then
+                let last =
+                    FSharpType.GetUnionCases paused
+                    |> Array.map (fun case -> resumptionOf m (case.GetFields().[0].PropertyType))
+                    |> Array.filter (fun resumption ->
+                        not (isProgress resumption.ReturnType)
+                        || resumption.ReturnType.GetGenericArguments().[0] <> paused
+                    )
+                    |> Array.map steppedFields
+                    |> Array.distinct
+
+                match last with
+                | [| fields |] -> fields
+                | found -> failwith $"%s{m.Name}'s copies answer %A{found}, not one thing"
+            else
+                steppedFields (resumptionOf m paused)
         elif FSharpType.IsTuple answer then
             FSharpType.GetTupleElements answer |> List.ofArray
         else

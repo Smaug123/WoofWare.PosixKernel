@@ -64,6 +64,7 @@
         <Compile Include="DeviceFileSystem.fs" />
         <Compile Include="AccessTimeUpdate.fs" />
         <Compile Include="UserBuffer.fs" />
+        <Compile Include="MessageHeader.fs" />
         <Compile Include="TimespecArgument.fs" />
         <Compile Include="OsThreadId.fs" />
         <Compile Include="ProcessIdTable.fs" />

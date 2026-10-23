@@ -316,6 +316,85 @@ module TestStepOracle =
             )
             |> Result.map SteppedCall.SendTo
             |> Result.mapError SyscallRefusal.SendTo
+        | Syscall.SendMsg (fd, message, flags) ->
+            let vectorsOf (sent : SentMessage) : ImmutableArray<SentVector> =
+                match sent.SentVectors with
+                | CopiedArgument.Readable vectors -> vectors
+                | other -> failwith $"the call stopped to copy iovecs from %A{other}, which no call should copy from"
+
+            // Each copy after the header, as a client holding `sent` makes it.
+            let rec copies
+                (sent : SentMessage)
+                (progress :
+                    Result<
+                        CallProgress<SendMsgCopy<int, string>, ProcessFate<WriteOutcome<int>, int, string>>,
+                        SendRefusal
+                     >)
+                =
+                progress
+                |> CallProgress.resumeWith (fun copy ->
+                    match copy with
+                    | SendMsgCopy.Name paused ->
+                        UnixReadWrite.trySendMsgWithName
+                            (copied sent.SentName (PausedSendMsgName.copyRange paused))
+                            paused
+                        |> copies sent
+                    | SendMsgCopy.Vectors paused ->
+                        let vectors = vectorsOf sent
+                        let count = PausedSendMsgVectors.count paused
+
+                        if count > vectors.Length then
+                            raise (
+                                ShortContentsException
+                                    $"the call copies %d{count} iovecs, but the array holds %d{vectors.Length}"
+                            )
+
+                        let decoded =
+                            vectors
+                            |> Seq.take count
+                            |> Seq.map (fun vector ->
+                                {
+                                    VectorBase = bufferOf vector.SentBase
+                                    VectorLength = vector.SentLength
+                                }
+                            )
+                            |> ImmutableArray.CreateRange
+
+                        UnixReadWrite.trySendMsgWithVectors decoded paused |> copies sent
+                    | SendMsgCopy.Bytes paused ->
+                        let bytes =
+                            Seq.map2
+                                (fun (range : CopyRange) (vector : SentVector) ->
+                                    if range.ByteCount = 0 then
+                                        ImmutableArray.Empty
+                                    else
+                                        copied vector.SentBase range
+                                )
+                                (PausedSendMsgBytes.copyRanges paused)
+                                (vectorsOf sent)
+                            |> ImmutableArray.CreateRange
+
+                        UnixReadWrite.trySendMsgWithBytes bytes paused
+                )
+
+            UnixReadWrite.trySendMsg caller fd (bufferOf message) flags system
+            |> CallProgress.resumeWith (fun paused ->
+                let sent = cell message
+
+                let header =
+                    {
+                        MessageName = bufferOf sent.SentName
+                        MessageNameLength = sent.SentNameLength
+                        MessageVectors = bufferOf sent.SentVectors
+                        MessageVectorCount = sent.SentVectorCount
+                        MessageControl = bufferOf sent.SentControl
+                        MessageControlLength = sent.SentControlLength
+                    }
+
+                UnixReadWrite.trySendMsgWithHeader header paused |> copies sent
+            )
+            |> Result.map SteppedCall.SendMsg
+            |> Result.mapError SyscallRefusal.SendMsg
         | Syscall.PWrite (fd, buffer, count, offset) ->
             UnixReadWrite.tryPwrite caller fd (bufferOf buffer) count offset system
             |> CallProgress.resumeWith (fun paused ->
@@ -1629,6 +1708,55 @@ module TestStepOracle =
                 let! declaredLength = sockaddrLengthGen
                 return Syscall.SendTo (fd, buffer, count, flags, destination, declaredLength)
             }
+            "SendMsg",
+            gen {
+                let! fd, flags = distinct2 datagramFd (messageFlagsGen flavour)
+                let! name = copiedGen (sockaddrGen platform)
+                let! nameLength = Gen.oneof [ sockaddrLengthGen ; Gen.elements [ 0u ; 129u ; 0xFFFFFFFFu ] ]
+                let! held = Gen.choose (0, 3)
+
+                let! vectors =
+                    Gen.listOfLength
+                        held
+                        (gen {
+                            let! buffer, count = bufferAndCountGen
+
+                            return
+                                {
+                                    SentBase = buffer
+                                    SentLength = count
+                                }
+                        })
+
+                // Mostly as many iovecs as the array holds; sometimes more,
+                // or a count no array could.
+                let! vectorCount =
+                    Gen.frequency
+                        [
+                            8, Gen.constant (uint64 held)
+                            1, Gen.constant (uint64 held + 1UL)
+                            1, Gen.elements [ 1025UL ; 0xFFFF_FFFFUL ; UInt64.MaxValue ]
+                        ]
+
+                let! vectorArray = copiedGen (Gen.constant (ImmutableArray.CreateRange vectors))
+                let! control = copiedGen bytesGen
+                let! controlLength = Gen.frequency [ 6, Gen.constant 0UL ; 1, Gen.elements [ 8UL ; 16UL ] ]
+
+                let! message =
+                    copiedGen (
+                        Gen.constant
+                            {
+                                SentName = name
+                                SentNameLength = nameLength
+                                SentVectors = vectorArray
+                                SentVectorCount = vectorCount
+                                SentControl = control
+                                SentControlLength = controlLength
+                            }
+                    )
+
+                return Syscall.SendMsg (fd, message, flags)
+            }
             "PWrite",
             gen {
                 let! fd = writableFd
@@ -2000,6 +2128,8 @@ module TestStepOracle =
             | Ok (CallProgress.Answered (CallProgress.NeedsCopyIn _)) -> true
             | Ok (CallProgress.Answered (CallProgress.Answered _))
             | Error _ -> false
+        | Syscall.SendMsg (fd, message, flags) ->
+            UnixReadWrite.trySendMsg caller fd (bufferOf message) flags system |> stopped
         | Syscall.RecvFrom (fd, buffer, count, flags, source, sourceLength) ->
             UnixReadWrite.tryRecvFrom caller fd buffer count flags source (bufferOf sourceLength) system
             |> stopped
@@ -2029,6 +2159,7 @@ module TestStepOracle =
             "Write"
             "Send"
             "SendTo"
+            "SendMsg"
             "RecvFrom"
             "PWrite"
             "Bind"

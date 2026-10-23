@@ -528,7 +528,8 @@ module internal ReceiveRefusal =
         | ReceiveRefusal.UnmodelledReceiveFrom _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnrepresentableLength _ -> RefusalKind.Unmodelled
 
-/// Why this kernel will not answer a `send(2)`, or a `sendto(2)`.
+/// Why this kernel will not answer a `send(2)`, a `sendto(2)` or a
+/// `sendmsg(2)`.
 ///
 /// Its own type rather than `WriteRefusal`, as `ReceiveRefusal` is. A `send`
 /// that sleeps is woken by `UnixReadWrite.finishWrite` and finished by
@@ -575,6 +576,22 @@ type internal SendRefusal =
     /// A Darwin `sendto(2)` whose implicit bind found every port in the
     /// ephemeral range taken: what Darwin answers is not measured.
     | EphemeralPortsExhausted of range : uint16 * uint16
+    /// A `sendmsg(2)` on a socket that is not an IPv4 UDP one, whose answers
+    /// are not measured.
+    | UnmodelledSendMsg of socket : SocketId * domain : SocketDomain * kind : SocketKind
+    /// The `struct msghdr` has no answer at its copy.
+    | MessageBuffer of BufferRefusal
+    /// The iovec array has no answer at its copy.
+    | VectorArrayBuffer of BufferRefusal
+    /// A `sendmsg(2)` with `msg_controllen` of `length`, not 0. This kernel
+    /// sends no control message.
+    | ControlData of length : uint64
+    /// A Linux `sendmsg(2)` with a NULL name and a `msg_namelen` negative as
+    /// an `int`, whose answer is not measured.
+    | UnmeasuredNameLength of length : uint32
+    /// A Darwin `struct msghdr` whose field `field` holds `value`, wider than
+    /// the field, which no Darwin header can hold.
+    | HeaderFieldWidth of field : string * value : uint64
 
 [<RequireQualifiedAccess>]
 module internal SendRefusal =
@@ -607,6 +624,16 @@ module internal SendRefusal =
             $"the destination is %s{Ipv4Endpoint.toString destination}, a broadcast or multicast address. This kernel models no group membership and no interface to broadcast on: of the broadcast addresses it answers only 255.255.255.255, which each flavour refuses a socket without SO_BROADCAST."
         | SendRefusal.EphemeralPortsExhausted (low, high) ->
             $"the sendto(2) binds the socket first, and every port in the ephemeral range %d{low}-%d{high} is taken. What Darwin answers then is not measured. Widen the machine's EphemeralPortRange."
+        | SendRefusal.UnmodelledSendMsg (socket, domain, kind) ->
+            $"the descriptor is socket %O{socket} (%O{domain}, %O{kind}). This kernel answers sendmsg(2) on an IPv4 UDP socket only; what it answers on any other socket has not been measured."
+        | SendRefusal.MessageBuffer refusal -> $"the struct msghdr: %s{BufferRefusal.describe refusal}"
+        | SendRefusal.VectorArrayBuffer refusal -> $"the iovec array: %s{BufferRefusal.describe refusal}"
+        | SendRefusal.ControlData length ->
+            $"msg_controllen is %d{length}. This kernel sends no control message, and models no option whose control data a sendmsg(2) could carry: pass a msg_controllen of 0."
+        | SendRefusal.UnmeasuredNameLength length ->
+            $"msg_name is NULL and msg_namelen is %d{length}, negative as an int. What Linux answers for such a header has not been measured."
+        | SendRefusal.HeaderFieldWidth (field, value) ->
+            $"the header's %s{field} is %d{value}, which a Darwin struct msghdr's 32-bit field cannot hold. Pass the field's 32 bits, as an unsigned number."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SendRefusal) : RefusalKind =
@@ -626,6 +653,12 @@ module internal SendRefusal =
         | SendRefusal.ShortDestination _ -> RefusalKind.Unmodelled
         | SendRefusal.GroupDestination _ -> RefusalKind.Unmodelled
         | SendRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
+        | SendRefusal.UnmodelledSendMsg _ -> RefusalKind.Unmodelled
+        | SendRefusal.MessageBuffer refusal -> BufferRefusal.kind refusal
+        | SendRefusal.VectorArrayBuffer refusal -> BufferRefusal.kind refusal
+        | SendRefusal.ControlData _ -> RefusalKind.Unmodelled
+        | SendRefusal.UnmeasuredNameLength _ -> RefusalKind.Unmodelled
+        | SendRefusal.HeaderFieldWidth _ -> RefusalKind.OutOfRange "header"
 
 /// What a `write(2)` or `send(2)` did, if it did not end the process (see
 /// `ProcessFate`).
@@ -828,6 +861,124 @@ module PausedSendToAddress =
         : CopyRange
         =
         paused.Range
+
+/// What a `sendmsg(2)` has made of its name by a point where it stops.
+[<RequireQualifiedAccess ; NoEquality ; NoComparison>]
+type internal SendMsgName =
+    /// The call has not reached its name yet.
+    | Unread
+    /// The call sends without a name: the name is NULL, or (Linux) 0 bytes
+    /// long.
+    | Absent
+    /// The call copied these bytes of the name, which it treats as
+    /// `declaredLength` bytes long.
+    | Copied of bytes : ImmutableArray<byte> * declaredLength : uint32
+
+/// What a `sendmsg(2)` has read and decided by a point where it stops for a
+/// copy after its header.
+[<NoEquality ; NoComparison>]
+type internal SendMsgSoFar<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    {
+        Thread : 'Thread
+        Fd : int
+        Header : MessageHeader
+        Name : SendMsgName
+        /// The iovec array, once the call has read it.
+        Vectors : ImmutableArray<IoVector> option
+        /// The system the call was made in: everything a `sendmsg` does
+        /// before its last copy is a question.
+        System : ProcessView<'Thread, 'Handler>
+    }
+
+/// A `sendmsg(2)` stopped where the kernel copies the caller's
+/// `struct msghdr`: `UnixReadWrite.sendmsg` answers it, and
+/// `UnixReadWrite.sendmsgWithHeader` takes the header the client read there.
+[<NoEquality ; NoComparison>]
+type PausedSendMsgHeader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            Thread : 'Thread
+            Fd : int
+            System : ProcessView<'Thread, 'Handler>
+        }
+
+/// A `sendmsg(2)` stopped where the kernel copies the name its header
+/// names: `PausedSendMsgName.copyRange` says which bytes of it, and
+/// `UnixReadWrite.sendmsgWithName` takes them.
+[<NoEquality ; NoComparison>]
+type PausedSendMsgName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            SoFar : SendMsgSoFar<'Thread, 'Handler>
+            Range : CopyRange
+        }
+
+[<RequireQualifiedAccess>]
+module PausedSendMsgName =
+    /// The bytes of the name the kernel copies: what
+    /// `UnixReadWrite.sendmsgWithName` takes. Always from the start of the
+    /// name.
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedSendMsgName<'Thread, 'Handler>)
+        : CopyRange
+        =
+        paused.Range
+
+/// A `sendmsg(2)` stopped where the kernel copies the iovec array its header
+/// names: `PausedSendMsgVectors.count` says how many iovecs, and
+/// `UnixReadWrite.sendmsgWithVectors` takes them.
+[<NoEquality ; NoComparison>]
+type PausedSendMsgVectors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            SoFar : SendMsgSoFar<'Thread, 'Handler>
+            Count : int
+        }
+
+[<RequireQualifiedAccess>]
+module PausedSendMsgVectors =
+    /// How many iovecs the kernel copies, from the start of the array: what
+    /// `UnixReadWrite.sendmsgWithVectors` takes.
+    let count<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedSendMsgVectors<'Thread, 'Handler>)
+        : int
+        =
+        paused.Count
+
+/// A `sendmsg(2)` stopped where the kernel copies the datagram's bytes from
+/// the iovecs: `PausedSendMsgBytes.copyRanges` says which bytes of each, and
+/// `UnixReadWrite.sendmsgWithBytes` takes them.
+[<NoEquality ; NoComparison>]
+type PausedSendMsgBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            Send : PausedSend<'Thread, 'Handler>
+            Ranges : ImmutableArray<CopyRange>
+        }
+
+[<RequireQualifiedAccess>]
+module PausedSendMsgBytes =
+    /// The bytes of each iovec the kernel copies, one range for each iovec of
+    /// the array in order, an iovec of no bytes included: what
+    /// `UnixReadWrite.sendmsgWithBytes` takes. Each is from the start of its
+    /// iovec, and every one of its bytes.
+    let copyRanges<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedSendMsgBytes<'Thread, 'Handler>)
+        : ImmutableArray<CopyRange>
+        =
+        paused.Ranges
+
+/// Where a `sendmsg(2)` that has read its header stops next to copy from the
+/// caller's memory. Which comes next is each flavour's: Linux copies the name
+/// before the iovec array, and Darwin the iovec array before the name.
+[<RequireQualifiedAccess ; NoEquality ; NoComparison>]
+type SendMsgCopy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// The name: `UnixReadWrite.sendmsgWithName` takes it.
+    | Name of paused : PausedSendMsgName<'Thread, 'Handler>
+    /// The iovec array: `UnixReadWrite.sendmsgWithVectors` takes it.
+    | Vectors of paused : PausedSendMsgVectors<'Thread, 'Handler>
+    /// The datagram's bytes: `UnixReadWrite.sendmsgWithBytes` takes them.
+    | Bytes of paused : PausedSendMsgBytes<'Thread, 'Handler>
 
 /// Which `recvfrom(2)` a `PausedRecvFrom` is, so that its resumption
 /// knows what to ask again.
@@ -6445,6 +6596,634 @@ module UnixReadWrite =
         =
         trySendToWithAddress copied paused
         |> Refusal.orRaise "UnixReadWrite.sendtoWithAddress" SendRefusal.kind SendRefusal.describe
+
+    /// Whether `socketId` is a socket `sendmsg` and `recvmsg` are modelled on:
+    /// an IPv4 UDP one.
+    let private carriesMessages<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (socketId : SocketId)
+        (system : ProcessView<'Thread, 'Handler>)
+        : bool
+        =
+        let socket = UnixMachineState.socket socketId system.Machine
+        SocketTable.receivesDatagrams socket && socket.Domain = SocketDomain.Inet
+
+    /// The iovecs `vectors` as one buffer, as a send gathers them into one
+    /// datagram: the storage of the first iovec holding bytes that is not
+    /// real storage, or real storage if every one is.
+    let private gathered (vectors : ImmutableArray<IoVector>) : UserBuffer =
+        vectors
+        |> Seq.filter (fun vector -> vector.VectorLength > 0UL)
+        |> Seq.tryPick (fun vector ->
+            match vector.VectorBase with
+            | UserBuffer.Mapped -> None
+            | other -> Some other
+        )
+        |> Option.defaultValue UserBuffer.Mapped
+
+    /// What a `sendmsg` answers of its iovecs once it has copied them, or
+    /// their total, the count it sends. Measured on both (`udp-msg.c` Y1 and
+    /// Y6, in docs/plans/2026-10-18-udp-data-path; the plan's section 2.17).
+    let private messageTotal<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (vectors : ImmutableArray<IoVector>)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Result<int, UnixError>, SendRefusal>
+        =
+        let platform = system.Machine.UnixPlatform
+
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux ->
+            let maxTransfer =
+                uint64 (TransferCountLimit.maxTransfer (SimulatedUnixPlatform.transferCountLimit platform))
+
+            // A length negative as an `ssize_t`, then each iovec's range: on
+            // its whole length where there are several, and on at most one
+            // call's worth where there is one. The total is cut to one call's
+            // worth.
+            if vectors |> Seq.exists (fun vector -> int64 vector.VectorLength < 0L) then
+                Ok (Error UnixError.EINVAL)
+            else
+
+            let screened =
+                vectors
+                |> Seq.map (fun vector ->
+                    let length =
+                        if vectors.Length = 1 then
+                            min vector.VectorLength maxTransfer
+                        else
+                            vector.VectorLength
+
+                    UserBufferCheck.faultsBeforeOperationFor
+                        (UnixMachineState.userBufferCheck system.Machine)
+                        vector.VectorBase
+                        length
+                )
+                |> List.ofSeq
+
+            match
+                screened
+                |> List.tryPick (fun screen ->
+                    match screen with
+                    | Error refusal -> Some refusal
+                    | Ok _ -> None
+                )
+            with
+            | Some refusal -> Error (SendRefusal.Buffer refusal)
+            | None ->
+
+            if screened |> List.contains (Ok true) then
+                Ok (Error UnixError.EFAULT)
+            else
+                let total =
+                    (0UL, vectors)
+                    ||> Seq.fold (fun total vector -> total + min vector.VectorLength (maxTransfer - total))
+
+                Ok (Ok (int total))
+        | SimulatedUnixFlavour.Darwin ->
+            // A total above INT_MAX, one iovec or several.
+            let limit = uint64 System.Int32.MaxValue
+
+            let total =
+                (Some 0UL, vectors)
+                ||> Seq.fold (fun total vector ->
+                    match total with
+                    | Some total when vector.VectorLength <= limit && total + vector.VectorLength <= limit ->
+                        Some (total + vector.VectorLength)
+                    | _ -> None
+                )
+
+            match total with
+            | None -> Ok (Error UnixError.EINVAL)
+            | Some total -> Ok (Ok (int total))
+
+    /// The rest of a `sendmsg` from what `soFar` has read and decided: each
+    /// rung of its flavour's ladder that `soFar` has not passed, in order, up
+    /// to its answer or the next copy. Measured on both (`udp-msg.c`, in
+    /// docs/plans/2026-10-18-udp-data-path; the plan's section 2.17 lists the
+    /// rungs). From the bind on (Linux) or `MSG_OOB` on (Darwin) it is
+    /// `sendto`'s, with the iovecs' total as the count and the name as the
+    /// destination, or `send`'s without a name.
+    let rec private advanceSendMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (soFar : SendMsgSoFar<'Thread, 'Handler>)
+        : Result<
+              CallProgress<
+                  SendMsgCopy<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
+              SendRefusal
+           >
+        =
+        let system = soFar.System
+        let header = soFar.Header
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        let answered (error : UnixError) =
+            Ok (CallProgress.Answered (ViewFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system)))
+
+        let stop (copy : SendMsgCopy<'Thread, 'Handler>) = Ok (CallProgress.NeedsCopyIn copy)
+
+        let nameNull = header.MessageName = UserBuffer.Unmapped 0UL
+
+        // The name, which the call goes on without, stops to copy, or
+        // answers for.
+        let readName () =
+            let copy (length : uint32) =
+                match header.MessageName with
+                | UserBuffer.Unmapped _ -> answered UnixError.EFAULT
+                | UserBuffer.Opaque -> Error (SendRefusal.DestinationBuffer BufferRefusal.OpaqueAtTransfer)
+                | UserBuffer.Addressless -> Error (SendRefusal.DestinationBuffer BufferRefusal.AddresslessAtTransfer)
+                | UserBuffer.Mapped ->
+                    stop (
+                        SendMsgCopy.Name
+                            {
+                                SoFar = soFar
+                                Range = CopyRange.fromStart (int length)
+                            }
+                    )
+
+            let absent () =
+                advanceSendMsg
+                    { soFar with
+                        Name = SendMsgName.Absent
+                    }
+
+            let length = header.MessageNameLength
+
+            match flavour with
+            | SimulatedUnixFlavour.Linux ->
+                // Linux reads the length as an `int`, and cuts one above its
+                // `sockaddr_storage` to 128.
+                if nameNull then
+                    if int32 length < 0 then
+                        Error (SendRefusal.UnmeasuredNameLength length)
+                    else
+                        absent ()
+                elif header.MessageName = UserBuffer.Addressless then
+                    Error (SendRefusal.DestinationBuffer BufferRefusal.AddresslessAtScreen)
+                elif int32 length < 0 then
+                    answered UnixError.EINVAL
+                elif length = 0u then
+                    absent ()
+                else
+                    copy (min length 128u)
+            | SimulatedUnixFlavour.Darwin ->
+                // As `sendto`'s copy of its destination.
+                if nameNull then
+                    absent ()
+                elif header.MessageName = UserBuffer.Addressless then
+                    Error (SendRefusal.DestinationBuffer BufferRefusal.AddresslessAtScreen)
+                elif length > 255u then
+                    answered UnixError.ENAMETOOLONG
+                elif length < 2u then
+                    answered UnixError.EINVAL
+                else
+                    copy length
+
+        // The iovec array, which the call stops to copy, or answers for.
+        let readVectors () =
+            let count = header.MessageVectorCount
+
+            let tooMany =
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> count > 1024UL
+                // Darwin's count is an `int`, and must be from 1 to 1024.
+                | SimulatedUnixFlavour.Darwin ->
+                    let count = int32 (uint32 count)
+                    count <= 0 || count > 1024
+
+            if tooMany then
+                answered UnixError.EMSGSIZE
+            elif count = 0UL then
+                advanceSendMsg
+                    { soFar with
+                        Vectors = Some ImmutableArray.Empty
+                    }
+            else
+
+            match header.MessageVectors with
+            | UserBuffer.Unmapped _ -> answered UnixError.EFAULT
+            | UserBuffer.Opaque -> Error (SendRefusal.VectorArrayBuffer BufferRefusal.OpaqueAtTransfer)
+            | UserBuffer.Addressless -> Error (SendRefusal.VectorArrayBuffer BufferRefusal.AddresslessAtTransfer)
+            | UserBuffer.Mapped ->
+                stop (
+                    SendMsgCopy.Vectors
+                        {
+                            SoFar = soFar
+                            Count = int count
+                        }
+                )
+
+        // The control buffer, then the send itself.
+        let send (vectors : ImmutableArray<IoVector>) (total : int) =
+            if header.MessageControlLength <> 0UL then
+                Error (SendRefusal.ControlData header.MessageControlLength)
+            else
+
+            let socketId = datagramSocketOf "UnixReadWrite.sendmsg" soFar.Fd system
+            let buffer = gathered vectors
+
+            let step =
+                match soFar.Name with
+                | SendMsgName.Copied (bytes, declaredLength) ->
+                    admitSendTo socketId buffer total declaredLength bytes system
+                | SendMsgName.Absent ->
+                    socketWrite soFar.Thread socketId buffer (uint64 total) system
+                    |> Result.mapError sendRefusalOf
+                | SendMsgName.Unread ->
+                    failwith
+                        "UnixReadWrite.sendmsg: the call reached its send without reading its name (this is a bug in this library)."
+
+            step
+            |> Result.map (
+                progressOf
+                    "UnixReadWrite.sendmsg"
+                    (fun admission ->
+                        match admission with
+                        | WriteAdmission.Answered answer -> Choice1Of2 answer
+                        | WriteAdmission.Transfer (count, into) ->
+                            let ranges =
+                                vectors
+                                |> Seq.map (fun vector -> CopyRange.fromStart (int vector.VectorLength))
+                                |> ImmutableArray.CreateRange
+
+                            if ranges |> Seq.sumBy (fun range -> range.ByteCount) <> count then
+                                failwith
+                                    $"UnixReadWrite.sendmsg: the send copies %d{count} bytes, but its iovecs hold %d{total} (this is a bug in this library)."
+
+                            Choice2Of2 (fun system ->
+                                SendMsgCopy.Bytes
+                                    {
+                                        Send =
+                                            {
+                                                Thread = soFar.Thread
+                                                Call = PausedSendCall.Send into
+                                                Range = CopyRange.fromStart count
+                                                System = system
+                                            }
+                                        Ranges = ranges
+                                    }
+                            )
+                        | WriteAdmission.TransferThenSleep _ ->
+                            failwith
+                                "UnixReadWrite.sendmsg: a datagram send would sleep, which no UDP send does (this is a bug in this library)."
+                    )
+            )
+
+        match flavour with
+        | SimulatedUnixFlavour.Linux ->
+            match soFar.Name, soFar.Vectors with
+            | SendMsgName.Unread, _ -> readName ()
+            | _, None -> readVectors ()
+            | _, Some vectors ->
+
+            match messageTotal vectors system with
+            | Error refusal -> Error refusal
+            | Ok (Error error) -> answered error
+            | Ok (Ok total) -> send vectors total
+        | SimulatedUnixFlavour.Darwin ->
+            match soFar.Vectors with
+            | None -> readVectors ()
+            | Some vectors ->
+
+            match messageTotal vectors system with
+            | Error refusal -> Error refusal
+            | Ok (Error error) -> answered error
+            | Ok (Ok total) ->
+
+            // Darwin looks the descriptor up only once it holds the iovecs
+            // (Y4).
+            match socketOf soFar.Fd system with
+            | Error error -> answered error
+            | Ok (_, _, socketId) when not (carriesMessages socketId system) ->
+                let socket = UnixMachineState.socket socketId system.Machine
+                Error (SendRefusal.UnmodelledSendMsg (socketId, socket.Domain, socket.Kind))
+            | Ok _ ->
+
+            match soFar.Name with
+            | SendMsgName.Unread -> readName ()
+            | SendMsgName.Absent
+            | SendMsgName.Copied _ -> send vectors total
+
+    /// `trySendMsg` once `Entry` has admitted its caller.
+    let private trySendMsgIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (fd : int)
+        (message : UserBuffer)
+        (flags : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<
+                  PausedSendMsgHeader<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
+              SendRefusal
+           >
+        =
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        // `MSG_DONTWAIT` and `MSG_NOSIGNAL` change nothing on a UDP socket,
+        // which never waits and raises no SIGPIPE.
+        match SendFlags.decode flavour flags with
+        | Error unmodelled -> Error (SendRefusal.UnmodelledFlags unmodelled)
+        | Ok _ ->
+
+        let answered (error : UnixError) =
+            Ok (CallProgress.Answered (ViewFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system)))
+
+        let header () =
+            match message with
+            | UserBuffer.Unmapped _ -> answered UnixError.EFAULT
+            | UserBuffer.Opaque -> Error (SendRefusal.MessageBuffer BufferRefusal.OpaqueAtTransfer)
+            | UserBuffer.Addressless -> Error (SendRefusal.MessageBuffer BufferRefusal.AddresslessAtTransfer)
+            | UserBuffer.Mapped ->
+                ({
+                    Thread = thread
+                    Fd = fd
+                    System = system
+                }
+                : PausedSendMsgHeader<'Thread, 'Handler>)
+                |> CallProgress.NeedsCopyIn
+                |> Ok
+
+        match flavour with
+        // Measured (`udp-msg.c` Y4): Linux looks the descriptor up before it
+        // copies the header, and Darwin after it has copied the iovecs.
+        | SimulatedUnixFlavour.Linux ->
+            match socketOf fd system with
+            | Error error -> answered error
+            | Ok (_, _, socketId) when not (carriesMessages socketId system) ->
+                let socket = UnixMachineState.socket socketId system.Machine
+                Error (SendRefusal.UnmodelledSendMsg (socketId, socket.Domain, socket.Kind))
+            | Ok _ -> header ()
+        | SimulatedUnixFlavour.Darwin -> header ()
+
+    /// `sendmsg`, with a refusal answered as the `Error` rather than raised.
+    let internal trySendMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (message : UserBuffer)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedSendMsgHeader<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              SendRefusal
+           >
+        =
+        Entry.call
+            "UnixReadWrite.sendmsg"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.fate))
+            (trySendMsgIn (Caller.thread caller) fd message flags)
+            system
+
+    /// `sendmsg(2)` by `caller`: send one datagram through `fd`, of the bytes
+    /// of the iovecs the `struct msghdr` at `message` names, to the name it
+    /// names, with the flag word `flags`, raw, in the flavour's numbering
+    /// (`MessageFlag.number`).
+    ///
+    /// The call answers, or stops at the copy of the header, which
+    /// `sendmsgWithHeader` takes. That answers, or stops at the next copy
+    /// (`SendMsgCopy`): the name, the iovec array or the datagram's bytes, in
+    /// the flavour's order. Linux copies the name before the iovec array, and
+    /// Darwin the iovec array before the name; each stops for its bytes last.
+    ///
+    /// The call is `sendto(2)` of the iovecs' bytes to the name, or `send(2)`
+    /// of them without one, once it has read its header, its name and its
+    /// iovecs, which each flavour checks in its own order. What each answers,
+    /// and in which order, is plan section 2.17 (`udp-msg.c`), and, briefly:
+    ///
+    /// - **Linux** looks the descriptor up first. A name that is NULL, or 0
+    ///   bytes long, is no name, and one longer than 128 bytes is cut to 128.
+    ///   More than 1024 iovecs is `EMSGSIZE`, and none sends an empty
+    ///   datagram.
+    /// - **Darwin** copies the header and the iovecs before it looks the
+    ///   descriptor up. A NULL name is no name, whatever its length. Fewer
+    ///   than 1 or more than 1024 iovecs is `EMSGSIZE`, and a total above
+    ///   `INT_MAX` is `EINVAL`.
+    ///
+    /// Refused: a socket that is not an IPv4 UDP one, any `msg_controllen`
+    /// but 0, and every flag `sendto` refuses.
+    ///
+    /// Fails loudly if `caller` is not a thread of one of the system's
+    /// processes, or is already asleep in a syscall.
+    let sendmsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (message : UserBuffer)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSendMsgHeader<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+        =
+        trySendMsg caller fd message flags system
+        |> Refusal.orRaise "UnixReadWrite.sendmsg" SendRefusal.kind SendRefusal.describe
+
+    /// `trySendMsgWithHeader` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private trySendMsgWithHeaderIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (header : MessageHeader)
+        (paused : PausedSendMsgHeader<'Thread, 'Handler>)
+        : Result<
+              CallProgress<
+                  SendMsgCopy<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
+              SendRefusal
+           >
+        =
+        CallProgress.requirePaused "UnixReadWrite.sendmsgWithHeader" "UnixReadWrite.sendmsg" paused
+
+        let narrow =
+            match SimulatedUnixPlatform.flavour paused.System.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux -> None
+            | SimulatedUnixFlavour.Darwin ->
+                [
+                    "msg_iovlen", header.MessageVectorCount
+                    "msg_controllen", header.MessageControlLength
+                ]
+                |> List.tryFind (fun (_, value) -> value > uint64 System.UInt32.MaxValue)
+
+        match narrow with
+        | Some (field, value) -> Error (SendRefusal.HeaderFieldWidth (field, value))
+        | None ->
+
+        advanceSendMsg
+            {
+                Thread = paused.Thread
+                Fd = paused.Fd
+                Header = header
+                Name = SendMsgName.Unread
+                Vectors = None
+                System = paused.System
+            }
+
+    /// `sendmsgWithHeader`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal trySendMsgWithHeader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (header : MessageHeader)
+        (paused : PausedSendMsgHeader<'Thread, 'Handler>)
+        : Result<
+              CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              SendRefusal
+           >
+        =
+        Entry.resume (Shape.result (Shape.progress Shape.fate)) (trySendMsgWithHeaderIn header paused)
+
+    /// The rest of the `sendmsg` `paused` stopped: `header` is the
+    /// `struct msghdr` the caller's memory held. The call answers, or stops at
+    /// its next copy. See `sendmsg`.
+    ///
+    /// Fails with `ArgumentOutOfRangeException` if, under Darwin, `header`'s `MessageVectorCount` or `MessageControlLength` is wider than the field's 32 bits.
+    let sendmsgWithHeader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (header : MessageHeader)
+        (paused : PausedSendMsgHeader<'Thread, 'Handler>)
+        : CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+        =
+        trySendMsgWithHeader header paused
+        |> Refusal.orRaise "UnixReadWrite.sendmsgWithHeader" SendRefusal.kind SendRefusal.describe
+
+    /// `trySendMsgWithName` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private trySendMsgWithNameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedSendMsgName<'Thread, 'Handler>)
+        : Result<
+              CallProgress<
+                  SendMsgCopy<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
+              SendRefusal
+           >
+        =
+        CallProgress.requirePaused "UnixReadWrite.sendmsgWithName" "UnixReadWrite.sendmsgWithHeader" paused
+        CopyRange.require "UnixReadWrite.sendmsgWithName" paused.Range copied
+
+        advanceSendMsg
+            { paused.SoFar with
+                Name = SendMsgName.Copied (copied, uint32 paused.Range.ByteCount)
+            }
+
+    /// `sendmsgWithName`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal trySendMsgWithName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedSendMsgName<'Thread, 'Handler>)
+        : Result<
+              CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              SendRefusal
+           >
+        =
+        Entry.resume (Shape.result (Shape.progress Shape.fate)) (trySendMsgWithNameIn copied paused)
+
+    /// The rest of the `sendmsg` `paused` stopped: `copied`, exactly the bytes
+    /// `PausedSendMsgName.copyRange` names, is the name, read as a
+    /// `struct sockaddr_in`. The call answers, or stops at its next copy. See
+    /// `sendmsg`.
+    ///
+    /// Fails with `InvalidOperationException` if `copied` is not exactly `PausedSendMsgName.copyRange`'s count long.
+    let sendmsgWithName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedSendMsgName<'Thread, 'Handler>)
+        : CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+        =
+        trySendMsgWithName copied paused
+        |> Refusal.orRaise "UnixReadWrite.sendmsgWithName" SendRefusal.kind SendRefusal.describe
+
+    /// `trySendMsgWithVectors` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private trySendMsgWithVectorsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (vectors : ImmutableArray<IoVector>)
+        (paused : PausedSendMsgVectors<'Thread, 'Handler>)
+        : Result<
+              CallProgress<
+                  SendMsgCopy<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
+              SendRefusal
+           >
+        =
+        CallProgress.requirePaused "UnixReadWrite.sendmsgWithVectors" "UnixReadWrite.sendmsgWithHeader" paused
+
+        if vectors.IsDefault then
+            invalidOp
+                "UnixReadWrite.sendmsgWithVectors: vectors is the default ImmutableArray, whose underlying array is null; pass the iovecs PausedSendMsgVectors.count names."
+
+        if vectors.Length <> paused.Count then
+            invalidOp
+                $"UnixReadWrite.sendmsgWithVectors: the call copies %d{paused.Count} iovecs, but %d{vectors.Length} were supplied. Supply exactly the iovecs PausedSendMsgVectors.count names (this is a bug in the caller)."
+
+        advanceSendMsg
+            { paused.SoFar with
+                Vectors = Some vectors
+            }
+
+    /// `sendmsgWithVectors`, with a refusal answered as the `Error` rather
+    /// than raised.
+    let internal trySendMsgWithVectors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (vectors : ImmutableArray<IoVector>)
+        (paused : PausedSendMsgVectors<'Thread, 'Handler>)
+        : Result<
+              CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              SendRefusal
+           >
+        =
+        Entry.resume (Shape.result (Shape.progress Shape.fate)) (trySendMsgWithVectorsIn vectors paused)
+
+    /// The rest of the `sendmsg` `paused` stopped: `vectors`, exactly as many
+    /// as `PausedSendMsgVectors.count` names, are the iovec array's first
+    /// iovecs. The call answers, or stops at its next copy. See `sendmsg`.
+    ///
+    /// Fails with `InvalidOperationException` if `vectors` does not hold exactly `PausedSendMsgVectors.count` iovecs.
+    let sendmsgWithVectors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (vectors : ImmutableArray<IoVector>)
+        (paused : PausedSendMsgVectors<'Thread, 'Handler>)
+        : CallProgress<SendMsgCopy<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+        =
+        trySendMsgWithVectors vectors paused
+        |> Refusal.orRaise "UnixReadWrite.sendmsgWithVectors" SendRefusal.kind SendRefusal.describe
+
+    /// `trySendMsgWithBytes` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private trySendMsgWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (bytes : ImmutableArray<ImmutableArray<byte>>)
+        (paused : PausedSendMsgBytes<'Thread, 'Handler>)
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, SendRefusal>
+        =
+        CallProgress.requirePaused "UnixReadWrite.sendmsgWithBytes" "UnixReadWrite.sendmsgWithVectors" paused
+
+        if bytes.IsDefault then
+            invalidOp
+                "UnixReadWrite.sendmsgWithBytes: bytes is the default ImmutableArray, whose underlying array is null; pass one array for each range PausedSendMsgBytes.copyRanges names."
+
+        if bytes.Length <> paused.Ranges.Length then
+            invalidOp
+                $"UnixReadWrite.sendmsgWithBytes: the call copies from %d{paused.Ranges.Length} iovecs, but bytes of %d{bytes.Length} were supplied. Supply one array for each range PausedSendMsgBytes.copyRanges names (this is a bug in the caller)."
+
+        Seq.iter2 (CopyRange.require "UnixReadWrite.sendmsgWithBytes") paused.Ranges bytes
+
+        trySendWithBytesIn (ImmutableArray.CreateRange (Seq.concat bytes)) paused.Send
+
+    /// `sendmsgWithBytes`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal trySendMsgWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (bytes : ImmutableArray<ImmutableArray<byte>>)
+        (paused : PausedSendMsgBytes<'Thread, 'Handler>)
+        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
+        =
+        Entry.resume (Shape.result Shape.fate) (trySendMsgWithBytesIn bytes paused)
+
+    /// The rest of the `sendmsg` `paused` stopped: `bytes` holds, for each
+    /// range `PausedSendMsgBytes.copyRanges` names, exactly those bytes of its
+    /// iovec, in order. They are sent as one datagram, and the call returns
+    /// their count.
+    ///
+    /// Fails with `InvalidOperationException` if `bytes` does not hold one array for each range, or an array is not exactly its range's count long.
+    let sendmsgWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (bytes : ImmutableArray<ImmutableArray<byte>>)
+        (paused : PausedSendMsgBytes<'Thread, 'Handler>)
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+        =
+        trySendMsgWithBytes bytes paused
+        |> Refusal.orRaise "UnixReadWrite.sendmsgWithBytes" SendRefusal.kind SendRefusal.describe
 
     /// A `recvfrom`'s length cell, as far as the call has read it.
     [<RequireQualifiedAccess>]

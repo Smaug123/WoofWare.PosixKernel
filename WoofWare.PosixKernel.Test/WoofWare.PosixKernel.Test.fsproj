@@ -261,6 +261,7 @@
     <Compile Include="TestDatagramTransfer.fs" />
     <Compile Include="TestDatagramSendToProbe.fs" />
     <Compile Include="TestDatagramSleepersProbe.fs" />
+    <Compile Include="TestDatagramSendMsgProbe.fs" />
     <Compile Include="TestDatagramBlockingReceive.fs" />
     <Compile Include="TestDatagramTransferAgainstHost.fs" />
     <Compile Include="TestDatagramErrorAgainstHost.fs" />
@@ -816,6 +817,8 @@
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sendto.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpSendto.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sleepers.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpSleepers.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-sleepers.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpSleepers.darwin.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-msg.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpMsg.linux.txt" />
+    <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-msg.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpMsg.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-capacity.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.udpCapacity.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-10-18-udp-data-path\udp-truesize.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.udpTruesize.linux.txt" />
