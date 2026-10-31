@@ -330,6 +330,7 @@
     <Compile Include="TestKqueueOwner.fs" />
     <Compile Include="TestProcessView.fs" />
     <Compile Include="TestMultiProcess.fs" />
+    <Compile Include="TestProcessLaunch.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
     <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />

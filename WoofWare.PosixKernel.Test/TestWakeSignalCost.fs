@@ -29,8 +29,8 @@ module TestWakeSignalCost =
         | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> system
         | other -> failwith $"expected no signal at the return to user mode: %A{other}"
 
-    let private launch (platform : SimulatedUnixPlatform) : ProcessLaunch<int> =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let private launch () : ProcessLaunch<int> =
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     /// A new pipe of `caller`'s process: its read end, its write end, and the
     /// system.
@@ -227,7 +227,7 @@ module TestWakeSignalCost =
         (count : int)
         : UnixSystem<int, unit> * Caller<int> * int
         =
-        let booted = UnixSystem.initial platform |> UnixBootImage.boot (launch platform)
+        let booted = UnixSystem.initial platform |> UnixBootImage.boot (launch ())
         let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
 
         let fd, system =
@@ -249,7 +249,7 @@ module TestWakeSignalCost =
         let system =
             (system, [ 1..count ])
             ||> List.fold (fun system _ ->
-                let pid, system = UnixSystem.launch (launch platform) system
+                let pid, system = UnixSystem.launch (launch ()) system
                 crowdMember (Caller.make pid 0) system
             )
 

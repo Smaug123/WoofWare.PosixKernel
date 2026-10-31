@@ -96,9 +96,9 @@ type internal UnixProcessState<'Thread, 'Handler when 'Thread : comparison and '
             /// Process state rather than filesystem state, and shared by every
             /// thread. Held at the width the platform's `umask(2)` stores
             /// (`SimulatedUnixPlatform.umaskStoredBits`): never above 0o777 on Linux.
-            /// The process replaces it with `UnixSystem.umask`, and a client sets
-            /// the one it starts with using `ProcessLaunch.withUmask`; both keep it at
-            /// that width.
+            /// The process replaces it with `UnixSystem.umask`. A client
+            /// requests its starting mask with `ProcessLaunch.withUmask`;
+            /// launching refuses a mask with bits outside that width.
             ///
             /// Deliberately *not* consulted for seed entries. A seed describes a
             /// tree that some other process built, so this run's mask has no bearing

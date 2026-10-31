@@ -180,7 +180,6 @@ module TestBootImage =
         |> shouldEqual
             [
                 "WoofWare.PosixKernel.ProcessLaunch.leader"
-                "WoofWare.PosixKernel.ProcessLaunch.platform"
                 "WoofWare.PosixKernel.UnixBootImage.boot"
                 "WoofWare.PosixKernel.UnixSystem.launch"
             ]

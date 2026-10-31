@@ -18,7 +18,7 @@ module TestForgedValues =
     let private platform : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
     let private launch : ProcessLaunch<int> =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private image () : UnixBootImage<int, string> = UnixSystem.initial platform
 
@@ -43,14 +43,6 @@ module TestForgedValues =
     [<Test>]
     let ``a null platform is the caller's mistake`` () : unit =
         let forged = Unchecked.defaultof<SimulatedUnixPlatform>
-
-        rejects<ArgumentNullException>
-            "platform"
-            "ProcessLaunch.create"
-            (fun () ->
-                ProcessLaunch.create forged UnixSystem.pipedStandardStreams 0 (CpuId 0)
-                |> ignore<ProcessLaunch<int>>
-            )
 
         rejects<ArgumentNullException>
             "platform"

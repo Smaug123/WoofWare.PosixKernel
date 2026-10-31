@@ -570,7 +570,7 @@ module TestPendingSignalLimit =
         // A sibling of the same user (every launch has the default
         // credentials), holding four real-time signals it sent itself.
         let launch =
-            Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> ProcessLaunch.withPendingSignalLimit 4UL
 
         let sibling, system = UnixSystem.launch launch system
@@ -723,11 +723,13 @@ module TestPendingSignalLimit =
 
     [<Test>]
     let ``Darwin has no RLIMIT_SIGPENDING: the setting is refused and its processes hold no limit`` () : unit =
-        let launch =
-            Launched.launch SimulatedUnixPlatform.macOsArm64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        let launch = Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        let configured = ProcessLaunch.withPendingSignalLimit 4UL launch
 
         Assert.Throws<PlatformNotSupportedException> (fun () ->
-            ProcessLaunch.withPendingSignalLimit 4UL launch |> ignore<ProcessLaunch<int>>
+            UnixBootImage.boot configured (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64)
+            |> ignore<UnixSystem<int, string>>
         )
         |> ignore<PlatformNotSupportedException>
 

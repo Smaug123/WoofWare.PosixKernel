@@ -118,7 +118,7 @@ module TestBindUidsMeasured =
                 (CpuId 0)
 
         let launch =
-            Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Launched.credentials (credentialsOf binder)
 
         match UnixSystem.tryLaunch launch first with

@@ -248,7 +248,7 @@ module TestMachineSetterRefusals =
             let booted =
                 configured
                 |> Result.bind (fun image ->
-                    UnixBootImage.tryBoot (Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
+                    UnixBootImage.tryBoot (Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
                     |> Result.mapError (fun refusal -> $"%A{refusal}")
                 )
 
@@ -324,9 +324,7 @@ module TestMachineSetterRefusals =
             UnixBootImage.tryWithEphemeralPortRange (low, high) (imageOn SimulatedUnixPlatform.linuxX64)
             |> Result.mapError (fun refusal -> $"%A{refusal}")
             |> Result.bind (fun image ->
-                UnixBootImage.tryBoot
-                    (Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                    image
+                UnixBootImage.tryBoot (Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
             )
             |> Result.map (fun _ -> ())

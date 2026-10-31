@@ -530,8 +530,8 @@ module UnixBootImage =
             Machine = machine
         }
 
-    /// The platform the machine was made for, which every launch onto it must
-    /// be described for (`ProcessLaunch.create`).
+    /// The platform the machine was made for. `boot` uses it to choose the
+    /// launch's defaults and check its requested settings.
     let platform<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (image : UnixBootImage<'Thread, 'Handler>)
         : SimulatedUnixPlatform
@@ -590,14 +590,16 @@ module UnixBootImage =
     ///
     /// The process has the ID `withProcessId` set, `UnixSystem.defaultProcessId`
     /// unless it was set, and its leader the thread ID the machine's counter
-    /// starts at. Refuses a launch described for another platform, one whose
-    /// leader is on a processor the machine does not have, and one whose
-    /// directory the machine's filesystem does not let it start in; and, on
-    /// Linux, an image whose ephemeral range starts below its unprivileged
-    /// port start.
+    /// starts at. Chooses defaults for omitted launch settings and checks
+    /// requested descriptors, credentials, umask and pending-signal limit
+    /// against the machine's platform. Refuses a leader on a processor the
+    /// machine does not have, or a directory the filesystem does not let it
+    /// start in; and, on Linux, an image whose ephemeral range starts below
+    /// its unprivileged port start.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have. Under Linux, the ephemeral range starts at `low`, below the unprivileged port start `start`. Linux refuses either sysctl a value that would leave them so, so no Linux machine has them. Contradictory.</exception>
-    /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
+    /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory. The image's ephemeral port range starts below its unprivileged port start.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs.</exception>
+    /// <exception cref="T:System.PlatformNotSupportedException">An explicit pending-signal limit was requested on Darwin.</exception>
     let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (image : UnixBootImage<'Thread, 'Handler>)

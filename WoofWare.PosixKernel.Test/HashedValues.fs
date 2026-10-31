@@ -24,8 +24,7 @@ module HashedValues =
             "6.18.5-custom"
 
     let private booted (platform : SimulatedUnixPlatform) : UnixSystem<int, unit> =
-        let launch =
-            ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        let launch = ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         UnixSystem.initial platform |> UnixBootImage.boot launch
 

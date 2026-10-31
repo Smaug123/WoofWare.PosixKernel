@@ -94,10 +94,14 @@ Sysctls are configuration too: `UnixBootImage.withInotifyLimits` sets Linux's `f
 Since no setter takes a booted system, configuration can only describe the machine from the moment it booted.
 
 How a process starts is a `ProcessLaunch`.
-`ProcessLaunch.create (platform : SimulatedUnixPlatform) (streams : Map<int, LaunchDescriptor>) (leader : 'Thread) (leaderCpu : CpuId)` takes the descriptors it is launched with, its first thread's name and the processor that thread starts on.
+`ProcessLaunch.create (streams : Map<int, LaunchDescriptor>) (leader : 'Thread) (leaderCpu : CpuId)` takes the descriptors it is launched with, its first thread's name and the processor that thread starts on.
 `UnixSystem.pipedStandardStreams` gives descriptors 0, 1 and 2 as pipes: 0 reads a pipe whose far end supplied nothing, and 1 and 2 write to pipes the client drains (see "The far end of a launched pipe").
 The setters in the `ProcessLaunch` module set the rest, such as `ProcessLaunch.withCredentials`, `ProcessLaunch.withCurrentDirectory`, `ProcessLaunch.withEnvironment` and `ProcessLaunch.withUmask`.
 `UnixBootImage.boot launch` launches the machine's first process, to give the `UnixSystem` its first syscall takes.
+A launch describes requested settings independently of a platform; the same description can be used on different machines.
+`UnixBootImage.boot` and `UnixSystem.launch` fill in omitted credentials and the pending-signal limit from the target machine's defaults, and check its descriptor bound, credentials, umask, processor and current directory.
+An explicit pending-signal limit on Darwin throws `PlatformNotSupportedException` at launch; an omitted limit leaves its process with none.
+`ProcessLaunch.create` still rejects negative descriptor numbers immediately.
 
 A process's leader starts blocking no signal; a client launching one whose parent left signals blocked sets that mask with `UnixSignal.pthreadSigmask` before the leader's first instruction, as it installs inherited ignores with `UnixSignal.sigaction`.
 
@@ -114,7 +118,7 @@ let path (text : string) : PathArgumentBytes =
 // which this client names 0, on logical processor 0, and runs as root.
 let system : UnixSystem<int, unit> =
     let launch =
-        ProcessLaunch.create SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
         |> ProcessLaunch.withCredentials (Credentials.ofIds UserId.root (GroupId.parseOrFail "example" 0u) [])
 
     UnixSystem.initial SimulatedUnixPlatform.linuxX64 |> UnixBootImage.boot launch
@@ -186,7 +190,7 @@ let root : InodeOwner = InodeOwner.ofProcess (Credentials.ofIds UserId.root (Gro
 
 let system : UnixSystem<int, unit> =
     let launch =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial platform
     |> UnixBootImage.withFileSystem UnixTimestamp.epoch root seed
@@ -273,7 +277,7 @@ open WoofWare.PosixKernel
 
 let system : UnixSystem<int, unit> =
     let launch =
-        ProcessLaunch.create SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial SimulatedUnixPlatform.linuxX64 |> UnixBootImage.boot launch
 
@@ -678,7 +682,7 @@ let numbering = SimulatedUnixPlatform.signalNumbering platform
 
 let booted : UnixSystem<int, string> =
     let launch =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial platform |> UnixBootImage.boot launch
 
@@ -867,7 +871,7 @@ let platform = SimulatedUnixPlatform.linuxX64
 
 let booted : UnixSystem<int, unit> =
     let launch =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial platform |> UnixBootImage.boot launch
 
@@ -1013,7 +1017,7 @@ let numbering = SimulatedUnixPlatform.signalNumbering platform
 
 let booted : UnixSystem<int, unit> =
     let launch =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial platform |> UnixBootImage.boot launch
 
@@ -1074,7 +1078,7 @@ let numbering = SimulatedUnixPlatform.signalNumbering platform
 
 let booted : UnixSystem<int, string> =
     let launch =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     UnixSystem.initial platform |> UnixBootImage.boot launch
 
@@ -1198,7 +1202,7 @@ let platform = SimulatedUnixPlatform.linuxX64
 // A process with the three piped standard streams, and one thread, which this
 // client names 0 in every process, on processor 0.
 let launch : ProcessLaunch<int> =
-    ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
 let booted : UnixSystem<int, unit> =
     UnixSystem.initial platform |> UnixBootImage.boot launch

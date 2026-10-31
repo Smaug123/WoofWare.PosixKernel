@@ -17,8 +17,8 @@ module TestMultiProcess =
 
     let private context : string = "TestMultiProcess"
 
-    let private launchOn (platform : SimulatedUnixPlatform) : ProcessLaunch<int> =
-        Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let private launch () : ProcessLaunch<int> =
+        Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     /// A machine of `platform` with `count` processes, the first booted and
     /// the rest launched, and their process IDs in that order.
@@ -31,7 +31,7 @@ module TestMultiProcess =
 
         ((([ Lone.pid first ], machine)), [ 2..count ])
         ||> List.fold (fun (pids, machine) _ ->
-            match Machines.tryLaunch (launchOn platform) machine with
+            match Machines.tryLaunch (launch ()) machine with
             | Ok (pid, machine) -> pids @ [ pid ], machine
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         )
@@ -78,7 +78,7 @@ module TestMultiProcess =
         OsThreadId.toUInt64 worker |> shouldEqual 4243UL
 
         let pid, machine =
-            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
+            match Machines.tryLaunch (launch ()) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
@@ -110,7 +110,7 @@ module TestMultiProcess =
         let pids, machine =
             ((([], Machines.ofSystem first)), [ 1..2 ])
             ||> List.fold (fun (pids, machine) _ ->
-                match Machines.tryLaunch (launchOn platform) machine with
+                match Machines.tryLaunch (launch ()) machine with
                 | Ok (pid, machine) -> pids @ [ pid ], machine
                 | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
             )
@@ -147,7 +147,7 @@ module TestMultiProcess =
             |> Launched.processId (ProcessId.parseOrFail context (ProcessIdTable.darwinPidMax - 1))
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        Machines.tryLaunch (launchOn platform) (Machines.ofSystem first)
+        Machines.tryLaunch (launch ()) (Machines.ofSystem first)
         |> Result.map ignore
         |> shouldEqual (Error (ProcessCreationRefusal.DarwinPidMaxReached ProcessIdTable.darwinPidMax))
 
@@ -162,7 +162,7 @@ module TestMultiProcess =
             |> Launched.leaderThreadId (System.UInt64.MaxValue - 1UL)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        Machines.tryLaunch (launchOn platform) (Machines.ofSystem first)
+        Machines.tryLaunch (launch ()) (Machines.ofSystem first)
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.DarwinThreadIdCounterExhausted)
 
@@ -173,7 +173,7 @@ module TestMultiProcess =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let pid, machine =
-            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
+            match Machines.tryLaunch (launch ()) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
@@ -181,7 +181,7 @@ module TestMultiProcess =
         |> OsThreadId.toUInt64
         |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
-        Machines.tryLaunch (launchOn platform) machine
+        Machines.tryLaunch (launch ()) machine
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.DarwinThreadIdCounterExhausted)
 
@@ -197,36 +197,23 @@ module TestMultiProcess =
             |> UnixSystem.writePidMaxSysctl 301
 
         let pid, machine =
-            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
+            match Machines.tryLaunch (launch ()) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
         ProcessId.toInt32 pid |> shouldEqual 300
 
-        Machines.tryLaunch (launchOn platform) machine
+        Machines.tryLaunch (launch ()) machine
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.NoFreeProcessId)
 
     [<Test>]
-    let ``a launch is refused for another platform, and for a directory the filesystem does not hold`` () : unit =
+    let ``a launch is refused for a directory the filesystem does not hold`` () : unit =
         let _, machine = machineOf SimulatedUnixPlatform.linuxX64 1
-
-        Machines.tryLaunch (launchOn SimulatedUnixPlatform.linuxArm64) machine
-        |> Result.map ignore
-        |> shouldEqual (
-            Error (
-                ProcessCreationRefusal.Launch (
-                    LaunchRefusal.NotOfPlatform (SimulatedUnixPlatform.linuxArm64, SimulatedUnixPlatform.linuxX64)
-                )
-            )
-        )
 
         let nowhere = AbsoluteUnixPath.parseOrFail context "/nowhere"
 
-        Machines.tryLaunch
-            (launchOn SimulatedUnixPlatform.linuxX64
-             |> ProcessLaunch.withCurrentDirectory nowhere)
-            machine
+        Machines.tryLaunch (launch () |> ProcessLaunch.withCurrentDirectory nowhere) machine
         |> Result.map ignore
         |> shouldEqual (
             Error (

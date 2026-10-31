@@ -75,8 +75,7 @@ module TestLocalPortRangeMeasured =
             )
         )
         |> Result.bind (fun image ->
-            let launch =
-                Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            let launch = Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             UnixBootImage.tryBoot launch image
             |> Result.mapError (fun refusal -> BootRefusal.describe refusal, BootRefusal.kind refusal)

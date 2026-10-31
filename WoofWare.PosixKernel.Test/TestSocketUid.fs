@@ -26,8 +26,8 @@ module TestSocketUid =
         | "root" -> Credentials.ofIds UserId.root (gid 0u) []
         | name -> Credentials.ofIds (uid (uint32 (name.Substring 1))) (gid 20u) []
 
-    let private launchOn (platform : SimulatedUnixPlatform) (credentials : Credentials) : ProcessLaunch<int> =
-        Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let private launchWith (credentials : Credentials) : ProcessLaunch<int> =
+        Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
         |> Launched.credentials credentials
         |> ProcessLaunch.withCoreDumps CoreDumps.Suppressed
 
@@ -55,7 +55,7 @@ module TestSocketUid =
         (system : UnixSystem<int, string>)
         : ProcessId * UnixSystem<int, string>
         =
-        match UnixSystem.tryLaunch (launchOn (UnixSystem.platform system) credentials) system with
+        match UnixSystem.tryLaunch (launchWith credentials) system with
         | Ok launched -> launched
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 

@@ -207,7 +207,7 @@ module TestPortSharingMeasured =
         let holderPid = Lone.pid system
 
         let launch =
-            Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Launched.credentials (credentials (if row.DifferentUid then 1001u else 1000u))
 
         let candidatePid, system =

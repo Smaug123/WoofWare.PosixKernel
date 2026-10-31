@@ -178,9 +178,7 @@ module TestUnixScheduling =
 
         let cpu = CpuId (cpu % world.Count)
 
-        match
-            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.System
-        with
+        match Machines.tryLaunch (Launched.launch UnixSystem.pipedStandardStreams 0 cpu) world.System with
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         | Ok (pid, machine) ->
             { world with

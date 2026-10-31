@@ -225,15 +225,20 @@ module TestUmask =
                     (Lone.proc system).Umask |> shouldEqual (mode bits)
                     UnixSystem.checkInvariants system |> shouldEqual []
                 else
-                    Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
-                    |> ProcessLaunch.tryWithUmask (mode bits)
+                    Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                    |> ProcessLaunch.withUmask (mode bits)
+                    |> fun launch -> UnixBootImage.tryBoot launch (UnixSystem.initial<int, string> platform)
                     |> Result.map ignore
                     |> shouldEqual (
                         Error (
-                            UmaskRefusal.BitsNotStored (
-                                mode bits,
-                                mode (measuredWidth platform),
-                                SimulatedUnixPlatform.flavour platform
+                            BootRefusal.Launch (
+                                LaunchRefusal.Umask (
+                                    UmaskRefusal.BitsNotStored (
+                                        mode bits,
+                                        mode (measuredWidth platform),
+                                        SimulatedUnixPlatform.flavour platform
+                                    )
+                                )
                             )
                         )
                     )

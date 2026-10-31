@@ -8,16 +8,15 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal Launched =
 
-    /// A process on `platform` launched with `streams`, its leader `leader`
+    /// A process launched with `streams`, its leader `leader`
     /// on `cpu`.
     let launch<'Thread when 'Thread : comparison>
-        (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
         (leader : 'Thread)
         (cpu : CpuId)
         : ProcessLaunch<'Thread>
         =
-        ProcessLaunch.tryCreate platform streams leader cpu
+        ProcessLaunch.tryCreate streams leader cpu
         |> Configured.expectOk LaunchTableRefusal.describe
 
     /// `image` booted with a first process launched with `streams`, its leader
@@ -30,7 +29,7 @@ module internal Launched =
         (image : UnixBootImage<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let launch = launch (UnixBootImage.platform image) streams leader cpu |> configure
+        let launch = launch streams leader cpu |> configure
 
         UnixBootImage.tryBoot launch image |> Configured.expectOk BootRefusal.describe
 
@@ -50,8 +49,7 @@ module internal Launched =
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
-        ProcessLaunch.tryWithCredentials credentials launch
-        |> Configured.expectOk CredentialsRefusal.describe
+        ProcessLaunch.withCredentials credentials launch
 
     /// `ProcessLaunch.withUmask`, which the test means to admit it.
     let umask<'Thread when 'Thread : comparison>
@@ -59,8 +57,7 @@ module internal Launched =
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
-        ProcessLaunch.tryWithUmask umask launch
-        |> Configured.expectOk UmaskRefusal.describe
+        ProcessLaunch.withUmask umask launch
 
     /// `UnixBootImage.withProcessId`, which the test means to admit it.
     let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
