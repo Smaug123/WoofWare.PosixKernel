@@ -134,51 +134,6 @@ module internal UmaskRefusal =
         match refusal with
         | UmaskRefusal.BitsNotStored _ -> RefusalKind.Contradictory "umask"
 
-/// Why a process cannot be launched onto a machine as its `ProcessLaunch`
-/// describes it.
-[<RequireQualifiedAccess>]
-type internal LaunchRefusal =
-    /// The launch was described for the platform `launch`, and the machine is
-    /// `machine`: the description was checked against the wrong platform's
-    /// rules.
-    | NotOfPlatform of launch : SimulatedUnixPlatform * machine : SimulatedUnixPlatform
-    /// The process cannot start in `directory` on this machine's filesystem.
-    | CurrentDirectory of directory : AbsoluteUnixPath * fault : CurrentDirectoryFault
-    /// The launch puts its leader on the logical processor `cpu`, and the
-    /// machine has `processorCount`, numbered from 0, which do not include it.
-    /// Contradictory: no kernel runs a thread on a processor it does not have.
-    | LeaderCpuBeyondMachine of cpu : CpuId * processorCount : int
-
-[<RequireQualifiedAccess>]
-module internal LaunchRefusal =
-    /// What this library knows about why it refused the launch, for a client
-    /// composing a diagnostic that names its own knob.
-    let describe (refusal : LaunchRefusal) : string =
-        match refusal with
-        | LaunchRefusal.NotOfPlatform (launch, machine) ->
-            $"the launch was described for %O{SimulatedUnixPlatform.flavour launch} (%O{launch}), but the machine is %O{SimulatedUnixPlatform.flavour machine} (%O{machine}); describe it with the machine's platform."
-        | LaunchRefusal.CurrentDirectory (directory, fault) ->
-            let described = AbsoluteUnixPath.toEscaped directory
-
-            match fault with
-            | CurrentDirectoryFault.DoesNotResolve error ->
-                $"the process cannot start in \"%s{described}\", which does not resolve in the machine's filesystem (%O{error}). A process cannot be started in a directory that does not exist; make the filesystem contain it."
-            | CurrentDirectoryFault.TooLong flavour ->
-                $"%O{flavour} refuses \"%s{described}\" as too long: a component is past NAME_MAX, or, on Darwin, a symbolic link it goes through expands past PATH_MAX. Shorten the component, or that link's target."
-            | CurrentDirectoryFault.NotADirectory ->
-                $"the process cannot start in \"%s{described}\", which resolves to something that is not a directory. Start it in a directory the filesystem holds."
-            | CurrentDirectoryFault.Path refusal ->
-                $"the kernel will not resolve \"%s{described}\": %s{PathRefusal.describe refusal}"
-        | LaunchRefusal.LeaderCpuBeyondMachine (cpu, processorCount) ->
-            $"the launch puts its leader on %O{cpu}, but the machine has %d{processorCount} logical processors, numbered from 0."
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : LaunchRefusal) : RefusalKind =
-        match refusal with
-        | LaunchRefusal.NotOfPlatform _ -> RefusalKind.Misuse
-        | LaunchRefusal.CurrentDirectory (_, inner) -> CurrentDirectoryFault.kind inner
-        | LaunchRefusal.LeaderCpuBeyondMachine _ -> RefusalKind.Contradictory "launch"
-
 /// Why `ProcessLaunch.withPendingSignalLimit` refuses a limit.
 [<RequireQualifiedAccess>]
 type internal PendingSignalLimitRefusal =
@@ -199,6 +154,52 @@ module internal PendingSignalLimitRefusal =
     let kind (refusal : PendingSignalLimitRefusal) : RefusalKind =
         match refusal with
         | PendingSignalLimitRefusal.NoSuchLimit _ -> RefusalKind.NotOnPlatform
+
+/// Why a process cannot be launched onto a machine as its `ProcessLaunch`
+/// describes it.
+[<RequireQualifiedAccess>]
+type internal LaunchRefusal =
+    /// The process cannot start in `directory` on this machine's filesystem.
+    | CurrentDirectory of directory : AbsoluteUnixPath * fault : CurrentDirectoryFault
+    /// The launch puts its leader on the logical processor `cpu`, and the
+    /// machine has `processorCount`, numbered from 0, which do not include it.
+    /// Contradictory: no kernel runs a thread on a processor it does not have.
+    | LeaderCpuBeyondMachine of cpu : CpuId * processorCount : int
+    /// The process specified a pending signal limit which is incompatible with this platform.
+    | PendingSignalLimit of PendingSignalLimitRefusal
+    /// The process specified a umask which is incompatible with this platform.
+    | Umask of UmaskRefusal
+
+[<RequireQualifiedAccess>]
+module internal LaunchRefusal =
+    /// What this library knows about why it refused the launch, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : LaunchRefusal) : string =
+        match refusal with
+        | LaunchRefusal.CurrentDirectory (directory, fault) ->
+            let described = AbsoluteUnixPath.toEscaped directory
+
+            match fault with
+            | CurrentDirectoryFault.DoesNotResolve error ->
+                $"the process cannot start in \"%s{described}\", which does not resolve in the machine's filesystem (%O{error}). A process cannot be started in a directory that does not exist; make the filesystem contain it."
+            | CurrentDirectoryFault.TooLong flavour ->
+                $"%O{flavour} refuses \"%s{described}\" as too long: a component is past NAME_MAX, or, on Darwin, a symbolic link it goes through expands past PATH_MAX. Shorten the component, or that link's target."
+            | CurrentDirectoryFault.NotADirectory ->
+                $"the process cannot start in \"%s{described}\", which resolves to something that is not a directory. Start it in a directory the filesystem holds."
+            | CurrentDirectoryFault.Path refusal ->
+                $"the kernel will not resolve \"%s{described}\": %s{PathRefusal.describe refusal}"
+        | LaunchRefusal.LeaderCpuBeyondMachine (cpu, processorCount) ->
+            $"the launch puts its leader on %O{cpu}, but the machine has %d{processorCount} logical processors, numbered from 0."
+        | LaunchRefusal.PendingSignalLimit refusal -> PendingSignalLimitRefusal.describe refusal
+        | LaunchRefusal.Umask refusal -> UmaskRefusal.describe refusal
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : LaunchRefusal) : RefusalKind =
+        match refusal with
+        | LaunchRefusal.CurrentDirectory (_, inner) -> CurrentDirectoryFault.kind inner
+        | LaunchRefusal.LeaderCpuBeyondMachine _ -> RefusalKind.Contradictory "launch"
+        | LaunchRefusal.PendingSignalLimit inner -> PendingSignalLimitRefusal.kind inner
+        | LaunchRefusal.Umask inner -> UmaskRefusal.kind inner
 
 /// What a process starts with unless its launch says otherwise: the values of
 /// `UnixSystem`'s defaults of the same names, whose docstrings say why each is
@@ -244,6 +245,20 @@ module internal LaunchDefaults =
         | SimulatedUnixFlavour.Linux -> ValueSome pendingSignalLimit
         | SimulatedUnixFlavour.Darwin -> ValueNone
 
+[<Struct>]
+type internal PendingSignalLimitSpec =
+    /// <summary>
+    /// The user has specified that the value of <c>RLIMIT_SIGPENDING</c> is this.
+    /// </summary>
+    /// <remarks>
+    /// We don't currently model <c>setrlimit(2)</c>, so the user is forced to specify
+    /// this value directly from the host.
+    /// When we model that properly, this should go away, because that syscall will be
+    /// the blessed way to specify rlimit values, and it can perform validation
+    /// internally.
+    /// </remarks>
+    | Requested of uint64
+
 /// How a process starts: everything about a process that is fixed before its
 /// first instruction, as its launcher sets it up before `exec`. Both the first
 /// process on a machine (`UnixBootImage.boot`) and every later one
@@ -258,7 +273,6 @@ module internal LaunchDefaults =
 type ProcessLaunch<'Thread when 'Thread : comparison> =
     internal
         {
-            Platform : SimulatedUnixPlatform
             /// The descriptors the launcher set up, each a pipe end of its own
             /// whose other end is the client's.
             Streams : Map<int, LaunchDescriptor>
@@ -266,14 +280,15 @@ type ProcessLaunch<'Thread when 'Thread : comparison> =
             Leader : 'Thread
             /// The logical processor the leader starts on.
             LeaderCpu : CpuId
-            Credentials : Credentials
-            Umask : PermissionBits
+            /// Leave as None for "take the default for the launching platform".
+            /// If supplied, we have not yet checked they're valid for the launching platform.
+            NonValidatedCredentials : Credentials option
+            NonValidatedUmask : PermissionBits voption
             Environment : UnixByteString list
             ProcessPath : AbsoluteUnixPath option
             CoreDumps : CoreDumps
-            /// Under Linux the process's `RLIMIT_SIGPENDING`; `ValueNone` under
-            /// Darwin, which has no such limit.
-            PendingSignalLimit : uint64 voption
+            /// <summary><c>ValueNone</c> if the user hasn't specified a limit.</summary>
+            PendingSignalLimit : PendingSignalLimitSpec voption
             /// The directory the process starts in, resolved against the
             /// machine's filesystem when the process is launched.
             CurrentDirectory : AbsoluteUnixPath
@@ -284,14 +299,11 @@ module ProcessLaunch =
 
     /// `create`, with a refusal answered as the `Error` rather than raised.
     let internal tryCreate<'Thread when 'Thread : comparison>
-        (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
         (leader : 'Thread)
         (leaderCpu : CpuId)
         : Result<ProcessLaunch<'Thread>, LaunchTableRefusal>
         =
-        let platform = SimulatedUnixPlatform.assertValid "ProcessLaunch.create" platform
-        let flavour = SimulatedUnixPlatform.flavour platform
         let bound = SimulatedUnixPlatform.descriptorBound platform
 
         let offending =
@@ -311,16 +323,15 @@ module ProcessLaunch =
         | None ->
             Ok
                 {
-                    Platform = platform
                     Streams = streams
                     Leader = leader
                     LeaderCpu = leaderCpu
-                    Credentials = LaunchDefaults.credentials flavour
-                    Umask = LaunchDefaults.umask
+                    NonValidatedCredentials = None
+                    NonValidatedUmask = ValueNone
                     Environment = []
                     ProcessPath = LaunchDefaults.processPath
                     CoreDumps = LaunchDefaults.coreDumps
-                    PendingSignalLimit = LaunchDefaults.pendingSignalLimitOf flavour
+                    PendingSignalLimit = ValueNone
                     CurrentDirectory = LaunchDefaults.currentDirectory
                 }
 
@@ -350,30 +361,23 @@ module ProcessLaunch =
     /// <exception cref="T:System.ArgumentOutOfRangeException">The table names a negative descriptor, which no process has. Contradictory.</exception>
     /// <exception cref="T:System.ArgumentNullException">`platform` is null, which only `Unchecked.defaultof` or C# `default` makes it.</exception>
     let create<'Thread when 'Thread : comparison>
-        (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
         (leader : 'Thread)
         (leaderCpu : CpuId)
         : ProcessLaunch<'Thread>
         =
-        tryCreate platform streams leader leaderCpu
+        tryCreate streams leader leaderCpu
         |> Refusal.orRaise "ProcessLaunch.create" LaunchTableRefusal.kind LaunchTableRefusal.describe
-
-    /// The platform the launch was described for, whose rules its setters
-    /// check against.
-    let platform<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : SimulatedUnixPlatform =
-        launch.Platform
 
     /// The process's first thread.
     let leader<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : 'Thread = launch.Leader
 
-    /// `withCredentials`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithCredentials<'Thread when 'Thread : comparison>
+    /// Validates the NonValidatedCredentials in a ProcessLaunch.
+    let internal validateCredentialsForPlatform<'Thread when 'Thread : comparison>
+        (platform : SimulatedUnixPlatform)
         (credentials : Credentials)
-        (launch : ProcessLaunch<'Thread>)
-        : Result<ProcessLaunch<'Thread>, CredentialsRefusal>
+        : Result<Credentials, CredentialsRefusal>
         =
-        let platform = launch.Platform
         let flavour = SimulatedUnixPlatform.flavour platform
         let count = List.length credentials.SupplementaryGroups
         let limit = SimulatedUnixPlatform.supplementaryGroupsHeld platform
@@ -391,65 +395,34 @@ module ProcessLaunch =
         match flavour with
         | SimulatedUnixFlavour.Darwin when not idsAgree -> Error (CredentialsRefusal.IdsDifferOnDarwin credentials)
         | SimulatedUnixFlavour.Darwin
-        | SimulatedUnixFlavour.Linux ->
-            Ok
-                { launch with
-                    Credentials = credentials
-                }
+        | SimulatedUnixFlavour.Linux -> Ok credentials
 
-    /// <summary>
-    /// Set who the process is.
-    ///
-    /// Refuses more supplementary groups than the platform's
-    /// `SimulatedUnixPlatform.supplementaryGroupsHeld`, which no process on it
-    /// could hold. On Darwin it also refuses credentials whose real, effective
-    /// and saved IDs are not all the same: which of them a Darwin kernel
-    /// consults has not been measured, so this library does not model such a
-    /// process there.
-    /// </summary>
-    /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupsHeld`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`, and Darwin's list of that many holds the effective group too. Contradictory.</exception>
-    let withCredentials<'Thread when 'Thread : comparison>
-        (credentials : Credentials)
-        (launch : ProcessLaunch<'Thread>)
-        : ProcessLaunch<'Thread>
-        =
-        tryWithCredentials credentials launch
-        |> Refusal.orRaise "ProcessLaunch.withCredentials" CredentialsRefusal.kind CredentialsRefusal.describe
-
-    /// `withUmask`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithUmask<'Thread when 'Thread : comparison>
+    /// Validates that the given umask is valid on this platform.
+    let internal validateUmask<'Thread when 'Thread : comparison>
+        (platform : SimulatedUnixPlatform)
         (umask : PermissionBits)
-        (launch : ProcessLaunch<'Thread>)
-        : Result<ProcessLaunch<'Thread>, UmaskRefusal>
+        : Result<PermissionBits, UmaskRefusal>
         =
         let umask = PermissionBits.assertValidFor "ProcessLaunch.withUmask" "umask" umask
-        let stored = SimulatedUnixPlatform.umaskStoredBits launch.Platform
+        let stored = SimulatedUnixPlatform.umaskStoredBits platform
 
         if PermissionBits.toInt umask &&& ~~~(PermissionBits.toInt stored) <> 0 then
-            Error (UmaskRefusal.BitsNotStored (umask, stored, SimulatedUnixPlatform.flavour launch.Platform))
+            Error (UmaskRefusal.BitsNotStored (umask, stored, SimulatedUnixPlatform.flavour platform))
         else
-            Ok
-                { launch with
-                    Umask = umask
-                }
+            Ok umask
 
     /// <summary>
     /// Set the file-mode creation mask the process starts with: the one its
     /// parent left it, which it can read and replace with `umask`.
-    ///
-    /// Refuses a mask with a bit the platform's `umask(2)` never stores
-    /// (`SimulatedUnixPlatform.umaskStoredBits`): on Linux, any of 0o7000. No
-    /// parent could have left such a mask, so it names a process that cannot
-    /// exist.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The mask holds a bit `flavour`'s `umask(2)` never stores: it keeps only `stored` (`SimulatedUnixPlatform.umaskStoredBits`). No parent could have left such a mask. Contradictory.</exception>
     let withUmask<'Thread when 'Thread : comparison>
         (umask : PermissionBits)
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
-        tryWithUmask umask launch
-        |> Refusal.orRaise "ProcessLaunch.withUmask" UmaskRefusal.kind UmaskRefusal.describe
+        { launch with
+            NonValidatedUmask = ValueSome umask
+        }
 
     /// Set the environment the process was started with, replacing whatever
     /// it held. The entries are kept in the order given, duplicates and all,
@@ -497,25 +470,23 @@ module ProcessLaunch =
             CoreDumps = coreDumps
         }
 
-    /// `withPendingSignalLimit`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithPendingSignalLimit<'Thread when 'Thread : comparison>
-        (limit : uint64)
-        (launch : ProcessLaunch<'Thread>)
-        : Result<ProcessLaunch<'Thread>, PendingSignalLimitRefusal>
+    let internal validatePendingSignalLimit<'Thread when 'Thread : comparison>
+        (platform : SimulatedUnixPlatform)
+        (spec : PendingSignalLimitSpec)
+        : Result<uint64, PendingSignalLimitRefusal>
         =
-        match SimulatedUnixPlatform.flavour launch.Platform with
+        match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Darwin -> Error (PendingSignalLimitRefusal.NoSuchLimit SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
-            Ok
-                { launch with
-                    PendingSignalLimit = ValueSome limit
-                }
+            match spec with
+            | PendingSignalLimitSpec.Requested p -> p
+            |> Ok
 
     /// Set the process's `RLIMIT_SIGPENDING`: how many signals may be queued for
     /// its real user, in all that user's processes on the machine, before a
-    /// signal sent to it gets no queue entry. Linux only, and fixed for the life
-    /// of the process: this library models no `setrlimit(2)`. The default is
-    /// `UnixSystem.defaultPendingSignalLimit`.
+    /// signal sent to it gets no queue entry. This is meaningful on Linux only,
+    /// and fixed for the life of the process: this library models no `setrlimit(2)`.
+    /// The default is `UnixSystem.defaultPendingSignalLimit`.
     ///
     /// Past the limit, a real-time signal sent by `kill` is lost, or, if no
     /// instance of it is pending in its set, pending without the information
@@ -523,18 +494,16 @@ module ProcessLaunch =
     /// standard signal is pending as before. Every limit is admitted, the
     /// largest (`RLIM_INFINITY`) included.
     ///
-    /// Throws `PlatformNotSupportedException` for a Darwin launch: Darwin has
-    /// no `RLIMIT_SIGPENDING`.
+    /// This is validated when you attempt to launch the process.
     let withPendingSignalLimit<'Thread when 'Thread : comparison>
+        (platform : SimulatedUnixPlatform)
         (limit : uint64)
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
-        tryWithPendingSignalLimit limit launch
-        |> Refusal.orRaise
-            "ProcessLaunch.withPendingSignalLimit"
-            PendingSignalLimitRefusal.kind
-            PendingSignalLimitRefusal.describe
+        { launch with
+            PendingSignalLimit = ValueSome (PendingSignalLimitSpec.Requested limit)
+        }
 
     /// Set the directory the process starts in.
     ///
@@ -628,9 +597,7 @@ module ProcessLaunch =
         =
         let platform = machine.UnixPlatform
 
-        if launch.Platform <> platform then
-            Error (LaunchRefusal.NotOfPlatform (launch.Platform, platform))
-        elif not (UnixMachineState.hasProcessor launch.LeaderCpu machine) then
+        if not (UnixMachineState.hasProcessor launch.LeaderCpu machine) then
             Error (LaunchRefusal.LeaderCpuBeyondMachine (launch.LeaderCpu, machine.ProcessorCount))
         else
 
@@ -674,18 +641,43 @@ module ProcessLaunch =
             }
             |> UnixMachineState.holdCurrentDirectory directory
 
+        let flavour = SimulatedUnixPlatform.flavour platform
+
+        let credentials =
+            match launch.NonValidatedCredentials with
+            | None -> LaunchDefaults.credentials flavour
+            | Some c -> c
+
+        let signalLimit =
+            match launch.PendingSignalLimit with
+            | ValueNone -> LaunchDefaults.pendingSignalLimitOf flavour |> Ok
+            | ValueSome s -> validatePendingSignalLimit platform s |> Result.map ValueSome
+
+        match signalLimit with
+        | Error e -> Error (LaunchRefusal.PendingSignalLimit e)
+        | Ok signalLimit ->
+
+        let umask =
+            match launch.NonValidatedUmask with
+            | ValueNone -> LaunchDefaults.umask |> Ok
+            | ValueSome umask -> validateUmask platform umask
+
+        match umask with
+        | Error e -> Error (LaunchRefusal.Umask e)
+        | Ok umask ->
+
         let proc : UnixProcessState<'Thread, 'Handler> =
             {
                 FileDescriptors = FileDescriptorRegistry.descriptorTable registry
                 Environment = launch.Environment
                 CurrentDirectoryInode = directory
                 ProcessPath = launch.ProcessPath
-                Credentials = launch.Credentials
-                Umask = launch.Umask
+                Credentials = credentials
+                Umask = umask
                 ProcessId = pid
                 Signals = SignalState.initial (SimulatedUnixPlatform.signalNumbering platform) Set.empty
                 CoreDumps = launch.CoreDumps
-                PendingSignalLimit = launch.PendingSignalLimit
+                PendingSignalLimit = signalLimit
             }
 
         Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId UnixThreadTable.empty)
