@@ -118,7 +118,6 @@ module TestUnmodelledException =
         | RefusalKind.Contradictory _ -> typeof<ArgumentException>
         | RefusalKind.OutOfRange _ -> typeof<ArgumentOutOfRangeException>
         | RefusalKind.Null _ -> typeof<ArgumentNullException>
-        | RefusalKind.Misuse -> typeof<InvalidOperationException>
         | RefusalKind.NotOnPlatform -> typeof<PlatformNotSupportedException>
 
     let private kindGen : Gen<RefusalKind> =
@@ -131,7 +130,6 @@ module TestUnmodelledException =
                 parameter |> Gen.map RefusalKind.Contradictory
                 parameter |> Gen.map RefusalKind.OutOfRange
                 parameter |> Gen.map RefusalKind.Null
-                Gen.constant RefusalKind.Misuse
                 Gen.constant RefusalKind.NotOnPlatform
             ]
 

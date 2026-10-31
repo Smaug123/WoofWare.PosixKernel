@@ -3761,9 +3761,8 @@ WoofWare.PosixKernel.ProcessIdModule.toInt32 [static method]: WoofWare.PosixKern
 WoofWare.PosixKernel.ProcessIdTableModule inherit obj
 WoofWare.PosixKernel.ProcessIdTableModule.darwinPidMax [static field]: int = 99999
 WoofWare.PosixKernel.ProcessLaunch inherit obj
-WoofWare.PosixKernel.ProcessLaunch.create [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> Map<int, WoofWare.PosixKernel.LaunchDescriptor> -> 'Thread -> WoofWare.PosixKernel.CpuId -> 'Thread WoofWare.PosixKernel.ProcessLaunch
+WoofWare.PosixKernel.ProcessLaunch.create [static method]: Map<int, WoofWare.PosixKernel.LaunchDescriptor> -> 'Thread -> WoofWare.PosixKernel.CpuId -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.leader [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread
-WoofWare.PosixKernel.ProcessLaunch.platform [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.SimulatedUnixPlatform
 WoofWare.PosixKernel.ProcessLaunch.withCoreDumps [static method]: WoofWare.PosixKernel.CoreDumps -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withCredentials [static method]: WoofWare.PosixKernel.Credentials -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch
 WoofWare.PosixKernel.ProcessLaunch.withCurrentDirectory [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> 'Thread WoofWare.PosixKernel.ProcessLaunch -> 'Thread WoofWare.PosixKernel.ProcessLaunch

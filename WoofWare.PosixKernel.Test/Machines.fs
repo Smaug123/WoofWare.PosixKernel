@@ -172,10 +172,10 @@ module internal Machines =
         =
         UnixSystem.checkInvariants system
 
-    /// A launch of a process on `platform` with the three piped standard
+    /// A launch of a process with the three piped standard
     /// streams and one thread, 0, on processor 0.
-    let launchOn (platform : SimulatedUnixPlatform) : ProcessLaunch<int> =
-        Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let defaultLaunch () : ProcessLaunch<int> =
+        Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     /// A system of `platform`, booted from an image `configure` configured,
     /// with `count` processes, the first booted and the rest launched, each
@@ -195,7 +195,7 @@ module internal Machines =
         let pids, system =
             (([ Lone.pid first ], first), [ 2..count ])
             ||> List.fold (fun (pids, system) _ ->
-                match tryLaunch (launchOn platform) system with
+                match tryLaunch (defaultLaunch ()) system with
                 | Ok (pid, system) -> pids @ [ pid ], system
                 | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
             )

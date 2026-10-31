@@ -110,7 +110,7 @@ module TestProcessView =
             | Error (SyscallRefusal.Close _) -> system
             | Error refusal -> failwith $"%A{call}: %s{SyscallRefusal.describe refusal}"
         | Op.Launch ->
-            match Machines.tryLaunch (Machines.launchOn (UnixSystem.platform system)) system with
+            match Machines.tryLaunch (Machines.defaultLaunch ()) system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 

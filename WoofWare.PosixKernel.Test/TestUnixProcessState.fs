@@ -142,7 +142,7 @@ module TestUnixProcessState =
                 ProcessLaunch.withEnvironment
                     "whatever the client calls it"
                     [ UnixByteString.empty ; Unchecked.defaultof<UnixByteString> ]
-                    (Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                    (Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0))
                 |> ignore<ProcessLaunch<int>>
             )
 
@@ -157,7 +157,7 @@ module TestUnixProcessState =
                 ProcessLaunch.withProcessPath
                     "the client's name for the path"
                     (Some Unchecked.defaultof<AbsoluteUnixPath>)
-                    (Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                    (Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0))
                 |> ignore<ProcessLaunch<int>>
             )
 

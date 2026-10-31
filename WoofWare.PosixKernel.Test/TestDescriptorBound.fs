@@ -265,10 +265,11 @@ module TestDescriptorBound =
             |> UnixSystem.checkInvariants
             |> shouldEqual []
 
-            ProcessLaunch.tryCreate platform (Map.ofList [ bound, LaunchDescriptor.Drained ]) 0 (CpuId 0)
+            ProcessLaunch.create (Map.ofList [ bound, LaunchDescriptor.Drained ]) 0 (CpuId 0)
+            |> fun launch -> UnixBootImage.tryBoot launch (UnixSystem.initial<int, string> platform)
             |> Result.map ignore
-            |> shouldEqual (Error (LaunchTableRefusal.AtOrAboveBound (bound, bound)))
+            |> shouldEqual (Error (BootRefusal.Launch (LaunchRefusal.DescriptorAtOrAboveBound (bound, bound))))
 
-            ProcessLaunch.tryCreate platform (Map.ofList [ -1, LaunchDescriptor.Drained ]) 0 (CpuId 0)
+            ProcessLaunch.tryCreate (Map.ofList [ -1, LaunchDescriptor.Drained ]) 0 (CpuId 0)
             |> Result.map ignore
             |> shouldEqual (Error (LaunchTableRefusal.NegativeDescriptor -1))

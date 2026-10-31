@@ -1,20 +1,28 @@
 namespace WoofWare.PosixKernel
 
-/// This library's model does not cover what was asked: nobody has measured
-/// what a real kernel does there, or the model cannot hold what the answer
-/// needs. It is a feature request for this library, not a condition to handle
-/// in normal operation.
+/// <summary>
+/// Exception indicating that you've tried to do something WoofWare.PosixKernel
+/// doesn't yet support.
+/// </summary>
+/// <remarks>
+/// WoofWare.PosixKernel generally only offers behaviour that has been measured
+/// on its target kernels, and throws this exception if you ask for something
+/// which hasn't been measured.
+/// This exception indicates a feature request for PosixKernel.
 ///
-/// Any call may throw it, and a minor version may add or remove the places
-/// that do. The message is for a human, and has no stable structure.
+/// Any library function may throw this exception at any time.
+/// ("WITHOUT WARRANTY… INCLUDING… FITNESS FOR A PARTICULAR PURPOSE")
 ///
-/// A throw leaves nothing behind: every value this library takes is
-/// immutable, so a client that catches this may carry on from the state it
-/// passed in.
+/// WoofWare.PosixKernel operates only with immutable data structures, so you
+/// can at least catch this and try to carry on yourself.
+/// </remarks>
 [<Sealed>]
 type UnmodelledException internal (message : string) =
     inherit System.Exception (message)
 
+/// <summary>
+/// Classifies a refusal from a public entry point.
+/// </summary>
 /// Which exception a refusal is raised as at a public entry point. The
 /// question is whether a client that follows the documentation could have
 /// made the call: if it could, the model does not cover the call; if not, the
@@ -22,21 +30,47 @@ type UnmodelledException internal (message : string) =
 /// so.
 [<RequireQualifiedAccess>]
 type internal RefusalKind =
-    /// The model does not cover what was asked: `UnmodelledException`.
+    /// <summary>
+    /// The model does not cover what was asked.
+    /// </summary>
+    /// <remarks>
+    /// We'll surface this to the user as <c>UnmodelledException</c>.
+    /// </remarks>
     | Unmodelled
-    /// The value passed as `parameter` contradicts the rest of the call, or the
-    /// machine: no machine could have it. `ArgumentException`.
+    /// <summary>
+    /// The user has passed a parameter which doesn't make sense in the context of the call
+    /// or of the state of the machine.
+    /// </summary>
+    /// <param name="parameter">The name of the function parameter whose value is inconsistent.</param>
+    /// <example>
+    /// The user attempted to spawn a new process specifying a working directory which is not a valid Unix path.
+    /// </example>
+    /// <remarks>
+    /// We'll surface this to the user as <c>ArgumentException</c>.
+    /// </remarks>
     | Contradictory of parameter : string
-    /// The value passed as `parameter` lies outside the range any machine
-    /// could have. `ArgumentOutOfRangeException`.
+    /// <summary>
+    /// The user has passed a parameter which is outside the range any machine could accept.
+    /// </summary>
+    /// <example>
+    /// The user attempted to create a process with a PID that exceeds the machine's highest possible PID.
+    /// </example>
+    /// <param name="parameter">The name of the function parameter whose value is out of range.</param>
+    /// <remarks>
+    /// We'll surface this to the user as <c>ArgumentOutOfRangeException</c>.
+    /// </remarks>
     | OutOfRange of parameter : string
-    /// The reference passed as `parameter` is null, which only
-    /// `Unchecked.defaultof` or C# `default` can make it.
-    /// `ArgumentNullException`.
+    /// <summary>
+    /// The user passed a null parameter.
+    /// </summary>
+    /// <remarks>
+    /// This is impossible if the user is using the library as documented, but they may encounter
+    /// this error if e.g. they used <c>Unchecked.defaultof</c> to manufacture nulls.
+    ///
+    /// We'll surface this to the user as <c>ArgumentNullException</c>.
+    /// </remarks>
+    /// <param name="parameter">The name of the function parameter whose value is null.</param>
     | Null of parameter : string
-    /// The call is one the documentation rules out at this point.
-    /// `InvalidOperationException`.
-    | Misuse
     /// The flavour being simulated has no such call, which the client could
     /// have checked first. `PlatformNotSupportedException`.
     | NotOnPlatform
@@ -54,7 +88,6 @@ module internal Refusal =
         | RefusalKind.Contradictory parameter -> System.ArgumentException (message, parameter)
         | RefusalKind.OutOfRange parameter -> System.ArgumentOutOfRangeException (parameter, message)
         | RefusalKind.Null parameter -> System.ArgumentNullException (parameter, message)
-        | RefusalKind.Misuse -> System.InvalidOperationException message
         | RefusalKind.NotOnPlatform -> System.PlatformNotSupportedException message
 
     /// The answer `result` holds, or, for a refusal, the exception

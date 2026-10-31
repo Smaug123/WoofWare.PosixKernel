@@ -739,7 +739,7 @@ module TestFileSystemIndex =
 
             let booted =
                 UnixSystem.initial platform
-                |> UnixBootImage.boot (ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                |> UnixBootImage.boot (ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0))
 
             let caller = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
 

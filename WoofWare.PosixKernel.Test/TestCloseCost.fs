@@ -43,8 +43,7 @@ module TestCloseCost =
         (count : int)
         : Caller<int> * int * UnixSystem<int, unit>
         =
-        let launch =
-            ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        let launch = ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let booted = UnixSystem.initial platform |> UnixBootImage.boot launch
         let pid = Seq.exactlyOne (UnixSystem.processIds booted)

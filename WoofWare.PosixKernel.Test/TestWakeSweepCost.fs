@@ -19,8 +19,7 @@ module TestWakeSweepCost =
     let private platform : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
     let private booted : UnixSystem<int, unit> =
-        let launch =
-            ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        let launch = ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         UnixSystem.initial platform |> UnixBootImage.boot launch
 
@@ -167,8 +166,7 @@ module TestWakeSweepCost =
             | Crowd.Processes ->
                 (booted, [ 1..count ])
                 ||> List.fold (fun system _ ->
-                    let launch =
-                        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                    let launch = ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                     UnixSystem.launch launch system |> snd
                 )

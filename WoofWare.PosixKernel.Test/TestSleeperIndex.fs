@@ -172,7 +172,7 @@ module TestSleeperIndex =
 
         match random.Next 18 with
         | 0 when pids.Length < 4 ->
-            let pid, system = UnixSystem.launch (Machines.launchOn platform) system
+            let pid, system = UnixSystem.launch (Machines.defaultLaunch ()) system
             cover Label.Launched
             Map.add pid [] pipes, system
         | 1 when running pid thread system && threads.Length < 5 ->
@@ -312,7 +312,7 @@ module TestSleeperIndex =
             agrees system
 
             if remaining > 0 && (UnixSystem.processIds system).IsEmpty then
-                let pid, system = UnixSystem.launch (Machines.launchOn platform) system
+                let pid, system = UnixSystem.launch (Machines.defaultLaunch ()) system
                 go (remaining - 1) (Map.add pid [] pipes) system
             else
                 let woken = scanned system |> Map.exists (fun _ asleep -> not asleep)

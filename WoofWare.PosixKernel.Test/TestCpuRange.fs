@@ -100,7 +100,7 @@ module TestCpuRange =
     [<Test>]
     let ``boot refuses exactly a leader on a processor the machine does not have`` () : unit =
         let property (cover : Side -> unit) (platform : SimulatedUnixPlatform, count : int, cpu : int) : unit =
-            let launch = Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId cpu)
+            let launch = Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId cpu)
 
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
@@ -122,7 +122,7 @@ module TestCpuRange =
         let property (cover : Side -> unit) (platform : SimulatedUnixPlatform, count : int, cpu : int) : unit =
             let machine = Machines.ofSystem (systemWith platform count)
 
-            let launch = Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId cpu)
+            let launch = Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId cpu)
 
             match Machines.tryLaunch launch machine, inRange count cpu with
             | Ok (pid, after), true ->

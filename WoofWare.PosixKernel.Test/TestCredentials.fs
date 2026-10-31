@@ -206,10 +206,17 @@ module TestCredentials =
                     .Credentials
                 |> shouldEqual credentials
             else
-                Launched.launch SimulatedUnixPlatform.macOsArm64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
-                |> ProcessLaunch.tryWithCredentials credentials
+                Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                |> ProcessLaunch.withCredentials credentials
+                |> fun launch -> UnixBootImage.tryBoot launch image
                 |> Result.map ignore
-                |> shouldEqual (Error (CredentialsRefusal.IdsDifferOnDarwin credentials))
+                |> shouldEqual (
+                    Error (
+                        BootRefusal.Launch (
+                            LaunchRefusal.Credentials (CredentialsRefusal.IdsDifferOnDarwin credentials)
+                        )
+                    )
+                )
 
         Check.One (config, Prop.forAll (Arb.fromGen eitherKind) property)
 
@@ -247,10 +254,13 @@ module TestCredentials =
             ]
 
         for variant in variants do
-            Launched.launch SimulatedUnixPlatform.macOsArm64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> ProcessLaunch.tryWithCredentials variant
+            Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            |> ProcessLaunch.withCredentials variant
+            |> fun launch -> UnixBootImage.tryBoot launch image
             |> Result.map ignore
-            |> shouldEqual (Error (CredentialsRefusal.IdsDifferOnDarwin variant))
+            |> shouldEqual (
+                Error (BootRefusal.Launch (LaunchRefusal.Credentials (CredentialsRefusal.IdsDifferOnDarwin variant)))
+            )
 
     [<TestCase("linux", 65536, 65536)>]
     [<TestCase("darwin", 16, 15)>]
@@ -287,16 +297,25 @@ module TestCredentials =
 
         let aboveLimit = Credentials.ofIds (uid 1000u) (gid 1000u) (groups (limit + 1))
 
-        Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> ProcessLaunch.tryWithCredentials aboveLimit
+        Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        |> ProcessLaunch.withCredentials aboveLimit
+        |> fun launch -> UnixBootImage.tryBoot launch image
         |> Result.map ignore
         |> shouldEqual (
             Error (
-                CredentialsRefusal.TooManySupplementaryGroups (limit + 1, limit, SimulatedUnixPlatform.flavour platform)
+                BootRefusal.Launch (
+                    LaunchRefusal.Credentials (
+                        CredentialsRefusal.TooManySupplementaryGroups (
+                            limit + 1,
+                            limit,
+                            SimulatedUnixPlatform.flavour platform
+                        )
+                    )
+                )
             )
         )
 
-        // A state assembled without the setter is caught by the invariants.
+        // A state assembled without launching is caught by the invariants.
         initial
         |> Lone.mapProc (fun proc ->
             { proc with

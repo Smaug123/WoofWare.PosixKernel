@@ -75,8 +75,8 @@ module TestWithFileSystemAndCurrentDirectory =
         | Seed of FileSystemSeedFault
         | Directory of CurrentDirectoryFault
 
-    let private launchAt (platform : SimulatedUnixPlatform) (dir : string) : ProcessLaunch<int> =
-        Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let private launchAt (dir : string) : ProcessLaunch<int> =
+        Launched.launch UnixSystem.pipedStandardStreams 0 (CpuId 0)
         |> ProcessLaunch.withCurrentDirectory (absolute dir)
 
     let private bootAt
@@ -84,7 +84,7 @@ module TestWithFileSystemAndCurrentDirectory =
         (image : UnixBootImage<int, string>)
         : Result<UnixSystem<int, string>, StartFault>
         =
-        match UnixBootImage.tryBoot (launchAt (UnixBootImage.platform image) dir) image with
+        match UnixBootImage.tryBoot (launchAt dir) image with
         | Ok system -> Ok system
         | Error (BootRefusal.Launch (LaunchRefusal.CurrentDirectory (_, fault))) -> Error (StartFault.Directory fault)
         | Error refusal -> failwith $"unexpected boot refusal: %s{BootRefusal.describe refusal}"

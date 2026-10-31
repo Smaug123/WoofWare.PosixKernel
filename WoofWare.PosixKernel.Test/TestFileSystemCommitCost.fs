@@ -23,8 +23,8 @@ module TestFileSystemCommitCost =
         | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> system
         | other -> failwith $"expected no signal at the return to user mode: %A{other}"
 
-    let private launch (platform : SimulatedUnixPlatform) : ProcessLaunch<int> =
-        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    let private launch () : ProcessLaunch<int> =
+        ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private flavourOf (system : UnixSystem<int, unit>) : SimulatedUnixFlavour =
         SimulatedUnixPlatform.flavour (UnixSystem.platform system)
@@ -128,14 +128,14 @@ module TestFileSystemCommitCost =
         (count : int)
         : UnixSystem<int, unit> * Caller<int>
         =
-        let booted = image platform |> UnixBootImage.boot (launch platform)
+        let booted = image platform |> UnixBootImage.boot (launch ())
         let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
         let system = hold holding 0 leader booted
 
         let system =
             (system, [ 1..count ])
             ||> List.fold (fun system index ->
-                let pid, system = UnixSystem.launch (launch platform) system
+                let pid, system = UnixSystem.launch (launch ()) system
                 hold holding index (Caller.make pid 0) system
             )
 
@@ -238,7 +238,7 @@ module TestFileSystemCommitCost =
     /// allocates, into an instance that watches `count` files already.
     let private addWatchBytes (count : int) : int64 =
         let platform = SimulatedUnixPlatform.linuxX64
-        let booted = UnixSystem.initial platform |> UnixBootImage.boot (launch platform)
+        let booted = UnixSystem.initial platform |> UnixBootImage.boot (launch ())
         let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
         let fd, system = inotify leader booted
 
@@ -273,7 +273,7 @@ module TestFileSystemCommitCost =
     /// watching it too. With the first's caller and its instance.
     let private sharing (holding : string) (count : int) : UnixSystem<int, unit> * Caller<int> * int =
         let platform = SimulatedUnixPlatform.linuxX64
-        let booted = image platform |> UnixBootImage.boot (launch platform)
+        let booted = image platform |> UnixBootImage.boot (launch ())
         let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
         let system = touch leader "/shared" booted
         let fd, system = inotify leader system
@@ -282,7 +282,7 @@ module TestFileSystemCommitCost =
         let system =
             (system, [ 1..count ])
             ||> List.fold (fun system _ ->
-                let pid, system = UnixSystem.launch (launch platform) system
+                let pid, system = UnixSystem.launch (launch ()) system
                 let caller = Caller.make pid 0
 
                 match holding with
