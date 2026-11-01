@@ -95,7 +95,7 @@ type HardlinkProtection =
     /// </remarks>
     | Off
     /// <summary>
-    /// An unprivileged caller which doesn't own the inode may only link the file if it can both read and write
+    /// An unprivileged caller which doesn't own the inode may only link a regular file if it can both read and write
     /// that file, the file is not setuid, and the file isn't simultaneously setgid and group-executable.
     /// </summary>
     /// <remarks>
