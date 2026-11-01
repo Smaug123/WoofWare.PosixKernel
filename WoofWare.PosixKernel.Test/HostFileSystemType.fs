@@ -61,7 +61,7 @@ module HostFileSystemType =
         if result <> 0 then
             let errno = Marshal.GetLastPInvokeError ()
 
-            match UnixError.ofRawErrno errno with
+            match UnixError.ofRawErrnoPortable errno with
             | Some error -> FileSystemStatisticsAnswer.Failed error
             | None -> failwith $"host fstatfs(%d{fd}) failed with errno %d{errno}, which has no portable name"
         else

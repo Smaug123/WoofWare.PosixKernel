@@ -636,7 +636,7 @@ module TestDirectorySize =
         else
             let errno = Marshal.GetLastPInvokeError ()
 
-            match UnixError.ofRawErrno errno with
+            match UnixError.ofRawErrnoPortable errno with
             | Some error -> Error error
             | None -> failwith $"host lseek failed with errno %d{errno}, which has no portable name"
 

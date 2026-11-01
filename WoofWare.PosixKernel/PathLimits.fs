@@ -1,7 +1,5 @@
 namespace WoofWare.PosixKernel
 
-open System.Collections.Immutable
-
 /// The longest a single path component may be, *and the unit that length is
 /// measured in* — which is not the same on every Unix, so the two travel
 /// together as one value rather than as a number beside a unit that could

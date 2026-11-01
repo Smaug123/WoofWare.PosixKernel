@@ -279,7 +279,7 @@ module TestUnixError =
                 | _ -> false
 
             UnixError.isPortableRawErrno raw |> shouldEqual expected
-            UnixError.ofRawErrno raw |> Option.isSome |> shouldEqual expected
+            UnixError.ofRawErrnoPortable raw |> Option.isSome |> shouldEqual expected
 
     // ---------------------------------------------------------------------
     // The transcription, against this host.
@@ -420,8 +420,8 @@ module TestUnixError =
     let ``ofRawErrno maps neither candidate of a platform-dependent error`` () : unit =
         // Mapping 40 to ELOOP would be right on Linux and wrong on Darwin,
         // where 40 is EMSGSIZE; mapping 62 would be wrong the other way round.
-        UnixError.ofRawErrno 40 |> shouldEqual None
-        UnixError.ofRawErrno 62 |> shouldEqual None
+        UnixError.ofRawErrnoPortable 40 |> shouldEqual None
+        UnixError.ofRawErrnoPortable 62 |> shouldEqual None
 
     /// The alias, from the decoding side: Linux's 95 is one errno, and it is
     /// answered as `EOPNOTSUPP`; Darwin's 45 and 102 are two.
@@ -501,7 +501,7 @@ module TestUnixError =
 
     [<Test>]
     let ``ofRawErrno declines a platform-dependent errno`` () : unit =
-        UnixError.ofRawErrno 39 |> shouldEqual None
-        UnixError.ofRawErrno 11 |> shouldEqual None
-        UnixError.ofRawErrno 2 |> shouldEqual (Some UnixError.ENOENT)
-        UnixError.ofRawErrno 15 |> shouldEqual (Some UnixError.ENOTBLK)
+        UnixError.ofRawErrnoPortable 39 |> shouldEqual None
+        UnixError.ofRawErrnoPortable 11 |> shouldEqual None
+        UnixError.ofRawErrnoPortable 2 |> shouldEqual (Some UnixError.ENOENT)
+        UnixError.ofRawErrnoPortable 15 |> shouldEqual (Some UnixError.ENOTBLK)

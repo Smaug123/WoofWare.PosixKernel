@@ -6,14 +6,19 @@
   <img alt="Project logo: minimalistic face of a cartoon Shiba Inu, drawn in outline, sitting at the centre of three concentric rings." src="WoofWare.PosixKernel/logos/light.svg" width="300">
 </picture>
 
-A deterministic, purely functional simulation of a POSIX process: its filesystem, file descriptors, pipes, sockets, `poll`/epoll/kqueue, inotify, signals, threads, clock and entropy, on a Linux or a Darwin kernel whose divergences were each measured on the real thing.
-It performs no I/O and makes no host reads, so a replay never depends on the machine that produced it.
+A deterministic, purely functional simulation of a POSIX process: its filesystem, file descriptors, pipes, sockets, `poll`/epoll/kqueue, inotify, signals, threads, clock and entropy, on either a Linux or a Darwin kernel.
+It doesn't read any state from the host machine (so e.g. it doesn't perform IO), so a replay never depends on the machine that produced it.
 
-The library's own README, [`WoofWare.PosixKernel/README.md`](WoofWare.PosixKernel/README.md), is the account of how a client uses it, and is also the package's README on [NuGet](https://www.nuget.org/packages/WoofWare.PosixKernel).
+The library's own README, [`WoofWare.PosixKernel/README.md`](WoofWare.PosixKernel/README.md), is the account of how a client uses it.
+
+See the published package on [NuGet](https://www.nuget.org/packages/WoofWare.PosixKernel).
+
+Slop status: 100% vibe-coded by various models from GPT-5.5 and Claude Opus 4.6 onwards.
+As of 2026-10, I am now going through the published library manually, making the docstrings easier on my eyes and correcting the most obvious architectural howlers.
 
 ## Building and testing
 
-Everything runs inside the Nix devshell, which pins the .NET SDK and provides the C compiler and Python the host-comparison tests start.
+There's a Nix devshell, although library development doesn't require you to use it.
 
 ```sh
 nix develop -c dotnet build

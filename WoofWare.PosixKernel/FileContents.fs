@@ -4,11 +4,14 @@ open System
 open System.Collections.Immutable
 open System.Runtime.InteropServices
 
-/// The bytes a regular file holds.
-///
-/// Two values are equal when they hold the same bytes and the same holes: a
-/// range that reads as zero because nothing was written there is distinct from
-/// one a write filled with zeroes.
+/// <summary>
+/// The bytes held in a regular file.
+/// </summary>
+/// <remarks>
+/// Two values are equal when they hold the same bytes and the same holes.
+/// A range that reads as zero because nothing was written there is distinct from
+/// one which was explicitly filled with zeros by a write.
+/// </remarks>
 [<CustomEquality>]
 [<CustomComparison>]
 [<StructuredFormatDisplay("{Display}")>]
@@ -50,6 +53,9 @@ type FileContents =
         let ellipsis = if this.Length > int64 shown then " ..." else ""
         $"FileContents (%d{this.Length} bytes, %d{this.Held} pages held: %s{prefix}%s{ellipsis})"
 
+    /// <summary>
+    /// A human-readable representation of this file (including a snippet and some diagnostic information about its size and layout).
+    /// </summary>
     override this.ToString () : string = this.Display
 
     override this.Equals (other : obj) : bool =
@@ -66,8 +72,12 @@ type FileContents =
                    other.Pages
         | _ -> false
 
-    // Of the length alone, so that hashing a file costs nothing in proportion
-    // to its length or its pages (`Map.Count` walks the map).
+    /// <summary>
+    /// A very permissive hash, incorporating only the length of the content.
+    /// </summary>
+    /// <remarks>
+    /// This is for performance reasons: we don't want dictionary entries hashing the entire file contents, for example.
+    /// </remarks>
     override this.GetHashCode () : int = hash this.Length
 
     interface IComparable with
@@ -87,7 +97,9 @@ type FileContents =
                 | c -> c
             | _ -> invalidArg "other" $"FileContents: cannot compare with %O{other}"
 
-/// Making and reading `FileContents`.
+/// <summary>
+/// Making and reading <c>FileContents</c>.
+/// </summary>
 [<RequireQualifiedAccess>]
 module FileContents =
 
@@ -98,7 +110,9 @@ module FileContents =
 
     let private pageSize64 : int64 = int64 pageSize
 
+    /// <summary>
     /// A file holding no bytes.
+    /// </summary>
     let empty : FileContents =
         {
             Length = 0L
@@ -106,18 +120,25 @@ module FileContents =
             Held = 0L
         }
 
-    /// How many bytes the file holds.
+    /// <summary>How many bytes the file holds.</summary>
+    /// <remarks>
+    /// This doesn't count holes at the end of the file, for example.
+    /// </remarks>
     let length (contents : FileContents) : int64 = contents.Length
 
     // How long page `index` is in a file `length` bytes long.
     let private pageLength (length : int64) (index : int64) : int =
         min pageSize64 (length - index * pageSize64) |> int
 
-    /// A file holding exactly `bytes`, with no holes.
-    ///
-    /// Shares `bytes` rather than copying it, so that a file of two gigabytes
-    /// costs nothing more to make; the array is held until every page of it
+    /// <summary>
+    /// Create a file holding exactly <c>bytes</c>, with no holes.
+    /// </summary>
+    /// <remarks>
+    /// Shares <c>bytes</c> rather than copying it, so that a file of two gigabytes
+    /// costs nothing more to make.
+    /// This means <c>bytes</c> is retained until every page of it in the file
     /// has been written over or truncated away.
+    /// </remarks>
     let ofImmutableArray (bytes : ImmutableArray<byte>) : FileContents =
         // `ImmutableArray` is a struct wrapping an array, so `default` carries a
         // null one. Rejected rather than treated as empty: a caller who wrote
@@ -144,8 +165,13 @@ module FileContents =
             Held = pageCount
         }
 
-    /// The bytes from `offset`, up to `count` of them, stopping at the end of
-    /// the file: empty when `offset` is at or past the end.
+    /// <summary>
+    /// The bytes from <c>offset</c>, up to <c>count</c> of them, stopping at the end of
+    /// the file.
+    /// </summary>
+    /// <remarks>
+    /// Returns an empty array when <c>offset</c> is at or past the end of the file.
+    /// </remarks>
     let read (offset : int64) (count : int) (contents : FileContents) : ImmutableArray<byte> =
         if offset < 0L then
             invalidArg (nameof offset) $"FileContents.read: offset %d{offset} is negative."
@@ -176,9 +202,10 @@ module FileContents =
         // Wrapped rather than copied: nothing else holds `result`.
         ImmutableCollectionsMarshal.AsImmutableArray result
 
-    /// Every byte the file holds.
-    ///
-    /// Throws `ArgumentException` for a file longer than one array can be.
+    /// <summary>
+    /// Every byte the file holds, with holes filled by zeros.
+    /// </summary>
+    /// <exception cref="ArgumentException">The file is longer than can fit in an array.</exception>
     let toImmutableArray (contents : FileContents) : ImmutableArray<byte> =
         if contents.Length > int64 Array.MaxLength then
             invalidArg

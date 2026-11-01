@@ -1,6 +1,5 @@
 namespace WoofWare.PosixKernel
 
-
 /// <summary>
 /// Why a candidate is not usable as a single Unix directory-entry name.
 /// </summary>
@@ -34,11 +33,12 @@ type FileNameError =
     | Reserved of name : string
 
 /// <summary>
-/// A single component of a Unix path that names an actual directory entry.
+/// A single component of a Unix path that names a directory entry.
 /// </summary>
 /// <remarks>
 /// This is non-empty, separator-free, NUL-free, and neither "." nor "..".
-/// It need not be valid UTF-8.
+/// It need not be valid UTF-8, so it need not be valid on the simulated machine's
+/// filesystem.
 ///
 /// Construct via <c>DirectoryEntryName.parse</c> or <c>DirectoryEntryName.ofByteString</c>.
 /// </remarks>
@@ -47,29 +47,40 @@ type DirectoryEntryName =
     private
     | DirectoryEntryName of name : UnixByteString
 
-    /// The name rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The name rendered for a diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     override this.ToString () : string =
         match this with
         | DirectoryEntryName name -> UnixByteString.toEscaped name
 
 [<RequireQualifiedAccess>]
 module DirectoryEntryName =
-    /// The name's bytes, exactly as `readdir` would hand them back.
+    /// <summary>
+    /// The name's bytes, exactly as <c>readdir</c> would hand them back.
+    /// </summary>
     let toByteString (name : DirectoryEntryName) : UnixByteString =
         match name with
         | DirectoryEntryName name -> name
 
-    /// The name as a .NET string, or `None` if its bytes are not valid UTF-8.
+    /// <summary>
+    /// The name as a .NET string, or <c>None</c> if its bytes are not valid UTF-8.
+    /// </summary>
     let tryToString (name : DirectoryEntryName) : string option =
         UnixByteString.tryToString (toByteString name)
 
-    /// The name rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The name rendered for a diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     let toEscaped (name : DirectoryEntryName) : string =
         UnixByteString.toEscaped (toByteString name)
 
+    /// <summary>
     /// Take a byte string as a single directory-entry name, or explain why it is not one.
-    ///
-    /// Never reports `FileNameError.Text`: a `UnixByteString` has no text defects.
+    /// </summary>
+    /// <remarks>
+    /// Never reports <c>FileNameError.Text</c>: a <c>UnixByteString</c> has no text defects.
+    /// </remarks>
     let ofByteString (candidate : UnixByteString) : Result<DirectoryEntryName, FileNameError> =
         let candidate =
             UnixByteString.assertValidFor "DirectoryEntryName.ofByteString" "candidate" candidate
@@ -170,9 +181,9 @@ module DirectoryEntryName =
         assertValidFor context "name" name
 
 /// <summary>
-/// One component of a path a process supplies, between two separators; or one
-/// name a directory stream hands back, which is "." or ".." or a name the
-/// directory binds.
+/// When a process supplies a path argument to a syscall, this type represents
+/// one component of that path (i.e. a part between two separators).
+/// Also represents the name of an entry returned from reading a directory.
 /// </summary>
 [<RequireQualifiedAccess>]
 type PathComponent =
@@ -181,7 +192,7 @@ type PathComponent =
     /// This is not a no-op as a component, because it adds the constraint that
     /// the preceding segment must be a directory.
     /// That is, "a/." is illegal to resolve when "a" is a regular file, but
-    /// not when it's a directory.
+    /// is legal when it's a directory.
     /// </remarks>
     | Current
     /// <summary>"..".</summary>
@@ -194,8 +205,12 @@ type PathComponent =
     /// <summary>An ordinary entry name, to be looked up in the directory reached so far.</summary>
     | Name of name : DirectoryEntryName
 
-    /// The component rendered for a diagnostic; `PathComponent.toByteString`
-    /// is what `readdir(3)` puts in `d_name`.
+    /// <summary>
+    /// The component rendered for a human-readable diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// Use <c>PathComponent.toByteString</c> instead for state in the simulated machine.
+    /// </remarks>
     override this.ToString () : string =
         match this with
         | PathComponent.Current -> "."
@@ -212,7 +227,9 @@ module PathComponent =
     let private dot : UnixByteString = ofLiteral "."
     let private dotDot : UnixByteString = ofLiteral ".."
 
-    /// The bytes of the component: what `readdir(3)` puts in `d_name`.
+    /// <summary>
+    /// The bytes of the component: what <c>readdir(3)</c> puts in <c>d_name</c>.
+    /// </summary>
     let toByteString (name : PathComponent) : UnixByteString =
         match name with
         | PathComponent.Current -> dot
@@ -220,13 +237,13 @@ module PathComponent =
         | PathComponent.Name name -> DirectoryEntryName.toByteString name
 
 /// <summary>
-/// Why a .NET string is not usable as a Unix path a process supplies.
+/// Why a .NET string is not usable as a Unix path supplied to the kernel by a syscall.
 /// </summary>
 ///
 /// <remarks>
 /// Far more permissive than <c>AbsoluteUnixPathError</c>, which instead describes what the <i>kernel can return</i>.
 /// A process may legitimately pass a relative path, repeated separators, a trailing separator, and "." or
-/// ".." components.
+/// ".." components, so those cases aren't included in <c>UnixPathError</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type UnixPathError =
@@ -247,8 +264,8 @@ type UnixPathError =
 /// A path exactly as a process handed it to a syscall.
 /// </summary>
 /// <remarks>
-/// Possibly relative, possibly containing "." and ".." components, possibly with a trailing
-/// separator.
+/// Possibly relative, possibly containing "." and ".." components and symlinks,
+/// possibly with a trailing separator.
 ///
 /// This is the input to the <c>VirtualFileSystem</c> resolution walk.
 ///
@@ -279,10 +296,10 @@ type UnixPath =
         }
 
 /// <summary>
-/// A position part-way through resolving a path, specifying a component or separator within the path.
+/// A position part-way through resolving a path. The cursor specifies a component or separator within the path.
 /// </summary>
 /// <remarks>
-/// This is the shape a Unix kernel's own resolution state has, namely a
+/// This is the same shape as a Unix kernel's own resolution state, namely a
 /// pathname buffer plus a pointer into it (XNU's <c>cn_pnbuf</c> and <c>ni_next</c>,
 /// Linux's <c>nameidata</c>).
 /// </remarks>
@@ -296,8 +313,8 @@ type internal PathCursor =
             /// </summary>
             ///
             /// <remarks>
-            /// Always satisfies <c>UnixPath</c>'s invariant, because every way to
-            /// build one takes a <c>UnixPath</c>.
+            /// When building a <c>PathCursor</c>, you must ensure that this always
+            /// satisfies <c>UnixPath</c>'s invariant.
             /// </remarks>
             Buffer : UnixByteString
             /// <summary>
@@ -348,7 +365,7 @@ module internal PathCursor =
     /// <c>None</c> when the path is exhausted;
     /// otherwise, the component that was at the cursor, and a new cursor which is advanced to the next component.
     /// </returns>
-    /// <remarks>Throws if the input cursor is a forged default.</remarks>
+    /// <remarks>Throws if the input cursor is <c>Unchecked.defaultof</c>.</remarks>
     let next (cursor : PathCursor) : (PathComponent * PathCursor) option =
         let buffer = bufferOf cursor
         let start = afterSeparators cursor
@@ -446,13 +463,22 @@ module internal PathCursor =
 
 [<RequireQualifiedAccess>]
 module UnixPath =
+    /// <summary>
     /// The path's bytes, exactly as the caller passed them, separator runs and all.
+    /// </summary>
     let toByteString (path : UnixPath) : UnixByteString = path.Raw
 
-    /// The path as a .NET string, or `None` if its bytes are not valid UTF-8.
+    /// <summary>
+    /// The path as a .NET string, or <c>None</c> if its bytes are not valid UTF-8.
+    /// </summary>
     let tryToString (path : UnixPath) : string option = UnixByteString.tryToString path.Raw
 
-    /// The path rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The path rendered for a human-readable diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// See <c>UnixByteString.toEscaped</c>.
+    /// </remarks>
     let toEscaped (path : UnixPath) : string = UnixByteString.toEscaped path.Raw
 
     /// <summary>True when the path began with a separator.</summary>
@@ -464,9 +490,6 @@ module UnixPath =
         let bytes = UnixByteString.toBytes path.Raw
         bytes.Length > 0 && bytes.[0] = UnixPathText.separatorByte
 
-    // A resolution walk should use `PathCursor` instead, which is the same
-    // traversal without discarding where in the buffer it is (so it can also
-    // work out how symlinks affect resolution).
     /// <summary>
     /// The path's components in order.
     /// </summary>
@@ -474,11 +497,10 @@ module UnixPath =
     /// No zero-length segments, but "." and ".." are preserved
     /// as <c>PathComponent.Current</c> and <c>PathComponent.Parent</c>.
     /// </returns>
-    ///
-    /// <remarks>
-    /// A projection of the stored text, recomputed on demand.
-    /// </remarks>
     let components (path : UnixPath) : PathComponent list =
+        // A resolution walk should use `PathCursor` instead, which is the same
+        // traversal without discarding where in the buffer it is (so it can also
+        // work out how symlinks affect resolution).
         let rec go (cursor : PathCursor) (acc : PathComponent list) : PathComponent list =
             match PathCursor.next cursor with
             | None -> List.rev acc
@@ -523,11 +545,15 @@ module UnixPath =
     /// </remarks>
     let isEmpty (path : UnixPath) : bool = UnixByteString.length path.Raw = 0
 
-    /// Take a byte string a process supplied as a path. Every NUL-free byte
-    /// string is one, so this cannot fail.
-    ///
-    /// Stores the bytes verbatim, for the reasons `parse` gives.
+    /// <summary>
+    /// Take a byte string a process supplied as a path.
+    /// </summary>
+    /// <remarks>
+    /// Every NUL-free byte string (and hence every <c>UnixByteString</c>) is valid for
+    /// a caller to pass to a syscall, so this cannot fail.
+    /// </remarks>
     let ofByteString (bytes : UnixByteString) : UnixPath =
+        // Stores the bytes verbatim, for the reasons `parse` gives.
         {
             Raw = UnixByteString.assertValidFor "UnixPath.ofByteString" "bytes" bytes
         }
@@ -540,15 +566,15 @@ module UnixPath =
         | Ok bytes -> ofByteString bytes
         | Error defect -> failwith $"UnixPath.root: %s{UnixPathText.describe defect}"
 
-    /// <summary>Parse a path a process supplied.</summary>
+    /// <summary>Parse a path which a process supplied.</summary>
     ///
     /// <remarks>
     /// Stores the UTF-8 encoding of the candidate verbatim.
     /// (Even the simplest normalisation, collapsing consecutive separator characters, is observable on Darwin,
-    /// so we can't even do that during parse.)
+    /// so we can't even do <i>that</i> during parse.)
     ///
-    /// POSIX leaves a path beginning with exactly two separators
-    /// implementation-defined (it may denote a distinct namespace).
+    /// In POSIX, the treatment of a path beginning with exactly two separators
+    /// is implementation-defined (it may denote a distinct namespace).
     /// WoofWare.PosixKernel treats it as the root.
     /// </remarks>
     let parse (candidate : string) : Result<UnixPath, UnixPathError> =
@@ -569,7 +595,7 @@ module UnixPath =
             "path is null; the empty path is legal at this boundary, but a null one never reached the kernel at all"
         | UnixPathError.Text defect -> $"path %s{UnixPathText.describe defect}"
 
-    /// <summary><c>UnixPath.parse</c>, but throwing on error.</summary>
+    /// <summary><c>UnixPath.parse</c>, but throwing on error if parse fails.</summary>
     /// <remarks>
     /// Don't use this for paths arriving from a process, because
     /// a process can legally pass a path which contains NULs; the kernel must
@@ -588,7 +614,7 @@ module UnixPath =
             )
 
     /// <summary>
-    /// Widen a fully-resolved absolute path into the shape of a path a process supplies.
+    /// Widen a fully-resolved absolute path into the <c>UnixPath</c> type.
     /// </summary>
     let ofAbsolute (path : AbsoluteUnixPath) : UnixPath =
         ofByteString (AbsoluteUnixPath.toByteString path)

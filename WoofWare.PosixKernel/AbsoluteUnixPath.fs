@@ -50,19 +50,24 @@ type AbsoluteUnixPathError =
     | UnresolvedSegment of segment : string * index : int
 
 /// <summary>
-/// An absolute, fully-resolved Unix path: exactly the shape <c>getcwd(3)</c> can
+/// An absolute Unix path: exactly the shape <c>getcwd(3)</c> can
 /// return, and hence the only shape the simulated current directory is allowed to take.
 /// </summary>
 ///
 /// <remarks>
 /// Construct via <c>AbsoluteUnixPath.parse</c> (or the <c>AbsoluteUnixPath.root</c> constant).
+///
+/// The constructor ensures only that the path is syntactically valid.
+/// A path need not exist in a running system, and it might contain unresolved symlinks.
 /// </remarks>
 [<Struct>]
 type AbsoluteUnixPath =
     private
     | AbsoluteUnixPath of path : UnixByteString
 
-    /// The path rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The path rendered for a diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     override this.ToString () : string =
         match this with
         | AbsoluteUnixPath path -> UnixByteString.toEscaped path
@@ -84,16 +89,22 @@ module AbsoluteUnixPath =
         | Ok bytes -> AbsoluteUnixPath bytes
         | Error defect -> failwith $"AbsoluteUnixPath.root: %s{UnixPathText.describe defect}"
 
-    /// The path's bytes, exactly as `getcwd(3)` would hand them back.
+    /// <summary>
+    /// The path's bytes, exactly as <c>getcwd(3)</c> would hand them back.
+    /// </summary>
     let toByteString (path : AbsoluteUnixPath) : UnixByteString =
         match path with
         | AbsoluteUnixPath path -> path
 
-    /// The path as a .NET string, or `None` if its bytes are not valid UTF-8.
+    /// <summary>
+    /// The path as a .NET string, or <c>None</c> if its bytes are not valid UTF-8.
+    /// </summary>
     let tryToString (path : AbsoluteUnixPath) : string option =
         UnixByteString.tryToString (toByteString path)
 
-    /// The path rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The path rendered for a diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     let toEscaped (path : AbsoluteUnixPath) : string =
         UnixByteString.toEscaped (toByteString path)
 
@@ -134,10 +145,14 @@ module AbsoluteUnixPath =
 
         check 1
 
+    /// <summary>
     /// Take a byte string as an absolute path, or explain why it is not one.
+    /// </summary>
     ///
-    /// Never reports `ContainsNul` or `UnpairedSurrogate`: a `UnixByteString`
-    /// can contain neither.
+    /// <remarks>
+    /// Never reports <c>ContainsNul</c> or <c>UnpairedSurrogate</c>: a <c>UnixByteString</c>
+    /// already can't contain either of those.
+    /// </remarks>
     let ofByteString (candidate : UnixByteString) : Result<AbsoluteUnixPath, AbsoluteUnixPathError> =
         let candidate =
             UnixByteString.assertValidFor "AbsoluteUnixPath.ofByteString" "candidate" candidate
@@ -160,8 +175,10 @@ module AbsoluteUnixPath =
     /// </summary>
     ///
     /// <remarks>
-    /// This rejects invalid input (such as components which are just "..") rather than performing any normalisation.
-    /// (Paths cannot be normalised correctly without knowing whether there are symlinks.)
+    /// This rejects invalid input, such as paths with components which are just "..", rather than performing any normalisation.
+    /// (Paths cannot be normalised correctly without risking changing their meaning if there are symlinks. For example,
+    /// <c>"/a/link/.."</c> would normalise syntactically to "/a", which is likely semantically incorrect in a running
+    /// system.)
     /// </remarks>
     let parse (candidate : string) : Result<AbsoluteUnixPath, AbsoluteUnixPathError> =
         if String.IsNullOrEmpty candidate then

@@ -1,13 +1,13 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// A timestamp, measured in whole seconds plus a nanosecond part in <c>[0, 1e9)</c>:
-/// since the Unix epoch for a filesystem timestamp or the realtime clock, and since
-/// boot for a monotonic clock.
+/// A timestamp, measured in whole seconds plus a nanosecond part in <c>[0, 1e9)</c>.
+/// The zero time is the Unix epoch for a filesystem timestamp or the realtime clock,
+/// and is the boot time for a monotonic clock.
 /// </summary>
 /// <remarks>
 /// This is a model of <c>struct timespec</c>.
-///
+/// <para />
 /// Negative seconds are permitted; negative nanoseconds are not.
 /// </remarks>
 [<Struct>]
@@ -16,7 +16,7 @@ type UnixTimestamp =
     | UnixTimestamp of seconds : int64 * nanoseconds : int
 
     /// <summary>
-    /// Format this timestamp as a number of seconds since the epoch.
+    /// Format this timestamp as a possibly-fractional number of seconds since the epoch.
     /// </summary>
     override this.ToString () : string =
         match this with
@@ -61,7 +61,8 @@ module UnixTimestamp =
         | UnixTimestamp (_, nanoseconds) -> nanoseconds
 
     /// <summary>
-    /// A timestamp formed from "seconds since the epoch" plus a fractional nanosecond part.
+    /// A timestamp formed from "seconds since the epoch" (or since boot, for a monotonic clock)
+    /// plus a fractional nanosecond part.
     /// </summary>
     /// <returns>
     /// <c>None</c> if the nanosecond part is not in <c>[0, 1e9)</c>.
@@ -73,7 +74,8 @@ module UnixTimestamp =
             Some (UnixTimestamp (seconds, nanoseconds))
 
     /// <summary>
-    /// A timestamp formed from "seconds since the epoch" plus a fractional nanosecond part.
+    /// A timestamp formed from "seconds since the epoch" (or since boot, for a monotonic clock)
+    /// plus a fractional nanosecond part.
     /// </summary>
     /// <remarks>
     /// This is <c>create</c> except it throws (naming <c>context</c>) instead of returning <c>None</c>.
@@ -91,12 +93,12 @@ module UnixTimestamp =
             )
 
     /// <summary>
-    /// A timestamp formed from "integer number of seconds since the epoch".
+    /// A timestamp formed from "integer number of seconds since the epoch" (or since boot, for a monotonic clock).
     /// </summary>
     let ofSeconds (seconds : int64) : UnixTimestamp = UnixTimestamp (seconds, 0)
 
     /// <summary>
-    /// A timestamp from an integer count of milliseconds since the Unix epoch.
+    /// A timestamp from an integer count of milliseconds since the Unix epoch (or since boot, for a monotonic clock).
     /// </summary>
     let ofMillisecondsSinceEpoch (milliseconds : int64) : UnixTimestamp =
         // Floor division, so that a negative millisecond count keeps the
@@ -130,8 +132,10 @@ module UnixTimestamp =
     /// </remarks>
     let epoch : UnixTimestamp = UnixTimestamp (0L, 0)
 
-    /// The latest whole microsecond not after `timestamp`, which is what a
-    /// filesystem keeping its times to the microsecond stores for it.
+    /// <summary>
+    /// The latest whole microsecond not after <c>timestamp</c>, which is what a
+    /// filesystem would store if it only keeps times to the microsecond.
+    /// </summary>
     let internal truncateToMicroseconds (timestamp : UnixTimestamp) : UnixTimestamp =
         match timestamp with
         | UnixTimestamp (seconds, nanoseconds) -> UnixTimestamp (seconds, nanoseconds - nanoseconds % 1000)
