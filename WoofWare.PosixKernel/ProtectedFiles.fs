@@ -1,74 +1,136 @@
 namespace WoofWare.PosixKernel
 
-/// Linux's `fs.protected_symlinks` sysctl: which symbolic links a path walk
-/// refuses to follow.
-///
-/// Linux admits only 0 and 1 for it; Darwin has no such setting, and behaves
-/// as `Off`.
+/// <summary>
+/// Configuration for when a platform refuses to follow symlinks.
+/// </summary>
+/// <remarks>
+/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// <para />
+/// This is Linux's <c>fs.protected_symlinks</c> sysctl.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type SymlinkProtection =
-    /// 0, the kernel's own default: a walk follows any link it may search its
-    /// way to.
+    /// <summary>
+    /// Walks follow all links.
+    /// </summary>
+    /// <remarks>
+    /// On Linux, this is what you'd get by setting <c>fs.protected_symlinks</c> to <c>0</c> (the default).
+    /// It's also the only option on Darwin.
+    /// </remarks>
     | Off
-    /// 1: a walk refuses with EACCES to follow a link in the final position of
-    /// a path when the directory holding the link is sticky and world-writable,
-    /// unless the follower owns the link or the directory's owner does. Past
-    /// half the traversal budget Linux's answer depends on its dentry cache,
-    /// so such a walk is refused.
-    ///
-    /// Many distributions set this through `sysctl.d`.
+    /// <summary>
+    /// A walk refuses (returning EACCES) to follow a link in the final position of a path, when the
+    /// containing directory is sticky and world-writable, unless the follower or the directory's owner owns the link.
+    /// </summary>
+    /// <remarks>
+    /// Darwin doesn't have this.
+    /// <para />
+    /// On Linux, path resolution depends also on the state of the dentry cache, because the kernel
+    /// may eventually return ELOOP if there are too many links to follow. WoofWare.PosixKernel
+    /// currently throws <c>UnmodelledException</c> in some of those cases, rather than correctly
+    /// giving EACCES or ELOOP.
+    /// <para />
+    /// On Linux, this is what you'd get by setting <c>fs.protected_symlinks</c> to <c>1</c>.
+    /// <para />
+    /// Many distributions set this through <c>sysctl.d</c>.
+    /// </remarks>
     | InWorldWritableStickyDirectories
 
-/// Linux's `fs.protected_regular` and `fs.protected_fifos` sysctls: which
-/// existing files (or FIFOs) an `open(2)` with `O_CREAT` refuses to open in a
-/// sticky directory.
-///
-/// Linux admits only 0, 1 and 2 for each; Darwin has no such settings, and
-/// behaves as `Off`.
+/// <summary>
+/// Configuration for when a platform refuses to create an existing file or FIFO with <c>O_CREAT</c> in <c>open(2)</c>.
+/// </summary>
+/// <remarks>
+/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// <para />
+/// This models Linux's <c>fs.protected_regular</c> and <c>fs.protected_fifos</c> sysctls.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type CreationProtection =
-    /// 0, the kernel's own default: no such open is refused for who owns what.
+    /// <summary>
+    /// There's no protection preventing an open with <c>O_CREAT</c> in a sticky directory.
+    /// </summary>
+    /// <remarks>
+    /// On Linux, this is what you'd get by setting <c>fs.protected_regular</c> (or <c>fs.protected_fifos</c>) to 0 (the default).
+    /// It's also the only option on Darwin.
+    /// </remarks>
     | Off
-    /// 1: an `O_CREAT` open of an existing object in a sticky, world-writable
-    /// directory is refused with EACCES unless the caller owns the object or
-    /// the directory's owner does.
+    /// <summary>
+    /// An <c>O_CREAT</c> open of an existing object in a sticky, world-writable directory
+    /// is refused with EACCES, unless the caller or the directory's owner owns the object.
+    /// </summary>
+    /// <remarks>
+    /// Darwin doesn't have this.
+    /// <para />
+    /// On Linux, this is what you'd get by setting <c>fs.protected_regular</c> (or <c>fs.protected_fifos</c>) to 1.
+    /// </remarks>
     | InWorldWritableStickyDirectories
-    /// 2: as for 1, and in a sticky directory that is group-writable but not
-    /// world-writable as well.
+    /// <summary>
+    /// In addition to <c>InWorldWritableStickyDirectories</c>'s restrictions, an <c>O_CREAT</c> open
+    /// of an existing object in a sticky group-writable but not world-writable directory is refused
+    /// with EACCES, unless the caller or the directory's owner owns the object.
+    /// </summary>
+    /// <remarks>
+    /// Darwin doesn't have this.
+    /// <para />
+    /// On Linux, this is what you'd get by setting <c>fs.protected_regular</c> (or <c>fs.protected_fifos</c>) to 2.
+    /// </remarks>
     | InGroupOrWorldWritableStickyDirectories
 
-/// Linux's `fs.protected_hardlinks` sysctl: which inodes a caller that does
-/// not own them may hard-link.
-///
-/// Linux admits only 0 and 1 for it; Darwin has no such setting, and behaves
-/// as `Off`.
+/// <summary>
+/// Configuration for when a platform refuses to create a hardlink.
+/// </summary>
+/// <remarks>
+/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// <para />
+/// This is Linux's <c>fs.protected_hardlinks</c> sysctl.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type HardlinkProtection =
-    /// 0, the kernel's own default: a caller may link any inode it may reach.
+    /// <summary>
+    /// A caller may link any inode.
+    /// </summary>
+    /// <remarks>
+    /// On Linux, this is what you'd get by setting <c>fs.protected_hardlinks</c> to 0 (the default).
+    /// It's also the only option on Darwin.
+    /// </remarks>
     | Off
-    /// 1: a caller that neither owns an inode nor is privileged may link only a
-    /// regular file it may both read and write and that is neither
-    /// set-user-ID nor set-group-ID and group-executable; `link(2)` answers
-    /// EPERM otherwise.
-    ///
-    /// Many distributions set this through `sysctl.d`.
+    /// <summary>
+    /// An unprivileged caller which doesn't own the inode may only link a regular file if it can both read and write
+    /// that file, the file is not setuid, and the file isn't simultaneously setgid and group-executable.
+    /// </summary>
+    /// <remarks>
+    /// Darwin doesn't have this.
+    /// <para />
+    /// The condition takes a lot of words to say, but the gist is "you can only link the file if: you can
+    /// already access it, and setsid/setgid are such that you can't execute its contents as someone else after you
+    /// write them".
+    /// <para />
+    /// On Linux, this is what you'd get by setting <c>fs.protected_hardlinks</c> to 1.
+    /// <para />
+    /// <c>link(2)</c> returns EPERM for callers who are forbidden.
+    /// <para />
+    /// Many distributions set this through <c>sysctl.d</c>.
+    /// </remarks>
     | NonOwnersNeedReadAndWrite
 
-/// Linux's `fs.protected_*` sysctls that decide what a caller may do with
-/// another user's files: machine configuration rather than a fact of the
-/// kernel, since an administrator sets them.
+/// <summary>
+/// Linux's <c>fs.protected_*</c> sysctls that decide what a caller may do with
+/// another user's files.
+/// </summary>
 type ProtectedFiles =
+    // This is machine configuration, not a fact of the kernel, because an administrator
+    // sets these.
     {
-        /// `fs.protected_symlinks`.
+        /// <summary><c>fs.protected_symlinks</c>.</summary>
         Symlinks : SymlinkProtection
-        /// `fs.protected_regular`.
+        /// <summary><c>fs.protected_regular</c>.</summary>
         RegularFiles : CreationProtection
-        /// `fs.protected_fifos`.
-        ///
-        /// Nothing in this version makes a FIFO inode, so this decides nothing
-        /// yet.
+        /// <summary><c>fs.protected_fifos</c>.</summary>
         Fifos : CreationProtection
-        /// `fs.protected_hardlinks`, which `link(2)` consults.
+        /// <summary><c>fs.protected_hardlinks</c>.</summary>
+        /// <remarks>
+        /// <c>link(2)</c> consults this.
+        /// </remarks>
         Hardlinks : HardlinkProtection
     }
 
@@ -78,8 +140,12 @@ module ProtectedFiles =
     let private worldWritable : int = 0o0002
     let private stickyWorldWritable : int = PermissionBits.sticky ||| worldWritable
 
-    /// Every one of the sysctls 0: Linux's own default, and how Darwin, which
-    /// has none of them, behaves.
+    /// <summary>
+    /// Represents setting all the protection sysctls to <c>0</c>.
+    /// </summary>
+    /// <remarks>
+    /// Also represents how Darwin behaves, because it doesn't have those sysctls.
+    /// </remarks>
     let off : ProtectedFiles =
         {
             Symlinks = SymlinkProtection.Off
