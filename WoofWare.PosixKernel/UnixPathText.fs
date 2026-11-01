@@ -29,12 +29,17 @@ type UnixPathTextDefect =
 [<RequireQualifiedAccess>]
 module UnixPathText =
     /// <summary>
-    /// The Unix directory separator. (Unlike Windows, Unix has no alternate separator to normalise away.)
+    /// The Unix directory separator.
     /// </summary>
+    /// <remarks>
+    /// Unlike Windows, Unix has no alternate separator to normalise away.
+    /// </remarks>
     [<Literal>]
     let separator : char = '/'
 
-    /// `separator` as the single byte a Unix kernel scans for.
+    /// <summary>
+    /// <c>separator</c>, but as the single ASCII byte a Unix kernel scans for.
+    /// </summary>
     [<Literal>]
     let separatorByte : byte = 47uy
 

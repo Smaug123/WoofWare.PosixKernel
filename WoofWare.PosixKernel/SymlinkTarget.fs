@@ -20,7 +20,9 @@ type SymlinkTarget =
     /// </remarks>
     | SymlinkTarget of target : UnixByteString
 
-    /// The target rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The target rendered for a human-readable diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     override this.ToString () : string =
         match this with
         | SymlinkTarget target -> UnixByteString.toEscaped target
@@ -63,18 +65,25 @@ module SymlinkTarget =
         match target with
         | SymlinkTarget target -> target
 
-    /// The target as a .NET string, or `None` if its bytes are not valid UTF-8.
+    /// <summary>
+    /// The target as a .NET string, or <c>None</c> if its bytes are not valid UTF-8.
+    /// </summary>
     let tryToString (target : SymlinkTarget) : string option =
         UnixByteString.tryToString (toByteString target)
 
-    /// The target rendered for a diagnostic; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The target rendered for a human-readable diagnostic; see <c>UnixByteString.toEscaped</c>.
+    /// </summary>
     let toEscaped (target : SymlinkTarget) : string =
         UnixByteString.toEscaped (toByteString target)
 
+    /// <summary>
     /// Take a byte string as a symlink target, or explain why it is not one.
-    ///
-    /// Never reports `SymlinkTargetError.Text`: a `UnixByteString` has no text
+    /// </summary>
+    /// <remarks>
+    /// Never reports <c>SymlinkTargetError.Text</c>: a <c>UnixByteString</c> already has no text
     /// defects.
+    /// </remarks>
     let ofByteString (candidate : UnixByteString) : Result<SymlinkTarget, SymlinkTargetError> =
         let candidate =
             UnixByteString.assertValidFor "SymlinkTarget.ofByteString" "candidate" candidate

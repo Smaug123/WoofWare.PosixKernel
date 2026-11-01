@@ -6,18 +6,22 @@ open System.Collections.Immutable
 open System.Text
 open System.Text.Unicode
 
-/// Why a sequence of bytes is not a `UnixByteString`.
+/// <summary>
+/// Why a sequence of bytes is not a <c>UnixByteString</c>.
+/// </summary>
 [<RequireQualifiedAccess>]
 type UnixByteStringDefect =
+    /// <summary>
     /// A NUL at this byte index.
-    ///
+    /// </summary>
+    /// <remarks>
     /// A Unix kernel takes its strings NUL-terminated across the `char*`
     /// boundary, so a NUL cannot appear within one: everything after it would be
     /// invisible to the kernel.
+    /// </remarks>
     | ContainsNul of index : int
 
-/// Shared by `UnixByteString`'s own members and by its module: a member
-/// cannot call a function declared after the type it is attached to.
+/// Shared by `UnixByteString`'s own members and by its module.
 module private UnixByteStringInternal =
     /// `Unchecked.defaultof<UnixByteString>` and C# `default` carry a
     /// *default* `ImmutableArray`, whose underlying array is null, and
@@ -29,7 +33,7 @@ module private UnixByteStringInternal =
     let checkedBytes (bytes : ImmutableArray<byte>) : ImmutableArray<byte> =
         if bytes.IsDefault then
             raise (
-                System.ArgumentException
+                ArgumentException
                     "UnixByteString: value carries no bytes at all, so it can only have come from `Unchecked.defaultof` or C# `default`; construct one with UnixByteString.ofBytes or UnixByteString.ofString instead."
             )
 
@@ -155,13 +159,17 @@ module private UnixByteStringInternal =
 
         builder.ToString ()
 
+/// <summary>
 /// A NUL-free sequence of bytes: what a Unix kernel means by "a string".
+/// </summary>
 ///
-/// This carries no encoding. A Unix filesystem stores the bytes a caller handed
-/// it, so a name need not be text at all, and `tryToString` is a partial
-/// function for exactly that reason.
+/// <remarks>
+/// No encoding is implied. A Unix filesystem just directly stores the bytes
+/// a caller handed it, so a name need not be text at all. That is why
+/// <c>tryToString</c> is a partial function.
 ///
-/// Construct via `UnixByteString.ofBytes` or `UnixByteString.ofString`.
+/// Construct via <c>UnixByteString.ofBytes</c> or <c>UnixByteString.ofString</c>.
+/// </remarks>
 [<Struct>]
 [<CustomEquality>]
 [<CustomComparison>]
@@ -171,10 +179,15 @@ type UnixByteString =
             Bytes : ImmutableArray<byte>
         }
 
-    /// The escaped rendering; see `UnixByteString.toEscaped`.
+    /// <summary>
+    /// The escaped rendering, for error messages.
+    /// </summary>
+    /// <remarks>
+    /// See <c>UnixByteString.toEscaped</c>.
     ///
-    /// Not round-trippable through any parser here: it exists so that a
-    /// diagnostic can name a byte string that has no .NET string.
+    /// Not round-trippable through any parser here: it exists only so that
+    /// diagnostics can reproduce a byte string that has no .NET string.
+    /// </remarks>
     override this.ToString () : string =
         UnixByteStringInternal.escape this.Bytes
 
@@ -210,7 +223,9 @@ type UnixByteString =
 
 [<RequireQualifiedAccess>]
 module UnixByteString =
-    /// Human-readable rendering of a rejection.
+    /// <summary>
+    /// Human-readable rendering of a rejection reason.
+    /// </summary>
     let describe (defect : UnixByteStringDefect) : string =
         match defect with
         | UnixByteStringDefect.ContainsNul index ->
@@ -267,17 +282,29 @@ module UnixByteString =
     let toBytes (s : UnixByteString) : ImmutableArray<byte> =
         UnixByteStringInternal.checkedBytes s.Bytes
 
-    /// How many bytes this is.
+    /// <summary>
+    /// How many bytes are in this string.
+    /// </summary>
+    /// <remarks>
+    /// This count doesn't include a NUL terminator (which you can't store in a <c>UnixByteString</c> anyway).
+    /// </remarks>
     let length (s : UnixByteString) : int =
         (UnixByteStringInternal.checkedBytes s.Bytes).Length
 
+    /// <summary>
     /// The empty byte string.
+    /// </summary>
     let empty : UnixByteString =
         {
             Bytes = ImmutableArray<byte>.Empty
         }
 
-    /// The `count` bytes starting at `start`. Throws if that range is not within `s`.
+    /// <summary>
+    /// The <c>count</c> bytes starting at <c>start</c>.
+    /// </summary>
+    /// <remarks>
+    /// Throws if that range is not within <c>s</c>.
+    /// </remarks>
     let slice (start : int) (count : int) (s : UnixByteString) : UnixByteString =
         let bytes = UnixByteStringInternal.checkedBytes s.Bytes
 
@@ -294,7 +321,9 @@ module UnixByteString =
             Bytes = bytes.Slice (start, count)
         }
 
-    /// `left` followed by `right`.
+    /// <summary>
+    /// <c>left</c> followed by <c>right</c>.
+    /// </summary>
     let append (left : UnixByteString) (right : UnixByteString) : UnixByteString =
         let left = UnixByteStringInternal.checkedBytes left.Bytes
         let right = UnixByteStringInternal.checkedBytes right.Bytes
@@ -303,25 +332,35 @@ module UnixByteString =
             Bytes = left.AddRange right
         }
 
-    /// The .NET string these bytes name, if they name one at all.
+    /// <summary>
+    /// Interpret the bytes as a string and represent that string in .NET, if that's possible.
+    /// </summary>
     ///
-    /// `None` exactly when the bytes are not strictly-valid UTF-8.
+    /// <returns>
+    /// <c>None</c> exactly when the bytes are not strictly-valid UTF-8.
+    /// </returns>
     ///
-    /// The Darwin flavour happens to admit exactly the names for which this
-    /// is `Some`, but that is a chosen approximation of APFS's rule rather than
+    /// <remarks>
+    /// Our Darwin flavour currently happens to admit exactly the names for which this
+    /// is <c>Some</c>, but that is a chosen approximation of APFS's rule rather than
     /// APFS's rule: real APFS also refuses Unicode noncharacters and over-long
-    /// combining sequences, which this accepts. Do not read a `Some` here as
-    /// "a real Darwin would bind this".
+    /// combining sequences, which this accepts.
+    /// Do not read a <c>Some</c> here as "a real Darwin would bind this".
+    /// </remarks>
     let tryToString (s : UnixByteString) : string option =
         UnixByteStringInternal.tryDecode s.Bytes
 
-    /// A rendering for diagnostics: total, and injective, so two distinct byte
+    /// <summary>
+    /// A rendering for human-readable diagnostics: total, and injective, so two distinct byte
     /// strings never print alike.
+    /// </summary>
     ///
-    /// Strictly-valid UTF-8 runs verbatim; every other byte becomes `\xNN`;
-    /// a literal backslash doubles. Use this rather than `tryToString` in an
-    /// error message: a diagnostic that cannot render the thing it is diagnosing
-    /// is no use, and the bytes that fail to decode are exactly the interesting ones.
+    /// <remarks>
+    /// Strictly-valid UTF-8 runs verbatim; every other byte becomes <c>\xNN</c>;
+    /// a literal backslash doubles. Use this rather than <c>tryToString</c> in
+    /// error messages, because <c>tryToString</c> doesn't render anything for
+    /// non-UTF-8 bytes.
+    /// </remarks>
     let toEscaped (s : UnixByteString) : string = UnixByteStringInternal.escape s.Bytes
 
     /// `assertValid`, naming `operation` as the function and `parameter` as its
@@ -341,10 +380,12 @@ module UnixByteString =
 
         s
 
-    /// Re-check the invariant of a value that may not have come from a constructor,
-    /// throwing `ArgumentException` (with a message containing `context`) if it
-    /// does not hold.
-    ///
+    /// <summary>
+    /// Re-check the invariant of a value that may not have come from a constructor.
+    /// </summary>
+    /// <remarks>
     /// The constructors already ensure the invariant holds, so there is no need to
     /// call this if you know where the value came from. Takes constant time.
+    /// </remarks>
+    /// <exception cref="ArgumentException">Throws if the invariant doesn't hold.</exception>
     let assertValid (context : string) (s : UnixByteString) : UnixByteString = assertValidFor context "s" s

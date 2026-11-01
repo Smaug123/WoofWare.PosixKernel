@@ -71,15 +71,23 @@ type internal RefusalKind =
     /// </remarks>
     /// <param name="parameter">The name of the function parameter whose value is null.</param>
     | Null of parameter : string
-    /// The flavour being simulated has no such call, which the client could
-    /// have checked first. `PlatformNotSupportedException`.
+    /// <summary>
+    /// The user tried to call a syscall which doesn't exist on this platform.
+    /// </summary>
+    /// <remarks>
+    /// We'll surface this to the user as <c>PlatformNotSupportedException</c>.
+    /// </remarks>
+    /// <example>
+    /// Darwin has no <c>setresuid</c>, so can't change the user ID of a process.
+    /// </example>
     | NotOnPlatform
 
 [<RequireQualifiedAccess>]
 module internal Refusal =
 
-    /// The exception a public entry point named `operation` throws for a
-    /// refusal of `kind`, which `description` describes.
+    /// <summary>
+    /// Convert the given <c>RefusalKind</c> to an exception suitable for throwing to the user.
+    /// </summary>
     let exceptionOf (operation : string) (kind : RefusalKind) (description : string) : exn =
         let message = $"%s{operation}: %s{description}"
 
@@ -90,9 +98,9 @@ module internal Refusal =
         | RefusalKind.Null parameter -> System.ArgumentNullException (parameter, message)
         | RefusalKind.NotOnPlatform -> System.PlatformNotSupportedException message
 
-    /// The answer `result` holds, or, for a refusal, the exception
-    /// `exceptionOf` gives for it: what a public entry point named `operation`
-    /// does with what its internal function answered.
+    /// <summary>
+    /// Extract the result from <c>result</c>, or throw the exception corresponding to its error case.
+    /// </summary>
     let orRaise<'Answer, 'Refusal>
         (operation : string)
         (kind : 'Refusal -> RefusalKind)

@@ -92,6 +92,7 @@ type internal StickyRemoval =
 /// By contrast, both modelled Unixes clear <c>S_ISUID</c> and leave the sticky
 /// bit alone during a write from an unprivileged process, so there's no
 /// configuration knob for that behaviour.
+/// <para />
 /// The behaviour is for security purposes: writing to an executable file should
 /// not cause you to be able to run your arbitrary new contents as an impersonated
 /// user.
@@ -111,7 +112,7 @@ type SetGroupIdOnWrite =
     /// This is the case on Linux.
     ///
     /// For example, <c>02644</c> remains <c>02644</c> after an unprivileged write by a member of the
-    /// file's group, and becomes <c>00644</c> after one by anyone else.
+    /// file's group, but becomes <c>00644</c> after an unprivileged write by anyone else.
     /// </example>
     | StripWhenGroupExecutableOrWriterOutsideGroup
     /// <summary>
@@ -121,12 +122,13 @@ type SetGroupIdOnWrite =
     /// <remarks>
     /// On all platforms, <c>S_ISUID</c> already behaves this way.
     ///
-    /// Whether the writer owns the file or is in its group makes no difference.
+    /// On a platform which satisfies <c>StripAlways</c>, it makes no difference if the writer owns the file,
+    /// or is in its group.
     /// </remarks>
     /// <example>
     /// This is the case on Darwin.
     ///
-    /// For example, <c>02644</c> becomes <c>00644</c> after an unprivileged write.
+    /// For example, <c>02644</c> becomes <c>00644</c> after any unprivileged write.
     /// </example>
     | StripAlways
 
@@ -167,10 +169,10 @@ type SetIdBitsOnTruncation =
 /// </summary>
 /// <remarks>
 /// This is <c>st_mode &amp; 0o7777</c>.
-///
+/// <para />
 /// You would feed this to <c>chmod(2)</c>, for example.
-///
-/// Deliberately <i>not</i> the <c>S_IFMT</c> file-type band, which is derived from
+/// <para />
+/// Deliberately <i>not</i> including the <c>S_IFMT</c> file-type band, which is derived from
 /// <c>InodeContent</c> by <c>InodeContent.fileTypeBits</c> instead (because
 /// <c>chmod(2)</c> can't set that).
 /// </remarks>
@@ -189,27 +191,40 @@ type PermissionBits =
         match this with
         | PermissionBits bits -> "0o" + System.Convert.ToString(bits, 8).PadLeft (4, '0')
 
+/// <summary>
 /// What a privileged caller is granted when it asks to execute something that
-/// is not a directory: `X_OK` on a regular file or a symbolic link.
-///
-/// An unprivileged caller's rule is the same on every modelled Unix: it is
-/// refused EACCES unless the triple its standing selects has the execute bit.
+/// is not a directory.
+/// </summary>
+/// <remarks>
+/// This specifies the behaviour of <c>X_OK</c> access checks on a regular file or a symbolic link.
+/// <para />
+/// There's no corresponding configuration for an <i>unprivileged</i> caller,
+/// which is always refused EACCES unless the target has the appropriate execute bit.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type PrivilegedExecution =
-    /// Granted exactly when at least one of the three execute bits is set,
-    /// whichever triple it is in, and whether or not the caller owns the inode
-    /// or is in its group; otherwise refused EACCES.
+    /// <summary>
+    /// The caller is granted exactly when at least one of the three execute bits is set,
+    /// whether or not the caller owns the inode or is in its group.
+    /// Otherwise, it's refused with EACCES.
+    /// </summary>
     ///
-    /// This is Linux.
+    /// <example>
+    /// Linux does this.
+    /// </example>
     | NeedsAnExecuteBit
-    /// On a regular file, granted exactly when at least one of the three
-    /// execute bits is set, whoever owns it, and otherwise refused EPERM
-    /// rather than EACCES. On a symbolic link asked about itself, granted
-    /// whatever its mode. What a privileged caller is granted on a FIFO, a
-    /// socket or a device has not been measured, so a call that asks is refused
-    /// rather than guessed at.
-    ///
-    /// This is Darwin.
+    /// <summary>
+    /// For <i>regular files</i>, the caller is granted exactly when at least
+    /// one of the three execute bits is set, and otherwise is refused with EPERM.
+    /// For <i>symlinks</i>, the caller is granted unconditionally.
+    /// </summary>
+    /// <remarks>
+    /// Behaviour is not yet measured on FIFOs/sockets/devices, so those currently
+    /// throw.
+    /// </remarks>
+    /// <example>
+    /// Darwin does this.
+    /// </example>
     | RegularFileNeedsAnExecuteBit
 
 /// What a caller asks to execute, when it asks `X_OK` of something that is not
@@ -254,22 +269,33 @@ module internal ExecutionRefusal =
         | ExecutionRefusal.UnmeasuredPrivilegedTarget _ -> RefusalKind.Unmodelled
         | ExecutionRefusal.UnmeasuredPrivilegedCombination _ -> RefusalKind.Unmodelled
 
-/// Whether reading a symbolic link's target, `readlink(2)`, consults the
+/// <summary>
+/// Whether reading a symbolic link's target, <c>readlink(2)</c>, consults the
 /// link's own permission bits.
+/// </summary>
 [<RequireQualifiedAccess>]
 type LinkReadRule =
+    /// <summary>
     /// The link's bits are never consulted: a caller that reaches the link
-    /// reads it, whatever its mode, owner and group.
+    /// can read it, whatever its mode, owner and group.
+    /// </summary>
     ///
-    /// This is Linux, where no syscall gives a link any mode but 0777.
+    /// <example>
+    /// Linux behaves this way: every syscall results in symlinks having mode 0777.
+    /// </example>
     | ModeIgnored
-    /// An unprivileged caller is refused unless the triple its standing
-    /// selects has the read bit. A privileged caller reads any link.
-    ///
-    /// This is Darwin.
+    /// <summary>
+    /// An unprivileged caller is refused unless it has the read bit on the symlink.
+    /// A privileged caller can read any link.
+    /// </summary>
+    /// <example>
+    /// Darwin behaves this way.
+    /// </example>
     | ReadBitOfSelectedTriple
 
-/// What `chmod(2)` or `fchmod(2)` does to one inode's mode, for one caller.
+/// <summary>
+/// What <c>chmod(2)</c> or <c>fchmod(2)</c> does to one inode's mode during a single call.
+/// </summary>
 [<RequireQualifiedAccess>]
 type internal ModeChange =
     /// The caller may not change this inode's mode: it neither owns the inode
@@ -561,7 +587,6 @@ module PermissionBits =
     let internal fromCreationMode (modeMask : PermissionBits) (umask : PermissionBits) (mode : int) : PermissionBits =
         mode &&& toInt modeMask &&& ~~~(toInt umask)
         |> parseOrFail "PermissionBits.fromCreationMode"
-
 
     /// <summary>
     /// What <c>chmod(2)</c> or <c>fchmod(2)</c>, asked for the raw mode word <c>mode</c> by a

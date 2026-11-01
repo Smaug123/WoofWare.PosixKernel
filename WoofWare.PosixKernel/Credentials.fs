@@ -1,9 +1,14 @@
 namespace WoofWare.PosixKernel
 
-/// A user ID: a `uid_t` a process can hold.
-///
-/// Every `uint32` except `(uid_t)-1`, which is not an ID but the "leave this
-/// one unchanged" argument of `setresuid(2)` and `chown(2)`.
+/// <summary>
+/// A user ID, as a process would pass as a syscall argument.
+/// </summary>
+/// <remarks>
+/// This is our model of <c>uid_t</c>.
+/// <para />
+/// Every <c>uint32</c> except <c>(uid_t)-1</c>, which is not an ID but the "leave this
+/// unchanged" argument of <c>setresuid(2)</c> and <c>chown(2)</c>.
+/// </remarks>
 [<Struct>]
 type UserId =
     private
@@ -22,23 +27,28 @@ module UserId =
     // process could have held on Linux.
     let private unchanged : uint32 = System.UInt32.MaxValue
 
-    /// The superuser.
+    /// <summary>The superuser's uid.</summary>
     let root : UserId = UserId 0u
 
-    /// The `uid_t` a kernel would report for this ID.
+    /// <summary>
+    /// Convert to a raw <c>uid_t</c>.
+    /// </summary>
     let toUInt32 (uid : UserId) : uint32 =
         match uid with
         | UserId uid -> uid
 
-    /// The user ID `candidate` names, or `None` if it is `(uid_t)-1`.
+    /// <summary>
+    /// The user ID <c>candidate</c> names, or <c>None</c> if it is the "do not change" indicator <c>(uid_t)-1</c>.
+    /// </summary>
     let parse (candidate : uint32) : UserId option =
         if candidate = unchanged then
             None
         else
             Some (UserId candidate)
 
-    /// As `parse`, but throwing `ArgumentException`, with `context` in the
-    /// message, if `candidate` is `(uid_t)-1`.
+    /// <summary>
+    /// As <c>parse</c>, but throwing <c>ArgumentException</c> if the candidate is the "do not change" indicator <c>(uid_t)-1</c>.
+    /// </summary>
     let parseOrFail (context : string) (candidate : uint32) : UserId =
         match parse candidate with
         | Some uid -> uid
@@ -50,10 +60,15 @@ module UserId =
                     $"%d{candidate} is (uid_t)-1, which is not a user ID a process can hold; setresuid(2) and chown(2) read it as \"leave this ID unchanged\"."
             )
 
-/// A group ID: a `gid_t` a process can hold.
-///
-/// Every `uint32` except `(gid_t)-1`, which is not an ID but the "leave this
-/// one unchanged" argument of `setresgid(2)` and `chown(2)`.
+/// <summary>
+/// A group ID, as a process would pass as a syscall argument.
+/// </summary>
+/// <remarks>
+/// This is our model of <c>gid_t</c>.
+/// <para />
+/// Every <c>uint32</c> except <c>(gid_t)-1</c>, which is not an ID but the "leave this
+/// unchanged" argument of <c>setresgid(2)</c> and <c>chown(2)</c>.
+/// </remarks>
 [<Struct>]
 type GroupId =
     private
@@ -70,20 +85,26 @@ module GroupId =
     // as for `UserId`.
     let private unchanged : uint32 = System.UInt32.MaxValue
 
-    /// The `gid_t` a kernel would report for this ID.
+    /// <summary>
+    /// Convert to a raw <c>gid_t</c>.
+    /// </summary>
     let toUInt32 (gid : GroupId) : uint32 =
         match gid with
         | GroupId gid -> gid
 
-    /// The group ID `candidate` names, or `None` if it is `(gid_t)-1`.
+    /// <summary>
+    /// The group ID <c>candidate</c> names, or <c>None</c> if it is <c>(gid_t)-1</c>.
+    /// </summary>
     let parse (candidate : uint32) : GroupId option =
         if candidate = unchanged then
             None
         else
             Some (GroupId candidate)
 
-    /// As `parse`, but throwing `ArgumentException`, with `context` in the
-    /// message, if `candidate` is `(gid_t)-1`.
+    /// <summary>
+    /// As <c>parse</c>, but throwing <c>ArgumentException</c> if the candidate is
+    /// <c>(gid_t)-1</c>.
+    /// </summary>
     let parseOrFail (context : string) (candidate : uint32) : GroupId =
         match parse candidate with
         | Some gid -> gid
@@ -95,13 +116,19 @@ module GroupId =
                     $"%d{candidate} is (gid_t)-1, which is not a group ID a process can hold; setresgid(2) and chown(2) read it as \"leave this ID unchanged\"."
             )
 
+/// <summary>
 /// Who a process is: the IDs a kernel consults when it decides what the
 /// process may do.
-///
-/// The real IDs are who started the process, the effective IDs are who it is
-/// acting as, and the saved IDs are what it may switch its effective IDs back
-/// to. They differ only in a process that was started from a set-user-ID or
-/// set-group-ID executable, or that has changed its IDs since.
+/// </summary>
+/// <remarks>
+/// The real IDs are who started the process.
+/// The effective IDs are who it is acting as (e.g. if you're running a <c>setuid</c> process).
+/// The saved IDs are what it may switch its effective IDs back to with <c>seteuid</c>.
+/// (These are all standard POSIX concepts; see <c>setresuid</c>.)
+/// <para />
+/// Most of the time, all these IDs are the same: they differ only in a process
+/// that was started from a set-user-ID or set-group-ID executable, or that has changed its IDs since.
+/// </remarks>
 type Credentials =
     {
         RealUser : UserId
@@ -110,42 +137,55 @@ type Credentials =
         RealGroup : GroupId
         EffectiveGroup : GroupId
         SavedGroup : GroupId
-        /// On Linux, the groups `setgroups(2)` was given, in the order it was
-        /// given them, duplicates and all. On Darwin, which keeps one list
-        /// whose first group is the effective group, the rest of that list:
-        /// the groups `setgroups(2)` was given after its first, which became
-        /// `EffectiveGroup`.
-        ///
-        /// Not necessarily what `getgroups(2)` reports
-        /// (`UnixCredentials.getgroups`): Linux reports these sorted, and Darwin
-        /// reports the effective group and then these.
+        /// <summary>
+        /// Additional group memberships, with order and duplicates preserved.
+        /// </summary>
+        /// <remarks>
+        /// The effective group is represented separately by <c>EffectiveGroup</c>.
+        /// <para />
+        /// The platforms differ on how <c>getgroups(2)</c> (<c>UnixCredentials.getgroups</c>) presents this list.
+        /// See <c>GroupListReport</c> for the configuration which controls that presentation.
+        /// </remarks>
         SupplementaryGroups : GroupId list
     }
 
-/// Which groups a flavour's `getgroups(2)` reports for a process's credentials,
+/// <summary>
+/// Which groups a flavour's <c>getgroups(2)</c> reports for a process's credentials,
 /// and in what order.
+/// </summary>
 [<RequireQualifiedAccess>]
 type GroupListReport =
+    /// <summary>
     /// The supplementary groups in ascending numeric order, duplicates kept,
     /// and nothing else: the effective group is not added.
-    ///
-    /// This is Linux, which sorts the list when `setgroups(2)` installs it.
+    /// </summary>
+    /// <example>
+    /// Linux does this: it sorts the list when <c>setgroups(2)</c> installs it.
+    /// </example>
     | SortedSupplementaryGroups
-    /// The effective group, then the supplementary groups as they are held,
+    /// <summary>
+    /// The effective group, then the supplementary groups exactly as they were supplied,
     /// duplicates kept.
-    ///
-    /// This is Darwin, which keeps one list whose first group is the
-    /// effective group: `setgroups(2)` installs the list it is given as it
-    /// is, its first group becoming the effective group, and `getgroups(2)`
-    /// reports it unchanged (`30,10,20` as `30,10,20` with effective group 30;
-    /// `7,7,3,7` as given).
+    /// </summary>
+    /// <example>
+    /// Darwin does this: it keeps one list whose first group is the
+    /// effective group. <c>setgroups(2)</c> installs the list it is given as it
+    /// is, its first group becoming the effective group. Then <c>getgroups(2)</c>
+    /// reports it unchanged (so setting <c>30,10,20</c> means <c>getgroups</c>
+    /// reports <c>30,10,20</c> and the effective group becomes <c>30</c>).
+    /// </example>
     | EffectiveGroupThenSupplementaryGroups
 
 [<RequireQualifiedAccess>]
 module Credentials =
+    /// <summary>
     /// The credentials of a process whose real, effective and saved IDs are all
-    /// `user` and `group`, which is every process that has not been started
-    /// set-user-ID or set-group-ID and has not changed its IDs since.
+    /// <c>user</c> and <c>group</c>.
+    /// </summary>
+    /// <remarks>
+    /// This represents a process that has not been started
+    /// set-user-ID or set-group-ID and has not changed its IDs since being started.
+    /// </remarks>
     let ofIds (user : UserId) (group : GroupId) (supplementaryGroups : GroupId list) : Credentials =
         {
             RealUser = user
@@ -157,10 +197,13 @@ module Credentials =
             SupplementaryGroups = supplementaryGroups
         }
 
+    /// <summary>
     /// Whether a process with these credentials is exempt from the permission
     /// rules a kernel applies to everyone else.
-    ///
-    /// Decided by the effective user ID alone: effective uid 0, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Decided by the effective user ID alone: only effective uid 0 has this privilege.
+    /// </remarks>
     let privilege (credentials : Credentials) : CallerPrivilege =
         // Measured on Linux 6.18.5 (`credentials.c`): binding port 80 succeeds with
         // real 1000 / effective 0 / saved 1000, and is EACCES with real 0 /
@@ -179,23 +222,31 @@ module Credentials =
         else
             CallerPrivilege.Unprivileged
 
-    /// Whether a process with these credentials is in `group`: it is the
+    /// <summary>
+    /// Whether a process with these credentials is in <c>group</c>: it is the
     /// effective group, or one of the supplementary groups.
-    ///
+    /// </summary>
+    /// <remarks>
     /// The real and saved groups play no part.
+    /// </remarks>
     let isInGroup (credentials : Credentials) (group : GroupId) : bool =
         group = credentials.EffectiveGroup
         || List.contains group credentials.SupplementaryGroups
 
-    /// These credentials with the real user and group standing in for the
-    /// effective ones: who `access(2)` checks a path as, at every step of the
+    /// <summary>
+    /// Returns the same credentials but with the effective user/group set
+    /// to the current real ones.
+    /// </summary>
+    /// <remarks>
+    /// This is who <c>access(2)</c> checks a path as, at every step of the
     /// walk and at the inode it reaches.
     ///
     /// Everything else is kept, so privilege and group membership are still
-    /// decided as for any credentials (see `Credentials.privilege`), from
+    /// decided as for any credentials (see <c>Credentials.privilege</c>), from
     /// the substituted IDs: a real uid of 0 is privileged here whatever
     /// the effective uid, and the supplementary groups count as they always
     /// do.
+    /// </remarks>
     let realIdsAsEffective (credentials : Credentials) : Credentials =
         // Measured on Linux 6.18.5 (`access-rules.c`): over all 4096 modes on
         // a file and a directory and every R_OK/W_OK/X_OK combination, with
@@ -211,8 +262,10 @@ module Credentials =
             EffectiveGroup = credentials.RealGroup
         }
 
-    /// The groups `getgroups(2)` reports for a process with these credentials,
-    /// under `report`.
+    /// <summary>
+    /// The groups <c>getgroups(2)</c> reports for a process with these credentials,
+    /// under <c>report</c>.
+    /// </summary>
     let internal reportedGroups (report : GroupListReport) (credentials : Credentials) : GroupId list =
         match report with
         | GroupListReport.SortedSupplementaryGroups ->

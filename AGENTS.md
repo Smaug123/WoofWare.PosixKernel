@@ -1,11 +1,12 @@
 # WoofWare.PosixKernel
 
-WoofWare.PosixKernel is a deterministic, purely functional simulation of a POSIX process, written in F# and published as a NuGet package.
+WoofWare.PosixKernel is a deterministic, purely functional simulation of a POSIX process, written in F#.
 The simulated kernel is a state machine: each syscall is a pure function from one state to an answer and the next state.
 It performs no I/O and makes no host reads, so two runs from the same starting state see the same world on any machine.
 
-Its first client is [WoofWare.PawPrint](https://github.com/Smaug123/WoofWare.PawPrint), a deterministic .NET runtime, whose repository it was developed in until it moved here with its history.
-The library must not depend on that client, or on any other; see "Speaking POSIX, not a client's language" below.
+Its first client is [WoofWare.PawPrint](https://github.com/Smaug123/WoofWare.PawPrint), a deterministic .NET runtime.
+
+The library has no NuGet dependencies.
 
 `WoofWare.PosixKernel/README.md` is the client-facing account of the library (and the package's README on nuget.org).
 Read it before changing the public API, and change it with the API: `TestReadme` holds it to the code.
@@ -26,7 +27,7 @@ A syscall that would block parks its thread and answers a `WakeCondition` (`Wake
 
 ## Commands
 
-The Nix devshell provides the pinned .NET SDK and everything the tests and checks start (a C compiler, `python3`, `alejandra`). Run `dotnet` as `nix develop -c dotnet ...`, never bare.
+Use the Nix devshell: e.g. run `dotnet` as `nix develop -c dotnet ...`, never bare.
 
 - Build: `nix develop -c dotnet build`
 - Test: `nix develop -c dotnet test WoofWare.PosixKernel.Test/WoofWare.PosixKernel.Test.fsproj`
@@ -36,7 +37,7 @@ The Nix devshell provides the pinned .NET SDK and everything the tests and check
 - Flake checks (the prose and docstring checks below, and the skipped-tests check's contract): `nix flake check`
 - Pack: `nix develop -c dotnet pack --configuration Release`, which writes `WoofWare.PosixKernel/bin/Release/WoofWare.PosixKernel.<version>.nupkg`.
 
-The solution file is `WoofWare.PosixKernel.slnx`. The build treats warnings as errors and is deterministic.
+The solution file is `WoofWare.PosixKernel.slnx`.
 
 ### Tests worth knowing about
 
@@ -53,9 +54,6 @@ The solution file is `WoofWare.PosixKernel.slnx`. The build treats warnings as e
 
 ## Speaking POSIX, not a client's language
 
-The library is meant to be usable by a client that has never heard of .NET or of PawPrint.
-
-- **It must not depend on a client assembly.** `TestNoPawPrintReference` asserts mechanically that it references no WoofWare.PawPrint assembly.
 - **Its prose uses POSIX terminology.** `scripts/check-client-references.py`, the `client-references` flake check, fails if any library `.fs` line (code, docstring, comment or string) names CoreCLR, CoreLib, the shim, `SystemNative_*`, the BCL or the PAL, or calls the process a "guest". `scripts/test-client-references.sh` is the checker's contract, and the flake check runs it first.
 - **It states POSIX values and no client's encoding of them**: a raw `<errno.h>` number in each flavour's own numbering, epoll's own readiness conditions, the sockets it will create, a signo, an `open(2)` flag word. Converting those to and from a client's encoding is the client's business, in the client's repository. Read the prose when you add or move something: a POSIX-named declaration documented in a client's terms is how such an encoding comes back, and no check can see that.
 - **A fact the process could learn about its platform is data in the simulated kernel, never a host read.** The library must not call `System.Environment`, `DateTime.Now`, `Guid.NewGuid`, the filesystem, or anything else whose answer depends on the machine running it: a replay would then depend on the machine that produced it. `SimulatedUnixPlatform` holds what is true of a kernel's source (the same on every machine running it); boot-time and per-process configuration holds what a different administrator could change. The `emulated-posix-kernel` skill says how to tell them apart.

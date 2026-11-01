@@ -12,7 +12,13 @@ namespace WoofWare.PosixKernel
 /// </remarks>
 [<RequireQualifiedAccess>]
 type RawErrnoNumbering =
+    /// <summary>
+    /// <c>&lt;errno.h&gt;</c> is derived from Linux.
+    /// </summary>
     | Linux
+    /// <summary>
+    /// <c>&lt;errno.h&gt;</c> is derived from Darwin.
+    /// </summary>
     | Darwin
 
 /// <summary>
@@ -43,13 +49,23 @@ type RawErrnoPortability =
     /// raw 62 is <c>ELOOP</c> on Darwin but <c>ETIME</c> on Linux.
     /// </example>
     | PlatformDependent of linux : int * darwin : int
-    /// This error exists only on Linux: Darwin's `<errno.h>` has no name for
-    /// it, and the number is either unassigned there or a different error.
-    /// `ENOKEY` is one.
+    /// <summary>This error exists only on Linux.</summary>
+    /// <remarks>
+    /// That is, Darwin's <c>&lt;errno.h&gt;</c> has no name for this error,
+    /// so this number is either a different error on Darwin or completely unassigned.
+    /// </remarks>
+    /// <example>
+    /// <c>ENOKEY</c>: Linux has <c>keyctl(2)</c> but Darwin does not, so Darwin doesn't have that error.
+    /// </example>
     | LinuxOnly of linux : int
-    /// This error exists only on Darwin: Linux's `<errno.h>` has no name for
-    /// it, and the number is either unassigned there or a different error.
-    /// `EAUTH` is one.
+    /// <summary>This error exists only on Darwin.</summary>
+    /// <remarks>
+    /// That is, Linux's <c>&lt;errno.h&gt;</c> has no name for this error,
+    /// so this number is either a different error on Linux or completely unassigned.
+    /// </remarks>
+    /// <example>
+    /// <c>EAUTH</c> is a BSD-flavoured errno which Linux doesn't have but Darwin does.
+    /// </example>
     | DarwinOnly of darwin : int
 
 /// <summary>
@@ -60,10 +76,11 @@ type RawErrnoPortability =
 /// However, those ints are not portable across the simulated platforms, so we also provide this separate
 /// semantic layer.
 /// Call <c>UnixError.toRawErrnoUnder</c> to get an integer out directly for a given platform, or
-/// <c>UnixError.rawNumbering</c> to get a representation which can be interpreted on any platform.
+/// <c>UnixError.rawNumbering</c> if you don't yet know the platform.
 ///
-/// There is a case for every error either modelled Unix's <c>&lt;errno.h&gt;</c> names, including those only one of them has
-/// (such as Linux's <c>ENOKEY</c> and Darwin's <c>EAUTH</c>).
+/// There is a case for every error which appears in either of our flavours' <c>&lt;errno.h&gt;</c>, including
+/// those only one of them has (such as Linux's <c>ENOKEY</c> or Darwin's <c>EAUTH</c>).
+///
 /// A second spelling of the same error, like <c>EWOULDBLOCK</c> for <c>EAGAIN</c>, has no case of its own.
 /// </remarks>
 [<RequireQualifiedAccess>]
@@ -211,8 +228,8 @@ type UnixError =
     /// Too many levels of symbolic links.
     /// </summary>
     /// <example>
-    /// Reported when a path resolution traverses
-    /// more symlinks than any of our modelled Unixes would allow.
+    /// Reported when resolving a path would exceed the modelled Unix's limit
+    /// on symlink traversals.
     /// </example>
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
@@ -276,8 +293,8 @@ type UnixError =
     /// Illegal byte sequence.
     /// </summary>
     /// <example>
-    /// Darwin answers this for binding a name that APFS will not hold: a creating <c>open</c>,
-    /// <c>mkdir</c> or <c>rename</c> whose final name is not valid UTF-8. Linux binds such a name.
+    /// Darwin answers this instead of binding a filename that APFS will not hold: e.g. a creating <c>open</c>,
+    /// <c>mkdir</c> or <c>rename</c> whose final name is not valid UTF-8. (Linux successfully binds such a name.)
     /// </example>
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
@@ -313,7 +330,8 @@ type UnixError =
     /// </summary>
     /// <example>
     /// Reported by Linux's <c>socket(2)</c> for a type the address family has no protocol for, such as
-    /// <c>SOCK_RDM</c> under <c>AF_INET</c>. Darwin answers <c>EPROTONOSUPPORT</c> or <c>EPROTOTYPE</c> there instead.
+    /// <c>SOCK_RDM</c> under <c>AF_INET</c>.
+    /// (Darwin answers <c>EPROTONOSUPPORT</c> or <c>EPROTOTYPE</c> there instead.)
     /// </example>
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
@@ -421,175 +439,495 @@ type UnixError =
     /// Linux numbers it 111; Darwin numbers it 61.
     /// </remarks>
     | ECONNREFUSED
-    /// Not supported. Darwin numbers this 45 and `EOPNOTSUPP` 102: `flock` on a
-    /// socket, a pipe or a kqueue answers this one. Linux gives both the one
-    /// number, 95.
+    /// <summary>
+    /// Not supported.
+    /// </summary>
+    /// <example>
+    /// On Darwin, <c>flock</c> on a socket, a pipe, or a kqueue returns this error.
+    /// </example>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 95; Darwin numbers it 45.
+    /// </remarks>
     | ENOTSUP
-    /// The socket is not connected. Linux 107, Darwin 57.
+    /// <summary>The socket is not connected.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 107; Darwin numbers it 57.
+    /// </remarks>
     | ENOTCONN
-    /// Connection timed out. Linux 110, Darwin 60.
+    /// <summary>Connection timed out.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 110; Darwin numbers it 60.
+    /// </remarks>
     | ETIMEDOUT
-    /// Connection reset by peer. Linux 104, Darwin 54.
+    /// <summary>Connection reset by peer.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 104; Darwin numbers it 54.
+    /// </remarks>
     | ECONNRESET
-    /// Message too long. Linux 90, Darwin 40 -- which is `ELOOP` on Linux.
+    /// <summary>Message too long.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 90; Darwin numbers it 40.
+    /// </remarks>
     | EMSGSIZE
-    /// Function not implemented. Linux 38 -- which is `ENOTSOCK` on Darwin --
-    /// and Darwin 78.
+    /// <summary>Function not implemented.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 38; Darwin numbers it 78.
+    /// </remarks>
     | ENOSYS
-    /// Resource deadlock would occur. The V7 transposition with `EAGAIN`:
-    /// Linux 35, Darwin 11. Linux's `EDEADLOCK` is another name for it.
+    /// <summary>Resource deadlock would occur.</summary>
+    /// <remarks>
+    /// On Linux, <c>EDEADLOCK</c> is another name for this.
+    ///
+    /// This is the only errno in the range 1-34 which differs between Linux and Darwin
+    /// (it was transposed with <c>EAGAIN</c>).
+    ///
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 35; Darwin numbers it 11.
+    /// </remarks>
     | EDEADLK
-    /// No locks available. Linux 37, Darwin 77.
+    /// <summary>No locks available.</summary>
+    /// <remarks>
+    /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 37; Darwin numbers it 77.
+    /// </remarks>
     | ENOLCK
+    /// <summary>
     /// Block device required.
+    /// </summary>
     | ENOTBLK
+    /// <summary>
     /// No message of desired type.
+    /// </summary>
     | ENOMSG
+    /// <summary>
     /// Identifier removed.
+    /// </summary>
     | EIDRM
+    /// <summary>
     /// Device not a stream.
+    /// </summary>
     | ENOSTR
+    /// <summary>
     /// No data available.
+    /// </summary>
     | ENODATA
+    /// <summary>
     /// Timer expired.
+    /// </summary>
     | ETIME
+    /// <summary>
     /// Out of streams resources.
+    /// </summary>
     | ENOSR
+    /// <summary>
     /// Object is remote.
+    /// </summary>
     | EREMOTE
+    /// <summary>
     /// Link has been severed.
+    /// </summary>
     | ENOLINK
+    /// <summary>
     /// Protocol error.
+    /// </summary>
     | EPROTO
+    /// <summary>
     /// Multihop attempted.
+    /// </summary>
     | EMULTIHOP
+    /// <summary>
     /// Bad message.
+    /// </summary>
     | EBADMSG
+    /// <summary>
     /// Too many users.
+    /// </summary>
     | EUSERS
+    /// <summary>
     /// Destination address required.
+    /// </summary>
     | EDESTADDRREQ
+    /// <summary>
     /// Protocol not available.
+    /// </summary>
     | ENOPROTOOPT
+    /// <summary>
     /// Protocol family not supported.
+    /// </summary>
     | EPFNOSUPPORT
+    /// <summary>
     /// Network is down.
+    /// </summary>
     | ENETDOWN
+    /// <summary>
     /// Network is unreachable.
+    /// </summary>
     | ENETUNREACH
+    /// <summary>
     /// Network dropped connection on reset.
+    /// </summary>
     | ENETRESET
+    /// <summary>
     /// Software caused connection abort.
+    /// </summary>
     | ECONNABORTED
+    /// <summary>
     /// No buffer space available.
+    /// </summary>
     | ENOBUFS
+    /// <summary>
     /// Cannot send after transport endpoint shutdown.
+    /// </summary>
     | ESHUTDOWN
+    /// <summary>
     /// Too many references: cannot splice.
+    /// </summary>
     | ETOOMANYREFS
+    /// <summary>
     /// Host is down.
+    /// </summary>
     | EHOSTDOWN
+    /// <summary>
     /// No route to host.
+    /// </summary>
     | EHOSTUNREACH
+    /// <summary>
     /// Operation already in progress.
+    /// </summary>
     | EALREADY
+    /// <summary>
     /// Stale file handle.
+    /// </summary>
     | ESTALE
+    /// <summary>
     /// Disk quota exceeded.
+    /// </summary>
     | EDQUOT
+    /// <summary>
     /// Operation canceled.
+    /// </summary>
     | ECANCELED
+    /// <summary>
     /// Owner died.
+    /// </summary>
     | EOWNERDEAD
+    /// <summary>
     /// State not recoverable.
+    /// </summary>
     | ENOTRECOVERABLE
-    /// Channel number out of range. Linux only.
+    /// <summary>
+    /// Channel number out of range.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ECHRNG
-    /// Level 2 not synchronized. Linux only.
+    /// <summary>
+    /// Level 2 not synchronized.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EL2NSYNC
-    /// Level 3 halted. Linux only.
+    /// <summary>
+    /// Level 3 halted.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EL3HLT
-    /// Level 3 reset. Linux only.
+    /// <summary>
+    /// Level 3 reset.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EL3RST
-    /// Link number out of range. Linux only.
+    /// <summary>
+    /// Link number out of range.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELNRNG
-    /// Protocol driver not attached. Linux only.
+    /// <summary>
+    /// Protocol driver not attached.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EUNATCH
-    /// No CSI structure available. Linux only.
+    /// <summary>
+    /// No CSI structure available.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOCSI
-    /// Level 2 halted. Linux only.
+    /// <summary>
+    /// Level 2 halted.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EL2HLT
-    /// Invalid exchange. Linux only.
+    /// <summary>
+    /// Invalid exchange.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBADE
-    /// Invalid request descriptor. Linux only.
+    /// <summary>
+    /// Invalid request descriptor.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBADR
-    /// Exchange full. Linux only.
+    /// <summary>
+    /// Exchange full.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EXFULL
-    /// No anode. Linux only.
+    /// <summary>
+    /// No anode.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOANO
-    /// Invalid request code. Linux only.
+    /// <summary>
+    /// Invalid request code.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBADRQC
-    /// Invalid slot. Linux only.
+    /// <summary>
+    /// Invalid slot.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBADSLT
-    /// Bad font file format. Linux only.
+    /// <summary>
+    /// Bad font file format.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBFONT
-    /// Machine is not on the network. Linux only.
+    /// <summary>
+    /// Machine is not on the network.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENONET
-    /// Package not installed. Linux only.
+    /// <summary>
+    /// Package not installed.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOPKG
-    /// Advertise error. Linux only.
+    /// <summary>
+    /// Advertise error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EADV
-    /// Srmount error. Linux only.
+    /// <summary>
+    /// Srmount error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ESRMNT
-    /// Communication error on send. Linux only.
+    /// <summary>
+    /// Communication error on send.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ECOMM
-    /// RFS specific error. Linux only.
+    /// <summary>
+    /// RFS specific error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EDOTDOT
-    /// Name not unique on network. Linux only.
+    /// <summary>
+    /// Name not unique on network.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOTUNIQ
-    /// File descriptor in bad state. Linux only.
+    /// <summary>
+    /// File descriptor in bad state.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EBADFD
-    /// Remote address changed. Linux only.
+    /// <summary>
+    /// Remote address changed.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EREMCHG
-    /// Can not access a needed shared library. Linux only.
+    /// <summary>
+    /// Can not access a needed shared library.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELIBACC
-    /// Accessing a corrupted shared library. Linux only.
+    /// <summary>
+    /// Accessing a corrupted shared library.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELIBBAD
-    /// .lib section in a.out corrupted. Linux only.
+    /// <summary>
+    /// .lib section in a.out corrupted.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELIBSCN
-    /// Attempting to link in too many shared libraries. Linux only.
+    /// <summary>
+    /// Attempting to link in too many shared libraries.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELIBMAX
-    /// Cannot exec a shared library directly. Linux only.
+    /// <summary>
+    /// Cannot exec a shared library directly.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ELIBEXEC
-    /// Interrupted system call should be restarted. Linux only.
+    /// <summary>
+    /// Interrupted system call should be restarted.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ERESTART
-    /// Streams pipe error. Linux only.
+    /// <summary>
+    /// Streams pipe error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ESTRPIPE
-    /// Structure needs cleaning. Linux only.
+    /// <summary>
+    /// Structure needs cleaning.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EUCLEAN
-    /// Not a XENIX named type file. Linux only.
+    /// <summary>
+    /// Not a XENIX named type file.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOTNAM
-    /// No XENIX semaphores available. Linux only.
+    /// <summary>
+    /// No XENIX semaphores available.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENAVAIL
-    /// Is a named type file. Linux only.
+    /// <summary>
+    /// Is a named type file.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EISNAM
-    /// Remote I/O error. Linux only.
+    /// <summary>
+    /// Remote I/O error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EREMOTEIO
-    /// No medium found. Linux only.
+    /// <summary>
+    /// No medium found.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOMEDIUM
-    /// Wrong medium type. Linux only.
+    /// <summary>
+    /// Wrong medium type.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EMEDIUMTYPE
-    /// Required key not available. Linux only.
+    /// <summary>
+    /// Required key not available.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ENOKEY
-    /// Key has expired. Linux only.
+    /// <summary>
+    /// Key has expired.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EKEYEXPIRED
-    /// Key has been revoked. Linux only.
+    /// <summary>
+    /// Key has been revoked.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EKEYREVOKED
-    /// Key was rejected by service. Linux only.
+    /// <summary>
+    /// Key was rejected by service.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EKEYREJECTED
-    /// Operation not possible due to RF-kill. Linux only.
+    /// <summary>
+    /// Operation not possible due to RF-kill.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | ERFKILL
-    /// Memory page has hardware error. Linux only.
+    /// <summary>
+    /// Memory page has hardware error.
+    /// </summary>
+    /// <remarks>
+    /// This is Linux-only.
+    /// </remarks>
     | EHWPOISON
     /// Too many processes. Darwin only.
     | EPROCLIM
@@ -630,9 +968,10 @@ type UnixError =
     /// Capabilities insufficient. Darwin only.
     | ENOTCAPABLE
 
-    /// The error's name as `<errno.h>` spells it, such as "EACCES".
+    /// <summary>The error's name as <c>&lt;errno.h&gt;</c> spells it.</summary>
+    /// <example><c>"EACCES"</c></example>
     override this.ToString () : string =
-        // F#'s generated ToString reflects over every case on each call.
+        // F#'s generated ToString reflects over every case on each call, so we do this manually.
         match this with
         | UnixError.EPERM -> "EPERM"
         | UnixError.ENOENT -> "ENOENT"
@@ -1148,8 +1487,13 @@ module UnixError =
         | UnixError.EQFULL -> darwinOnly 106
         | UnixError.ENOTCAPABLE -> darwinOnly 107
 
-    /// The raw `<errno.h>` number for this error on the chosen platform, or
-    /// `None` if that platform has no such error (`ENOKEY` under Darwin, say).
+    /// <summary>
+    /// The raw <c>&lt;errno.h&gt;</c> number for this error on the chosen platform.
+    /// </summary>
+    /// <returns><c>None</c> if the given platform has no such error.</returns>
+    /// <example>
+    /// <c>ENOKEY</c> doesn't exist on Darwin, so you get <c>None</c> there.
+    /// </example>
     let tryToRawErrnoUnder (reporting : RawErrnoNumbering) (error : UnixError) : int option =
         match rawNumbering error, reporting with
         | RawErrnoPortability.Portable value, _ -> Some value
@@ -1164,8 +1508,8 @@ module UnixError =
     /// The raw <c>&lt;errno.h&gt;</c> integer for this error on the chosen platform.
     /// </summary>
     /// <remarks>
-    /// Throws for an error the chosen platform does not have, such as <c>ENOKEY</c> under Darwin:
-    /// no number is right for it there. <c>tryToRawErrnoUnder</c> answers <c>None</c> instead.
+    /// Throws for an error the chosen platform does not have, such as <c>ENOKEY</c> under Darwin.
+    /// Use <c>tryToRawErrnoUnder</c> to get <c>None</c> instead.
     /// </remarks>
     /// <exception cref="T:System.ArgumentException">The chosen platform does not have <c>error</c>.</exception>
     let toRawErrnoUnder (reporting : RawErrnoNumbering) (error : UnixError) : int =
@@ -1188,7 +1532,7 @@ module UnixError =
     /// The number 11 is <c>EAGAIN</c> on Linux but <c>EDEADLK</c> on Darwin, so is not portable.
     /// </example>
     /// <remarks>
-    /// These are exactly the numbers <c>ofRawErrno</c> converts.
+    /// These are exactly the numbers <c>ofRawErrnoPortable</c> converts.
     /// </remarks>
     let isPortableRawErrno (raw : int) : bool = raw >= 1 && raw <= 34 && raw <> 11
 
@@ -1204,11 +1548,12 @@ module UnixError =
     /// Convert a portable raw integer errno to a structured error.
     /// </summary>
     /// <remarks>
-    /// This returns <c>None</c> for non-portable errnos, and for numbers no modelled Unix names an error for.
+    /// This returns <c>None</c> for non-portable errnos, and for numbers which aren't named under any
+    /// modelled Unix.
     ///
     /// Use <c>ofRawErrnoUnder</c> to convert an errno if you already know the platform you're simulating.
     /// </remarks>
-    let ofRawErrno (raw : int) : UnixError option =
+    let ofRawErrnoPortable (raw : int) : UnixError option =
         all
         |> List.tryFind (fun error ->
             match rawNumbering error with
@@ -1218,10 +1563,19 @@ module UnixError =
             | RawErrnoPortability.DarwinOnly _ -> false
         )
 
-    // Linux gives ENOTSUP and EOPNOTSUPP one number, 95, and the kernel's own
-    // name for it is EOPNOTSUPP: its headers define no ENOTSUP, which glibc's
-    // <errno.h> adds as a synonym. So under Linux the number decodes as
-    // EOPNOTSUPP, and ENOTSUP is only ever encoded.
+    /// <summary>
+    /// Whether this error decodes on the platform.
+    /// </summary>
+    /// <param name="reporting">The flavour of platform we're decoding the error for.</param>
+    /// <param name="error">An error which may or may not be valid for this platform.</param>
+    /// <example>
+    /// Linux gives ENOTSUP and EOPNOTSUPP one number, 95, and the kernel's own
+    /// name for it is EOPNOTSUPP: its headers don't define ENOTSUP, and glibc's
+    /// <c>&lt;errno.h&gt;</c> adds as a synonym. So under Linux the number decodes as
+    /// EOPNOTSUPP, and ENOTSUP is only ever encoded.
+    ///
+    /// So this function returns <c>false</c> for ENOTSUP.
+    /// </example>
     let private decodesUnder (reporting : RawErrnoNumbering) (error : UnixError) : bool =
         match reporting, error with
         | RawErrnoNumbering.Linux, UnixError.ENOTSUP -> false
@@ -1252,7 +1606,7 @@ module UnixError =
     /// Convert a raw integer errno to a structured error on the specified platform.
     /// </summary>
     /// <remarks>
-    /// Unlike <c>ofRawErrno</c>, this returns values for platform-dependent entries too.
+    /// Unlike <c>ofRawErrnoPortable</c>, this returns values for platform-dependent entries too.
     /// It returns <c>None</c> exactly for a number that platform's <c>&lt;errno.h&gt;</c> names no error for.
     /// Where a platform gives two errors one number, one of them is answered:
     /// Linux's 95 is <c>EOPNOTSUPP</c>, never <c>ENOTSUP</c>.

@@ -1,14 +1,12 @@
 namespace WoofWare.PosixKernel
 
-open System.Collections.Immutable
-
 /// <summary>
 /// Identity of a file within the emulated filesystem.
 /// </summary>
 /// <remarks>
 /// This is the <c>st_ino</c> a process reads back from <c>stat</c>.
 ///
-/// The exact values are observable: a program commonly decides whether two
+/// The exact values are observable by the emulated process: a program commonly decides whether two
 /// paths name the same file by comparing their device and inode numbers as
 /// integers.
 /// </remarks>
@@ -52,8 +50,8 @@ type InodeTimes =
         /// <c>st_birthtim</c>: when the inode was created.
         /// </summary>
         /// <remarks>
-        /// Moves after creation only where Darwin's <c>utimensat</c> sets a
-        /// modification time earlier than it, which pulls it back; see
+        /// After creation, this moves only when Darwin's <c>utimensat</c> sets a
+        /// modification time earlier than the current birth time, in which case it moves backwards; see
         /// <c>UnixPathResolution.utimensat</c>.
         /// </remarks>
         Birth : UnixTimestamp
@@ -62,7 +60,7 @@ type InodeTimes =
 [<RequireQualifiedAccess>]
 module internal InodeTimes =
     /// <summary>
-    /// The timing metadata of a freshly-created inode has.
+    /// The timing metadata of a freshly-created inode.
     /// </summary>
     /// <remarks>
     /// All four timestamps are equal, because creation is simultaneously its birth,
@@ -81,7 +79,7 @@ module internal InodeTimes =
     /// </summary>
     /// <remarks>
     /// <c>mtime</c> and <c>ctime</c> both move,
-    /// because changing what a file or directory holds also changes the inode
+    /// because changing what's in a file or directory also changes the inode
     /// that describes it.
     /// <c>atime</c> and <c>birth</c> do not move.
     /// </remarks>
@@ -92,13 +90,14 @@ module internal InodeTimes =
         }
 
     /// <summary>
-    /// Record a change to the inode itself, its contents untouched.
+    /// Set the status-change time to <c>now</c>.
     /// </summary>
     /// <remarks>
-    /// <c>ctime</c> moves, and nothing else does.
+    /// There may be platform-specific logic required to compute which timestamps need
+    /// to be updated in response to any given syscall; this function doesn't do that.
     /// </remarks>
     /// <example>
-    /// This is the timestamp change that happens when the inode gains or loses a link does,
+    /// This is the timestamp change that happens when the inode gains or loses a link,
     /// since a link count lives on the inode rather than in what the inode holds.
     /// </example>
     let statusChangedAt (now : UnixTimestamp) (times : InodeTimes) : InodeTimes =
@@ -142,44 +141,58 @@ type DirectoryContent =
         Permissions : PermissionBits
     }
 
-/// The number a device node holds, which is all a node holds of the device it
-/// stands for: `open(2)` looks the driver up by it, and `stat(2)` reports it as
-/// `st_rdev`, in the flavour's own encoding of the pair.
+/// <summary>
+/// The number a device node holds.
+/// </summary>
+/// <example>
+/// This is what <c>open(2)</c> uses to look up a driver, and what <c>stat(2)</c> reports
+/// as <c>st_rdev</c>.
+/// </example>
 [<Struct>]
 type DeviceNumber =
     | DeviceNumber of major : uint32 * minor : uint32
 
-    /// The pair as `major:minor`.
+    /// <summary>The pair as <c>major:minor</c></summary>.
     override this.ToString () : string =
         match this with
         | DeviceNumber (major, minor) -> $"%d{major}:%d{minor}"
 
-/// A character device this kernel has, or may one day have, a driver for.
-/// `CharacterDevice.all` lists the ones it has a driver for, which are the ones
-/// a node can be opened as.
+/// <summary>
+/// A well-known character device.
+/// </summary>
+/// <remarks>
+/// Not all of these are necessarily implemented yet; see <c>CharacterDevice.all</c> for the implemented ones.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type CharacterDevice =
-    /// `/dev/null`.
+    /// <summary>
+    /// <c>/dev/null</c>.
+    /// </summary>
     | Null
-    /// `/dev/urandom`.
+    /// <summary>
+    /// <c>/dev/urandom</c>.
+    /// </summary>
     | URandom
-    /// `/dev/zero`.
-    ///
-    /// Nothing in this version produces it: this kernel has no driver for it,
-    /// so a node holding its number, `/dev/zero` among them, is listed and
-    /// reported but cannot be opened.
+    /// <summary>
+    /// <c>/dev/zero</c>.
+    /// </summary>
+    /// <remarks>
+    /// Not yet implemented.
+    /// </remarks>
     | Zero
-    /// `/dev/random`.
-    ///
-    /// Nothing in this version produces it: this kernel has no driver for it,
-    /// so a node holding its number, `/dev/random` among them, is listed and
-    /// reported but cannot be opened.
+    /// <summary>
+    /// <c>/dev/random</c>.
+    /// </summary>
+    /// <remarks>
+    /// Not yet implemented.
+    /// </remarks>
     | Random
-    /// `/dev/tty`: the calling process's controlling terminal.
-    ///
-    /// Nothing in this version produces it: this kernel has no driver for it,
-    /// so a node holding its number, which a configuration may give `/dev`,
-    /// is listed and reported but cannot be opened.
+    /// <summary>
+    /// <c>/dev/tty</c>: the calling process's controlling terminal.
+    /// </summary>
+    /// <remarks>
+    /// Not yet implemented.
+    /// </remarks>
     | Tty
 
 /// <summary>
@@ -193,51 +206,61 @@ type CharacterDevice =
 /// a directory binds a name under exactly the bytes it was created with.
 /// On Linux, a lookup reaches only the entry bound under exactly the bytes looked up.
 /// On Darwin, as on APFS, a lookup reaches the entry bound under any canonically
-/// equivalent Unicode spelling of them; this library holds no Unicode tables, so
-/// a call whose answer that equivalence could change throws <c>UnmodelledException</c>.
+/// equivalent Unicode spelling of them; but this library doesn't hold any Unicode tables, so
+/// a call which would rely on that equivalence throws <c>UnmodelledException</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type InodeContent =
     | RegularFile of contents : FileContents * permissions : PermissionBits
     | Directory of directory : DirectoryContent
     /// <summary>
-    /// The link's target, unresolved, and the link's own permission bits.
+    /// The link's target (unresolved), and the link's own permission bits.
     /// </summary>
     /// <remarks>
     /// The kernel treats a symlink's target as a string to be re-resolved
     /// on every traversal; it's not a reference to whatever it pointed at
     /// when it was made.
     ///
-    /// The permission bits are what the link was created with, which is a rule of
-    /// the flavour. Linux's are
+    /// The permission bits are what the link was created with, which depends
+    /// on the flavour. Linux's are
     /// always <c>0o777</c>; Darwin's depend on the creating process's umask.
     /// </remarks>
     | Symlink of target : SymlinkTarget * permissions : PermissionBits
-    /// A character special file: what `stat(2)` reports as `S_IFCHR`, standing
-    /// for the device `number` names rather than holding any contents of its
-    /// own. Opening it reaches the driver registered for that number, if this
+    /// <summary>
+    /// A character special file: what <c>stat(2)</c> reports as <c>S_IFCHR</c>.
+    /// </summary>
+    /// <remarks>
+    /// This inode stands for the device <c>number</c> names, rather than holding
+    /// any contents of its own.
+    /// Opening it reaches the driver registered for that number, if this
     /// kernel has one.
+    /// </remarks>
     | CharacterDevice of number : DeviceNumber * permissions : PermissionBits
-    /// A socket special file: what `stat(2)` reports as `S_IFSOCK`, which a
-    /// pathname `bind(2)` of a Unix-domain socket makes.
-    ///
-    /// Nothing in this version makes one: `mknodat` of `S_IFSOCK` is refused,
-    /// and so is a Unix-domain `bind`.
+    /// <summary>
+    /// A socket special file: what <c>stat(2)</c> reports as <c>S_IFSOCK</c>.
+    /// </summary>
+    /// <example>
+    /// Created, for example, by a `bind(2)` of a Unix-domain socket.
+    /// </example>
     | Socket of permissions : PermissionBits
-    /// A FIFO special file, or named pipe: what `stat(2)` reports as
-    /// `S_IFIFO`, which `mkfifo` or `mknod(2)` of `S_IFIFO` makes.
-    ///
+    /// <summary>
+    /// A FIFO special file, or named pipe: what <c>stat(2)</c> reports as
+    /// <c>S_IFIFO</c>.
+    /// </summary>
+    /// <example>
+    /// Created, for example, by <c>mkfifo</c> or <c>mknod(2)</c> of <c>S_IFIFO</c>.
+    /// </example>
+    /// <remarks>
     /// The bytes in transit are not part of the content: they live only while
     /// some end of the FIFO is open, and go at the last close.
-    ///
-    /// Nothing in this version makes one: `mknodat` of `S_IFIFO` is refused.
+    /// </remarks>
     | Fifo of permissions : PermissionBits
 
 [<RequireQualifiedAccess>]
 module InodeContent =
     /// <summary>
-    /// The <c>S_IFMT</c> band of <c>st_mode</c>, indicating which kind of thing (directory, regular file, symlink, character device,
-    /// socket, FIFO) lives at an inode.
+    /// The <c>S_IFMT</c> band of <c>st_mode</c>, indicating which kind of thing (directory, regular file, socket etc)
+    /// lives at an inode.
     /// </summary>
     let fileTypeBits (content : InodeContent) : int =
         match content with
@@ -250,7 +273,9 @@ module InodeContent =
         // `S_IFIFO`, `0010000` in both flavours' `<sys/stat.h>`.
         | InodeContent.Fifo _ -> 0o010000
 
-/// Who owns an inode: the `st_uid` and `st_gid` that `stat(2)` reports for it.
+/// <summary>
+/// Who owns an inode: the <c>st_uid</c> and <c>st_gid</c> that <c>stat(2)</c> reports for it.
+/// </summary>
 [<Struct>]
 type InodeOwner =
     {
@@ -258,23 +283,32 @@ type InodeOwner =
         Group : GroupId
     }
 
-/// Where a newly created inode's group comes from.
+/// <summary>
+/// How a platform determines where a newly created inode's group comes from.
+/// </summary>
 [<RequireQualifiedAccess>]
 type NewInodeGroupRule =
+    /// <summary>
     /// The creator's effective group, unless the directory the inode is created
     /// in is set-group-ID, in which case that directory's group.
-    ///
-    /// This is Linux, on a filesystem not mounted `grpid`.
+    /// </summary>
+    /// <example>
+    /// This is how Linux behaves, on a filesystem not mounted <c>grpid</c>.
+    /// </example>
     | CreatorsUnlessParentSetGroupId
+    /// <summary>
     /// Always the group of the directory the inode is created in.
-    ///
-    /// This is Darwin, as it is every BSD.
+    /// </summary>
+    /// <example>
+    /// This is how Darwin behaves, as does every BSD.
+    /// </example>
     | Parents
 
 [<RequireQualifiedAccess>]
 module InodeOwner =
-    /// The effective user and group of a process with `credentials`: who owns
-    /// what that process creates when nothing else decides.
+    /// <summary>
+    /// The effective user and group of a process with <c>credentials</c>.
+    /// </summary>
     let ofProcess (credentials : Credentials) : InodeOwner =
         {
             User = credentials.EffectiveUser
@@ -346,7 +380,9 @@ type Inode =
     {
         Content : InodeContent
         Times : InodeTimes
+        /// <summary>
         /// Who owns this inode.
+        /// </summary>
         Owner : InodeOwner
     }
 
