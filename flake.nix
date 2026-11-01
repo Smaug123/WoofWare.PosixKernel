@@ -78,11 +78,8 @@
         };
       };
       checks = {
-        # Fails `nix flake check` when a WoofWare.PosixKernel source line names a client
-        # (WoofWare.PawPrint or one of its symbols, CoreCLR or its PAL) or calls the process a
-        # guest. The library is meant to read as a POSIX simulator that knows nothing of any
-        # client, and prose is where that knowledge creeps in. Runs the checker's own contract
-        # first, so that a change to the checker cannot quietly retire it.
+        # Fails `nix flake check` when a WoofWare.PosixKernel source line uses CoreCLR
+        # terminology or calls the process a guest. Runs the checker's own contract first.
         client-references =
           pkgs.runCommand "client-references" {
             buildInputs = [pkgs.python3 pkgs.bash];

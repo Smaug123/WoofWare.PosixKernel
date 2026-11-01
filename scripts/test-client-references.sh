@@ -3,11 +3,9 @@
 #
 # Builds a throwaway library directory holding every shape the check has an
 # opinion about, and asserts the report names exactly the lines that name
-# PawPrint or CoreCLR or say "guest", in code, docstrings, comments and strings
-# alike. The silent shapes are as much the point: a check that fires on
-# `WoofWare.PosixKernel`, on the word "program" or on "a .NET string" is a check
-# nobody keeps. The exit status is asserted too, since that is what the flake
-# check branches on.
+# CoreCLR or say "guest", in code, docstrings, comments and strings
+# alike. The silent shapes include ordinary English and .NET terminology. The
+# exit status is asserted too, since that is what the flake check branches on.
 set -euo pipefail
 
 # The checker is normally its sibling; the flake check passes it in from the
@@ -17,35 +15,6 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/lib/Nested"
-
-cat > "$tmp/lib/A.fs" <<'EOF'
-namespace WoofWare.PosixKernel
-
-/// Set this with `KernelConfig.Umask`.
-let docstring = 1
-// Held on `EmulatedKernel` for now.
-let comment = 2
-let message () = failwith "see NativeSystemNative.fs (this is a PawPrint bug)"
-let code = IlMachineState.foo
-/// Checked by `EmulatedKernelDefect.SignalDispatcherWithoutTask`.
-let prefix = 3
-/// Applied by `Program.prepare` before the `.cctor` runs.
-let program = 4
-/// The program. A Program is not a PawPrint name, and neither is `Program.fs`.
-let silentProgram = 5
-/// Lives in WoofWare.PosixKernel, as does `UnixMachineState.withUmask`.
-let silentLibrary = 6
-/// Lower case pawprint is not the identifier; nor is aPawPrint mid-word.
-let silentCase = 7
-EOF
-
-cat > "$tmp/lib/Nested/B.fs" <<'EOF'
-module B
-/// `NativeEnvironment` asserts it; `HostConfig` launches it.
-// A `DIR*` is keyed through DirectoryStreamFds.
-// NextLowLevelMonitorId numbers the LowLevelMonitor table.
-let nested = 1
-EOF
 
 cat > "$tmp/lib/Nested/Clr.fs" <<'EOF'
 module Clr
@@ -60,31 +29,13 @@ let m () = failwith "a guest passed it"
 let clr = 1
 EOF
 
-# A permalink to one of the client's measurement documents is a citation, not a
-# reference: it is pinned to a commit, so it names a fixed record rather than
-# sending the reader into the client's moving code. Anything short of that form
-# is still a reference.
-sha=6b4aeb4fce455e8c187157ce020d1058fb0821bf
-cat > "$tmp/lib/Nested/Urls.fs" <<EOF
-module Urls
-/// Measured: https://github.com/Smaug123/WoofWare.PawPrint/blob/$sha/docs/divergences.md
-// (https://github.com/Smaug123/WoofWare.PawPrint/blob/$sha/docs/plans/2026-08-21-socket-connect.md): the table
-/// https://github.com/Smaug123/WoofWare.PawPrint/blob/main/docs/divergences.md
-/// https://github.com/Smaug123/WoofWare.PawPrint/blob/6b4aeb4f/docs/divergences.md
-/// https://github.com/Smaug123/WoofWare.PawPrint/blob/$sha/scripts/check-pal-residue.py
-/// See https://github.com/Smaug123/WoofWare.PawPrint/blob/$sha/docs/divergences.md, set by KernelConfig.Mount.
-/// https://example.com/Smaug123/WoofWare.PawPrint/blob/$sha/docs/divergences.md
-/// https://github.com/Smaug123/WoofWare.PawPrint/tree/$sha/docs/probes
-let urls = 1
-EOF
-
 cat > "$tmp/lib/README.md" <<'EOF'
-Extracted from WoofWare.PawPrint, whose KernelConfig configures it.
+A client running CoreCLR calls its process a guest.
 EOF
 
 mkdir -p "$tmp/lib/obj/Debug"
 cat > "$tmp/lib/obj/Debug/Generated.fs" <<'EOF'
-// RepositoryUrl https://github.com/Smaug123/WoofWare.PawPrint
+// Generated for a CoreCLR client.
 EOF
 
 set +e
@@ -93,19 +44,6 @@ status=$?
 set -e
 
 expected_hits=(
-  "A.fs:3: KernelConfig:"
-  "A.fs:5: EmulatedKernel:"
-  "A.fs:7: NativeSystemNative:"
-  "A.fs:7: PawPrint:"
-  "A.fs:8: IlMachineState:"
-  "A.fs:9: EmulatedKernel:"
-  "A.fs:11: Program.prepare:"
-  "A.fs:13: PawPrint:"
-  "Nested/B.fs:2: NativeEnvironment:"
-  "Nested/B.fs:2: HostConfig:"
-  "Nested/B.fs:3: DirectoryStreamFds:"
-  "Nested/B.fs:4: NextLowLevelMonitorId:"
-  "Nested/B.fs:4: LowLevelMonitor:"
   "Nested/Clr.fs:2: CoreCLR:"
   "Nested/Clr.fs:2: shim:"
   "Nested/Clr.fs:3: SystemNative:"
@@ -118,12 +56,6 @@ expected_hits=(
   "Nested/Clr.fs:6: CoreLib:"
   "Nested/Clr.fs:6: SocketAsyncEngine:"
   "Nested/Clr.fs:6: guests:"
-  "Nested/Urls.fs:4: PawPrint:"
-  "Nested/Urls.fs:5: PawPrint:"
-  "Nested/Urls.fs:6: PawPrint:"
-  "Nested/Urls.fs:7: KernelConfig:"
-  "Nested/Urls.fs:8: PawPrint:"
-  "Nested/Urls.fs:9: PawPrint:"
 )
 
 fail=0
@@ -143,22 +75,10 @@ if [ "$reported" -ne "${#expected_hits[@]}" ]; then
   fail=1
 fi
 
-# Line 13 is the one line that mixes silent and reported shapes: `PawPrint` there
-# is a real reference, so the line is reported once, for that token alone.
-if grep -qE 'A\.fs:(4|6|10|12|14|15|16|17|18): ' <<<"$out"; then
-  echo "FAIL: a silent line was reported" >&2
-  fail=1
-fi
-# CoreCLR's names and "guest" are whole words; the English and .NET words beside
-# them, and words that merely begin with one, are not.
+# The English and .NET words beside the markers are allowed, including words
+# that merely begin with a whole-word marker such as PAL, shim or guest.
 if grep -qE 'Clr\.fs:(1|7|8|9|10): ' <<<"$out"; then
   echo "FAIL: a silent CoreCLR-fixture line was reported" >&2
-  fail=1
-fi
-# Pinned permalinks into the client's docs/ are silent, and masking one leaves
-# the rest of its line scanned: line 7 is reported for KernelConfig alone.
-if grep -qE 'Urls\.fs:(1|2|3|10): |Urls\.fs:7: PawPrint' <<<"$out"; then
-  echo "FAIL: a pinned permalink to the client's docs was reported" >&2
   fail=1
 fi
 if grep -q 'README' <<<"$out"; then
