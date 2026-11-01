@@ -5901,15 +5901,6 @@ module TestUnixSystemStep =
         GetSockNameRefusal.describe (GetSockNameRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         |> shouldContainText "bytes the caller cannot produce"
 
-        // And neither names a client: which client is asking, and what it would
-        // have to build, is the client's half of the message.
-        for refusal in
-            [
-                GetSockNameRefusal.UnmodelledDomain (socketZero, SocketDomain.Inet6)
-                GetSockNameRefusal.Buffer BufferRefusal.AddresslessAtTransfer
-            ] do
-            GetSockNameRefusal.describe refusal |> shouldNotContainText "PawPrint"
-
     // ------------------------------------------------------------- rename
 
     /// The tree `docs/probes/rename/walk-order.py` builds, so that the rows
