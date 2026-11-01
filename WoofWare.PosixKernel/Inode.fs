@@ -6,7 +6,7 @@ namespace WoofWare.PosixKernel
 /// <remarks>
 /// This is the <c>st_ino</c> a process reads back from <c>stat</c>.
 ///
-/// The exact values are observable by the guest: a program commonly decides whether two
+/// The exact values are observable by the emulated process: a program commonly decides whether two
 /// paths name the same file by comparing their device and inode numbers as
 /// integers.
 /// </remarks>

@@ -1,7 +1,7 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// A user ID, as a guest would pass as a syscall argument.
+/// A user ID, as a process would pass as a syscall argument.
 /// </summary>
 /// <remarks>
 /// This is our model of <c>uid_t</c>.
@@ -61,7 +61,7 @@ module UserId =
             )
 
 /// <summary>
-/// A group ID, as a guest would pass as a syscall argument.
+/// A group ID, as a process would pass as a syscall argument.
 /// </summary>
 /// <remarks>
 /// This is our model of <c>gid_t</c>.

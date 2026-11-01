@@ -122,7 +122,7 @@ module FileContents =
 
     /// <summary>How many bytes the file holds.</summary>
     /// <remarks>
-    /// This doesn't count holes at the end of the file, for example.
+    /// This includes bytes implicit in the presence of holes, including trailing holes.
     /// </remarks>
     let length (contents : FileContents) : int64 = contents.Length
 

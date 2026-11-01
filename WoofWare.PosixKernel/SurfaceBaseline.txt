@@ -8567,7 +8567,7 @@ WoofWare.PosixKernel.UnixErrorModule.all [static property]: [read-only] WoofWare
 WoofWare.PosixKernel.UnixErrorModule.get_all [static method]: unit -> WoofWare.PosixKernel.UnixError list
 WoofWare.PosixKernel.UnixErrorModule.isPortableRawErrno [static method]: int -> bool
 WoofWare.PosixKernel.UnixErrorModule.isUnambiguouslyNonStandardRawErrno [static method]: int -> bool
-WoofWare.PosixKernel.UnixErrorModule.ofRawErrno [static method]: int -> WoofWare.PosixKernel.UnixError option
+WoofWare.PosixKernel.UnixErrorModule.ofRawErrnoPortable [static method]: int -> WoofWare.PosixKernel.UnixError option
 WoofWare.PosixKernel.UnixErrorModule.ofRawErrnoUnder [static method]: WoofWare.PosixKernel.RawErrnoNumbering -> int -> WoofWare.PosixKernel.UnixError option
 WoofWare.PosixKernel.UnixErrorModule.rawNumbering [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.RawErrnoPortability
 WoofWare.PosixKernel.UnixErrorModule.toRawErrnoUnder [static method]: WoofWare.PosixKernel.RawErrnoNumbering -> WoofWare.PosixKernel.UnixError -> int
