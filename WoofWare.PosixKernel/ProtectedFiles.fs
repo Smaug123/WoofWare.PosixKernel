@@ -25,6 +25,11 @@ type SymlinkProtection =
     /// <remarks>
     /// Darwin doesn't have this.
     /// <para />
+    /// On Linux, path resolution depends also on the state of the dentry cache, because the kernel
+    /// may eventually return ELOOP if there are too many links to follow. WoofWare.PosixKernel
+    /// currently throws <c>UnmodelledException</c> in some of those cases, rather than correctly
+    /// giving EACCES or ELOOP.
+    /// <para />
     /// On Linux, this is what you'd get by setting <c>fs.protected_symlinks</c> to <c>1</c>.
     /// <para />
     /// Many distributions set this through <c>sysctl.d</c>.
@@ -90,11 +95,15 @@ type HardlinkProtection =
     /// </remarks>
     | Off
     /// <summary>
-    /// An unprivileged caller, which doesn't own the inode, may only link a regular file
-    /// which it can both read and write, and which is not setuid nor setgid nor group-executable.
+    /// An unprivileged caller which doesn't own the inode may only link the file if it can both read and write
+    /// that file, the file is not setuid, and the file isn't simultaneously setgid and group-executable.
     /// </summary>
     /// <remarks>
     /// Darwin doesn't have this.
+    /// <para />
+    /// The condition takes a lot of words to say, but the gist is "you can only link the file if: you can
+    /// already access it, and setsid/setgid are such that you can't execute its contents as someone else after you
+    /// write them".
     /// <para />
     /// On Linux, this is what you'd get by setting <c>fs.protected_hardlinks</c> to 1.
     /// <para />
