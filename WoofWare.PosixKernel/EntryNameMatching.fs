@@ -3,8 +3,9 @@ namespace WoofWare.PosixKernel
 open System
 open System.Collections.Immutable
 
-/// How a filesystem decides which entry of a directory a name looked up in it
-/// reaches.
+/// <summary>
+/// How a filesystem decides which entry is returned when looking up a name within a directory.
+/// </summary>
 [<RequireQualifiedAccess>]
 type internal EntryNameMatching =
     /// A name reaches only the entry bound under exactly its bytes, as on

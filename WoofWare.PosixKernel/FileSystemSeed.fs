@@ -65,22 +65,28 @@ module SeedEntry =
     /// </remarks>
     let defaultPermsForDirectory : PermissionBits = PermissionBits (0o777 &&& ~~~0o022)
 
-    /// The umask a seeded symbolic link was created under, which is the `umask
-    /// 022` the other defaults here assume: a seed describes a tree some other
-    /// process built, so the umask of the process the seed is booted into
-    /// never applied to it. Only Darwin's links are affected: Linux gives every
-    /// link 0o777 whatever the umask, and Darwin 0o777 less the umask.
+    /// <summary>
+    /// The default umask when creating a symlink via a FileSystemSeed.
+    /// </summary>
+    /// <remarks>
+    /// This is only relevant on Darwin, which subtracts this from 0o777 to decide perms for a symlink;
+    /// Linux always gives a symlink 0o777.
+    /// </remarks>
     let symlinkCreatorsUmask : PermissionBits = PermissionBits 0o022
 
-    /// A regular file with the mode a `umask 022` process's `open(O_CREAT)`
-    /// would have produced: 0666 &&& ~~~0o022. It belongs to whatever owner the
-    /// seed is realised with.
+    /// <summary>
+    /// Create an entry for a file with the default mode you'd get from a process with <c>umask 022</c>,
+    /// as you'd get if you created it with <c>open(O_CREAT)</c>.
+    /// </summary>
+    /// <remarks>The resulting file belongs to whatever owner the seed is realised with.</remarks>
     let file (contents : ImmutableArray<byte>) : SeedEntry =
         SeedEntry.File (contents, defaultPermsForRegularFile, None)
 
-    /// A directory with the mode a `umask 022` process's `mkdir` would have
-    /// produced: 0777 &&& ~~~0o022. It belongs to whatever owner the seed is
-    /// realised with.
+    /// <summary>
+    /// Create an entry for a directory with the default mode you'd get from a process with <c>umask 022</c>,
+    /// as you'd get if you created it with <c>mkdir</c>.
+    /// </summary>
+    /// <remarks>The resulting directory belongs to whatever owner the seed is realised with.</remarks>
     let directory (entries : Map<DirectoryEntryName, SeedEntry>) : SeedEntry =
         SeedEntry.Directory (entries, defaultPermsForDirectory, None)
 
