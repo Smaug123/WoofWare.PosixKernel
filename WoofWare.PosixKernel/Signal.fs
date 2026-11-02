@@ -75,7 +75,7 @@ type Signal =
     /// Sent to a process when the system experiences a power failure.
     /// </summary>
     /// <remarks>
-    /// Linux only, and typically ignored.
+    /// Linux only.
     /// </remarks>
     | SIGPWR
     | SIGSYS
