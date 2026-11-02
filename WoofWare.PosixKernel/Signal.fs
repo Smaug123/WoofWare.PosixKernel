@@ -553,11 +553,12 @@ module Signal =
     /// survives as pending when the receiving thread is blocking it.
     /// </summary>
     /// <remarks>
-    /// SIG_IGN is an example signal which has disposition "ignore".
+    /// The "ignore" disposition is called <c>SIG_IGN</c>.
     /// <para />
     /// Linux always leaves such signals as pending (and delivers it if
     /// a handler is installed before the thread becomes unblocked);
-    /// Darwin discards it at generation regardless.
+    /// Darwin discards it at generation regardless (except for SIGCONT which
+    /// stays pending).
     /// All platforms discard a signal that is ignored but not blocked.
     /// </remarks>
     let blockedIgnoredSignalStaysPendingUnder (numbering : SignalNumbering) (signal : Signal) : bool =
