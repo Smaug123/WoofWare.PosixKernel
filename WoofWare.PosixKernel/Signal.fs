@@ -1,14 +1,15 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Whose <c>&lt;signal.h&gt;</c> a raw signal number is read under.
+/// Which platform's <c>&lt;signal.h&gt;</c> defined a particular raw signal number.
 /// </summary>
 /// <remarks>
-/// A signo is meaningless until something says which Unix assigned it: 17 is
-/// <c>SIGCHLD</c> on Linux and <c>SIGSTOP</c> on Darwin, and Darwin has no
-/// signal 32 where Linux has real-time signals up to 64. This is the signal
-/// counterpart of <c>RawErrnoNumbering</c>; <c>SimulatedUnixPlatform.signalNumbering</c>
-/// says which one a platform uses.
+/// This is necessary to convert an integer to a signal number, because
+/// platforms differ in how they define the mapping.
+/// For example, 17 is <c>SIGCHLD</c> on Linux and <c>SIGSTOP</c> on Darwin.
+/// See also <c>RawErrnoNumbering</c> which is the same concept but for errnos.
+/// <para />
+/// Create this using <c>SimulatedUnixPlatform.signalNumbering</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type SignalNumbering =
@@ -19,13 +20,12 @@ type SignalNumbering =
 /// A POSIX signal recognised by the simulator.
 /// </summary>
 /// <remarks>
-/// The named cases cover every standard signal either platform's <c>&lt;signal.h&gt;</c> defines, and
-/// <c>RealTime</c> covers Linux's real-time signals, so every signal number either kernel has names a case.
-/// Some exist on one platform only (<c>SIGSTKFLT</c> and <c>SIGPWR</c> on Linux, <c>SIGEMT</c> and <c>SIGINFO</c>
-/// on Darwin); <c>Signal.existsUnder</c> says which.
-/// An alias is not a case of its own: <c>SIGIOT</c> is <c>SIGABRT</c>, <c>SIGCLD</c> is <c>SIGCHLD</c>, and Linux's
-/// <c>SIGPOLL</c> is <c>SIGIO</c>.
-///
+/// This is the union of the standard signals defined by all modelled platforms, so some of these
+/// exist only on particular platforms; see <c>Signal.existsUnder</c>.
+/// <para />
+/// This union doesn't contain duplicate spellings: for example, <c>SIGIOT</c> is not present,
+/// because it's a synonym of <c>SIGABRT</c>.
+/// <para />
 /// This type intentionally does not model an assignment of signals to numbers, which are platform-specific.
 /// Use <c>Signal.toRawSignoUnder</c> to render a number under a given <c>SignalNumbering</c>.
 /// </remarks>
@@ -45,7 +45,11 @@ type Signal =
     | SIGPIPE
     | SIGALRM
     | SIGTERM
+    /// <summary>Stack fault on coprocessor.</summary>
+    /// <remarks>
     /// Linux only.
+    /// Moreover, modern Linux never signals this.
+    /// </remarks>
     | SIGSTKFLT
     | SIGCHLD
     | SIGCONT
@@ -59,20 +63,45 @@ type Signal =
     | SIGVTALRM
     | SIGPROF
     | SIGWINCH
-    /// Linux's `<signal.h>` also calls this `SIGPOLL`. Darwin's gives that
-    /// name to `SIGEMT`'s number instead, and only under strict POSIX.
+    /// <summary>
+    /// Sent when a file descriptor is ready to perform IO that was started asynchronously.
+    /// </summary>
+    /// <remarks>
+    /// On Linux, this is also called <c>SIGPOLL</c>.
+    /// (Darwin's <c>SIGPOLL</c> is a synonym of <c>SIGEMT</c>, though only under strict POSIX.)
+    /// </remarks>
     | SIGIO
-    /// Linux only.
+    /// <summary>
+    /// Sent to a process when the system experiences a power failure.
+    /// </summary>
+    /// <remarks>
+    /// Linux only, and typically ignored.
+    /// </remarks>
     | SIGPWR
     | SIGSYS
-    /// Darwin only.
+    /// <summary>
+    /// Emulator trap: the operating system was unable to emulate a hardware instruction.
+    /// </summary>
+    /// <remarks>
+    /// Darwin only, now obsolete.
+    /// </remarks>
     | SIGEMT
-    /// Darwin only.
+    /// <summary>
+    /// Request information from a process.
+    /// </summary>
+    /// <remarks>
+    /// Darwin only. Linux would usually use SIGUSR1 for this.
+    /// </remarks>
     | SIGINFO
-    /// One of Linux's real-time signals, `offset` above the kernel's lowest,
-    /// which is signal 32: `RealTime 0` is 32 and `RealTime 32` is 64. glibc
-    /// keeps `RealTime 0` and `RealTime 1` for its own threads, so the
-    /// `SIGRTMIN` a program reads from it is `RealTime 2`. Darwin has none.
+    /// <summary>
+    /// One of Linux's real-time signals.
+    /// </summary>
+    /// <remarks>
+    /// Linux only.
+    /// <para />
+    /// In WoofWare.PosixKernel, offsets are between 0 and 32 inclusive, which gives raw signal numbers
+    /// of 32 through 64.
+    /// </remarks>
     | RealTime of offset : int
 
 /// <summary>
@@ -89,7 +118,7 @@ type DefaultDisposition =
     /// </summary>
     | Terminate
     /// <summary>
-    /// Specify that the kernel default is to ignore the signal entirely. No state changes.
+    /// Specify that the kernel default is to ignore the signal entirely, so no kernel state changes.
     /// </summary>
     | Ignore
     /// <summary>
@@ -104,17 +133,20 @@ type DefaultDisposition =
 [<RequireQualifiedAccess>]
 module Signal =
     /// <summary>
-    /// The highest signal number this kernel has: <c>kill(2)</c> and
-    /// <c>sigaction(2)</c> refuse anything above it with <c>EINVAL</c>.
+    /// The highest signal number this kernel has.
     /// </summary>
     /// <remarks>
+    /// <c>kill(2)</c> and <c>sigaction(2)</c> refuse anything above this number,
+    /// returning <c>EINVAL</c>.
+    /// <para />
     /// Linux: 64, which is glibc's <c>SIGRTMAX</c> and one less than its
-    /// <c>NSIG</c> of 65. Darwin: 31, one less than its <c>NSIG</c> of 32; it
-    /// has no real-time signals and so no <c>SIGRTMAX</c> at all. Both measured
-    /// by installing <c>SIG_DFL</c> with <c>sigaction</c> for every number up
-    /// to <c>NSIG + 1</c>, on Linux 6.18.5 / glibc 2.41 and Darwin 25.6.0.
+    /// <c>NSIG</c> of 65. Darwin: 31 (one less than its <c>NSIG</c> of 32),
+    /// because Darwin has no real-time signals so it has no <c>SIGRTMAX</c>
+    /// at all.
     /// </remarks>
     let highestSignoUnder (numbering : SignalNumbering) : int =
+        // Measured by installing SIG_DFL with sigaction for every number up
+        // to NSIG + 1, on Linux 6.18.5 / glibc 2.41 and Darwin 25.6.0.
         match numbering with
         | SignalNumbering.Linux -> 64
         | SignalNumbering.Darwin -> 31
@@ -212,9 +244,15 @@ module Signal =
             | Signal.SIGPWR
             | Signal.RealTime _ -> ValueNone
 
-    /// Whether the chosen platform has this signal at all: `SIGPWR` is not a
-    /// signal on Darwin, nor `SIGINFO` on Linux, nor a `RealTime` whose offset
-    /// is outside 0 to 32 anywhere.
+    /// <summary>
+    /// Whether the chosen platform has this signal at all.
+    /// </summary>
+    /// <example>
+    /// <c>SIGPWR</c> is not a signal on Darwin.
+    /// <c>SIGINFO</c> is not a signal on Linux.
+    /// <c>RealTime</c> signals don't exist on Darwin at all, and don't exist on our
+    /// emulated Linux with offsets outside the range 0 to 32.
+    /// </example>
     let existsUnder (numbering : SignalNumbering) (signal : Signal) : bool =
         (tryRawSignoUnder numbering signal).IsSome
 
@@ -222,17 +260,13 @@ module Signal =
     /// The raw <c>&lt;signal.h&gt;</c> number for this signal on the chosen platform.
     /// </summary>
     /// <remarks>
-    /// Most signals have the same number on both; <c>SIGBUS</c>, <c>SIGUSR1</c>,
-    /// <c>SIGUSR2</c>, <c>SIGCHLD</c>, <c>SIGCONT</c>, <c>SIGSTOP</c>, <c>SIGTSTP</c>,
-    /// <c>SIGURG</c>, <c>SIGIO</c> and <c>SIGSYS</c> do not.
-    /// Both columns were measured with a C probe rather than transcribed, on
-    /// Linux 6.18.5 / glibc 2.41 and Darwin 27.0.0.
-    ///
-    /// Throws <c>ArgumentException</c> for a signal the platform does not have
-    /// (see <c>existsUnder</c>), which no number under its numbering could
-    /// stand for.
+    /// Most signals have the same number on both; some, like <c>SIGBUS</c> and <c>SIGUSR1</c>,
+    /// do not.
     /// </remarks>
+    /// <exception cref="ArgumentException">The emulated platform does not have the named signal (see <c>existsUnder</c>).</exception>
     let toRawSignoUnder (numbering : SignalNumbering) (signal : Signal) : int =
+        // Both columns were measured with a C probe rather than transcribed, on
+        // Linux 6.18.5 / glibc 2.41 and Darwin 27.0.0.
         match tryRawSignoUnder numbering signal with
         | ValueSome signo -> signo
         | ValueNone ->
@@ -248,14 +282,15 @@ module Signal =
     /// signal.
     /// </summary>
     /// <remarks>
-    /// The inverse of <c>toRawSignoUnder</c>: every number the kernel has —
-    /// positive and at most <c>highestSignoUnder</c> — names a case.
+    /// The inverse of <c>toRawSignoUnder</c>.
     /// </remarks>
     /// <returns>
     /// <c>ValueNone</c> for a number that is not a signal on this platform:
-    /// zero, a negative, or anything above <c>highestSignoUnder</c>. Darwin's
-    /// 32 is such a number, although it is that platform's <c>NSIG</c>.
+    /// zero, a negative, or anything above <c>highestSignoUnder</c>.
     /// </returns>
+    /// <example>
+    /// Darwin's 32 returns <c>ValueNone</c>.
+    /// </example>
     let ofRawSignoUnder (numbering : SignalNumbering) (signo : int) : Signal voption =
         // Written out rather than searched for through `toRawSignoUnder`, so
         // that the round trip between the two is a check on each table rather
@@ -336,20 +371,22 @@ module Signal =
 
     /// <summary>
     /// Whether <c>sigaction(2)</c> refuses to install a handler for this
-    /// signal, with <c>EINVAL</c>.
+    /// signal.
     /// </summary>
+    /// <example>
+    /// POSIX specifies that <c>SIGKILL</c> and <c>SIGSTOP</c> are uncatchable.
+    /// <para />
+    /// On Linux, glibc refuses to install the zeroth and first realtime signals
+    /// (<c>RealTime 0</c> and <c>RealTime 1</c>, with numbers 32 and 33).
+    /// </example>
     /// <remarks>
-    /// <c>SIGKILL</c> and <c>SIGSTOP</c> on both, as POSIX requires: 9 and 19
-    /// on Linux, 9 and 17 on Darwin. Linux additionally refuses 32 and 33
-    /// (<c>RealTime 0</c> and <c>RealTime 1</c>),
-    /// which are not the kernel's doing but glibc's: its <c>sigaction</c>
-    /// wrapper screens out <c>SIGCANCEL</c> and <c>SIGSETXID</c>, which it
-    /// reserves for its own thread machinery. Measured on Linux 6.18.5 /
-    /// glibc 2.41 and Darwin 25.6.0 by installing <c>SIG_DFL</c> for every
-    /// number up to <c>NSIG + 1</c>; these were the only refusals below the
-    /// ceiling.
+    /// On refusing, <c>sigaction(2)</c> returns <c>EINVAL</c>.
     /// </remarks>
     let isUncatchableUnder (numbering : SignalNumbering) (signal : Signal) : bool =
+        // Measured on Linux 6.18.5 /
+        // glibc 2.41 and Darwin 25.6.0 by installing SIG_DFL for every
+        // number up to NSIG + 1; these were the only refusals below the
+        // ceiling.
         match signal with
         | Signal.SIGKILL
         | Signal.SIGSTOP -> true
@@ -389,27 +426,32 @@ module Signal =
         | Signal.SIGEMT
         | Signal.SIGINFO -> false
 
+    /// <summary>
     /// Whether a thread's attempt to add this signal to its own signal mask is
-    /// silently ignored: `sigprocmask(2)` and `pthread_sigmask(3)` succeed but
-    /// leave the signal out of the resulting mask. Note the shape, which is not
-    /// `sigaction`'s EINVAL refusal: the mask calls report success, so a model
-    /// of `block` drops the signal silently rather than failing.
-    ///
-    /// SIGKILL and SIGSTOP on both flavours, as POSIX requires. On Linux,
-    /// glibc's wrappers additionally screen 32 and 33 (SIGCANCEL and
-    /// SIGSETXID, reserved for its thread machinery) out of every set they are
-    /// handed.
+    /// silently ignored.
+    /// </summary>
+    /// <remarks>
+    /// The process's mask call (e.g. <c>sigprocmask(2)</c>) is still successful;
+    /// it just has no effect.
+    /// </remarks>
+    /// <example>
+    /// <c>SIGKILL</c>, as POSIX requires.
+    /// <para />
+    /// On Linux, the zeroth realtime signal (<c>RealTime 0</c>, raw number 32).
+    /// </example>
     let isUnblockableUnder (numbering : SignalNumbering) (signal : Signal) : bool =
+        // This actually happens to be the same implementation as `isUncatchableUnder`,
+        // but in principle it could differ on some platform: `isUnblockableUnder` is
+        // about mask manipulation, whereas `isUncatchableUnder` is about sigaction
+        // refusal.
+
         // Measured on Linux 6.18.5 / glibc 2.41 and Darwin 25.6.0 by setting
         // each signo's bit directly (bypassing sigaddset's own screening),
         // blocking, and reading the mask back, for every number up to past the
         // ceiling, through pthread_sigmask, sigprocmask and (Linux) the raw
         // rt_sigprocmask syscall. The raw syscall accepts 32 and 33 and
         // refuses only SIGKILL and SIGSTOP, so that pair is glibc's screening,
-        // not the kernel's. The same sets as `isUncatchableUnder`, as it
-        // happens — but those are different facts (what sigaction refuses
-        // loudly, and what the mask calls drop silently), separately measured,
-        // with no reason they must stay in step.
+        // not the kernel's.
         match signal with
         | Signal.SIGKILL
         | Signal.SIGSTOP -> true
@@ -449,12 +491,16 @@ module Signal =
         | Signal.SIGEMT
         | Signal.SIGINFO -> false
 
+    /// <summary>
     /// Whether repeated generation of this signal queues multiple pending
     /// instances (a real-time signal), rather than coalescing into at most one
     /// per pending set (a standard signal).
-    ///
+    /// </summary>
+    /// <remarks>
     /// Linux's real-time signals are signos 32 to 64; Darwin has none at all.
-    /// A signal the numbering does not have is not a real-time signal either.
+    /// <para />
+    /// Returns false for signals which don't exist on the current platform.
+    /// </remarks>
     let isRealTimeUnder (numbering : SignalNumbering) (signal : Signal) : bool =
         // Measured on Linux 6.18.5 / glibc 2.41: three generations of
         // SIGRTMIN+2 (glibc's 34+2 = 36) while blocked deliver three times,
@@ -502,12 +548,18 @@ module Signal =
         | Signal.SIGEMT
         | Signal.SIGINFO -> false
 
-    /// Whether a signal generated while its disposition is "ignore" (SIG_IGN,
-    /// or SIG_DFL with a default of Ignore) survives as pending when the
-    /// receiving thread is blocking it: on Linux it stays pending, and is
-    /// delivered if a handler is installed before the unblock, where Darwin
-    /// discards it at generation despite the block, SIGCONT alone excepted.
-    /// A signal that is ignored and *not* blocked is discarded on both.
+    /// <summary>
+    /// Whether a signal generated while its disposition is "ignore"
+    /// survives as pending when the receiving thread is blocking it.
+    /// </summary>
+    /// <remarks>
+    /// SIG_IGN is an example signal which has disposition "ignore".
+    /// <para />
+    /// Linux always leaves such signals as pending (and delivers it if
+    /// a handler is installed before the thread becomes unblocked);
+    /// Darwin discards it at generation regardless.
+    /// All platforms discard a signal that is ignored but not blocked.
+    /// </remarks>
     let blockedIgnoredSignalStaysPendingUnder (numbering : SignalNumbering) (signal : Signal) : bool =
         // Measured 2026-09-16 on Linux 6.18.5 / glibc 2.41 and Darwin 25.6.0,
         // two runs each: SIG_IGN'd SIGUSR1 and default-ignored SIGWINCH,
@@ -531,14 +583,17 @@ module Signal =
         | SignalNumbering.Linux -> true
         | SignalNumbering.Darwin -> signal = Signal.SIGCONT
 
+    /// <summary>
     /// Whether the kernel's default action for `signal` dumps core as well as
-    /// terminating the process. The dump is written only if the process's
-    /// settings allow it (see `CoreDumps`); either way the process dies.
-    ///
-    /// Linux: SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGBUS, SIGFPE, SIGSEGV,
-    /// SIGXCPU, SIGXFSZ and SIGSYS. Darwin: SIGQUIT, SIGILL, SIGTRAP,
-    /// SIGABRT, SIGEMT, SIGFPE, SIGBUS, SIGSEGV and SIGSYS, which is to say
-    /// not SIGXCPU or SIGXFSZ.
+    /// terminating the process.
+    /// </summary>
+    /// <remarks>
+    /// The dump is written only if the process's settings allow it (see <c>CoreDumps</c>).
+    /// Either way, the process dies.
+    /// </remarks>
+    /// <examples>
+    /// <c>SIGQUIT</c> on all platforms; <c>SIGXCPU</c> on Linux only.
+    /// </examples>
     let dumpsCoreUnder (numbering : SignalNumbering) (signal : Signal) : bool =
         // Measured 2026-09-26 by sending every signal number to a child under
         // SIG_DFL (docs/plans/2026-08-23-posix-kernel-extraction/core-class.c).
@@ -594,17 +649,18 @@ module Signal =
     /// </summary>
     /// <remarks>
     /// Only <c>SIGIO</c>'s differs between the platforms: Linux's terminates,
-    /// and Darwin's is discarded. Measured on Linux
-    /// 6.18.5 and Darwin 25.6.0 by having a forked child raise each signal on
-    /// itself under <c>SIG_DFL</c>.
-    ///
-    /// Signals the measurement could not classify — <c>SIGTSTP</c>,
-    /// <c>SIGTTIN</c> and <c>SIGTTOU</c>, which both kernels discard rather
-    /// than stop on when the process group is orphaned, as the probe's was —
-    /// take POSIX's <c>Stop</c>. Anything else terminates, which is the POSIX
-    /// default for a signal not otherwise specified.
+    /// and Darwin's is discarded.
     /// </remarks>
     let defaultDispositionUnder (numbering : SignalNumbering) (signal : Signal) : DefaultDisposition =
+        // Measured on Linux
+        // 6.18.5 and Darwin 25.6.0 by having a forked child raise each signal on
+        // itself under <c>SIG_DFL</c>.
+        //
+        // Signals the measurement could not classify — <c>SIGTSTP</c>,
+        // <c>SIGTTIN</c> and <c>SIGTTOU</c>, which both kernels discard rather
+        // than stop on when the process group is orphaned, as the probe's was —
+        // take POSIX's <c>Stop</c>. Anything else terminates, which is the POSIX
+        // default for a signal not otherwise specified.
         match signal with
         | Signal.SIGCHLD
         | Signal.SIGWINCH
@@ -644,45 +700,50 @@ module Signal =
         | Signal.SIGEMT
         | Signal.RealTime _ -> DefaultDisposition.Terminate
 
-/// Why `SignalMask.ofWord` refuses a word.
+/// <summary>
+/// Why <c>SignalMask.ofWord</c> refuses a word.
+/// </summary>
 [<RequireQualifiedAccess>]
 type SignalMaskRefusal =
-    /// Contradictory. `word` sets a bit at or above `sigsetBits`, the width of
-    /// the numbering's `sigset_t`, so no signal set of that flavour can hold
-    /// it: Darwin's `sigset_t` is 32 bits, where Linux's kernel set is 64.
+    /// <summary>
+    /// Contradictory: <c>word</c> sets a bit at or above <c>sigsetBits</c>, the width of
+    /// the numbering's <c>sigset_t</c>, so no signal set of that flavour can hold
+    /// it.
+    /// </summary>
+    /// <remarks>
+    /// Darwin's <c>sigset_t</c> is 32 bits, where Linux's kernel set is 64.
+    /// </remarks>
     | WiderThanSigset of word : uint64 * sigsetBits : int
 
 [<RequireQualifiedAccess>]
 module SignalMaskRefusal =
+    /// <summary>
     /// A human-readable account of why the word was refused.
+    /// </summary>
     let describe (refusal : SignalMaskRefusal) : string =
         match refusal with
         | SignalMaskRefusal.WiderThanSigset (word, sigsetBits) ->
             $"the signal set 0x%x{word} sets a bit at or above bit %d{sigsetBits}, and this flavour's sigset_t is only %d{sigsetBits} bits wide"
 
 /// <summary>
-/// A signal set as a kernel holds it: the bits of a <c>sigset_t</c>, in which
-/// bit <c>n - 1</c> is signal number <c>n</c>, read under one
+/// A signal set, as a kernel holds it: the bits of a <c>sigset_t</c>, in which
+/// bit <c>n - 1</c> is signal number <c>n</c>, read under a given platform's
 /// <c>SignalNumbering</c>.
 /// </summary>
 /// <remarks>
-/// A set of <c>Signal</c>s is not enough, because a kernel holds a bit that
-/// names no signal: Darwin's <c>sigset_t</c> is 32 bits and its highest signal
-/// is 31, and Darwin 27.0.0 stores bit 31 (signal number 32) in a thread's mask
-/// and in a handler's <c>sa_mask</c>, and hands it back
-/// (<c>docs/plans/2026-08-23-posix-kernel-extraction/sigprocmask-ops.c</c> and
-/// <c>sigaction-mask-bits.c</c>). Darwin's <c>sigfillset</c> sets every bit,
-/// so an ordinary <c>sigfillset</c> and <c>SIG_SETMASK</c> sets it. Every bit
-/// of Linux's 64 names a signal.
-///
-/// Opaque: made by <c>SignalMask.ofWord</c> or <c>SignalMask.ofSignals</c>,
-/// and read by <c>SignalMask.signals</c> and <c>SignalMask.toWord</c>. The empty
-/// mask is the same under every numbering, so <c>SignalMask.empty</c> needs
-/// none; any other mask remembers the numbering it was made under, and the
-/// operations that combine two masks fail loudly if theirs differ.
-///
-/// A mask may name SIGKILL and SIGSTOP. A kernel drops both when it stores a
-/// mask, which <c>SignalState</c> does; this type does not.
+/// This is not just a set of <c>Signal</c>s, because Darwin's <c>sigset_t</c>
+/// can hold a bit which doesn't have a named signal (namely the top bit),
+/// and this is visible to a process which calls <c>sigfillset</c>.
+/// <para />
+/// Make one of these with <c>SignalMask.ofWord</c> or <c>SignalMask.ofSignals</c>;
+/// consume it with <c>SignalMask.signals</c> and <c>SignalMask.toWord</c>.
+/// <para />
+/// Masks generally remember what platform they were made on (though the empty
+/// mask is the same on all platforms), and operations which combine two masks
+/// will throw if their platforms differ.
+/// <para />
+/// Even though a kernel drops SIGKILL and SIGSTOP when storing masks, this type
+/// retains them. <c>SignalState</c> is the type which tracks the kernel's state.
 /// </remarks>
 [<RequireQualifiedAccess>]
 [<StructuredFormatDisplay("{Display}")>]
@@ -693,7 +754,9 @@ type SignalMask =
     /// `sigset_t` width.
     | Under of numbering : SignalNumbering * word : uint64
 
-    /// The signals the mask names, and the bits it sets that name none.
+    /// <summary>
+    /// The signals included in this mask, as well as any bits it sets which don't have a name.
+    /// </summary>
     member this.Display : string =
         match this with
         | SignalMask.Empty -> "{}"
@@ -722,22 +785,35 @@ type SignalMask =
 [<RequireQualifiedAccess>]
 module SignalMask =
 
-    /// How many bits the numbering's `sigset_t` holds: Linux's kernel set is
-    /// 64 bits (`rt_sigprocmask`'s `sigsetsize` is 8), Darwin's `sigset_t` 32.
+    /// <summary>
+    /// How many bits the numbering's <c>sigset_t</c> holds.
+    /// </summary>
+    /// <example>
+    /// Linux's kernel set is 64 bits (<c>rt_sigprocmask</c>'s <c>sigsetsize</c> is 8).
+    /// Darwin's <c>sigset_t</c> is 32 bits.
+    /// </example>
     let private sigsetBits (numbering : SignalNumbering) : int =
         match numbering with
         | SignalNumbering.Linux -> 64
         | SignalNumbering.Darwin -> 32
 
+    /// <summary>
     /// The mask that blocks nothing, under every numbering.
+    /// </summary>
     let empty : SignalMask = SignalMask.Empty
 
-    /// The mask whose bits are `word`, read under `numbering`: bit `n - 1` is
-    /// signal number `n`. A bit that names no signal is kept (Darwin's bit 31,
-    /// see `SignalMask`).
-    ///
-    /// Refuses a word wider than the numbering's `sigset_t`: on Darwin, any
-    /// bit from 32 up.
+    /// <summary>
+    /// The mask whose bits are given by <c>word</c>, read under the given platform's <c>numbering</c>.
+    /// </summary>
+    /// <remarks>
+    /// Bit <c>n-1</c> corresponds to signal number <c>n</c>.
+    /// <para />
+    /// A bit which doesn't have a corresponding named signal is kept.
+    /// </remarks>
+    /// <returns>
+    /// An error for a word wider than the platform's <c>sigset_t</c> (so, for example, on Darwin this refuses
+    /// any bit from 32 up.)
+    /// </returns>
     let ofWord (numbering : SignalNumbering) (word : uint64) : Result<SignalMask, SignalMaskRefusal> =
         let bits = sigsetBits numbering
 
@@ -748,12 +824,10 @@ module SignalMask =
         else
             Ok (SignalMask.Under (numbering, word))
 
-    /// The mask naming exactly `signals`, under `numbering`.
-    ///
-    /// Throws `ArgumentException` on a signal the numbering does not have (see
-    /// `Signal.existsUnder`), which a client can build only by hand: one read
-    /// from a signal number went through `Signal.ofRawSignoUnder`, which
-    /// refuses those.
+    /// <summary>
+    /// The mask naming exactly <c>signals</c>, under the given platform's <c>numbering</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">A given signal is not present on this platform (see <c>Signal.existsUnder</c>).</exception>
     let ofSignals (numbering : SignalNumbering) (signals : Set<Signal>) : SignalMask =
         let word =
             (0UL, signals)
@@ -774,15 +848,28 @@ module SignalMask =
         else
             SignalMask.Under (numbering, word)
 
-    /// The mask's bits as its numbering's `sigset_t` holds them: bit `n - 1`
-    /// is signal number `n`. Zero for the empty mask.
+    /// <summary>
+    /// The mask's bits, as held in its platform's <c>sigset_t</c>.
+    /// </summary>
+    /// <remarks>
+    /// Bit <c>n-1</c> is signal number <c>n</c>.
+    /// </remarks>
+    /// <example>
+    /// The empty mask produces word 0.
+    /// </example>
     let toWord (mask : SignalMask) : uint64 =
         match mask with
         | SignalMask.Empty -> 0UL
         | SignalMask.Under (_, word) -> word
 
-    /// The signals the mask names. A bit that names no signal (Darwin's bit 31)
-    /// is left out: only `toWord` shows it.
+    /// <summary>
+    /// The signals this mask names.
+    /// </summary>
+    /// <remarks>
+    /// If a bit is set which doesn't have a corresponding signal (e.g. Darwin's bit 31),
+    /// it is left out of the set.
+    /// By contrast, <c>toWord</c> still shows that bit.
+    /// </remarks>
     let signals (mask : SignalMask) : Set<Signal> =
         match mask with
         | SignalMask.Empty -> Set.empty
@@ -796,8 +883,12 @@ module SignalMask =
             }
             |> Set.ofSeq
 
-    /// Whether the mask names `signal`. False for a signal its numbering does
-    /// not have.
+    /// <summary>
+    /// True if the mask names <c>signal</c>.
+    /// </summary>
+    /// <remarks>
+    /// Returns false for a signal which doesn't exist on this platform.
+    /// </remarks>
     let contains (signal : Signal) (mask : SignalMask) : bool =
         match mask with
         | SignalMask.Empty -> false
@@ -805,7 +896,9 @@ module SignalMask =
             Signal.existsUnder numbering signal
             && word &&& (1UL <<< (Signal.toRawSignoUnder numbering signal - 1)) <> 0UL
 
-    /// Whether the mask sets no bit.
+    /// <summary>
+    /// False iff the signal mask sets any bits.
+    /// </summary>
     let isEmpty (mask : SignalMask) : bool =
         match mask with
         | SignalMask.Empty -> true
