@@ -136,14 +136,14 @@ RULES = [
         },
     ),
     Rule(
-        name="process view's module",
-        pattern=re.compile(r"\bProcessView\."),
+        name="process view's and process reading's modules",
+        pattern=re.compile(r"\bProcess(?:View|Reading)\."),
         instead=(
             "focus a process through `Proc.view` or `Lone.view`, and put a view back through `unview` or "
-            "`unfocus` there"
+            "`unfocus` there; read one through `Proc.reading` or `Lone.reading`"
         ),
         allowed={
-            "Proc.fs": "defines the focusing and putting back every other test does",
+            "Proc.fs": "defines the focusing, reading and putting back every other test does",
             "TestProcessView.fs": "tests the module itself: that putting back a view unchanged from the one focused answers the very system focused",
         },
     ),

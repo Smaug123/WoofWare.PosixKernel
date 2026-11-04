@@ -39,12 +39,8 @@ module internal LinuxReadiness =
     ///
     /// Defined for a socket only when `modelsSocket` accepts it, and failing
     /// otherwise.
-    let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (targetId : OpenFileDescriptionId)
-        (system : ProcessView<'Thread, 'Handler>)
-        : uint32
-        =
-        match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
+    let ofDescription (targetId : OpenFileDescriptionId) (machine : UnixMachineState) : uint32 =
+        match OpenFileTable.tryFind targetId machine.OpenFiles with
         | None ->
             failwith
                 $"LinuxReadiness.ofDescription: %O{targetId} names no live open file description. Both waiters resolve their descriptor first, and FileDescriptorRegistry.dropDescriptor sweeps destroyed descriptions out of every interest table, so this is a bug in this library."
@@ -57,8 +53,8 @@ module internal LinuxReadiness =
             // condition the level already holds: every measured socket
             // presents RDNORM exactly when it presents IN, and WRNORM exactly
             // when OUT.
-            let level = UnixMachineState.socketReadinessLevel socketId system.Machine
-            let socket = UnixMachineState.socket socketId system.Machine
+            let level = UnixMachineState.socketReadinessLevel socketId machine
+            let socket = UnixMachineState.socket socketId machine
 
             // WRBAND is the one bit that depends on more than the level.
             // Measured, it rides with OUT on UDP (IPv4 and IPv6, with and
@@ -118,13 +114,13 @@ module internal LinuxReadiness =
             // comparison in `TestPipeAgainstHost`): IN|RDNORM while
             // the pipe holds anything, and HUP once no write end is open, data
             // or none. No PRI or RDBAND: a pipe's handler sets neither.
-            let pipe = UnixMachineState.pipe pipeId system.Machine
+            let pipe = UnixMachineState.pipe pipeId machine
 
             (if PipeBuffer.readable pipe.Buffer then
                  EpollEvents.In ||| EpollEvents.RdNorm
              else
                  0u)
-            ||| (if UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Write system.Machine then
+            ||| (if UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Write machine then
                      0u
                  else
                      EpollEvents.Hup)
@@ -132,13 +128,13 @@ module internal LinuxReadiness =
             // Measured likewise: OUT|WRNORM while a slot is free (see
             // `PipeBuffer.writable`), and ERR once no read end is open, whether
             // or not a slot is. No WRBAND.
-            let pipe = UnixMachineState.pipe pipeId system.Machine
+            let pipe = UnixMachineState.pipe pipeId machine
 
             (if PipeBuffer.writable pipe.Buffer then
                  EpollEvents.Out ||| EpollEvents.WrNorm
              else
                  0u)
-            ||| (if UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read system.Machine then
+            ||| (if UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read machine then
                      0u
                  else
                      EpollEvents.Err)
@@ -226,9 +222,9 @@ module internal EpollReadyList =
     /// Each pending entry of the epoll instance, in delivery order, with what it would
     /// report if `epoll_wait` re-polled it right now: the target's current
     /// readiness restricted to the registration's stored mask.
-    let private annotatedReady<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let private annotatedReady
         (epollState : EpollState)
-        (system : ProcessView<'Thread, 'Handler>)
+        (machine : UnixMachineState)
         : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list
         =
         epollState.Ready
@@ -240,7 +236,7 @@ module internal EpollReadyList =
                     failwith
                         $"EpollReadyList.annotatedReady: pending entry %A{key} has no registration. FileDescriptorRegistryDefect.EpollReadyEntryUnregistered exists to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
 
-            let reported = LinuxReadiness.ofDescription targetId system &&& registration.Events
+            let reported = LinuxReadiness.ofDescription targetId machine &&& registration.Events
 
             key, registration, reported
         )
@@ -256,12 +252,8 @@ module internal EpollReadyList =
     /// that has gone means a park was ended or the epoll instance destroyed some other
     /// way, and neither answer is honest: `true` wakes the waiter into an
     /// `EBADF` no kernel produces, and `false` sleeps for ever.
-    let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (epollId : OpenFileDescriptionId)
-        (system : ProcessView<'Thread, 'Handler>)
-        : bool
-        =
-        match OpenFileTable.tryFind epollId system.Machine.OpenFiles with
+    let hasDeliverableEvent (epollId : OpenFileDescriptionId) (machine : UnixMachineState) : bool =
+        match OpenFileTable.tryFind epollId machine.OpenFiles with
         | None ->
             failwith
                 $"EpollReadyList.hasDeliverableEvent: %O{epollId} names no live open file description, but a thread waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
@@ -279,7 +271,7 @@ module internal EpollReadyList =
             failwith
                 $"EpollReadyList.hasDeliverableEvent: %O{epollId} is not an epoll instance, so no wait can be parked on it (this is a bug in the caller of EpollReadyList.hasDeliverableEvent)."
         | OpenFileTarget.Epoll epollState ->
-            annotatedReady epollState system
+            annotatedReady epollState machine
             |> List.exists (fun (_, _, reported) -> reported <> 0u)
 
     /// Drain the epoll instance as one `epoll_wait(maxevents = maxCount)` would: walk
@@ -360,7 +352,7 @@ module internal EpollReadyList =
                 | EpollReportEffect.Disarm -> walk (reported + 1) delivered requeued (key :: disarming) rest
 
         let delivered, spared, requeued, disarming =
-            walk 0 [] [] [] (annotatedReady epollState system)
+            walk 0 [] [] [] (annotatedReady epollState system.Machine)
 
         // Each walked entry's target was polled again, as `ep_send_events`
         // polls each entry it takes off the list; the entries the stop spared
@@ -582,21 +574,21 @@ module internal DarwinReadiness =
     /// pipe has lost an end. Once either end has no descriptor left, every
     /// filter on the surviving end is ready with `EV_EOF`, reporting 0, but a
     /// read end's `EVFILT_READ`, which still reports what the pipe holds.
-    let ofPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let ofPipe
         (filter : KqueueFilter)
         (pipeId : PipeId)
         (pipeEnd : PipeEnd)
-        (system : ProcessView<'Thread, 'Handler>)
+        (machine : UnixMachineState)
         : KqueueFilterReport option
         =
-        let pipe = UnixMachineState.pipe pipeId system.Machine
+        let pipe = UnixMachineState.pipe pipeId machine
 
         let otherEnd =
             match pipeEnd with
             | PipeEnd.Read -> PipeEnd.Write
             | PipeEnd.Write -> PipeEnd.Read
 
-        let ended = not (UnixMachineState.pipeEndOpen pipeId pipe otherEnd system.Machine)
+        let ended = not (UnixMachineState.pipeEndOpen pipeId pipe otherEnd machine)
 
         let held = int64 (PipeBuffer.held pipe.Buffer)
 
@@ -849,12 +841,8 @@ module internal KqueueQueue =
     /// Loudly partial in `kqueue`, as `EpollReadyList.hasDeliverableEvent` is
     /// in its epoll instance: a thread parked on a kqueue holds it until its call returns,
     /// so the kqueue cannot have gone while something waits on it.
-    let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (kqueue : OpenFileDescriptionId)
-        (system : ProcessView<'Thread, 'Handler>)
-        : bool
-        =
-        match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
+    let hasDeliverableEvent (kqueue : OpenFileDescriptionId) (machine : UnixMachineState) : bool =
+        match OpenFileTable.tryFind kqueue machine.OpenFiles with
         | None ->
             failwith
                 $"KqueueQueue.hasDeliverableEvent: %O{kqueue} names no live open file description, but a thread waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
@@ -863,7 +851,7 @@ module internal KqueueQueue =
                } ->
             state.Active
             |> List.exists (fun (_, filter as key) ->
-                Option.isSome (reportOf filter (registrationOf kqueue state key) system.Machine)
+                Option.isSome (reportOf filter (registrationOf kqueue state key) machine)
             )
         | Some other ->
             failwith

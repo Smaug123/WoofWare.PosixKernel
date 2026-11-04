@@ -220,7 +220,7 @@ module SyscallInterruption =
     /// returned to user mode decides it.
     let internal suspension<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         (signals : SignalState<'Thread, 'Handler>)
         : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
         =
@@ -233,7 +233,7 @@ module SyscallInterruption =
             =
             match
                 SignalState.takeOnReturn
-                    (UnixSystemState.signalNumbering system)
+                    (SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform)
                     system.Process.CoreDumps
                     system.Leader
                     threads
@@ -283,7 +283,7 @@ module SyscallInterruption =
     /// to user mode now: empty when it would run no handler.
     let private framesOnReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : Result<HandlerFrame<'Thread, 'Handler> list, SyscallInterruptionRefusal>
         =
         let threads = UnixThreadTable.byName system.Threads |> Map.keys |> Set.ofSeq
@@ -293,7 +293,7 @@ module SyscallInterruption =
         // once its syscall has answered.
         match
             SignalState.onReturnToUser
-                (UnixSystemState.signalNumbering system)
+                (SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform)
                 system.Process.CoreDumps
                 system.Leader
                 threads
@@ -315,7 +315,7 @@ module SyscallInterruption =
     /// signal state, which its finishing call commits before it sleeps again.
     let internal wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : bool
         =
         // Nothing pending is no handler to run, and every sleeping thread is
@@ -571,7 +571,7 @@ module SyscallInterruption =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Ok Completion.Completes
         | SimulatedUnixFlavour.Darwin ->
-            match framesOnReturn thread system with
+            match framesOnReturn thread (ProcessReading.ofView system) with
             | Ok [] -> Ok Completion.Completes
             | Ok frames ->
                 match UnixThreadTable.parkOf thread system.Threads with

@@ -266,17 +266,6 @@ module internal ProcessView =
             Sweep = system.Sweep
         }
 
-    /// The view of `system` from the process `pid`, or `None` if `system`
-    /// holds no process with that ID.
-    let tryFocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (pid : ProcessId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : ProcessView<'Thread, 'Handler> option
-        =
-        match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
-        | Some slot -> Some (ofSlot pid slot system)
-        | None -> None
-
     /// The kernel `view` is a view of, as the view has it: its machine and
     /// scheduling, and its process back among the others, under its ID.
     let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -346,6 +335,72 @@ module internal ProcessView =
         : UnixSystem<'Thread, 'Handler>
         =
         if unchangedFrom focused view then origin else unfocus view
+
+/// What a question about one process reads of a `UnixSystem`: the machine,
+/// which thread each processor runs, and the process with its threads. It
+/// holds no other process, so nothing that reads one can read another, and
+/// making one costs the same however many processes the machine holds.
+///
+/// `Entry.query` makes one for a query's body (`ProcessReading.ofSlot`), and a
+/// call's body that asks such a question makes one of its view
+/// (`ProcessReading.ofView`).
+type internal ProcessReading<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    {
+        Machine : UnixMachineState
+        /// How long the machine has been up, and which thread each of its
+        /// processors runs: see `UnixSchedulingState`.
+        Scheduling : UnixSchedulingState
+        /// The process this is the reading of.
+        ProcessId : ProcessId
+        Process : UnixProcessState<'Thread, 'Handler>
+        /// The process's threads: see `ProcessSlot.Threads`.
+        Threads : ThreadTable<'Thread>
+        /// The process's leader: see `ProcessSlot.Leader`.
+        Leader : 'Thread
+    }
+
+/// Making a `ProcessReading`.
+[<RequireQualifiedAccess>]
+module internal ProcessReading =
+
+    /// The reading of `system` from the process `pid`, whose slot is `slot`.
+    let ofSlot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (slot : ProcessSlot<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessReading<'Thread, 'Handler>
+        =
+        {
+            Machine = system.Machine
+            Scheduling = system.Scheduling
+            ProcessId = pid
+            Process = slot.Process
+            Threads = slot.Threads
+            Leader = slot.Leader
+        }
+
+    /// The reading of the kernel `view` is a view of, from its process, as the
+    /// view has it.
+    let ofView<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : ProcessView<'Thread, 'Handler>)
+        : ProcessReading<'Thread, 'Handler>
+        =
+        {
+            Machine = view.Machine
+            Scheduling = view.Scheduling
+            ProcessId = view.ProcessId
+            Process = view.Process
+            Threads = view.Threads
+            Leader = view.Leader
+        }
+
+    /// The process's descriptor table, read against the machine's open file
+    /// descriptions.
+    let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (reading : ProcessReading<'Thread, 'Handler>)
+        : FileDescriptorRegistry
+        =
+        FileDescriptorRegistry.ofTables reading.Process.FileDescriptors reading.Machine.OpenFiles
 
 /// Reading and writing a `ProcessView`'s process's descriptor table together
 /// with the machine's open file descriptions it names.
@@ -988,19 +1043,23 @@ module internal Entry =
     /// A question about the process `pid` that no thread of it asks, such as
     /// which threads it has: fails with `InvalidOperationException` unless
     /// the kernel holds a process `pid`, and otherwise answers what `body`
-    /// answers for the view of it. `operation` names the function the client
-    /// called.
+    /// answers for the reading of it (`ProcessReading`). `operation` names the
+    /// function the client called.
     ///
     /// The answer holds no system, so nothing is handed back.
     let query<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (pid : ProcessId)
-        (body : ProcessView<'Thread, 'Handler> -> 'Answer)
+        (body : ProcessReading<'Thread, 'Handler> -> 'Answer)
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Answer
         =
-        match ProcessView.tryFocus pid system with
-        | Some view -> body view
-        | None ->
+        // `TryGetValue` rather than `Map.tryFind`, which would allocate an
+        // option.
+        let mutable slot = Unchecked.defaultof<ProcessSlot<'Thread, 'Handler>>
+
+        if not ((ProcessTable.slots system.Processes).TryGetValue (ProcessId.toInt32 pid, &slot)) then
             invalidOp
                 $"%s{operation}: the question is about process %O{pid}, but the system holds no process %O{pid}, so it cannot be asked of it (this is a bug in the client)."
+
+        body (ProcessReading.ofSlot pid slot system)

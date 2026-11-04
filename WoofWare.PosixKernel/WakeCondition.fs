@@ -25,13 +25,9 @@ module WakeCondition =
 
     /// Whether the machine's monotonic clock has reached `deadline`, if the call
     /// has one: what `WakePrimitive.DeadlinePassed` waits for.
-    let internal deadlinePassed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (deadline : int64 option)
-        (system : ProcessView<'Thread, 'Handler>)
-        : bool
-        =
+    let internal deadlinePassed (deadline : int64 option) (scheduling : UnixSchedulingState) : bool =
         match deadline with
-        | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
+        | Some deadline -> scheduling.NanosecondsSinceBoot >= deadline
         | None -> false
 
     /// The pipe the open file description `description` names `pipeEnd` of, and
@@ -41,7 +37,7 @@ module WakeCondition =
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : PipeId * PipeState
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -63,7 +59,7 @@ module WakeCondition =
     let private connectionOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : ConnectionEnd * TcpTransfer
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -93,7 +89,7 @@ module WakeCondition =
     /// Whether a close has ended the call `thread` is asleep in.
     let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : bool
         =
         match
@@ -154,7 +150,7 @@ module WakeCondition =
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (primitive : WakePrimitive)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : bool
         =
         match primitive with
@@ -168,8 +164,8 @@ module WakeCondition =
             | Some description ->
                 OpenFileTable.flockConflicts (OpenFileDescription.object requester description) requester mode openFiles
                 |> not
-        | WakePrimitive.EpollEventDeliverable epoll -> EpollReadyList.hasDeliverableEvent epoll system
-        | WakePrimitive.KqueueEventDeliverable kqueue -> KqueueQueue.hasDeliverableEvent kqueue system
+        | WakePrimitive.EpollEventDeliverable epoll -> EpollReadyList.hasDeliverableEvent epoll system.Machine
+        | WakePrimitive.KqueueEventDeliverable kqueue -> KqueueQueue.hasDeliverableEvent kqueue system.Machine
         | WakePrimitive.KqueuePollReportable -> KqueuePoll.reportable thread system
         | WakePrimitive.KqueueDrained kqueue ->
             match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -194,7 +190,7 @@ module WakeCondition =
                 failwith
                     $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a thread waits for it to become ready, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
 
-            LinuxReadiness.ofDescription description system &&& conditions <> 0u
+            LinuxReadiness.ofDescription description system.Machine &&& conditions <> 0u
         | WakePrimitive.AcceptQueueNonEmpty listener ->
             match OpenFileTable.tryFind listener system.Machine.OpenFiles with
             | None ->
@@ -245,7 +241,7 @@ module WakeCondition =
         | WakePrimitive.ConnectionWritable (writer, remaining) ->
             let connectionEnd, transfer = connectionOfWaiter primitive writer system
             TcpTransfer.writeResumes connectionEnd remaining transfer
-        | WakePrimitive.DeadlinePassed deadline -> deadlinePassed (Some deadline) system
+        | WakePrimitive.DeadlinePassed deadline -> deadlinePassed (Some deadline) system.Scheduling
         | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes thread system
         // `satisfied` answers a call a close has ended before it asks any
         // primitive, so this is asked only of one no close has ended.
@@ -340,7 +336,7 @@ module WakeCondition =
     let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (condition : WakeCondition)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =

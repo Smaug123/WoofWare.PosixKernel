@@ -2525,7 +2525,7 @@ module UnixPathResolution =
 
     /// `currentDirectoryPath` once `Entry` has admitted the process.
     let private currentDirectoryPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
         // Measured on both flavours; see docs/probes/chdir.
@@ -2616,7 +2616,7 @@ module UnixPathResolution =
             Error GetCwdRefusal.FatalToTheProcess
         else
 
-        match currentDirectoryPathIn system with
+        match currentDirectoryPathIn (ProcessReading.ofView system) with
         | None ->
             // No path reaches the directory the process is in, so there is
             // nothing to measure against the buffer. What the buffer can still

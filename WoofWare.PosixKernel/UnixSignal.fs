@@ -820,7 +820,7 @@ module UnixSignal =
     /// `owesReturn` once `Entry` has admitted the process.
     let private owesReturnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : bool
         =
         // The mark `Entry` refuses a call for (`UnixThreadTable.requireIssuer`),
@@ -1415,7 +1415,7 @@ module UnixSignal =
         // A signal the temporary mask lets through ends the call as it is made,
         // without a sleep (the probe's "pending" and "two" rows answered within
         // 50 ms), as a `poll` with something to report answers at once.
-        match SyscallInterruption.suspension thread system signals with
+        match SyscallInterruption.suspension thread (ProcessReading.ofView system) signals with
         | Error refusal -> Error refusal
         | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
             let interruption =
@@ -1615,7 +1615,7 @@ module UnixSignal =
             thread
             system.Threads
 
-        match SyscallInterruption.suspension thread system system.Process.Signals with
+        match SyscallInterruption.suspension thread (ProcessReading.ofView system) system.Process.Signals with
         | Error refusal -> Error refusal
         | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
             let interruption =

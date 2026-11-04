@@ -2045,6 +2045,8 @@ module UnixDescriptor =
             if not darwin then
                 None
             else
+                let reading = ProcessReading.ofView system
+
                 parks
                 |> List.tryPick (fun (thread, parked) ->
                     match parked with
@@ -2061,7 +2063,7 @@ module UnixDescriptor =
                         // close ends the read with end of file, which is what a
                         // read woken by the last writer closing answers too.
                         match
-                            WakeCondition.satisfied thread (WakeCondition.ofPark parked) system
+                            WakeCondition.satisfied thread (WakeCondition.ofPark parked) reading
                             |> Set.filter (fun primitive ->
                                 match primitive with
                                 | WakePrimitive.PipeWriteEndClosed _ -> false
@@ -2077,7 +2079,7 @@ module UnixDescriptor =
                         // in, which is what a write woken by the last reader
                         // closing answers too.
                         match
-                            WakeCondition.satisfied thread (WakeCondition.ofPark parked) system
+                            WakeCondition.satisfied thread (WakeCondition.ofPark parked) reading
                             |> Set.filter (fun primitive ->
                                 match primitive with
                                 | WakePrimitive.PipeReadEndClosed _ -> false
@@ -2097,14 +2099,14 @@ module UnixDescriptor =
                         // W-close, `tcp-close-drain.c`): the drain ends the
                         // call with EBADF. Nothing else answers a transfer so,
                         // so any wake at all is one the close races.
-                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
+                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) reading) then
                             None
                         else
                             Some (CloseRefusal.DarwinWokenTransfer (closingId, thread))
                     | ParkedSyscall.DatagramReceive receive when drainedHere receive.Socket ->
                         // Measured (`udp-sleepers.c` V11, V12): the drain ends
                         // the receive with EBADF, as above.
-                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) system) then
+                        if Set.isEmpty (WakeCondition.satisfied thread (WakeCondition.ofPark parked) reading) then
                             None
                         else
                             Some (CloseRefusal.DarwinWokenTransfer (closingId, thread))

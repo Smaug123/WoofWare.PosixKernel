@@ -578,7 +578,7 @@ module UnixFutex =
         // it returns; and a timeout beats a signal.
         if wait.TakenByWake then
             Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), UnixParkState.unpark thread system)
-        elif WakeCondition.deadlinePassed (FutexTimeout.deadline wait.FutexTimeout) system then
+        elif WakeCondition.deadlinePassed (FutexTimeout.deadline wait.FutexTimeout) system.Scheduling then
             Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ETIMEDOUT), UnixParkState.unpark thread system)
         else
 

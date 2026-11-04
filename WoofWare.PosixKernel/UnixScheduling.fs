@@ -148,7 +148,7 @@ module UnixScheduling =
     /// `runningOn` once `Entry` has admitted the process.
     let private runningOnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : CpuId option
         =
         match UnixThreadTable.tryFind thread system.Threads with
