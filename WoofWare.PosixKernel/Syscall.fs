@@ -610,6 +610,9 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
         word : CopiedArgument<uint32> *
         timeout : TimespecArgument *
         val3 : uint32
+    /// `gethostname(3)` into a buffer of `capacity` bytes, as
+    /// `UnixHostName.getHostName` makes it.
+    | GetHostName of destination : UserBuffer * capacity : uint64
 
 /// What `UnixSystem.step` answers for a `Syscall.Nanosleep`: what
 /// `SteppedCall.Nanosleep` holds.
@@ -976,6 +979,8 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixFutex.futexWithWord` answers, or `UnixFutex.futex` where the
     /// call answers before it reads the word.
     | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// What `UnixHostName.getHostName` answers.
+    | GetHostName of answer : GetHostNameAnswer
 
 [<RequireQualifiedAccess>]
 module SteppedCall =
@@ -1111,7 +1116,8 @@ module SteppedCall =
         | SteppedCall.GetProcessId _
         | SteppedCall.GetResUid _
         | SteppedCall.GetResGid _
-        | SteppedCall.GetCpu _ -> madeIn
+        | SteppedCall.GetCpu _
+        | SteppedCall.GetHostName _ -> madeIn
         | SteppedCall.RecvMsg _ -> reserved "RecvMsg"
         | SteppedCall.Select _ -> reserved "Select"
         | SteppedCall.PSelect _ -> reserved "PSelect"

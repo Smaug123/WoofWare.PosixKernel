@@ -57,6 +57,37 @@ module internal ProcessorCountRefusal =
         match refusal with
         | ProcessorCountRefusal.NotPositive _ -> RefusalKind.OutOfRange "count"
 
+/// Why `UnixBootImage.withHostName` refuses a name.
+[<RequireQualifiedAccess>]
+type internal HostNameRefusal =
+    /// The name is `length` bytes, longer than the `maximum` this flavour's
+    /// kernel holds: Linux's `__NEW_UTS_LEN` (64; measured, `sethostname(2)`
+    /// of 65 bytes is EINVAL), or Darwin's `MAXHOSTNAMELEN` less its
+    /// terminator (255; `sysconf(_SC_HOST_NAME_MAX)` measured). Contradictory.
+    | TooLong of length : int * maximum : int
+    /// The name is empty, on Darwin. Unmeasured: Linux holds an empty name
+    /// (measured, `sethostname("", 0)` succeeds), but setting Darwin's
+    /// `kern.hostname` needs root, and no Darwin machine was measured with
+    /// one.
+    | EmptyOnDarwin
+
+[<RequireQualifiedAccess>]
+module internal HostNameRefusal =
+    /// What this library knows about why it refused the name, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : HostNameRefusal) : string =
+        match refusal with
+        | HostNameRefusal.TooLong (length, maximum) ->
+            $"the name is %d{length} bytes, and this flavour's kernel holds a host name of at most %d{maximum}."
+        | HostNameRefusal.EmptyOnDarwin ->
+            "the name is empty, and no Darwin machine was measured with an empty kern.hostname, so what gethostname(3) would report of it is a guess."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : HostNameRefusal) : RefusalKind =
+        match refusal with
+        | HostNameRefusal.TooLong _ -> RefusalKind.Contradictory "name"
+        | HostNameRefusal.EmptyOnDarwin -> RefusalKind.Unmodelled
+
 /// Why `UnixBootImage.withEphemeralPortRange` refuses a range.
 [<RequireQualifiedAccess>]
 type internal EphemeralPortRangeRefusal =
@@ -1096,6 +1127,54 @@ module UnixBootImage =
         =
         tryWithProcessorCount count image
         |> Refusal.orRaise "UnixBootImage.withProcessorCount" ProcessorCountRefusal.kind ProcessorCountRefusal.describe
+
+    /// `withHostName`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithHostName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (name : UnixByteString)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, HostNameRefusal>
+        =
+        let machine = image.Machine
+        let length = (UnixByteString.toBytes name).Length
+
+        let maximum =
+            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux -> 64
+            | SimulatedUnixFlavour.Darwin -> 255
+
+        if length > maximum then
+            Error (HostNameRefusal.TooLong (length, maximum))
+        elif
+            length = 0
+            && SimulatedUnixPlatform.flavour machine.UnixPlatform = SimulatedUnixFlavour.Darwin
+        then
+            Error HostNameRefusal.EmptyOnDarwin
+        else
+
+        { machine with
+            HostName = name
+        }
+        |> withMachine image
+        |> Ok
+
+    /// <summary>
+    /// Set the name the machine reports from <c>gethostname(3)</c>, which is
+    /// otherwise <c>UnixSystem.defaultHostName</c>.
+    /// </summary>
+    /// <remarks>
+    /// The name is bytes, as the kernel holds it; it need not be a valid DNS
+    /// name, since no kernel checks that either. Linux holds up to 64 bytes and
+    /// Darwin up to 255.
+    /// </remarks>
+    /// <exception cref="T:System.ArgumentException">The name is longer than the flavour's kernel holds. Contradictory: no machine of the flavour has such a name.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">The name is empty, on Darwin, where no machine was measured with an empty name.</exception>
+    let withHostName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (name : UnixByteString)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
+        =
+        tryWithHostName name image
+        |> Refusal.orRaise "UnixBootImage.withHostName" HostNameRefusal.kind HostNameRefusal.describe
 
     /// `withEphemeralPortRange`, with a refusal answered as the `Error` rather than raised.
     let internal tryWithEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

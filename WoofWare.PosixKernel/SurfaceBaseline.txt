@@ -1682,6 +1682,27 @@ WoofWare.PosixKernel.GetGroupsAnswer.NewCopied [static method]: WoofWare.PosixKe
 WoofWare.PosixKernel.GetGroupsAnswer.NewCounted [static method]: int -> WoofWare.PosixKernel.GetGroupsAnswer
 WoofWare.PosixKernel.GetGroupsAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.GetGroupsAnswer
 WoofWare.PosixKernel.GetGroupsAnswer.Tag [property]: [read-only] int
+WoofWare.PosixKernel.GetHostNameAnswer inherit obj, implements WoofWare.PosixKernel.GetHostNameAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
+WoofWare.PosixKernel.GetHostNameAnswer+Failed inherit WoofWare.PosixKernel.GetHostNameAnswer
+WoofWare.PosixKernel.GetHostNameAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
+WoofWare.PosixKernel.GetHostNameAnswer+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
+WoofWare.PosixKernel.GetHostNameAnswer+Failed.get_placed [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.GetHostNameAnswer+Failed.placed [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.GetHostNameAnswer+Returned inherit WoofWare.PosixKernel.GetHostNameAnswer
+WoofWare.PosixKernel.GetHostNameAnswer+Returned.get_placed [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.GetHostNameAnswer+Returned.placed [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.GetHostNameAnswer+Tags inherit obj
+WoofWare.PosixKernel.GetHostNameAnswer+Tags.Failed [static field]: int = 1
+WoofWare.PosixKernel.GetHostNameAnswer+Tags.Returned [static field]: int = 0
+WoofWare.PosixKernel.GetHostNameAnswer.Equals [method]: (WoofWare.PosixKernel.GetHostNameAnswer, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.GetHostNameAnswer.get_IsFailed [method]: unit -> bool
+WoofWare.PosixKernel.GetHostNameAnswer.get_IsReturned [method]: unit -> bool
+WoofWare.PosixKernel.GetHostNameAnswer.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.GetHostNameAnswer.IsFailed [property]: [read-only] bool
+WoofWare.PosixKernel.GetHostNameAnswer.IsReturned [property]: [read-only] bool
+WoofWare.PosixKernel.GetHostNameAnswer.NewFailed [static method]: (System.Byte System.Collections.Immutable.ImmutableArray, WoofWare.PosixKernel.UnixError) -> WoofWare.PosixKernel.GetHostNameAnswer
+WoofWare.PosixKernel.GetHostNameAnswer.NewReturned [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.GetHostNameAnswer
+WoofWare.PosixKernel.GetHostNameAnswer.Tag [property]: [read-only] int
 WoofWare.PosixKernel.GetIdsAnswer`1 inherit obj, implements 'Id WoofWare.PosixKernel.GetIdsAnswer System.IEquatable, System.Collections.IStructuralEquatable, 'Id WoofWare.PosixKernel.GetIdsAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.GetIdsAnswer`1+Copied inherit 'Id WoofWare.PosixKernel.GetIdsAnswer
 WoofWare.PosixKernel.GetIdsAnswer`1+Copied.effective [property]: [read-only] 'Id
@@ -5312,7 +5333,7 @@ WoofWare.PosixKernel.StartingPointRules.get_NonDirectory [method]: unit -> WoofW
 WoofWare.PosixKernel.StartingPointRules.NonDirectory [property]: [read-only] WoofWare.PosixKernel.NonDirectoryDescriptorRule
 WoofWare.PosixKernel.SteppedCall inherit obj
 WoofWare.PosixKernel.SteppedCall.system [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
-WoofWare.PosixKernel.SteppedCall`2 inherit obj - union type with 117 cases
+WoofWare.PosixKernel.SteppedCall`2 inherit obj - union type with 118 cases
 WoofWare.PosixKernel.SteppedCall`2+Accept inherit WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2+Accept.get_outcome [method]: unit -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.SteppedCall`2+Accept.get_system [method]: unit -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
@@ -5487,6 +5508,9 @@ WoofWare.PosixKernel.SteppedCall`2+GetEntropy.system [property]: [read-only] Woo
 WoofWare.PosixKernel.SteppedCall`2+GetGroups inherit WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2+GetGroups.answer [property]: [read-only] WoofWare.PosixKernel.GetGroupsAnswer
 WoofWare.PosixKernel.SteppedCall`2+GetGroups.get_answer [method]: unit -> WoofWare.PosixKernel.GetGroupsAnswer
+WoofWare.PosixKernel.SteppedCall`2+GetHostName inherit WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
+WoofWare.PosixKernel.SteppedCall`2+GetHostName.answer [property]: [read-only] WoofWare.PosixKernel.GetHostNameAnswer
+WoofWare.PosixKernel.SteppedCall`2+GetHostName.get_answer [method]: unit -> WoofWare.PosixKernel.GetHostNameAnswer
 WoofWare.PosixKernel.SteppedCall`2+GetPeerName inherit WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2+GetPeerName.answer [property]: [read-only] WoofWare.PosixKernel.GetSockNameAnswer
 WoofWare.PosixKernel.SteppedCall`2+GetPeerName.get_answer [method]: unit -> WoofWare.PosixKernel.GetSockNameAnswer
@@ -5833,6 +5857,7 @@ WoofWare.PosixKernel.SteppedCall`2+Tags.GetEffectiveGroupId [static field]: int 
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetEffectiveUserId [static field]: int = 12
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetEntropy [static field]: int = 104
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetGroups [static field]: int = 14
+WoofWare.PosixKernel.SteppedCall`2+Tags.GetHostName [static field]: int = 117
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetPeerName [static field]: int = 70
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetProcessId [static field]: int = 105
 WoofWare.PosixKernel.SteppedCall`2+Tags.GetRandom [static field]: int = 103
@@ -5978,6 +6003,7 @@ WoofWare.PosixKernel.SteppedCall`2.get_IsGetEffectiveGroupId [method]: unit -> b
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetEffectiveUserId [method]: unit -> bool
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetEntropy [method]: unit -> bool
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetGroups [method]: unit -> bool
+WoofWare.PosixKernel.SteppedCall`2.get_IsGetHostName [method]: unit -> bool
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetPeerName [method]: unit -> bool
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetProcessId [method]: unit -> bool
 WoofWare.PosixKernel.SteppedCall`2.get_IsGetRandom [method]: unit -> bool
@@ -6096,6 +6122,7 @@ WoofWare.PosixKernel.SteppedCall`2.IsGetEffectiveGroupId [property]: [read-only]
 WoofWare.PosixKernel.SteppedCall`2.IsGetEffectiveUserId [property]: [read-only] bool
 WoofWare.PosixKernel.SteppedCall`2.IsGetEntropy [property]: [read-only] bool
 WoofWare.PosixKernel.SteppedCall`2.IsGetGroups [property]: [read-only] bool
+WoofWare.PosixKernel.SteppedCall`2.IsGetHostName [property]: [read-only] bool
 WoofWare.PosixKernel.SteppedCall`2.IsGetPeerName [property]: [read-only] bool
 WoofWare.PosixKernel.SteppedCall`2.IsGetProcessId [property]: [read-only] bool
 WoofWare.PosixKernel.SteppedCall`2.IsGetRandom [property]: [read-only] bool
@@ -6213,6 +6240,7 @@ WoofWare.PosixKernel.SteppedCall`2.NewGetEffectiveGroupId [static method]: WoofW
 WoofWare.PosixKernel.SteppedCall`2.NewGetEffectiveUserId [static method]: WoofWare.PosixKernel.UserId -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2.NewGetEntropy [static method]: (WoofWare.PosixKernel.GetEntropyAnswer, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2.NewGetGroups [static method]: WoofWare.PosixKernel.GetGroupsAnswer -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
+WoofWare.PosixKernel.SteppedCall`2.NewGetHostName [static method]: WoofWare.PosixKernel.GetHostNameAnswer -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2.NewGetPeerName [static method]: WoofWare.PosixKernel.GetSockNameAnswer -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2.NewGetProcessId [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2.NewGetRandom [static method]: (WoofWare.PosixKernel.GetRandomAnswer, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
@@ -6378,7 +6406,7 @@ WoofWare.PosixKernel.SymlinkTargetModule.toByteString [static method]: WoofWare.
 WoofWare.PosixKernel.SymlinkTargetModule.toEscaped [static method]: WoofWare.PosixKernel.SymlinkTarget -> string
 WoofWare.PosixKernel.SymlinkTargetModule.toUnixPath [static method]: WoofWare.PosixKernel.SymlinkTarget -> WoofWare.PosixKernel.UnixPath
 WoofWare.PosixKernel.SymlinkTargetModule.tryToString [static method]: WoofWare.PosixKernel.SymlinkTarget -> string option
-WoofWare.PosixKernel.Syscall`2 inherit obj, implements WoofWare.PosixKernel.Syscall<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable - union type with 117 cases
+WoofWare.PosixKernel.Syscall`2 inherit obj, implements WoofWare.PosixKernel.Syscall<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable - union type with 118 cases
 WoofWare.PosixKernel.Syscall`2+Accept inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+Accept.declaredLength [property]: [read-only] System.UInt32 option
 WoofWare.PosixKernel.Syscall`2+Accept.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
@@ -6598,6 +6626,11 @@ WoofWare.PosixKernel.Syscall`2+GetGroups.destination [property]: [read-only] Woo
 WoofWare.PosixKernel.Syscall`2+GetGroups.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetGroups.get_size [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+GetGroups.size [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+GetHostName inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+GetHostName.capacity [property]: [read-only] System.UInt64
+WoofWare.PosixKernel.Syscall`2+GetHostName.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
+WoofWare.PosixKernel.Syscall`2+GetHostName.get_capacity [method]: unit -> System.UInt64
+WoofWare.PosixKernel.Syscall`2+GetHostName.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetPeerName inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+GetPeerName.declaredLength [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.Syscall`2+GetPeerName.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
@@ -7059,6 +7092,7 @@ WoofWare.PosixKernel.Syscall`2+Tags.GetEffectiveGroupId [static field]: int = 13
 WoofWare.PosixKernel.Syscall`2+Tags.GetEffectiveUserId [static field]: int = 12
 WoofWare.PosixKernel.Syscall`2+Tags.GetEntropy [static field]: int = 104
 WoofWare.PosixKernel.Syscall`2+Tags.GetGroups [static field]: int = 14
+WoofWare.PosixKernel.Syscall`2+Tags.GetHostName [static field]: int = 117
 WoofWare.PosixKernel.Syscall`2+Tags.GetPeerName [static field]: int = 70
 WoofWare.PosixKernel.Syscall`2+Tags.GetProcessId [static field]: int = 105
 WoofWare.PosixKernel.Syscall`2+Tags.GetRandom [static field]: int = 103
@@ -7214,6 +7248,7 @@ WoofWare.PosixKernel.Syscall`2.get_IsGetEffectiveGroupId [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetEffectiveUserId [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetEntropy [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetGroups [method]: unit -> bool
+WoofWare.PosixKernel.Syscall`2.get_IsGetHostName [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetPeerName [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetProcessId [method]: unit -> bool
 WoofWare.PosixKernel.Syscall`2.get_IsGetRandom [method]: unit -> bool
@@ -7340,6 +7375,7 @@ WoofWare.PosixKernel.Syscall`2.IsGetEffectiveGroupId [property]: [read-only] boo
 WoofWare.PosixKernel.Syscall`2.IsGetEffectiveUserId [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsGetEntropy [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsGetGroups [property]: [read-only] bool
+WoofWare.PosixKernel.Syscall`2.IsGetHostName [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsGetPeerName [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsGetProcessId [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsGetRandom [property]: [read-only] bool
@@ -7455,6 +7491,7 @@ WoofWare.PosixKernel.Syscall`2.NewFutex [static method]: (System.UInt64, int, in
 WoofWare.PosixKernel.Syscall`2.NewGetCwd [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetEntropy [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetGroups [static method]: (int, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewGetHostName [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetPeerName [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetRandom [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetResGid [static method]: (WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -7790,6 +7827,7 @@ WoofWare.PosixKernel.UnixBootImage.withDeviceFileSystem [static method]: Map<Woo
 WoofWare.PosixKernel.UnixBootImage.withEntropySeed [static method]: System.UInt64 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withEphemeralPortRange [static method]: (System.UInt16, System.UInt16) -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withFileSystem [static method]: WoofWare.PosixKernel.UnixTimestamp -> WoofWare.PosixKernel.InodeOwner -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixBootImage.withHostName [static method]: WoofWare.PosixKernel.UnixByteString -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withInotifyLimits [static method]: WoofWare.PosixKernel.InotifyLimits -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withIpv6OnlyByDefault [static method]: bool -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withLeaderThreadId [static method]: System.UInt64 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
@@ -8648,6 +8686,8 @@ WoofWare.PosixKernel.UnixFutex.FutexWaitPrivate [static field]: int = 128
 WoofWare.PosixKernel.UnixFutex.FutexWakeBitsetPrivate [static field]: int = 138
 WoofWare.PosixKernel.UnixFutex.FutexWakePrivate [static field]: int = 129
 WoofWare.PosixKernel.UnixFutex.futexWithWord [static method]: System.UInt32 -> WoofWare.PosixKernel.PausedFutexWait<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixHostName inherit obj
+WoofWare.PosixKernel.UnixHostName.getHostName [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UserBuffer -> System.UInt64 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.GetHostNameAnswer
 WoofWare.PosixKernel.UnixInotify inherit obj
 WoofWare.PosixKernel.UnixInotify.inotifyAddWatch [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedInotifyAddWatch<'Thread, 'Handler>, (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixInotify.inotifyAddWatchWithPath [static method]: WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.PausedInotifyAddWatch<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
@@ -8879,6 +8919,7 @@ WoofWare.PosixKernel.UnixSystem.defaultDevtmpfsContents [static property]: [read
 WoofWare.PosixKernel.UnixSystem.defaultEntropySeed [static property]: [read-only] System.UInt64
 WoofWare.PosixKernel.UnixSystem.defaultEphemeralPortRange [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> (System.UInt16 * System.UInt16)
 WoofWare.PosixKernel.UnixSystem.defaultGroupId [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.GroupId
+WoofWare.PosixKernel.UnixSystem.defaultHostName [static property]: [read-only] WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.UnixSystem.defaultInotifyLimits [static property]: [read-only] WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.defaultLocalIpv4Addresses [static property]: [read-only] WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.defaultLocalRoutes [static property]: [read-only] WoofWare.PosixKernel.Ipv4Prefix list
@@ -8904,6 +8945,7 @@ WoofWare.PosixKernel.UnixSystem.get_defaultCurrentDirectory [static method]: uni
 WoofWare.PosixKernel.UnixSystem.get_defaultDevfsContents [static method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.get_defaultDevtmpfsContents [static method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.UnixSystem.get_defaultEntropySeed [static method]: unit -> System.UInt64
+WoofWare.PosixKernel.UnixSystem.get_defaultHostName [static method]: unit -> WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.UnixSystem.get_defaultInotifyLimits [static method]: unit -> WoofWare.PosixKernel.InotifyLimits
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalIpv4Addresses [static method]: unit -> WoofWare.PosixKernel.Ipv4Address list
 WoofWare.PosixKernel.UnixSystem.get_defaultLocalRoutes [static method]: unit -> WoofWare.PosixKernel.Ipv4Prefix list

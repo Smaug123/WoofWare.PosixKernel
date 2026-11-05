@@ -36,11 +36,13 @@ module TestGetHostName =
     /// `length` bytes of 'h', the name the probe sets.
     let private hs (length : int) : UnixByteString = nameOf (Array.create length (byte 'h'))
 
+    let private imageOn (platform : SimulatedUnixPlatform) : UnixBootImage<int, string> = UnixSystem.initial platform
+
     let private boot (image : UnixBootImage<int, string>) : UnixSystem<int, string> =
         Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
     let private bootNamed (platform : SimulatedUnixPlatform) (name : UnixByteString) : UnixSystem<int, string> =
-        UnixSystem.initial platform
+        imageOn platform
         |> UnixBootImage.tryWithHostName name
         |> Configured.expectOk HostNameRefusal.describe
         |> boot
@@ -67,7 +69,7 @@ module TestGetHostName =
     [<Test>]
     let ``a machine nobody names is localhost`` () : unit =
         for platform in platforms do
-            let system = boot (UnixSystem.initial platform)
+            let system = boot (imageOn platform)
 
             (Kernel.machine system).HostName
             |> UnixByteString.toBytes
@@ -77,7 +79,10 @@ module TestGetHostName =
             UnixSystem.defaultHostName |> shouldEqual (nameOf "localhost"B)
 
     [<Test>]
-    let ``withHostName admits exactly the names the flavour can hold, and the machine reports what it admitted`` () : unit =
+    let ``withHostName admits exactly the names the flavour can hold, and the machine reports what it admitted``
+        ()
+        : unit
+        =
         let property (platform : SimulatedUnixPlatform, length : int) : unit =
             let name = hs length
             let flavour = SimulatedUnixPlatform.flavour platform
@@ -86,7 +91,7 @@ module TestGetHostName =
                 length <= maximum platform
                 && (length > 0 || flavour = SimulatedUnixFlavour.Linux)
 
-            match UnixBootImage.tryWithHostName name (UnixSystem.initial platform), admissible with
+            match UnixBootImage.tryWithHostName name (imageOn platform), admissible with
             | Ok image, true -> (Kernel.machine (boot image)).HostName |> shouldEqual name
             | Error refusal, false ->
                 if length = 0 then
@@ -97,7 +102,11 @@ module TestGetHostName =
             | Error refusal, true -> failwith $"a name of %d{length} bytes was refused on %O{platform}: %A{refusal}"
 
         let lengths =
-            Gen.oneof [ Gen.choose (0, 300) ; Gen.elements [ 0 ; 1 ; 63 ; 64 ; 65 ; 254 ; 255 ; 256 ] ]
+            Gen.oneof
+                [
+                    Gen.choose (0, 300)
+                    Gen.elements [ 0 ; 1 ; 63 ; 64 ; 65 ; 254 ; 255 ; 256 ]
+                ]
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip (Gen.elements platforms) lengths)) property)
 
@@ -106,18 +115,18 @@ module TestGetHostName =
         for platform in platforms do
             let max = maximum platform
 
-            UnixBootImage.tryWithHostName (hs max) (UnixSystem.initial platform)
+            UnixBootImage.tryWithHostName (hs max) (imageOn platform)
             |> Result.map ignore
             |> shouldEqual (Ok ())
 
-            UnixBootImage.tryWithHostName (hs (max + 1)) (UnixSystem.initial platform)
+            UnixBootImage.tryWithHostName (hs (max + 1)) (imageOn platform)
             |> Result.map ignore
             |> shouldEqual (Error (HostNameRefusal.TooLong (max + 1, max)))
 
     [<Test>]
     let ``withHostName raises an empty Darwin name as unmodelled and an overlong name as an argument error`` () : unit =
-        let darwin = UnixSystem.initial SimulatedUnixPlatform.macOsArm64
-        let linux = UnixSystem.initial SimulatedUnixPlatform.linuxX64
+        let darwin = imageOn SimulatedUnixPlatform.macOsArm64
+        let linux = imageOn SimulatedUnixPlatform.linuxX64
 
         Assert.Throws<UnmodelledException> (fun () -> UnixBootImage.withHostName (hs 0) darwin |> ignore)
         |> ignore
@@ -243,7 +252,12 @@ module TestGetHostName =
 
         let flush () =
             match current with
-            | Some section -> result <- { section with Rows = List.rev section.Rows } :: result
+            | Some section ->
+                result <-
+                    { section with
+                        Rows = List.rev section.Rows
+                    }
+                    :: result
             | None -> ()
 
         for line in lines do
@@ -257,7 +271,11 @@ module TestGetHostName =
                     Some
                         {
                             Length = int set.Groups.[1].Value
-                            SetErrno = if set.Groups.[2].Value = "0" then None else Some set.Groups.[3].Value
+                            SetErrno =
+                                if set.Groups.[2].Value = "0" then
+                                    None
+                                else
+                                    Some set.Groups.[3].Value
                             Rows = []
                         }
             elif measured.Success then
@@ -362,13 +380,14 @@ module TestGetHostName =
         | Outcome.StoredBefore, Error GetHostNameRefusal.StoresBeforeTheBuffer -> None
         | (Outcome.Signalled _ | Outcome.StoredBefore), other -> Some $"model answered %A{other}"
 
-    [<TestCase(SimulatedUnixFlavour.Linux)>]
-    [<TestCase(SimulatedUnixFlavour.Darwin)>]
-    let ``the model reproduces every row of the recording`` (flavour : SimulatedUnixFlavour) : unit =
-        let platform =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> SimulatedUnixPlatform.linuxArm64
-            | SimulatedUnixFlavour.Darwin -> SimulatedUnixPlatform.macOsArm64
+    [<TestCase "Linux">]
+    [<TestCase "Darwin">]
+    let ``the model reproduces every row of the recording`` (flavourName : string) : unit =
+        let flavour, platform =
+            match flavourName with
+            | "Linux" -> SimulatedUnixFlavour.Linux, SimulatedUnixPlatform.linuxArm64
+            | "Darwin" -> SimulatedUnixFlavour.Darwin, SimulatedUnixPlatform.macOsArm64
+            | other -> failwith $"test bug: no flavour %s{other}"
 
         let sections = sections flavour
         sections |> shouldNotEqual []
@@ -384,9 +403,10 @@ module TestGetHostName =
                         // holds it.
                         errno |> shouldEqual "EINVAL"
 
-                        match UnixBootImage.tryWithHostName name (UnixSystem.initial platform) with
+                        match UnixBootImage.tryWithHostName name (imageOn platform) with
                         | Error (HostNameRefusal.TooLong _) -> ()
-                        | other -> yield $"name of %d{section.Length} bytes: setter answered %A{Result.map ignore other}"
+                        | other ->
+                            yield $"name of %d{section.Length} bytes: setter answered %A{Result.map ignore other}"
                     | None ->
                         section.Rows |> shouldNotEqual []
                         let system = bootNamed platform name
@@ -452,7 +472,13 @@ module TestGetHostName =
     let ``the model places what each C library's code places, at every capacity`` () : unit =
         let property (platform : SimulatedUnixPlatform, length : int, capacity : int) : unit =
             let flavour = SimulatedUnixPlatform.flavour platform
-            let length = if flavour = SimulatedUnixFlavour.Darwin then max 1 length else length
+
+            let length =
+                if flavour = SimulatedUnixFlavour.Darwin then
+                    max 1 length
+                else
+                    length
+
             let length = min length (maximum platform)
             // Any byte but NUL and the sentinel, so the transcription's
             // reading-back is exact.
@@ -463,16 +489,21 @@ module TestGetHostName =
             | None, Error GetHostNameRefusal.StoresBeforeTheBuffer -> ()
             | Some (ret, placed), Ok answer ->
                 fst (errnoName answer) |> shouldEqual ret
-                (placedOf answer).ToArray () |> shouldEqual placed
+                Seq.toArray (placedOf answer) |> shouldEqual placed
 
                 match answer with
                 | GetHostNameAnswer.Failed (_, error) -> error |> shouldEqual UnixError.ENAMETOOLONG
                 | GetHostNameAnswer.Returned _ -> ()
             | expected, actual ->
-                failwith $"%O{platform}, name of %d{length}, capacity %d{capacity}: expected %A{expected}, got %A{actual}"
+                failwith
+                    $"%O{platform}, name of %d{length}, capacity %d{capacity}: expected %A{expected}, got %A{actual}"
 
         let capacities =
-            Gen.oneof [ Gen.choose (0, 300) ; Gen.elements [ 0 ; 1 ; 2 ; 64 ; 65 ; 255 ; 256 ; 257 ; 258 ; 4096 ] ]
+            Gen.oneof
+                [
+                    Gen.choose (0, 300)
+                    Gen.elements [ 0 ; 1 ; 2 ; 64 ; 65 ; 255 ; 256 ; 257 ; 258 ; 4096 ]
+                ]
 
         Check.One (
             config,
@@ -485,7 +516,7 @@ module TestGetHostName =
     [<Test>]
     let ``an opaque or addressless destination is refused only where bytes would be placed`` () : unit =
         for platform in platforms do
-            let system = boot (UnixSystem.initial platform)
+            let system = boot (imageOn platform)
 
             for destination in [ UserBuffer.Opaque ; UserBuffer.Addressless ] do
                 for capacity in [ 0UL ; 1UL ; 5UL ; 256UL ; 257UL ; 4096UL ] do
@@ -503,10 +534,10 @@ module TestGetHostName =
     [<Test>]
     let ``UnixSystem.step answers a GetHostName label with what getHostName answers`` () : unit =
         let flatten (answer : GetHostNameAnswer) : int * byte[] =
-            fst (errnoName answer), (placedOf answer).ToArray ()
+            fst (errnoName answer), Seq.toArray (placedOf answer)
 
         for platform in platforms do
-            let system = boot (UnixSystem.initial platform)
+            let system = boot (imageOn platform)
             let caller = Callers.thread 0 system
 
             for capacity in [ 1UL ; 9UL ; 10UL ; 300UL ] do

@@ -62,7 +62,9 @@ module TestGetHostNameAgainstHost =
         let platform =
             match HostPlatform.flavour () with
             | Some flavour -> HostPlatform.platformOf flavour
-            | None -> Assert.Ignore "the library models no such host"; failwith "unreachable"
+            | None ->
+                Assert.Ignore "the library models no such host"
+                failwith "unreachable"
 
         let name =
             let _, _, placed = host 1024
@@ -75,7 +77,7 @@ module TestGetHostNameAgainstHost =
             | Ok name -> name
             | Error defect -> failwith $"unreachable: %s{UnixByteString.describe defect}"
 
-        let system =
+        let system : UnixSystem<int, string> =
             UnixSystem.initial platform
             |> UnixBootImage.tryWithHostName name
             |> Configured.expectOk HostNameRefusal.describe
@@ -101,15 +103,18 @@ module TestGetHostNameAgainstHost =
                                 (uint64 capacity)
                                 system
                         with
-                        | Ok (GetHostNameAnswer.Returned placed) -> Ok (0, 0, placed.ToArray ())
+                        | Ok (GetHostNameAnswer.Returned placed) -> Ok (0, 0, Seq.toArray placed)
                         | Ok (GetHostNameAnswer.Failed (placed, error)) ->
-                            Ok (-1, UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error, placed.ToArray ())
+                            Ok (
+                                -1,
+                                UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error,
+                                Seq.toArray placed
+                            )
                         | Error refusal -> Error (GetHostNameRefusal.describe refusal)
 
                     match expected with
                     | Ok expected when expected = (ret, errno, placed) -> ()
-                    | other ->
-                        yield $"capacity %d{capacity}: host %A{(ret, errno, placed)}, model %A{other}"
+                    | other -> yield $"capacity %d{capacity}: host %A{(ret, errno, placed)}, model %A{other}"
             ]
 
         mismatches |> shouldEqual []
