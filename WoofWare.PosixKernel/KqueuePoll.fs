@@ -98,7 +98,7 @@ module internal KqueuePoll =
     let private reportOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int, filter : KqueueFilter as key)
         (registration : PollRegistration)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : (KqueueFilterReport * bool) option
         =
         match registration.Socket with
@@ -110,7 +110,7 @@ module internal KqueuePoll =
             |> Option.map (fun report -> report, false)
         | None ->
 
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (ProcessReading.fileDescriptors system) with
         | Some (OpenFileTarget.Socket _) as other ->
             failwith
                 $"KqueuePoll: a poll's kqueue registers %A{key} as attached to no socket, but its descriptor names %A{other}. A poll attaches a socket's filter to the socket when it registers it, and closing a descriptor removes every registration made through it (this is a bug in this library, or in a caller that assembled the park by hand)."
@@ -118,7 +118,7 @@ module internal KqueuePoll =
         // reports `EV_OOBAND` back when it was asked for (measured,
         // `poll-darwin.c` section S: a pipe holding data answers `POLLPRI`).
         | Some (OpenFileTarget.Pipe (pipeId, pipeEnd)) ->
-            DarwinReadiness.ofPipe filter pipeId pipeEnd system
+            DarwinReadiness.ofPipe filter pipeId pipeEnd system.Machine
             |> Option.map (fun report -> report, registration.OutOfBand)
         // `poll` registers with `EV_POLL`, under which a regular file is
         // readable whatever its size and offset, and is always writable
@@ -189,7 +189,7 @@ module internal KqueuePoll =
     /// it.
     let activeAtRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registrations : Map<int * KqueueFilter, PollRegistration>)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : (int * KqueueFilter) list
         =
         registrations
@@ -215,7 +215,7 @@ module internal KqueuePoll =
         (revents : int16 list)
         (registrations : Map<int * KqueueFilter, PollRegistration>)
         (active : (int * KqueueFilter) list)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : int16 list * Map<int * KqueueFilter, PollRegistration> * (int * KqueueFilter) list
         =
         if List.length revents <> List.length entries then
@@ -264,7 +264,7 @@ module internal KqueuePoll =
     /// Loudly partial: `thread` must be asleep in a Darwin `poll`.
     let reportable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : bool
         =
         match UnixThreadTable.parkedFor thread system.Threads with

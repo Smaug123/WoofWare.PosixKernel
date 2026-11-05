@@ -33,7 +33,7 @@ module internal ReferenceWake =
                 | None -> failwith $"ReferenceWake.wakes: thread %O{thread} of process %O{pid} records no park"
                 | Some park ->
                     let fired =
-                        Proc.view pid system
+                        Proc.reading pid system
                         |> WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall)
 
                     if Set.isEmpty fired then

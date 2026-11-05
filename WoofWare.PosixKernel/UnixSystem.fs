@@ -1237,7 +1237,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Thread
         =
-        Entry.query "UnixSystem.leader" pid (fun (system : ProcessView<'Thread, 'Handler>) -> system.Leader) system
+        Entry.query "UnixSystem.leader" pid (fun (system : ProcessReading<'Thread, 'Handler>) -> system.Leader) system
 
     /// Every thread the process `pid` has, by the client's name for it, which
     /// `UnixThreadState`'s readers read. A name the process has no thread by,
@@ -1250,7 +1250,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.threads"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixThreadTable.byName system.Threads)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> UnixThreadTable.byName system.Threads)
             system
 
     /// The signal state of the process `pid`, which `SignalState`'s queries
@@ -1263,7 +1263,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.signals"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.signals system.Process)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> UnixProcessState.signals system.Process)
             system
 
     /// The environment the process `pid` was started with: the `envp` that
@@ -1281,7 +1281,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.environment"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.environment system.Process)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> UnixProcessState.environment system.Process)
             system
 
     /// The path of the executable that started the process `pid`, or `None` if
@@ -1297,7 +1297,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.processPath"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.processPath system.Process)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> UnixProcessState.processPath system.Process)
             system
 
     /// The platform the machine impersonates.
@@ -1350,7 +1350,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.fileDescriptors"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixSystemState.fileDescriptors system)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> ProcessReading.fileDescriptors system)
             system
 
     /// The machine's open file descriptions, which `OpenFileTable`'s queries
@@ -1378,7 +1378,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.currentDirectoryInode"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.CurrentDirectoryInode)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> system.Process.CurrentDirectoryInode)
             system
 
     /// Who the process `pid` is: all six of its IDs, and its supplementary
@@ -1391,7 +1391,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.credentials"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.Credentials)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> system.Process.Credentials)
             system
 
     /// The file-mode creation mask of the process `pid`, without replacing it
@@ -1404,7 +1404,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.fileModeCreationMask"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.Umask)
+            (fun (system : ProcessReading<'Thread, 'Handler>) -> system.Process.Umask)
             system
 
     /// The machine's entropy pool, from which every random-bytes syscall draws.
@@ -1530,8 +1530,8 @@ module UnixSystem =
         Entry.query
             "UnixSystem.descriptorTarget"
             pid
-            (fun (system : ProcessView<'Thread, 'Handler>) ->
-                FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
+            (fun (system : ProcessReading<'Thread, 'Handler>) ->
+                FileDescriptorRegistry.tryFindTarget fd (ProcessReading.fileDescriptors system)
             )
             system
 

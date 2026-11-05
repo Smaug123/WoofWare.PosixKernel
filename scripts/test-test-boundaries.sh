@@ -85,6 +85,7 @@ let processes = system.Processes
 let remembered = machine.Sweep.Remembered
     Sweep = WakeMemo.none
 let back = ProcessView.unfocus view
+let read = ProcessReading.ofView view
 let registry = UnixSystemState.fileDescriptors view
 // `Lone.UnixSystemState.signalNumbering` reads the platform.
 let silentQuery = UnixSystem.platform system
@@ -168,8 +169,9 @@ expected_hits=(
   "TestC.fs:14: machine.Sweep:"
   "TestC.fs:15: Sweep =:"
   "TestC.fs:16: ProcessView.:"
-  "TestC.fs:17: UnixSystemState:"
+  "TestC.fs:17: ProcessReading.:"
   "TestC.fs:18: UnixSystemState:"
+  "TestC.fs:19: UnixSystemState:"
   "TestD.fs:4: .Machine:"
   "TestD.fs:7: .Processes:"
   "TestD.fs:10: .Sweep:"
@@ -208,7 +210,7 @@ if grep -qE 'TestA\.fs:(1|5|7|11|12|13|14): ' <<<"$out"; then
   echo "FAIL: a silent line of TestA.fs was reported" >&2
   fail=1
 fi
-if grep -qE 'TestC\.fs:(1|19|2[0-9]|3[0-4]): ' <<<"$out"; then
+if grep -qE 'TestC\.fs:(1|2[0-9]|3[0-5]): ' <<<"$out"; then
   echo "FAIL: a silent line of TestC.fs was reported" >&2
   fail=1
 fi

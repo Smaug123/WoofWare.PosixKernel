@@ -672,7 +672,7 @@ module UnixPoll =
 
             if
                 not alreadyPending
-                && LinuxReadiness.ofDescription targetId system &&& stored <> 0u
+                && LinuxReadiness.ofDescription targetId system.Machine &&& stored <> 0u
             then
                 UnixSystemState.mapOpenFiles (OpenFileTable.appendEpollReady epollId key) polled
             else
@@ -895,7 +895,7 @@ module UnixPoll =
         // lie below 0x10000, where `<poll.h>` and `<sys/epoll.h>` share their
         // numbering.
         let answer () : int16 =
-            int16 (LinuxReadiness.ofDescription descriptionId system)
+            int16 (LinuxReadiness.ofDescription descriptionId system.Machine)
             &&& (entry.Events ||| linuxPollErr ||| linuxPollHup)
 
         match description.Target with
@@ -1096,7 +1096,7 @@ module UnixPoll =
 
         let system = polledEntries entries system
 
-        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system.Scheduling
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1317,10 +1317,11 @@ module UnixPoll =
             Ok (PollOutcome.Answered (revents, count), system)
         else
 
-        let active = KqueuePoll.activeAtRegistration registrations system
+        let reading = ProcessReading.ofView system
+        let active = KqueuePoll.activeAtRegistration registrations reading
 
         let revents, registrations, active =
-            KqueuePoll.scan entries revents registrations active system
+            KqueuePoll.scan entries revents registrations active reading
 
         let reported = triggered revents
 
@@ -1383,11 +1384,11 @@ module UnixPoll =
         let queue = UnixMachineState.pollQueue parked.Queue system.Machine
 
         let revents, registrations, active =
-            KqueuePoll.scan parked.Entries zero queue.Registrations queue.Active system
+            KqueuePoll.scan parked.Entries zero queue.Registrations queue.Active (ProcessReading.ofView system)
 
         let reported = triggered revents
 
-        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system.Scheduling
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1881,7 +1882,7 @@ module UnixPoll =
 
         let delivered, system = EpollReadyList.drain parked.Epoll parked.MaxEvents system
 
-        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system.Scheduling
 
         let finished = (UnixParkState.unpark thread system)
 

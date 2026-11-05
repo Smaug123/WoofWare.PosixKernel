@@ -48,11 +48,24 @@ module internal Proc =
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessView<'Thread, 'Handler>
         =
-        match ProcessView.tryFocus pid system with
-        | Some view -> view
+        match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
+        | Some slot -> ProcessView.ofSlot pid slot system
         | None ->
             failwith
                 $"Proc.view: asked about process %O{pid}, but the system holds the processes %A{UnixSystem.processIds system}"
+
+    /// The reading of `system` from the process `pid`: what a function that
+    /// answers a question about one process, such as a query's body, takes.
+    let reading<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessReading<'Thread, 'Handler>
+        =
+        match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
+        | Some slot -> ProcessReading.ofSlot pid slot system
+        | None ->
+            failwith
+                $"Proc.reading: asked about process %O{pid}, but the system holds the processes %A{UnixSystem.processIds system}"
 
     /// The system `view` is a view of, with the view's process as the view
     /// has it.

@@ -241,7 +241,7 @@ module internal Parking =
             let unsignalled =
                 WakeCondition.AnyOf (WakeCondition.Primitive first, List.map WakeCondition.Primitive rest)
 
-            let held = WakeCondition.satisfied thread unsignalled asleep
+            let held = WakeCondition.satisfied thread unsignalled (ProcessReading.ofView asleep)
 
             if not (Set.isEmpty held) then
                 failwith

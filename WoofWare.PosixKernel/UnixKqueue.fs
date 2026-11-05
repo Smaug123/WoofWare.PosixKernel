@@ -310,7 +310,10 @@ module UnixKqueue =
         (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
-        WakeCondition.satisfied thread (WakeCondition.Primitive (WakePrimitive.KqueueDrained kqueue)) system
+        WakeCondition.satisfied
+            thread
+            (WakeCondition.Primitive (WakePrimitive.KqueueDrained kqueue))
+            (ProcessReading.ofView system)
         |> Set.isEmpty
         |> not
 
@@ -791,9 +794,9 @@ module UnixKqueue =
 
         let isDrained = drained thread parked.Kqueue system
 
-        let deliverable = KqueueQueue.hasDeliverableEvent parked.Kqueue system
+        let deliverable = KqueueQueue.hasDeliverableEvent parked.Kqueue system.Machine
 
-        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system.Scheduling
 
         let completing (outcome : KeventOutcome) (answered : ProcessView<'Thread, 'Handler>) =
             Ok (outcome, UnixParkState.unpark thread answered)

@@ -255,7 +255,7 @@ module UnixWait =
     /// `satisfied` once `Entry` has admitted the process.
     let private satisfiedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
+        (system : ProcessReading<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
         UnixThreadTable.tryFind thread system.Threads
@@ -331,7 +331,7 @@ module UnixWait =
         let machine = system.Machine
 
         // One pass over the parks, in which each sleeping thread's condition is
-        // made once and asked of the view from its own process, which is made
+        // made once and asked of the reading of its own process, which is made
         // once for all the process's threads. Only the processes with a parked
         // thread are visited, and in each only its parked threads, as `parks`
         // visits them.
@@ -340,7 +340,7 @@ module UnixWait =
             ||> Set.fold (fun acc key ->
                 let pid = ProcessId.parseOrFail "UnixWait.wake" key
                 let slot = ProcessTable.find "UnixWait.wake" key system.Processes
-                let view = lazy (ProcessView.ofSlot pid slot system)
+                let reading = ProcessReading.ofSlot pid slot system
 
                 (acc, UnixThreadTable.parked slot.Threads)
                 ||> Set.fold (fun (struct (satisfied, earliest) as acc) thread ->
@@ -360,7 +360,7 @@ module UnixWait =
                                 | ValueNone -> ValueSome deadline
                             )
 
-                        let fired = WakeCondition.satisfied thread condition view.Value
+                        let fired = WakeCondition.satisfied thread condition reading
 
                         if Set.isEmpty fired then
                             struct (satisfied, earliest)

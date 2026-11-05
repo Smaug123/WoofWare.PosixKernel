@@ -35,6 +35,13 @@ module internal Lone =
         =
         Proc.view (only "view" system) system
 
+    /// The reading of `system` from its only process.
+    let reading<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessReading<'Thread, 'Handler>
+        =
+        Proc.reading (only "reading" system) system
+
     /// The system `view` is a view of, with the view's process as the view
     /// has it.
     let unview<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -297,7 +304,7 @@ module internal Lone =
             =
             view system |> WoofWare.PosixKernel.UnixParkState.unpark thread |> unview
 
-    /// `WoofWare.PosixKernel.WakeCondition`, asked in the view of the only
+    /// `WoofWare.PosixKernel.WakeCondition`, asked in the reading of the only
     /// process.
     [<RequireQualifiedAccess>]
     module WakeCondition =
@@ -307,7 +314,7 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : Set<WakePrimitive>
             =
-            WoofWare.PosixKernel.WakeCondition.satisfied thread condition (view system)
+            WoofWare.PosixKernel.WakeCondition.satisfied thread condition (reading system)
 
     /// `WoofWare.PosixKernel.ObjectLifetime`, made in the view of the only
     /// process.
@@ -352,10 +359,9 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : bool
             =
-            WoofWare.PosixKernel.EpollReadyList.hasDeliverableEvent epollId (view system)
+            WoofWare.PosixKernel.EpollReadyList.hasDeliverableEvent epollId (Kernel.machine system)
 
-    /// `WoofWare.PosixKernel.LinuxReadiness`, read in the view of the only
-    /// process.
+    /// `WoofWare.PosixKernel.LinuxReadiness`, read of the machine.
     [<RequireQualifiedAccess>]
     module LinuxReadiness =
         let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -363,7 +369,7 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : uint32
             =
-            WoofWare.PosixKernel.LinuxReadiness.ofDescription targetId (view system)
+            WoofWare.PosixKernel.LinuxReadiness.ofDescription targetId (Kernel.machine system)
 
     /// `answer`, with the view it holds put back.
     let private unviewed<'Answer, 'Thread, 'Handler, 'Refusal when 'Thread : comparison and 'Handler : equality>
