@@ -120,9 +120,13 @@ module internal UnprivilegedPortStartRefusal =
         match refusal with
         | UnprivilegedPortStartRefusal.NoSuchSetting _ -> RefusalKind.Contradictory "start"
 
-/// Why `UnixBootImage.boot` refuses to boot an image with a launch.
+/// Why `UnixBootImage.tryBoot` refuses to boot an image with a launch. Opaque:
+/// `BootRefusal.launch` says whether it was the launch that was refused, and
+/// `BootRefusal.describe` what this library knows about why.
 [<RequireQualifiedAccess>]
-type internal BootRefusal =
+[<NoComparison>]
+type BootRefusal =
+    internal
     /// The launch cannot start on the machine.
     | Launch of LaunchRefusal
     /// Under Linux, the ephemeral range starts at `low`, below the
@@ -131,17 +135,25 @@ type internal BootRefusal =
     | EphemeralPortsBelowUnprivilegedPortStart of low : uint16 * start : uint16
 
 [<RequireQualifiedAccess>]
-module internal BootRefusal =
+module BootRefusal =
     /// What this library knows about why it refused to boot, for a client
-    /// composing a diagnostic that names its own knob.
+    /// composing a diagnostic that names its own knob. It has no stable
+    /// structure, and does not name the knob.
     let describe (refusal : BootRefusal) : string =
         match refusal with
         | BootRefusal.Launch refusal -> LaunchRefusal.describe refusal
         | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, start) ->
             $"the ephemeral range starts at port %d{low}, below the unprivileged port start, %d{start}. Linux's ip_local_port_range takes a low end only at or above ip_unprivileged_port_start, and ip_unprivileged_port_start a value only at or below the range's low end (measured), so no Linux machine has these two settings. Lower the unprivileged port start to %d{low}, or start the range at %d{start} or above."
 
+    /// The refusal of the launch, if it was the launch that was refused; or
+    /// `ValueNone` if it was the image, whatever the launch.
+    let launch (refusal : BootRefusal) : LaunchRefusal voption =
+        match refusal with
+        | BootRefusal.Launch refusal -> ValueSome refusal
+        | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart _ -> ValueNone
+
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : BootRefusal) : RefusalKind =
+    let internal kind (refusal : BootRefusal) : RefusalKind =
         match refusal with
         | BootRefusal.Launch refusal -> LaunchRefusal.kind refusal
         | BootRefusal.EphemeralPortsBelowUnprivilegedPortStart _ -> RefusalKind.Contradictory "image"
@@ -538,8 +550,9 @@ module UnixBootImage =
         =
         image.Machine.UnixPlatform
 
-    /// `boot`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `boot`, with a refusal answered as the `Error` rather than raised: one of
+    /// the launch's settings (`BootRefusal.launch`), or the image's own.
+    let tryBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (image : UnixBootImage<'Thread, 'Handler>)
         : Result<UnixSystem<'Thread, 'Handler>, BootRefusal>
@@ -595,7 +608,8 @@ module UnixBootImage =
     /// against the machine's platform. Refuses a leader on a processor the
     /// machine does not have, or a directory the filesystem does not let it
     /// start in; and, on Linux, an image whose ephemeral range starts below
-    /// its unprivileged port start.
+    /// its unprivileged port start. `tryBoot` answers the refusal instead of
+    /// throwing it, and says which of the launch's settings it was.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory. The image's ephemeral port range starts below its unprivileged port start.</exception>
     /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs.</exception>

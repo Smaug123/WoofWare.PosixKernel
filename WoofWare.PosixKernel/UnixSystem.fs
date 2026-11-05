@@ -1075,9 +1075,14 @@ module internal DeviceFileSystemFault =
         | DeviceFileSystemFault.NumberNotEncodable _ -> RefusalKind.Contradictory "contents"
         | DeviceFileSystemFault.NamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
 
-/// Why `UnixSystem.launch` will not start a process.
+/// Why `UnixSystem.tryLaunch` will not start a process. Opaque:
+/// `ProcessCreationRefusal.launch` says whether it was the launch that was
+/// refused, and `ProcessCreationRefusal.describe` what this library knows about
+/// why.
 [<RequireQualifiedAccess>]
-type internal ProcessCreationRefusal =
+[<NoComparison>]
+type ProcessCreationRefusal =
+    internal
     /// The launch itself is refused; see `LaunchRefusal`.
     | Launch of LaunchRefusal
     /// On Linux, every ID the machine would hand out, from 300 up to its
@@ -1093,9 +1098,10 @@ type internal ProcessCreationRefusal =
     | DarwinThreadIdCounterExhausted
 
 [<RequireQualifiedAccess>]
-module internal ProcessCreationRefusal =
+module ProcessCreationRefusal =
     /// What this library knows about why it would not start the process, for
-    /// a client composing a diagnostic that names its own knob.
+    /// a client composing a diagnostic that names its own knob. It has no
+    /// stable structure, and does not name the knob.
     let describe (refusal : ProcessCreationRefusal) : string =
         match refusal with
         | ProcessCreationRefusal.Launch refusal -> LaunchRefusal.describe refusal
@@ -1106,8 +1112,18 @@ module internal ProcessCreationRefusal =
         | ProcessCreationRefusal.DarwinThreadIdCounterExhausted ->
             "the machine's thread ID counter has reached the top of its 64-bit range, so the new process's leader would take an ID beyond it; what Darwin does then has not been measured."
 
+    /// The refusal of the launch, if it was the launch that was refused; or
+    /// `ValueNone` if the machine has no process ID or thread ID left to give
+    /// the process, whatever the launch.
+    let launch (refusal : ProcessCreationRefusal) : LaunchRefusal voption =
+        match refusal with
+        | ProcessCreationRefusal.Launch refusal -> ValueSome refusal
+        | ProcessCreationRefusal.NoFreeProcessId
+        | ProcessCreationRefusal.DarwinPidMaxReached _
+        | ProcessCreationRefusal.DarwinThreadIdCounterExhausted -> ValueNone
+
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : ProcessCreationRefusal) : RefusalKind =
+    let internal kind (refusal : ProcessCreationRefusal) : RefusalKind =
         match refusal with
         | ProcessCreationRefusal.Launch inner -> LaunchRefusal.kind inner
         | ProcessCreationRefusal.NoFreeProcessId -> RefusalKind.Unmodelled
@@ -4688,8 +4704,10 @@ module UnixSystem =
                 }
         }
 
-    /// `launch`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLaunch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `launch`, with a refusal answered as the `Error` rather than raised: one
+    /// of the launch's settings (`ProcessCreationRefusal.launch`), or the
+    /// machine's want of an ID for the process.
+    let tryLaunch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessId * UnixSystem<'Thread, 'Handler>, ProcessCreationRefusal>
@@ -4772,7 +4790,8 @@ module UnixSystem =
     /// ID is the next from the 64-bit thread ID counter.
     ///
     /// Refuses a launch `UnixBootImage.boot` would refuse, and a machine with
-    /// no process ID left to hand out.
+    /// no process ID left to hand out. `tryLaunch` answers the refusal instead
+    /// of throwing it, and says which of the launch's settings it was.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory.</exception>
     /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs.</exception>

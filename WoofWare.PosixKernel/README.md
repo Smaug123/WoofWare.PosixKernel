@@ -103,6 +103,31 @@ A launch describes requested settings independently of a platform; the same desc
 An explicit pending-signal limit on Darwin throws `PlatformNotSupportedException` at launch; an omitted limit leaves its process with none.
 `ProcessLaunch.create` still rejects negative descriptor numbers immediately.
 
+`UnixBootImage.tryBoot` and `UnixSystem.tryLaunch` launch as `UnixBootImage.boot` and `UnixSystem.launch` do, but answer a refusal as the `Error` of a `Result` rather than throwing it: a `BootRefusal` or a `ProcessCreationRefusal`.
+Both are opaque. `BootRefusal.launch` and `ProcessCreationRefusal.launch` give the `LaunchRefusal` if it was the launch that was refused, rather than the image or the machine's supply of process IDs, and `LaunchRefusal.setting` says which of the launch's settings it was, as a `LaunchSetting`, for a client to name the knob of its own configuration that set it.
+Each has a `describe`, which has no stable structure and names no knob.
+
+```fsharp
+open WoofWare.PosixKernel
+
+let launch =
+    ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)
+    // Linux's umask(2) stores no bit above 0o777.
+    |> ProcessLaunch.withUmask (PermissionBits.parseOrFail "example" 0o1022)
+
+let image : UnixBootImage<int, unit> = UnixSystem.initial SimulatedUnixPlatform.linuxX64
+
+match UnixBootImage.tryBoot launch image with
+| Ok _ -> printfn "booted"
+| Error refusal ->
+    match BootRefusal.launch refusal with
+    | ValueSome refused -> printfn "refused: %O" (LaunchRefusal.setting refused)
+    | ValueNone -> printfn "refused the image"
+
+// Prints:
+// refused: Umask
+```
+
 A process's leader starts blocking no signal; a client launching one whose parent left signals blocked sets that mask with `UnixSignal.pthreadSigmask` before the leader's first instruction, as it installs inherited ignores with `UnixSignal.sigaction`.
 
 ```fsharp
@@ -327,6 +352,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
+A process's launch settings are checked when it is launched, so `UnixBootImage.tryBoot` and `UnixSystem.tryLaunch` answer which setting was refused instead (see "Booting a machine").
 
 A call that a real kernel would not let happen at all is a bug in the client, and throws `InvalidOperationException`: a thread making a syscall while it is asleep in another, or while it owes a return to user mode (see "The return to user mode"), the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too.
