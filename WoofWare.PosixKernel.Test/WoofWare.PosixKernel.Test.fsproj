@@ -337,6 +337,7 @@
     <Compile Include="TestWakeMemo.fs" />
     <Compile Include="TestWakeSweepCost.fs" />
     <Compile Include="TestQueryCost.fs" />
+    <Compile Include="TestDescriptionLookupCost.fs" />
     <Compile Include="TestDatagramDeliveryCost.fs" />
     <Compile Include="TestCloseCost.fs" />
     <Compile Include="TestOpenFileIndex.fs" />

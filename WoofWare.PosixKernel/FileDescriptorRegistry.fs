@@ -1479,7 +1479,9 @@ module private OpenFileEntries =
     type Entries =
         private
             {
-                All : Map<OpenFileDescriptionId, OpenFileEntry>
+                /// Every entry, keyed by its description's identity's value,
+                /// since a `Map` boxes a struct key at every comparison.
+                All : Map<int64, OpenFileEntry>
                 /// Keyed by the `PipeId`'s value, since a `Map` boxes a struct
                 /// key at every comparison. A pipe no live description names
                 /// has no key.
@@ -1557,10 +1559,13 @@ module private OpenFileEntries =
             HeldDirectories = Map.empty
         }
 
-    /// Every entry, by its description's identity.
-    let all (entries : Entries) : Map<OpenFileDescriptionId, OpenFileEntry> = entries.All
+    /// Every entry and its description's identity, in identity order.
+    let toSeq (entries : Entries) : (OpenFileDescriptionId * OpenFileEntry) seq =
+        entries.All
+        |> Map.toSeq
+        |> Seq.map (fun (raw, entry) -> OpenFileDescriptionId raw, entry)
 
-    let tryFind (id : OpenFileDescriptionId) (entries : Entries) : OpenFileEntry option = Map.tryFind id entries.All
+    let tryFind (OpenFileDescriptionId raw) (entries : Entries) : OpenFileEntry option = Map.tryFind raw entries.All
 
     /// `entries`'s indexes with `entry`, of the description `id`, counted in
     /// them (`step` 1) or no longer counted (`step` -1).
@@ -1895,7 +1900,8 @@ module private OpenFileEntries =
 
     /// `entries` with `entry` as the description `id`'s, in place of any it had.
     let add (id : OpenFileDescriptionId) (entry : OpenFileEntry) (entries : Entries) : Entries =
-        let before = Map.tryFind id entries.All
+        let (OpenFileDescriptionId raw) = id
+        let before = Map.tryFind raw entries.All
 
         let uncounted =
             match before with
@@ -1908,12 +1914,14 @@ module private OpenFileEntries =
             |> refileNames id before (Some entry)
 
         { counted with
-            All = Map.add id entry entries.All
+            All = Map.add raw entry entries.All
         }
 
     /// `entries` without the description `id`'s, if it has one.
     let remove (id : OpenFileDescriptionId) (entries : Entries) : Entries =
-        match Map.tryFind id entries.All with
+        let (OpenFileDescriptionId raw) = id
+
+        match Map.tryFind raw entries.All with
         | None -> entries
         | Some before ->
             let uncounted =
@@ -1922,12 +1930,12 @@ module private OpenFileEntries =
                 |> refileNames id (Some before) None
 
             { uncounted with
-                All = Map.remove id entries.All
+                All = Map.remove raw entries.All
             }
 
     /// Entries of exactly the descriptions in `all`.
-    let ofMap (all : Map<OpenFileDescriptionId, OpenFileEntry>) : Entries =
-        (empty, all) ||> Map.fold (fun entries id entry -> add id entry entries)
+    let ofSeq (all : (OpenFileDescriptionId * OpenFileEntry) seq) : Entries =
+        (empty, all) ||> Seq.fold (fun entries (id, entry) -> add id entry entries)
 
     /// Whether a live description names the `pipeEnd` end of `pipe`.
     let describesPipeEnd (PipeId pipe) (pipeEnd : PipeEnd) (entries : Entries) : bool =
@@ -1972,7 +1980,7 @@ module private OpenFileEntries =
         (entries : Entries)
         : OpenFileEntry * EpollState
         =
-        match Map.tryFind epoll entries.All with
+        match tryFind epoll entries with
         | Some ({
                     Description = {
                                       Target = OpenFileTarget.Epoll state
@@ -1990,7 +1998,7 @@ module private OpenFileEntries =
         (entries : Entries)
         : OpenFileEntry * KqueueState
         =
-        match Map.tryFind kqueue entries.All with
+        match tryFind kqueue entries with
         | Some ({
                     Description = {
                                       Target = OpenFileTarget.Kqueue state
@@ -2020,7 +2028,7 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Epoll state) entry) entries.All
             EpollsRegistering = RegistrationIndex.file target raw fd entries.EpollsRegistering
         }
 
@@ -2055,7 +2063,7 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Epoll state) entry) entries.All
             EpollsRegistering = filed
         }
 
@@ -2094,7 +2102,7 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
             KqueuesThrough = filed
             KqueuesOnSocket = onSocket
         }
@@ -2134,7 +2142,7 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add kqueue (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Kqueue state) entry) entries.All
             KqueuesThrough = filed
             KqueuesOnSocket = onSocket
         }
@@ -2165,8 +2173,8 @@ module private OpenFileEntries =
             )
 
         (entries, keysByEpoll)
-        ||> Map.fold (fun entries epoll keys ->
-            let epoll = OpenFileDescriptionId epoll
+        ||> Map.fold (fun entries raw keys ->
+            let epoll = OpenFileDescriptionId raw
             let entry, state = epollEntry "signalEpolls" epoll entries
 
             // In key order, as the registrations are held, before the sort,
@@ -2202,7 +2210,7 @@ module private OpenFileEntries =
                     }
 
                 { entries with
-                    All = Map.add epoll (retargeted (OpenFileTarget.Epoll state) entry) entries.All
+                    All = Map.add raw (retargeted (OpenFileTarget.Epoll state) entry) entries.All
                 }
         )
 
@@ -2250,7 +2258,7 @@ module private OpenFileEntries =
         (entries : Entries)
         : OpenFileEntry * InotifyState
         =
-        match Map.tryFind instance entries.All with
+        match tryFind instance entries with
         | Some ({
                     Description = {
                                       Target = OpenFileTarget.Inotify state
@@ -2289,7 +2297,7 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Inotify state) entry) entries.All
             WatchesOn = RegistrationIndex.file inode raw value watchesOn
             InotifyWatchesOf = bump added (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
         }
@@ -2316,15 +2324,15 @@ module private OpenFileEntries =
             }
 
         { entries with
-            All = Map.add instance (retargeted (OpenFileTarget.Inotify state) entry) entries.All
+            All = Map.add raw (retargeted (OpenFileTarget.Inotify state) entry) entries.All
             WatchesOn = RegistrationIndex.unfile inode raw value entries.WatchesOn
             InotifyWatchesOf = bump -1 (UserId.toUInt32 state.Owner) entries.InotifyWatchesOf
         }
 
-    /// Whether the indexes are those of the entries, as `ofMap` would build
+    /// Whether the indexes are those of the entries, as `ofSeq` would build
     /// them afresh.
     let indexesFresh (entries : Entries) : bool =
-        let fresh = ofMap entries.All
+        let fresh = ofSeq (toSeq entries)
 
         fresh.PipeEnds = entries.PipeEnds
         && fresh.Flocks = entries.Flocks
@@ -2636,10 +2644,13 @@ module OpenFileTable =
 
     /// Every live open file description on the machine.
     ///
-    /// Builds the map afresh, in time and space linear in the number of live
-    /// descriptions; a caller that wants one description wants `tryFind`.
+    /// Builds the map afresh, in time n log n and space linear in the number n
+    /// of live descriptions; a caller that wants one description wants
+    /// `tryFind`.
     let descriptions (table : OpenFileTable) : Map<OpenFileDescriptionId, OpenFileDescription> =
-        OpenFileEntries.all table.Entries |> Map.map (fun _ entry -> entry.Description)
+        OpenFileEntries.toSeq table.Entries
+        |> Seq.map (fun (id, entry) -> id, entry.Description)
+        |> Map.ofSeq
 
     /// The description `id` names, if it is live.
     let tryFind (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescription option =
@@ -2659,8 +2670,7 @@ module OpenFileTable =
     /// Every live description and its identity, in identity order, for a walk
     /// that would otherwise build `descriptions` only to read it once.
     let internal toSeq (table : OpenFileTable) : (OpenFileDescriptionId * OpenFileDescription) seq =
-        OpenFileEntries.all table.Entries
-        |> Map.toSeq
+        OpenFileEntries.toSeq table.Entries
         |> Seq.map (fun (id, entry) -> id, entry.Description)
 
     /// The live description `id` names. Loudly partial: `operation`, named in
@@ -2871,8 +2881,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : (OpenFileDescriptionId * OpenFileDescription * ReachedThrough) seq
         =
-        OpenFileEntries.all table.Entries
-        |> Map.toSeq
+        OpenFileEntries.toSeq table.Entries
         |> Seq.choose (fun (id, entry) ->
             entry.OpenedThrough
             |> Option.map (fun through -> id, entry.Description, through)
@@ -3873,8 +3882,8 @@ module OpenFileTable =
             |> Map.ofList
 
         let counts =
-            OpenFileEntries.all table.Entries
-            |> Map.toList
+            OpenFileEntries.toSeq table.Entries
+            |> Seq.toList
             |> List.choose (fun (id, entry) ->
                 let actual = Map.tryFind id naming |> Option.defaultValue 0
 
@@ -4117,8 +4126,8 @@ module OpenFileTable =
             )
 
         let openedThrough =
-            OpenFileEntries.all table.Entries
-            |> Map.toList
+            OpenFileEntries.toSeq table.Entries
+            |> Seq.toList
             |> List.choose (fun (id, entry) ->
                 if namesInode entry.Description.Target = entry.OpenedThrough.IsSome then
                     None
@@ -4128,8 +4137,8 @@ module OpenFileTable =
 
         let namesShared =
             let named =
-                OpenFileEntries.all table.Entries
-                |> Map.toList
+                OpenFileEntries.toSeq table.Entries
+                |> Seq.toList
                 |> List.choose (fun (id, entry) ->
                     match entry.OpenedThrough, inodeOf entry.Description.Target with
                     | Some (ReachedThrough.Name (_, unlinked) as through), Some inode ->
@@ -5335,10 +5344,18 @@ module FileDescriptorRegistry =
                                     NameIdentity = id
                                 }
                             )
-                            |> OpenFileEntries.ofMap
+                            |> Map.toSeq
+                            |> OpenFileEntries.ofSeq
                         NextId = nextId
                     }
             }
+
+        let private liveEntry (id : OpenFileDescriptionId) (registry : FileDescriptorRegistry) : OpenFileEntry =
+            match OpenFileEntries.tryFind id registry.OpenFiles.Entries with
+            | Some entry -> entry
+            | None ->
+                failwith
+                    $"FileDescriptorRegistry.Unchecked: %O{id} is not a live description, which the caller must name."
 
         /// Rewrite one description in place, however unsoundly. Partial: the
         /// id must be live.
@@ -5365,7 +5382,7 @@ module FileDescriptorRegistry =
                         Entries =
                             OpenFileEntries.add
                                 id
-                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
+                                { liveEntry id registry with
                                     OpenedThrough = through
                                 }
                                 registry.OpenFiles.Entries
@@ -5386,7 +5403,7 @@ module FileDescriptorRegistry =
                         Entries =
                             OpenFileEntries.add
                                 id
-                                { (OpenFileEntries.all registry.OpenFiles.Entries).[id] with
+                                { liveEntry id registry with
                                     Descriptors = count
                                 }
                                 registry.OpenFiles.Entries

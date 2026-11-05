@@ -188,8 +188,8 @@ module UnixThreadLifecycle =
         // order is unmeasured. On a machine no process's end has left so, no
         // description is unreferenced.
         let unreferenced =
-            OpenFileTable.descriptions dead.Machine.OpenFiles
-            |> Map.keys
+            OpenFileTable.toSeq dead.Machine.OpenFiles
+            |> Seq.map fst
             |> Seq.filter (fun id ->
                 OpenFileTable.descriptorCount id dead.Machine.OpenFiles = Some 0
                 && OpenFileTable.holdCount id dead.Machine.OpenFiles = Some 0

@@ -2262,8 +2262,8 @@ module UnixSystem =
 
 
         let named =
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.choose (fun (id, description) ->
                 match description.Target with
                 | OpenFileTarget.Kqueue _
@@ -2337,8 +2337,8 @@ module UnixSystem =
         let foreignObjects =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.choose (fun (id, description) ->
                 match description.Target, flavour with
                 | OpenFileTarget.Epoll _, SimulatedUnixFlavour.Darwin
@@ -2362,8 +2362,8 @@ module UnixSystem =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
             machine.OpenFiles
-            |> OpenFileTable.descriptions
-            |> Map.toList
+            |> OpenFileTable.toSeq
+            |> Seq.toList
             |> List.choose (fun (id, description) ->
                 match description.Target with
                 | OpenFileTarget.File (inode, _) ->
@@ -2782,8 +2782,8 @@ module UnixSystem =
 
         let registrationOrdinals =
             machine.OpenFiles
-            |> OpenFileTable.descriptions
-            |> Map.toList
+            |> OpenFileTable.toSeq
+            |> Seq.toList
             |> List.collect (fun (queueId, description) ->
                 match description.Target with
                 | OpenFileTarget.File _
@@ -2825,8 +2825,8 @@ module UnixSystem =
         let statusOfFlavour =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.collect (fun (id, description) ->
                 let status = description.Status
 
@@ -2849,8 +2849,8 @@ module UnixSystem =
         // descriptor tables, and the holds, which `holdCounts` holds to the
         // parks.
         let unreferencedDescriptions =
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.map fst
             |> List.filter (fun id ->
                 OpenFileTable.descriptorCount id machine.OpenFiles = Some 0
@@ -2861,8 +2861,8 @@ module UnixSystem =
         // A socket whose release `SO_LINGER` could have refused is never left
         // for a call's return to release, which could not refuse it.
         let lingeringHeldOnlyByCalls =
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.choose (fun (id, description) ->
                 match description.Target with
                 | OpenFileTarget.Socket socketId when
@@ -2901,8 +2901,8 @@ module UnixSystem =
                 |> List.countBy id
                 |> Map.ofList
 
-            OpenFileTable.descriptions machine.OpenFiles
-            |> Map.toList
+            OpenFileTable.toSeq machine.OpenFiles
+            |> Seq.toList
             |> List.choose (fun (id, _) ->
                 let recorded = OpenFileTable.holdCount id machine.OpenFiles |> Option.defaultValue 0
                 let parks = Map.tryFind id implied |> Option.defaultValue 0
@@ -3322,8 +3322,8 @@ module UnixSystem =
             let flavour = SimulatedUnixPlatform.flavour platform
 
             let named =
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
+                OpenFileTable.toSeq machine.OpenFiles
+                |> Seq.toList
                 |> List.choose (fun (id, description) ->
                     match description.Target with
                     | OpenFileTarget.Pipe (pipeId, _) -> Some (id, pipeId)
