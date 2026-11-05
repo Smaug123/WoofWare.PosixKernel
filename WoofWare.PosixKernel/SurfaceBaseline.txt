@@ -192,6 +192,11 @@ WoofWare.PosixKernel.BindFault.IsPrivilegedPort [property]: [read-only] bool
 WoofWare.PosixKernel.BindFault.Length [static property]: [read-only] WoofWare.PosixKernel.BindFault
 WoofWare.PosixKernel.BindFault.PrivilegedPort [static property]: [read-only] WoofWare.PosixKernel.BindFault
 WoofWare.PosixKernel.BindFault.Tag [property]: [read-only] int
+WoofWare.PosixKernel.BootRefusal inherit obj, implements WoofWare.PosixKernel.BootRefusal System.IEquatable, System.Collections.IStructuralEquatable
+WoofWare.PosixKernel.BootRefusal.Equals [method]: (WoofWare.PosixKernel.BootRefusal, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.BootRefusalModule inherit obj
+WoofWare.PosixKernel.BootRefusalModule.describe [static method]: WoofWare.PosixKernel.BootRefusal -> string
+WoofWare.PosixKernel.BootRefusalModule.launch [static method]: WoofWare.PosixKernel.BootRefusal -> WoofWare.PosixKernel.LaunchRefusal Microsoft.FSharp.Core.FSharpValueOption
 WoofWare.PosixKernel.BrokenWriteTarget inherit obj, implements WoofWare.PosixKernel.BrokenWriteTarget System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.BrokenWriteTarget System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.BrokenWriteTarget+Connection inherit WoofWare.PosixKernel.BrokenWriteTarget
 WoofWare.PosixKernel.BrokenWriteTarget+Connection.get_socket [method]: unit -> WoofWare.PosixKernel.SocketId
@@ -2390,6 +2395,61 @@ WoofWare.PosixKernel.LaunchDescriptor.IsGone [property]: [read-only] bool
 WoofWare.PosixKernel.LaunchDescriptor.IsSupplied [property]: [read-only] bool
 WoofWare.PosixKernel.LaunchDescriptor.NewSupplied [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.LaunchDescriptor
 WoofWare.PosixKernel.LaunchDescriptor.Tag [property]: [read-only] int
+WoofWare.PosixKernel.LaunchRefusal inherit obj, implements WoofWare.PosixKernel.LaunchRefusal System.IEquatable, System.Collections.IStructuralEquatable
+WoofWare.PosixKernel.LaunchRefusal.Equals [method]: (WoofWare.PosixKernel.LaunchRefusal, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.LaunchRefusalModule inherit obj
+WoofWare.PosixKernel.LaunchRefusalModule.describe [static method]: WoofWare.PosixKernel.LaunchRefusal -> string
+WoofWare.PosixKernel.LaunchRefusalModule.setting [static method]: WoofWare.PosixKernel.LaunchRefusal -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting inherit obj, implements WoofWare.PosixKernel.LaunchSetting System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.LaunchSetting System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 9 cases
+WoofWare.PosixKernel.LaunchSetting+Tags inherit obj
+WoofWare.PosixKernel.LaunchSetting+Tags.CoreDumps [static field]: int = 8
+WoofWare.PosixKernel.LaunchSetting+Tags.Credentials [static field]: int = 2
+WoofWare.PosixKernel.LaunchSetting+Tags.CurrentDirectory [static field]: int = 5
+WoofWare.PosixKernel.LaunchSetting+Tags.Environment [static field]: int = 6
+WoofWare.PosixKernel.LaunchSetting+Tags.LeaderCpu [static field]: int = 1
+WoofWare.PosixKernel.LaunchSetting+Tags.PendingSignalLimit [static field]: int = 4
+WoofWare.PosixKernel.LaunchSetting+Tags.ProcessPath [static field]: int = 7
+WoofWare.PosixKernel.LaunchSetting+Tags.Streams [static field]: int = 0
+WoofWare.PosixKernel.LaunchSetting+Tags.Umask [static field]: int = 3
+WoofWare.PosixKernel.LaunchSetting.CoreDumps [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.Credentials [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.CurrentDirectory [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.Environment [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.Equals [method]: (WoofWare.PosixKernel.LaunchSetting, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.LaunchSetting.get_CoreDumps [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_Credentials [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_CurrentDirectory [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_Environment [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_IsCoreDumps [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsCredentials [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsCurrentDirectory [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsEnvironment [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsLeaderCpu [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsPendingSignalLimit [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsProcessPath [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsStreams [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_IsUmask [method]: unit -> bool
+WoofWare.PosixKernel.LaunchSetting.get_LeaderCpu [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_PendingSignalLimit [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_ProcessPath [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_Streams [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.LaunchSetting.get_Umask [static method]: unit -> WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.IsCoreDumps [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsCredentials [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsCurrentDirectory [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsEnvironment [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsLeaderCpu [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsPendingSignalLimit [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsProcessPath [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsStreams [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.IsUmask [property]: [read-only] bool
+WoofWare.PosixKernel.LaunchSetting.LeaderCpu [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.PendingSignalLimit [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.ProcessPath [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.Streams [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
+WoofWare.PosixKernel.LaunchSetting.Tag [property]: [read-only] int
+WoofWare.PosixKernel.LaunchSetting.Umask [static property]: [read-only] WoofWare.PosixKernel.LaunchSetting
 WoofWare.PosixKernel.LinkReadRule inherit obj, implements WoofWare.PosixKernel.LinkReadRule System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.LinkReadRule System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.LinkReadRule+Tags inherit obj
 WoofWare.PosixKernel.LinkReadRule+Tags.ModeIgnored [static field]: int = 0
@@ -3728,6 +3788,11 @@ WoofWare.PosixKernel.PrivilegedExecution.IsRegularFileNeedsAnExecuteBit [propert
 WoofWare.PosixKernel.PrivilegedExecution.NeedsAnExecuteBit [static property]: [read-only] WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.PrivilegedExecution.RegularFileNeedsAnExecuteBit [static property]: [read-only] WoofWare.PosixKernel.PrivilegedExecution
 WoofWare.PosixKernel.PrivilegedExecution.Tag [property]: [read-only] int
+WoofWare.PosixKernel.ProcessCreationRefusal inherit obj, implements WoofWare.PosixKernel.ProcessCreationRefusal System.IEquatable, System.Collections.IStructuralEquatable
+WoofWare.PosixKernel.ProcessCreationRefusal.Equals [method]: (WoofWare.PosixKernel.ProcessCreationRefusal, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.ProcessCreationRefusalModule inherit obj
+WoofWare.PosixKernel.ProcessCreationRefusalModule.describe [static method]: WoofWare.PosixKernel.ProcessCreationRefusal -> string
+WoofWare.PosixKernel.ProcessCreationRefusalModule.launch [static method]: WoofWare.PosixKernel.ProcessCreationRefusal -> WoofWare.PosixKernel.LaunchRefusal Microsoft.FSharp.Core.FSharpValueOption
 WoofWare.PosixKernel.ProcessFate`3 inherit obj, implements WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.ProcessFate`3+Continues inherit WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+Continues.get_outcome [method]: unit -> 'Outcome
@@ -7719,6 +7784,7 @@ WoofWare.PosixKernel.UnbindTargetEffect.Untouched [static property]: [read-only]
 WoofWare.PosixKernel.UnixBootImage inherit obj
 WoofWare.PosixKernel.UnixBootImage.boot [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.platform [static method]: WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.SimulatedUnixPlatform
+WoofWare.PosixKernel.UnixBootImage.tryBoot [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> Microsoft.FSharp.Core.FSharpResult<WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>, WoofWare.PosixKernel.BootRefusal>
 WoofWare.PosixKernel.UnixBootImage.withBootTime [static method]: WoofWare.PosixKernel.UnixTimestamp -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withDeviceFileSystem [static method]: Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixBootImage.withEntropySeed [static method]: System.UInt64 -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixBootImage<'Thread, 'Handler>
@@ -8870,6 +8936,7 @@ WoofWare.PosixKernel.UnixSystem.socket [static method]: WoofWare.PosixKernel.Soc
 WoofWare.PosixKernel.UnixSystem.soMaxConn [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> int
 WoofWare.PosixKernel.UnixSystem.step [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.UnixSystem.threads [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> Map<'Thread, WoofWare.PosixKernel.UnixThreadState>
+WoofWare.PosixKernel.UnixSystem.tryLaunch [static method]: 'Thread WoofWare.PosixKernel.ProcessLaunch -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> Microsoft.FSharp.Core.FSharpResult<(WoofWare.PosixKernel.ProcessId * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>), WoofWare.PosixKernel.ProcessCreationRefusal>
 WoofWare.PosixKernel.UnixSystem.umask [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PermissionBits * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSystem.unprivilegedPortStart [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.UInt16
 WoofWare.PosixKernel.UnixSystem.userBufferCheck [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UserBufferCheck

@@ -141,7 +141,7 @@ module TestBootImage =
             configures launchType setter
 
     [<Test>]
-    let ``only boot makes a system from an image, and nothing makes an image from a system`` () : unit =
+    let ``only boot and tryBoot make a system from an image, and nothing makes an image from a system`` () : unit =
         let takes (definition : Type) (m : MethodInfo) : bool =
             m.GetParameters ()
             |> Array.exists (fun p -> isGenericOf definition p.ParameterType)
@@ -154,7 +154,12 @@ module TestBootImage =
         publicFunctions
         |> List.filter (fun m -> takes imageType m && makesSystem m)
         |> List.map describe
-        |> shouldEqual [ "WoofWare.PosixKernel.UnixBootImage.boot" ]
+        |> List.sort
+        |> shouldEqual
+            [
+                "WoofWare.PosixKernel.UnixBootImage.boot"
+                "WoofWare.PosixKernel.UnixBootImage.tryBoot"
+            ]
 
         publicFunctions
         |> List.filter (fun m -> takes systemType m && isGenericOf imageType m.ReturnType)
@@ -162,7 +167,7 @@ module TestBootImage =
         |> shouldEqual []
 
     [<Test>]
-    let ``a process starts only from a launch, by boot or by UnixSystem.launch`` () : unit =
+    let ``a process starts only from a launch, by boot, launch or their try forms`` () : unit =
         let takes (definition : Type) (m : MethodInfo) : bool =
             m.GetParameters ()
             |> Array.exists (fun p -> isGenericOf definition p.ParameterType)
@@ -181,7 +186,9 @@ module TestBootImage =
             [
                 "WoofWare.PosixKernel.ProcessLaunch.leader"
                 "WoofWare.PosixKernel.UnixBootImage.boot"
+                "WoofWare.PosixKernel.UnixBootImage.tryBoot"
                 "WoofWare.PosixKernel.UnixSystem.launch"
+                "WoofWare.PosixKernel.UnixSystem.tryLaunch"
             ]
 
     [<Test>]

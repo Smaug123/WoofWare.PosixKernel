@@ -148,10 +148,41 @@ module internal PendingSignalLimitRefusal =
         match refusal with
         | PendingSignalLimitRefusal.NoSuchLimit _ -> RefusalKind.NotOnPlatform
 
-/// Why a process cannot be launched onto a machine as its `ProcessLaunch`
-/// describes it.
+/// One of the settings of a `ProcessLaunch`, for a client to map to the knob of
+/// its own configuration that set it: the descriptors and the leader's processor
+/// `ProcessLaunch.create` takes, and what each setter in `ProcessLaunch` sets.
+///
+/// `LaunchRefusal.setting` names the one a launch was refused for. `Environment`,
+/// `ProcessPath` and `CoreDumps` are refused for nothing yet.
 [<RequireQualifiedAccess>]
-type internal LaunchRefusal =
+type LaunchSetting =
+    /// The descriptors `ProcessLaunch.create` was given.
+    | Streams
+    /// The logical processor `ProcessLaunch.create` put the leader on.
+    | LeaderCpu
+    /// What `ProcessLaunch.withCredentials` set.
+    | Credentials
+    /// What `ProcessLaunch.withUmask` set.
+    | Umask
+    /// What `ProcessLaunch.withPendingSignalLimit` set.
+    | PendingSignalLimit
+    /// What `ProcessLaunch.withCurrentDirectory` set.
+    | CurrentDirectory
+    /// What `ProcessLaunch.withEnvironment` set.
+    | Environment
+    /// What `ProcessLaunch.withProcessPath` set.
+    | ProcessPath
+    /// What `ProcessLaunch.withCoreDumps` set.
+    | CoreDumps
+
+/// Why a process cannot be launched onto a machine as its `ProcessLaunch`
+/// describes it, which `UnixBootImage.tryBoot` and `UnixSystem.tryLaunch`
+/// answer. Opaque: `LaunchRefusal.setting` says which setting of the launch was
+/// refused, and `LaunchRefusal.describe` what this library knows about why.
+[<RequireQualifiedAccess>]
+[<NoComparison>]
+type LaunchRefusal =
+    internal
     /// The process cannot start in `directory` on this machine's filesystem.
     | CurrentDirectory of directory : AbsoluteUnixPath * fault : CurrentDirectoryFault
     /// The launch puts its leader on the logical processor `cpu`, and the
@@ -169,9 +200,10 @@ type internal LaunchRefusal =
     | DescriptorAtOrAboveBound of fd : int * bound : int
 
 [<RequireQualifiedAccess>]
-module internal LaunchRefusal =
+module LaunchRefusal =
     /// What this library knows about why it refused the launch, for a client
-    /// composing a diagnostic that names its own knob.
+    /// composing a diagnostic that names its own knob. It has no stable
+    /// structure, and does not name the knob.
     let describe (refusal : LaunchRefusal) : string =
         match refusal with
         | LaunchRefusal.CurrentDirectory (directory, fault) ->
@@ -194,8 +226,18 @@ module internal LaunchRefusal =
         | LaunchRefusal.DescriptorAtOrAboveBound (fd, bound) ->
             $"the launch table names descriptor %d{fd}, at or above the bound %d{bound} this kernel assumes the process's RLIMIT_NOFILE reaches; it hands out no descriptor there."
 
+    /// The setting of the launch that was refused.
+    let setting (refusal : LaunchRefusal) : LaunchSetting =
+        match refusal with
+        | LaunchRefusal.CurrentDirectory _ -> LaunchSetting.CurrentDirectory
+        | LaunchRefusal.LeaderCpuBeyondMachine _ -> LaunchSetting.LeaderCpu
+        | LaunchRefusal.PendingSignalLimit _ -> LaunchSetting.PendingSignalLimit
+        | LaunchRefusal.Umask _ -> LaunchSetting.Umask
+        | LaunchRefusal.Credentials _ -> LaunchSetting.Credentials
+        | LaunchRefusal.DescriptorAtOrAboveBound _ -> LaunchSetting.Streams
+
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : LaunchRefusal) : RefusalKind =
+    let internal kind (refusal : LaunchRefusal) : RefusalKind =
         match refusal with
         | LaunchRefusal.CurrentDirectory (_, inner) -> CurrentDirectoryFault.kind inner
         | LaunchRefusal.LeaderCpuBeyondMachine _ -> RefusalKind.Contradictory "launch"

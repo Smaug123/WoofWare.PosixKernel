@@ -12,7 +12,9 @@ open WoofWare.PosixKernel
 /// A call this library cannot answer throws: `UnmodelledException` where its
 /// model does not cover what was asked, and the BCL's own exception where no
 /// client following the documentation could have asked it. The refusals behind
-/// those throws are internal values, so no public type is named for one.
+/// those throws are internal values, so no public type is named for one, but for
+/// the refusals of a launch, which are opaque: a client learns from them which
+/// launch setting to blame, and nothing of their cases.
 ///
 /// Each public entry point is its internal `tryX` with the refusal raised:
 /// these tests hold the two to agreeing, answer for answer and refusal for
@@ -36,8 +38,37 @@ module TestUnmodelledException =
                 "GetCwdDestinationFault"
             ]
 
+    /// The refusals a client holds, because only it can name the knob of its own
+    /// configuration that set a launch setting: public, with internal cases.
+    let private opaqueRefusals : Set<string> =
+        Set.ofList [ "BootRefusal" ; "LaunchRefusal" ; "ProcessCreationRefusal" ]
+
+    /// The public functions that answer an opaque refusal, each with the
+    /// refusal it answers.
+    let private refusalAnswers : Set<string * string> =
+        Set.ofList
+            [
+                "UnixBootImage.tryBoot", "BootRefusal"
+                "UnixSystem.tryLaunch", "ProcessCreationRefusal"
+            ]
+
     [<Test>]
-    let ``no public type is named Refusal or Fault, but the closed values`` () : unit =
+    let ``the opaque refusals have no public cases`` () : unit =
+        let exported =
+            library.GetExportedTypes ()
+            |> Array.filter (fun (t : Type) -> opaqueRefusals.Contains (LibraryNames.withoutArity t.Name))
+
+        exported
+        |> Array.map (fun (t : Type) -> LibraryNames.withoutArity t.Name)
+        |> Set.ofArray
+        |> shouldEqual opaqueRefusals
+
+        for t in exported do
+            FSharpType.IsUnion (t, BindingFlags.NonPublic) |> shouldEqual true
+            FSharpType.IsUnion (t, BindingFlags.Public) |> shouldEqual false
+
+    [<Test>]
+    let ``no public type is named Refusal or Fault, but the closed values and the opaque refusals`` () : unit =
         let named =
             library.GetExportedTypes ()
             |> Array.filter (fun (t : Type) -> not t.IsNested)
@@ -51,7 +82,7 @@ module TestUnmodelledException =
 
         let faults =
             [
-                for name in Set.difference named closedValues do
+                for name in Set.difference named (Set.union closedValues opaqueRefusals) do
                     yield
                         $"%s{name} is public. A refusal is internal, and a public entry point raises it (Refusal.orRaise); if %s{name} is a value a client holds rather than a refusal, add it to closedValues"
                 for name in Set.difference closedValues named do
@@ -87,7 +118,7 @@ module TestUnmodelledException =
             ]
 
     [<Test>]
-    let ``no public function answers a refusal`` () : unit =
+    let ``no public function answers a refusal, but the launch's opaque ones`` () : unit =
         let answered =
             library.GetExportedTypes ()
             |> Array.filter (fun (t : Type) -> LibraryNames.kindOf t = Some SourceConstructFlags.Module)
@@ -108,8 +139,14 @@ module TestUnmodelledException =
 
         answered
         |> List.filter (fun (_, error : string) -> not (publicErrors.Contains error))
+        |> List.filter (fun (name : string, error : string) -> not (refusalAnswers.Contains (name, error)))
         |> List.map (fun (name : string, error : string) -> $"%s{name} answers Error of %s{error}")
         |> shouldEqual []
+
+        answered
+        |> List.filter (fun (_, error : string) -> opaqueRefusals.Contains error)
+        |> Set.ofList
+        |> shouldEqual refusalAnswers
 
     /// The exception a public entry point throws for a refusal of `kind`.
     let private expectedType (kind : RefusalKind) : Type =

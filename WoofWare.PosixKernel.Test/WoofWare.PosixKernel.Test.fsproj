@@ -116,6 +116,7 @@
     <Compile Include="TestUnixSystemInitial.fs" />
     <Compile Include="TestBootImage.fs" />
     <Compile Include="TestMachineSetterRefusals.fs" />
+    <Compile Include="TestLaunchRefusals.fs" />
     <Compile Include="TestIpv4Address.fs" />
     <Compile Include="TestIpv4Prefix.fs" />
     <Compile Include="TestIpv6Address.fs" />

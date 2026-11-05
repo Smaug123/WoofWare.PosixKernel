@@ -188,11 +188,16 @@ call the flavour lacks). A new refusal is a new internal case and an arm of its
 `kind`; nothing public changes, so it is a minor version. That holds for boot
 configuration too: a setter in `UnixBootImage` or `ProcessLaunch` that rejects a
 well-formed value (`withBootTime`, `withMount`, `withTcpSendSpace`,
-`withProcessId`, `withCredentials`, …) has a `tryWith…` returning its own
-refusal, each case's docstring saying whether the value is unmeasured,
-unmodelled or contradictory. A client without friend access sees only the
-exception, so it is the client that names its own configuration field when it
-reports one. Only a forged value (`Unchecked.defaultof`) still fails with
+`withProcessId`, …) has a `tryWith…` returning its own refusal, each case's
+docstring saying whether the value is unmeasured, unmodelled or contradictory.
+A client without friend access sees only the exception, so it is the client that
+names its own configuration field when it reports one. A process's launch is the
+exception: its setters check nothing, since what they set is judged against the
+machine it is launched onto, so `UnixBootImage.tryBoot` and
+`UnixSystem.tryLaunch` are public, answering an opaque refusal whose cases stay
+internal and whose `LaunchRefusal.setting` names the `LaunchSetting` at fault. A
+new launch refusal is still an internal case, mapped to the setting it refuses;
+only a new setting is a new `LaunchSetting` case. Only a forged value (`Unchecked.defaultof`) still fails with
 `failwith`, and a setter keeps a `context` parameter only to name the knob in
 that throw.
 
