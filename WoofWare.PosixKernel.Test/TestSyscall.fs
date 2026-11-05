@@ -118,6 +118,7 @@ module TestSyscall =
             "UnixClock.gettimeofday", "GetTimeOfDay"
             "UnixEntropy.getRandom", "GetRandom"
             "UnixEntropy.getEntropy", "GetEntropy"
+            "UnixHostName.getHostName", "GetHostName"
             "UnixSystem.processId", "GetProcessId"
             "UnixSystem.umask", "UMask"
             "UnixCredentials.getresuid", "GetResUid"

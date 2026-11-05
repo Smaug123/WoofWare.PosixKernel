@@ -433,6 +433,12 @@ module TestCallerChecks =
                 "UnixEntropy.getEntropy"
                 (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
             running
+                "UnixHostName.getHostName"
+                (fun caller system ->
+                    UnixHostName.getHostName caller UserBuffer.Mapped 256UL system
+                    |> ignore<GetHostNameAnswer>
+                )
+            running
                 "UnixNamespace.openPath"
                 (fun caller system -> UnixNamespace.openPath caller root 0 0 system |> ignore)
             running
