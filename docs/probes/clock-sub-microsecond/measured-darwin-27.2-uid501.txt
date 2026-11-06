@@ -1,0 +1,43 @@
+# Darwin 27.2.0 arm64, macOS 27.2, Apple M5 Max
+# busy_threads=0 ncpu=18
+id=0 res=0.000001000
+id=0 reads=1000000 distinct=16714 whole_us=16714 longest_whole_run=16714 min_gap_ns=1000 median_gap_ns=1000
+id=0 window: judged=600 said_whole_us=600 of_which_no_reads=0
+id=0 distinct: judged=600 said_whole_us=600
+id=4 res=0.000000042
+id=4 reads=1000000 distinct=481085 whole_us=20058 longest_whole_run=2 min_gap_ns=41 median_gap_ns=42
+id=4 window: judged=302785540 said_whole_us=0 of_which_no_reads=0
+id=4 distinct: judged=302785540 said_whole_us=0
+id=5 res=0.000000042
+id=5 reads=1000000 distinct=498 whole_us=25 longest_whole_run=2 min_gap_ns=41 median_gap_ns=3708
+id=5 window: judged=449668117 said_whole_us=0 of_which_no_reads=0
+id=5 distinct: judged=449668117 said_whole_us=0
+id=6 res=0.000001000
+id=6 reads=1000000 distinct=28384 whole_us=28384 longest_whole_run=28384 min_gap_ns=1000 median_gap_ns=1000
+id=6 window: judged=600 said_whole_us=600 of_which_no_reads=0
+id=6 distinct: judged=600 said_whole_us=600
+id=8 res=0.000000042
+id=8 reads=1000000 distinct=503075 whole_us=20964 longest_whole_run=1 min_gap_ns=41 median_gap_ns=42
+id=8 window: judged=293504469 said_whole_us=0 of_which_no_reads=0
+id=8 distinct: judged=293504469 said_whole_us=0
+id=9 res=0.000000042
+id=9 reads=1000000 distinct=505 whole_us=22 longest_whole_run=2 min_gap_ns=125 median_gap_ns=3125
+id=9 window: judged=465412872 said_whole_us=0 of_which_no_reads=0
+id=9 distinct: judged=465412872 said_whole_us=0
+id=12 res=0.000001000
+id=12 reads=1000000 distinct=430318 whole_us=430318 longest_whole_run=430318 min_gap_ns=1000 median_gap_ns=1000
+id=12 window: judged=600 said_whole_us=600 of_which_no_reads=0
+id=12 distinct: judged=600 said_whole_us=600
+id=16 res=0.000000042
+id=16 reads=1000000 distinct=1000000 whole_us=43579 longest_whole_run=2 min_gap_ns=41 median_gap_ns=166
+id=16 window: judged=76567002 said_whole_us=0 of_which_no_reads=0
+id=16 distinct: judged=76567002 said_whole_us=0
+# busy_threads=72 ncpu=18
+id=8 res=0.000000042
+id=8 reads=1000000 distinct=421743 whole_us=17572 longest_whole_run=2 min_gap_ns=41 median_gap_ns=42
+id=8 window: judged=61527019 said_whole_us=29 of_which_no_reads=24
+id=8 distinct: judged=61527019 said_whole_us=0
+id=4 res=0.000000042
+id=4 reads=1000000 distinct=356290 whole_us=14852 longest_whole_run=1 min_gap_ns=41 median_gap_ns=42
+id=4 window: judged=60835597 said_whole_us=27 of_which_no_reads=23
+id=4 distinct: judged=60835597 said_whole_us=0
