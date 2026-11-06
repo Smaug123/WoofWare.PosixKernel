@@ -70,21 +70,48 @@ module TestClockAgainstHost =
             disagreements |> shouldEqual []
         )
 
-    /// Whether the host's readings of `clockId`, taken over at least `window`, ever carry
-    /// a digit finer than a microsecond.
+    /// How many distinct whole-microsecond readings `showsSubMicrosecondDigits` takes as
+    /// showing that a clock keeps only whole microseconds.
+    [<Literal>]
+    let private WholeMicrosecondReadings = 20
+
+    /// Whether the host's readings of `clockId` carry a digit finer than a microsecond:
+    /// true at the first reading that does, and false once `WholeMicrosecondReadings`
+    /// readings, each differing from the one before, have not.
     ///
-    /// A window rather than a count, because a coarse clock repeats its value until the
-    /// next timer tick: it needs time to pass, not calls, to show several values.
-    let private showsSubMicrosecondDigits (clockId : int) (window : System.TimeSpan) : bool =
+    /// It counts distinct readings, not calls or elapsed time. A coarse clock repeats its
+    /// value until its next tick, so calls alone do not show it changing; and a reader the
+    /// scheduler or the garbage collector holds up reads nothing while held, so time alone
+    /// does not either.
+    ///
+    /// Fails if the clock has not shown that many values by `deadline`.
+    let private showsSubMicrosecondDigits (clockId : int) (deadline : System.TimeSpan) : bool =
         let stopwatch = Stopwatch.StartNew ()
-        let mutable seen = false
+        let mutable verdict : bool voption = ValueNone
+        let mutable previous : Timespec voption = ValueNone
+        let mutable distinct = 0
 
-        while not seen && stopwatch.Elapsed < window do
-            match hostRead clockId with
-            | HostOutcome.Read reading -> seen <- reading.Nanoseconds % 1000L <> 0L
-            | HostOutcome.Failed errno -> failwith $"clock id %d{clockId} answered once and then failed with %d{errno}"
+        while verdict.IsNone do
+            if distinct >= WholeMicrosecondReadings then
+                verdict <- ValueSome false
+            elif stopwatch.Elapsed > deadline then
+                failwith
+                    $"clock id %d{clockId} showed %d{distinct} distinct whole-microsecond readings in %O{deadline}, short of the %d{WholeMicrosecondReadings} its verdict needs"
+            else
+                match hostRead clockId with
+                | HostOutcome.Failed errno ->
+                    failwith $"clock id %d{clockId} answered once and then failed with %d{errno}"
+                | HostOutcome.Read reading when reading.Nanoseconds % 1000L <> 0L -> verdict <- ValueSome true
+                | HostOutcome.Read reading ->
+                    match previous with
+                    | ValueSome before when before.Seconds = reading.Seconds && before.Nanoseconds = reading.Nanoseconds ->
+                        ()
+                    | ValueSome _
+                    | ValueNone -> distinct <- distinct + 1
 
-        seen
+                    previous <- ValueSome reading
+
+        verdict.Value
 
     [<Test>]
     let ``a clock reports whole microseconds here exactly when it does on the host`` () : unit =
@@ -111,11 +138,17 @@ module TestClockAgainstHost =
                 | Ok (ClockGettimeAnswer.Completed reading) ->
                     let modelKeepsNanoseconds = UnixTimestamp.nanoseconds reading % 1000 <> 0
 
-                    // Probability of a false negative for a fine clock is nil; for a coarse
-                    // clock at a 4 ms tick, 50 ms shows a dozen values, each of which would
-                    // have to land on a whole microsecond.
+                    // A fine clock on the hosts measured (`clock-sub-microsecond.c`) ticks
+                    // every 42 ns and lands at most one tick in 24 on a whole microsecond,
+                    // so it passes for a whole-microsecond clock only if all 20 distinct
+                    // readings land on one. Readings a tick apart cannot both, so that
+                    // takes the reader held up between every two of them, and even then
+                    // the chance is about 24^-20, under 10^-27. Linux's coarse clocks tick
+                    // every 4 ms in the measured VM, and every 10 ms at the slowest HZ
+                    // Linux builds with, so 20 values take at most 200 ms, far inside the
+                    // deadline.
                     let hostKeepsNanoseconds =
-                        showsSubMicrosecondDigits clockId (System.TimeSpan.FromMilliseconds 50.0)
+                        showsSubMicrosecondDigits clockId (System.TimeSpan.FromSeconds 10.0)
 
                     if modelKeepsNanoseconds <> hostKeepsNanoseconds then
                         failwith

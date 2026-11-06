@@ -1,0 +1,55 @@
+# Linux 6.18.5 aarch64, ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+# busy_threads=0 ncpu=5
+id=0 res=0.000000001
+id=0 reads=1000000 distinct=582956 whole_us=24321 longest_whole_run=1 min_gap_ns=41 median_gap_ns=42
+id=0 window: judged=294998444 said_whole_us=0 of_which_no_reads=0
+id=0 distinct: judged=294998444 said_whole_us=0
+id=1 res=0.000000001
+id=1 reads=1000000 distinct=492761 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=42
+id=1 window: judged=295228539 said_whole_us=0 of_which_no_reads=0
+id=1 distinct: judged=295228539 said_whole_us=0
+id=2 res=0.000000001
+id=2 reads=1000000 distinct=1000000 whole_us=0 longest_whole_run=0 min_gap_ns=83 median_gap_ns=167
+id=2 window: judged=79703852 said_whole_us=0 of_which_no_reads=0
+id=2 distinct: judged=79703852 said_whole_us=0
+id=3 res=0.000000001
+id=3 reads=1000000 distinct=1000000 whole_us=0 longest_whole_run=0 min_gap_ns=83 median_gap_ns=166
+id=3 window: judged=85928159 said_whole_us=0 of_which_no_reads=0
+id=3 distinct: judged=85928159 said_whole_us=0
+id=4 res=0.000000001
+id=4 reads=1000000 distinct=459607 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=42
+id=4 window: judged=323350140 said_whole_us=0 of_which_no_reads=0
+id=4 distinct: judged=323350140 said_whole_us=0
+id=5 res=0.004000000
+id=5 reads=1000000 distinct=1 whole_us=0 longest_whole_run=0 min_gap_ns=4000000 median_gap_ns=4000000
+id=5 window: judged=444129205 said_whole_us=17 of_which_no_reads=0
+id=5 distinct: judged=444129205 said_whole_us=16
+id=6 res=0.004000000
+id=6 reads=1000000 distinct=1 whole_us=0 longest_whole_run=0 min_gap_ns=4000000 median_gap_ns=4000000
+id=6 window: judged=462398204 said_whole_us=0 of_which_no_reads=0
+id=6 distinct: judged=462398204 said_whole_us=0
+id=7 res=0.000000001
+id=7 reads=1000000 distinct=470332 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=42
+id=7 window: judged=324634123 said_whole_us=0 of_which_no_reads=0
+id=7 distinct: judged=324634123 said_whole_us=0
+id=8 res=0.000000001
+id=8 reads=1000000 distinct=1000000 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=125
+id=8 window: judged=85816526 said_whole_us=0 of_which_no_reads=0
+id=8 distinct: judged=85816526 said_whole_us=0
+id=9 res=0.000000001
+id=9 reads=1000000 distinct=1000000 whole_us=0 longest_whole_run=0 min_gap_ns=42 median_gap_ns=125
+id=9 window: judged=87043839 said_whole_us=0 of_which_no_reads=0
+id=9 distinct: judged=87043839 said_whole_us=0
+id=11 res=0.000000001
+id=11 reads=1000000 distinct=486077 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=42
+id=11 window: judged=295681097 said_whole_us=0 of_which_no_reads=0
+id=11 distinct: judged=295681097 said_whole_us=0
+# busy_threads=20 ncpu=5
+id=1 res=0.000000001
+id=1 reads=1000000 distinct=437410 whole_us=0 longest_whole_run=0 min_gap_ns=41 median_gap_ns=42
+id=1 window: judged=50955370 said_whole_us=5 of_which_no_reads=5
+id=1 distinct: judged=50955370 said_whole_us=0
+id=6 res=0.004000000
+id=6 reads=1000000 distinct=1 whole_us=0 longest_whole_run=0 min_gap_ns=16000000 median_gap_ns=16000000
+id=6 window: judged=89197672 said_whole_us=1 of_which_no_reads=1
+id=6 distinct: judged=89197672 said_whole_us=0
