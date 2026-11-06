@@ -127,6 +127,7 @@
         <Compile Include="UnixReadWrite.fs" />
         <Compile Include="UnixPipe.fs" />
         <Compile Include="UnixEntropy.fs" />
+        <Compile Include="UnixHostName.fs" />
         <Compile Include="UnixNamespace.fs" />
         <Compile Include="UnixCredentials.fs" />
         <Compile Include="ProcessLaunch.fs" />

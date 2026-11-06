@@ -158,6 +158,8 @@
     <Compile Include="TestEntropyPool.fs" />
     <Compile Include="TestUnixEntropy.fs" />
     <Compile Include="TestEntropyAgainstHost.fs" />
+    <Compile Include="TestGetHostName.fs" />
+    <Compile Include="TestGetHostNameAgainstHost.fs" />
     <Compile Include="TestFileSystemType.fs" />
     <Compile Include="TestDirectorySize.fs" />
     <Compile Include="TestLinkCount.fs" />
@@ -406,6 +408,9 @@
          docs/probes/non-leader-unblock. `TestSignalReceiver` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.darwin.txt" />
+    <!-- docs/probes/gethostname. `TestGetHostName` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\gethostname\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.gethostname.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\gethostname\measured-darwin-27.2-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.gethostname.darwin.txt" />
     <!-- docs/probes/kill-targets. `TestKillTargetsMeasured` replays every `target` row. -->
     <EmbeddedResource Include="..\docs\probes\kill-targets\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.kill-targets.linux-uid0.txt" />
     <EmbeddedResource Include="..\docs\probes\kill-targets\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.kill-targets.linux-uid1000.txt" />

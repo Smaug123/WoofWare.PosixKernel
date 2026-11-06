@@ -1,0 +1,38 @@
+# Darwin 27.2.0 arm64, 27.2
+# HOST_NAME_MAX undefined _SC_HOST_NAME_MAX=255
+# name length 17; uname nodename is the name
+cap=0 dest=mapped: ret=0 errno=0 changed=0 nul=none prefix=y before=1
+cap=1 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=2 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=16 dest=mapped: ret=0 errno=0 changed=16 nul=15 prefix=y
+cap=17 dest=mapped: ret=0 errno=0 changed=17 nul=16 prefix=y
+cap=18 dest=mapped: ret=0 errno=0 changed=18 nul=17 prefix=y
+cap=19 dest=mapped: ret=0 errno=0 changed=19 nul=17 prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=64 nul=17 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=65 nul=17 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=255 nul=17 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=256 nul=17 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=18 nul=17 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=18 nul=17 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=18 nul=17 prefix=y
+cap=0 dest=null: signal=SIGSEGV
+cap=0 dest=prot_none: signal=SIGBUS
+cap=0 dest=read_only: signal=SIGBUS
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGBUS
+cap=1 dest=read_only: signal=SIGBUS
+cap=17 dest=null: signal=SIGSEGV
+cap=17 dest=prot_none: signal=SIGBUS
+cap=17 dest=read_only: signal=SIGBUS
+cap=18 dest=null: signal=SIGSEGV
+cap=18 dest=prot_none: signal=SIGBUS
+cap=18 dest=read_only: signal=SIGBUS
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGBUS
+cap=256 dest=read_only: signal=SIGBUS
+cap=257 dest=null: ret=0 errno=0
+cap=257 dest=prot_none: ret=-1 errno=EFAULT
+cap=257 dest=read_only: ret=-1 errno=EFAULT
+cap=1024 dest=null: ret=0 errno=0
+cap=1024 dest=prot_none: ret=-1 errno=EFAULT
+cap=1024 dest=read_only: ret=-1 errno=EFAULT

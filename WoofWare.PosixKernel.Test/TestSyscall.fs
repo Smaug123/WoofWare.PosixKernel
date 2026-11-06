@@ -118,6 +118,7 @@ module TestSyscall =
             "UnixClock.gettimeofday", "GetTimeOfDay"
             "UnixEntropy.getRandom", "GetRandom"
             "UnixEntropy.getEntropy", "GetEntropy"
+            "UnixHostName.getHostName", "GetHostName"
             "UnixSystem.processId", "GetProcessId"
             "UnixSystem.umask", "UMask"
             "UnixCredentials.getresuid", "GetResUid"
@@ -288,6 +289,7 @@ module TestSyscall =
             "ExitGroup"
             "GetCpu"
             "Futex"
+            "GetHostName"
         ]
 
     let private allCases : BindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
@@ -357,7 +359,7 @@ module TestSyscall =
         let cases = caseOfFunction |> List.map snd
 
         cases |> List.distinct |> shouldEqual cases
-        List.length cases |> shouldEqual 109
+        List.length cases |> shouldEqual 110
         List.length reserved |> shouldEqual 8
 
         Set.intersect (Set.ofList cases) (Set.ofList reserved) |> shouldEqual Set.empty
@@ -365,7 +367,7 @@ module TestSyscall =
         Set.union (Set.ofList cases) (Set.ofList reserved)
         |> shouldEqual (Set.ofList syscallCaseNames)
 
-        List.length syscallCaseNames |> shouldEqual 117
+        List.length syscallCaseNames |> shouldEqual 118
 
     [<Test>]
     let ``SteppedCall's cases are Syscall's, in the same order`` () : unit =

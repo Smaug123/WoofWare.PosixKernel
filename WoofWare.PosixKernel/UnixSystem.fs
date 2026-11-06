@@ -106,6 +106,7 @@ type internal SyscallRefusal<'Thread> =
     | ExitGroup of ProcessEndRefusal
     | GetCpu of GetCpuRefusal
     | Futex of FutexRefusal
+    | GetHostName of GetHostNameRefusal
     /// The call is `call`, a reserved case: this library does not model the
     /// call it names yet.
     | Reserved of call : string
@@ -215,6 +216,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.ExitGroup refusal -> $"exit_group: %s{ProcessEndRefusal.describe refusal}"
         | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
         | SyscallRefusal.Futex refusal -> $"futex: %s{FutexRefusal.describe refusal}"
+        | SyscallRefusal.GetHostName refusal -> $"gethostname: %s{GetHostNameRefusal.describe refusal}"
         | SyscallRefusal.Reserved call ->
             $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
 
@@ -318,6 +320,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.ExitGroup inner -> ProcessEndRefusal.kind inner
         | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
         | SyscallRefusal.Futex inner -> FutexRefusal.kind inner
+        | SyscallRefusal.GetHostName inner -> GetHostNameRefusal.kind inner
         | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
 
 /// A way this system's tables disagree with each other — a state no kernel
@@ -2197,6 +2200,10 @@ module UnixSystem =
                 (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout val3 system)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
+        | Syscall.GetHostName (destination, capacity) ->
+            UnixHostName.tryGetHostName caller destination capacity system
+            |> Result.map SteppedCall.GetHostName
+            |> Result.mapError SyscallRefusal.GetHostName
 
     /// <summary>
     /// Make the call `call` names, by `caller`, through that call's own
@@ -4337,6 +4344,14 @@ module UnixSystem =
     [<Literal>]
     let defaultProcessorCount : int = 1
 
+    /// The name a freshly-minted machine reports from `gethostname(3)`:
+    /// `localhost`, which every flavour can hold and which names no real
+    /// machine. A client chooses another with `UnixBootImage.withHostName`.
+    let defaultHostName : UnixByteString =
+        match UnixByteString.ofBytes (System.Collections.Immutable.ImmutableArray.Create<byte> "localhost"B) with
+        | Ok name -> name
+        | Error defect -> failwith $"unreachable: localhost %s{UnixByteString.describe defect}"
+
     /// The `fs.inotify` sysctls a freshly-minted machine has: 128 instances
     /// and 8192 watches per user, and 16384 records queued per instance.
     ///
@@ -4653,6 +4668,7 @@ module UnixSystem =
                     BootTime = UnixTimestamp.epoch
                     EntropyPool = EntropyPool.ofSeed defaultEntropySeed
                     ProcessorCount = defaultProcessorCount
+                    HostName = defaultHostName
                     UserBufferCheck = defaultUserBufferCheck platform
                     UnixPlatform = platform
                     CommittedFileSystem = CommittedFileSystem.initial filesystem

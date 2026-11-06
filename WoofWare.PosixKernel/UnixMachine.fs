@@ -247,6 +247,14 @@ type internal UnixMachineState =
             /// different value with `UnixBootImage.withProcessorCount`, which
             /// refuses anything below 1, since programs divide by it.
             ProcessorCount : int
+            /// The name `gethostname(3)` reports. Machine configuration rather
+            /// than a fact of the platform, since two machines running one
+            /// kernel image are named apart; never a host read.
+            ///
+            /// Defaults to `UnixSystem.defaultHostName`; a client chooses a
+            /// different name with `UnixBootImage.withHostName`, which refuses
+            /// one longer than the flavour holds.
+            HostName : UnixByteString
             /// Whether this machine's kernel screens a read or write buffer before
             /// it performs the operation, and if so the greatest value
             /// `address + length` may take: the machine's `TASK_SIZE_MAX`.

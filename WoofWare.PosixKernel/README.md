@@ -88,7 +88,7 @@ In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left
 ## Booting a machine
 
 `UnixSystem.initial` builds the *boot image* of a machine of the given `SimulatedUnixPlatform` that has not done anything yet: a `UnixBootImage`, which no syscall takes.
-Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withDeviceFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
+Configure it with the setters in the `UnixBootImage` module, such as `UnixBootImage.withFileSystem`, `UnixBootImage.withDeviceFileSystem`, `UnixBootImage.withMount`, `UnixBootImage.withBootTime`, `UnixBootImage.withProcessorCount`, `UnixBootImage.withHostName` and `UnixBootImage.withProcessId` (the first process's ID, where the machine's counters start).
 Sysctls are configuration too: `UnixBootImage.withInotifyLimits` sets Linux's `fs.inotify` limits (`InotifyLimits`), which default to `UnixSystem.defaultInotifyLimits` (128 instances and 8192 watches per user, 16384 records per instance).
 `UnixBootImage.withUnprivilegedPortStart` sets Linux's `net.ipv4.ip_unprivileged_port_start`, the lowest port a process without privilege may bind, which defaults to `UnixSystem.defaultUnprivilegedPortStart` (1024, where Darwin's privileged ports always end); and `UnixBootImage.withEphemeralPortRange` sets the range `bind` of port 0 draws from. Linux's sysctls keep the range at or above the unprivileged port start, so `UnixBootImage.boot` refuses a Linux image whose range starts below it, whichever setter ran first. Darwin's keep both ends within 1024 to 65535, so the setter refuses a Darwin range that starts below 1024; Darwin also takes a low end above the high end and searches downwards, which the setter refuses as unmodelled.
 Since no setter takes a booted system, configuration can only describe the machine from the moment it booted.
@@ -269,7 +269,7 @@ Where they do, the function says which it is, and the tables below mark it: (3) 
 * `UnixSignal.pthreadSigmask`, and on Linux `UnixSignal.sigprocmask`, drop 32 and 33 from a set as the C library does; `UnixSignal.rtSigprocmask` is Linux's `rt_sigprocmask(2)`, which can block them. `UnixSignal.rtSigsuspend` is Linux's `rt_sigsuspend(2)`, which differs from `UnixSignal.sigsuspend` only in taking the set's size.
 * `UnixSignal.pthreadKill` is `pthread_kill(3)` and `raise(3)`; the `tgkill(2)` beneath them is not modelled.
 * `UnixCredentials.setresuid`, `UnixCredentials.setresgid` and `UnixCredentials.setgroups` are the C library's functions, which change every thread of the process. Under Linux the system calls beneath them change only the calling thread, and are not modelled: glibc makes every other thread repeat the call by sending it signal 33, which ends or restarts a call the thread is asleep in, and with which the C library's function never returns while a thread blocks it. So under Linux each of the three is refused while another thread blocks signal 33, is asleep in a call, or owes a return to user mode, whatever the call would answer.
-* `UnixDescriptor.terminalAttributes` is `tcgetattr(3)`, `UnixPathResolution.getcwd` is `getcwd(3)` (a library routine on Darwin), and `UnixDescriptor.posixFadvise` returns its error as `posix_fadvise(3)` does, rather than setting errno.
+* `UnixDescriptor.terminalAttributes` is `tcgetattr(3)`, `UnixPathResolution.getcwd` is `getcwd(3)` (a library routine on Darwin), `UnixHostName.getHostName` is `gethostname(3)` (a library routine on both, whose answer to a short buffer is each C library's own), and `UnixDescriptor.posixFadvise` returns its error as `posix_fadvise(3)` does, rather than setting errno.
 
 A client replaying a record of raw system calls, such as an `strace` log, uses the (2) forms.
 
@@ -642,6 +642,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | Linux's `getrandom(2)` | `UnixEntropy.getRandom (caller : Caller) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
 | `getpid(2)` | `UnixSystem.processId (caller : Caller)` | `ProcessId` |
+| `gethostname(3)` | `UnixHostName.getHostName (caller : Caller) (destination : UserBuffer) (capacity : uint64)` | `GetHostNameAnswer` |
 | `umask(2)` | `UnixSystem.umask (caller : Caller) (mask : int)` | `PermissionBits * UnixSystem` |
 | `geteuid(2)` | `UnixCredentials.geteuid (caller : Caller)` | `UserId` |
 | `getegid(2)` | `UnixCredentials.getegid (caller : Caller)` | `GroupId` |

@@ -588,6 +588,10 @@ module TestStepOracle =
             |> CallProgress.resumeWith (fun paused -> UnixFutex.tryFutexWithWord (cell word) paused)
             |> Result.map SteppedCall.Futex
             |> Result.mapError SyscallRefusal.Futex
+        | Syscall.GetHostName (destination, capacity) ->
+            UnixHostName.tryGetHostName caller destination capacity system
+            |> Result.map SteppedCall.GetHostName
+            |> Result.mapError SyscallRefusal.GetHostName
         | other -> failwith $"%s{UnionCaseName.ofValue other} is a reserved case, whose call no function makes"
 
     /// What a call answered, as values to compare: the `SteppedCall`'s case
@@ -2081,6 +2085,11 @@ module TestStepOracle =
                 let! val3 = Gen.elements [ UnixFutex.FutexBitsetMatchAny ; 1u ; 2u ; 0u ]
                 return Syscall.Futex (address, op, value, word, timeout, val3)
             }
+            "GetHostName",
+            Gen.map2
+                (fun destination capacity -> Syscall.GetHostName (destination, capacity))
+                userBufferGen
+                (Gen.elements [ 0UL ; 1UL ; 5UL ; 9UL ; 10UL ; 256UL ; 257UL ; 4096UL ; UInt64.MaxValue ])
         ]
 
     [<Test>]

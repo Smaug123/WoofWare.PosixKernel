@@ -1,0 +1,190 @@
+# Linux 6.18.5 aarch64, ldd (Debian GLIBC 2.41-12+deb13u4) 2.41; root in its own UTS namespace
+# HOST_NAME_MAX=64 _SC_HOST_NAME_MAX=64
+## sethostname len=0: ret=0 errno=0
+# name length 0; uname nodename is the name
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=2 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=2 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=1 nul=0 prefix=y
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGSEGV
+cap=256 dest=read_only: signal=SIGSEGV
+cap=257 dest=null: signal=SIGSEGV
+cap=257 dest=prot_none: signal=SIGSEGV
+cap=257 dest=read_only: signal=SIGSEGV
+cap=1024 dest=null: signal=SIGSEGV
+cap=1024 dest=prot_none: signal=SIGSEGV
+cap=1024 dest=read_only: signal=SIGSEGV
+## sethostname len=1: ret=0 errno=0
+# name length 1; uname nodename is the name
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=1 nul=none prefix=y
+cap=2 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=1 nul=none prefix=y
+cap=2 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=3 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=2 nul=1 prefix=y
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=2 dest=null: signal=SIGSEGV
+cap=2 dest=prot_none: signal=SIGSEGV
+cap=2 dest=read_only: signal=SIGSEGV
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGSEGV
+cap=256 dest=read_only: signal=SIGSEGV
+cap=257 dest=null: signal=SIGSEGV
+cap=257 dest=prot_none: signal=SIGSEGV
+cap=257 dest=read_only: signal=SIGSEGV
+cap=1024 dest=null: signal=SIGSEGV
+cap=1024 dest=prot_none: signal=SIGSEGV
+cap=1024 dest=read_only: signal=SIGSEGV
+## sethostname len=9: ret=0 errno=0
+# name length 9; uname nodename is the name
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=1 nul=none prefix=y
+cap=2 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=2 nul=none prefix=y
+cap=8 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=8 nul=none prefix=y
+cap=9 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=9 nul=none prefix=y
+cap=10 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=11 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=10 nul=9 prefix=y
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=9 dest=null: signal=SIGSEGV
+cap=9 dest=prot_none: signal=SIGSEGV
+cap=9 dest=read_only: signal=SIGSEGV
+cap=10 dest=null: signal=SIGSEGV
+cap=10 dest=prot_none: signal=SIGSEGV
+cap=10 dest=read_only: signal=SIGSEGV
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGSEGV
+cap=256 dest=read_only: signal=SIGSEGV
+cap=257 dest=null: signal=SIGSEGV
+cap=257 dest=prot_none: signal=SIGSEGV
+cap=257 dest=read_only: signal=SIGSEGV
+cap=1024 dest=null: signal=SIGSEGV
+cap=1024 dest=prot_none: signal=SIGSEGV
+cap=1024 dest=read_only: signal=SIGSEGV
+## sethostname len=63: ret=0 errno=0
+# name length 63; uname nodename is the name
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=1 nul=none prefix=y
+cap=2 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=2 nul=none prefix=y
+cap=62 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=62 nul=none prefix=y
+cap=63 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=63 nul=none prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=64 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=64 nul=63 prefix=y
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=63 dest=null: signal=SIGSEGV
+cap=63 dest=prot_none: signal=SIGSEGV
+cap=63 dest=read_only: signal=SIGSEGV
+cap=64 dest=null: signal=SIGSEGV
+cap=64 dest=prot_none: signal=SIGSEGV
+cap=64 dest=read_only: signal=SIGSEGV
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGSEGV
+cap=256 dest=read_only: signal=SIGSEGV
+cap=257 dest=null: signal=SIGSEGV
+cap=257 dest=prot_none: signal=SIGSEGV
+cap=257 dest=read_only: signal=SIGSEGV
+cap=1024 dest=null: signal=SIGSEGV
+cap=1024 dest=prot_none: signal=SIGSEGV
+cap=1024 dest=read_only: signal=SIGSEGV
+## sethostname len=64: ret=0 errno=0
+# name length 64; uname nodename is the name
+cap=0 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=0 nul=none prefix=y
+cap=1 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=1 nul=none prefix=y
+cap=2 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=2 nul=none prefix=y
+cap=63 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=63 nul=none prefix=y
+cap=64 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=64 nul=none prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=66 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=64 dest=mapped: ret=-1 errno=ENAMETOOLONG changed=64 nul=none prefix=y
+cap=65 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=255 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=256 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=257 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=258 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=1024 dest=mapped: ret=0 errno=0 changed=65 nul=64 prefix=y
+cap=0 dest=null: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=prot_none: ret=-1 errno=ENAMETOOLONG
+cap=0 dest=read_only: ret=-1 errno=ENAMETOOLONG
+cap=1 dest=null: signal=SIGSEGV
+cap=1 dest=prot_none: signal=SIGSEGV
+cap=1 dest=read_only: signal=SIGSEGV
+cap=64 dest=null: signal=SIGSEGV
+cap=64 dest=prot_none: signal=SIGSEGV
+cap=64 dest=read_only: signal=SIGSEGV
+cap=65 dest=null: signal=SIGSEGV
+cap=65 dest=prot_none: signal=SIGSEGV
+cap=65 dest=read_only: signal=SIGSEGV
+cap=256 dest=null: signal=SIGSEGV
+cap=256 dest=prot_none: signal=SIGSEGV
+cap=256 dest=read_only: signal=SIGSEGV
+cap=257 dest=null: signal=SIGSEGV
+cap=257 dest=prot_none: signal=SIGSEGV
+cap=257 dest=read_only: signal=SIGSEGV
+cap=1024 dest=null: signal=SIGSEGV
+cap=1024 dest=prot_none: signal=SIGSEGV
+cap=1024 dest=read_only: signal=SIGSEGV
+## sethostname len=65: ret=-1 errno=EINVAL
+## sethostname len=255: ret=-1 errno=EINVAL
+## sethostname len=256: ret=-1 errno=EINVAL
