@@ -578,6 +578,9 @@ module TestMultiProcessFuzz =
         | InotifyReadPark
         /// A read of an inotify instance, woken, that returned records.
         | InotifyReadFinish
+        /// A read or write of a connected socket, made after a close drained
+        /// it (`SocketDescription.Drained`), that answered `EBADF`.
+        | DrainedTransfer
         /// A step refused, which tested nothing.
         | Refusal
         | Call
@@ -1028,6 +1031,15 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
 
+        // Whether `fd` names a socket a Darwin close has drained
+        // (`SocketDescription.Drained`), through which a read or write that
+        // would sleep answers EBADF instead (`tcp-close-drain.c` T7, T15, T21
+        // in docs/plans/2026-10-07-tcp-byte-transfer).
+        let drained (fd : int) : bool =
+            match FileDescriptorRegistry.tryFindTarget fd (Proc.fileDescriptors pid view) with
+            | Some (OpenFileTarget.Socket socketId) -> (UnixMachineState.socket socketId (Kernel.machine view)).Drained
+            | _ -> false
+
         // A read of `size` bytes from the connected socket `fd`.
         let receive (fd : int) (size : int) : Made =
             let socketId =
@@ -1054,6 +1066,9 @@ module TestMultiProcessFuzz =
                 cover FuzzLabel.Reset
                 Made.Answered after
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), after) -> Made.Answered after
+            | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), after) when drained fd ->
+                cover FuzzLabel.DrainedTransfer
+                Made.Answered after
             | Ok (ReadOutcome.WouldBlock _, after) ->
                 cover FuzzLabel.ConnectionReadPark
                 Made.Sleeps after
@@ -1075,6 +1090,9 @@ module TestMultiProcessFuzz =
                 Made.Answered after
             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, after)) ->
                 cover FuzzLabel.ShortWrite
+                Made.Answered after
+            | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EBADF, after)) when drained fd ->
+                cover FuzzLabel.DrainedTransfer
                 Made.Answered after
             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.ECONNRESET, _))
             | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, _, _))
@@ -2405,6 +2423,48 @@ module TestMultiProcessFuzz =
         // fixed sample.
         coverage.Count FuzzLabel.Refusal * 10
         |> shouldBeSmallerThan (coverage.Count FuzzLabel.Call)
+
+    /// Darwin steps in which the second of two prepared processes, which
+    /// holds the client end of the connection to `ports.[0]` at descriptor 7,
+    /// sleeps in `asleep` on thread 2, dups descriptor 7 as 8 on thread 0, and
+    /// closes 7 on thread 1, which drains the socket
+    /// (`SocketDescription.Drained`); then a wake pass finishes thread 2's
+    /// call, and thread 0 makes `later` through descriptor 8.
+    let private drainedCase (asleep : Op list) (later : Op) : Case =
+        {
+            Platform = SimulatedUnixPlatform.macOsArm64
+            ProcessCount = 2
+            Prepared = true
+            Steps =
+                (asleep |> List.map (fun op -> Step.Call (1, 2, op)))
+                @ [
+                    Step.Call (1, 0, Op.Dup 7)
+                    Step.Call (1, 1, Op.CloseThrough 0)
+                    Step.WakePass 1
+                    Step.Call (1, 0, later)
+                ]
+        }
+
+    /// The labels `case` reached, each once for every time it did.
+    let private reached (case : Case) : FuzzLabel list =
+        let labels = ResizeArray<FuzzLabel> ()
+        run labels.Add case
+        List.ofSeq labels
+
+    [<Test>]
+    let ``a write that would sleep through a dup of a socket a close drained answers EBADF`` () : unit =
+        // The first write fills the send buffer, so that the second sleeps.
+        drainedCase [ Op.SendThrough (0, 300000) ; Op.SendThrough (0, 300000) ] (Op.SendThrough (0, 300000))
+        |> reached
+        |> List.filter ((=) FuzzLabel.DrainedTransfer)
+        |> shouldEqual [ FuzzLabel.DrainedTransfer ]
+
+    [<Test>]
+    let ``a read that would sleep through a dup of a socket a close drained answers EBADF`` () : unit =
+        drainedCase [ Op.ReceiveThrough (0, 65536) ] (Op.ReceiveThrough (0, 65536))
+        |> reached
+        |> List.filter ((=) FuzzLabel.DrainedTransfer)
+        |> shouldEqual [ FuzzLabel.DrainedTransfer ]
 
     /// What `UnixWait.wake` did with the memo the system carries at a step,
     /// each counted every time a step reaches it.
