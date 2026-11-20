@@ -283,6 +283,315 @@ module TestSockNameFaultLength =
         SimulatedUnixPlatform.getSockNameFaultLength SimulatedUnixPlatform.macOsArm64
         |> shouldEqual GetSockNameFaultLength.Untouched
 
+    /// The recordings of `docs/probes/overlapping-output-order`.
+    let private overlapResources : string list =
+        [
+            "darwin-27.2.0-arm64.txt"
+            "linux-6.12.111-x86_64.txt"
+            "linux-6.17.13-x86_64.txt"
+            "linux-6.18.5-x86_64.txt"
+            "linux-6.18.5-aarch64.txt"
+        ]
+
+    /// One line of an overlap recording, after its two header lines.
+    type private OverlapLine =
+        /// A control: the call made twice with a separate buffer and cell.
+        | Control of
+            call : string *
+            declared : uint32 *
+            firstReturned : string *
+            secondReturned : string *
+            stored : int *
+            firstReported : string *
+            secondReported : string *
+            expected : string
+        /// An overlapping row, and which order its bytes match.
+        | Overlap of
+            call : string *
+            declared : uint32 *
+            offset : int *
+            line : string *
+            returned : string *
+            verdict : string
+
+    /// One overlap recording: the kernel it ran on, and its lines.
+    type private OverlapRecording =
+        {
+            Resource : string
+            Platform : SimulatedUnixPlatform
+            Lines : OverlapLine list
+        }
+
+    let private overlapControl : Regex =
+        Regex
+            @"^(\S+)\s+D=([0-9]+)\s+control\s+r=([-0-9]+),([-0-9]+)\s+errno=[0-9]+,[0-9]+\s+n=([0-9]+)\s+L=([-0-9]+),([-0-9]+)\s+expected=(\S+)\s"
+
+    let private overlapRow : Regex =
+        Regex
+            @"^(\S+)\s+D=([0-9]+)\s+k=(-?[0-9]+)\s+r=([-0-9]+)\s+errno=[0-9]+\s+(addr-first|length-first|either|NEITHER)\b"
+
+    let private overlapRecording (resource : string) : OverlapRecording =
+        let name = $"WoofWare.PosixKernel.Test.overlapping-output-order.%s{resource}"
+
+        use stream =
+            match Assembly.GetExecutingAssembly().GetManifestResourceStream name with
+            | null -> failwith $"no embedded resource %s{name}"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        let lines =
+            reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+            |> List.ofArray
+
+        match lines with
+        | header :: _layout :: rows ->
+            {
+                Resource = resource
+                Platform = platformOf resource header
+                Lines =
+                    rows
+                    |> List.map (fun line ->
+                        let control = overlapControl.Match line
+                        let row = overlapRow.Match line
+                        let group (m : Match) (i : int) = m.Groups.[i].Value
+
+                        if control.Success then
+                            OverlapLine.Control (
+                                group control 1,
+                                UInt32.Parse (group control 2),
+                                group control 3,
+                                group control 4,
+                                Int32.Parse (group control 5),
+                                group control 6,
+                                group control 7,
+                                group control 8
+                            )
+                        elif row.Success then
+                            OverlapLine.Overlap (
+                                group row 1,
+                                UInt32.Parse (group row 2),
+                                Int32.Parse (group row 3),
+                                line,
+                                group row 4,
+                                group row 5
+                            )
+                        else
+                            failwith $"%s{resource}: unparsed row %s{line}"
+                    )
+            }
+        | _ -> failwith $"%s{resource} has no rows"
+
+    let private overlapRecordings : Lazy<OverlapRecording list> =
+        lazy (overlapResources |> List.map overlapRecording)
+
+    /// The declared length and verdict of each of `recording`'s rows that tell
+    /// the two orders apart, by call. Fails on a row that matched neither order
+    /// or whose call failed.
+    let private decisive (recording : OverlapRecording) : Map<string, (uint32 * string) list> =
+        recording.Lines
+        |> List.choose (fun line ->
+            match line with
+            | OverlapLine.Control _ -> None
+            | OverlapLine.Overlap (call, declared, _, text, returned, verdict) ->
+                (recording.Resource, text, returned)
+                |> shouldEqual (recording.Resource, text, "0")
+
+                verdict |> shouldNotEqual "NEITHER"
+
+                if verdict = "either" then
+                    None
+                else
+                    Some (call, (declared, verdict))
+        )
+        |> List.groupBy fst
+        |> List.map (fun (call, rows) -> call, List.map snd rows)
+        |> Map.ofList
+
+    /// A control that failed, stored nothing, or read back two different
+    /// lengths makes the probe skip its overlapping rows, which would leave a
+    /// partial recording looking complete.
+    [<Test>]
+    let ``every overlap control succeeded`` () : unit =
+        for recording in overlapRecordings.Force () do
+            for line in recording.Lines do
+                match line with
+                | OverlapLine.Overlap _ -> ()
+                | OverlapLine.Control (call, _, r1, r2, stored, l1, l2, expected) ->
+                    (recording.Resource, call, r1, r2, stored > 0, l1 = l2, expected)
+                    |> shouldEqual (recording.Resource, call, "0", "0", true, true, "yes")
+
+    /// Each call the probe sweeps, in its order, with the declared lengths it
+    /// sweeps it at.
+    let private schedule (platform : SimulatedUnixPlatform) : (string * uint32 list) list =
+        let address = [ 6u ; 10u ; 16u ; 128u ]
+        let address6 = [ 10u ; 20u ; 26u ; 28u ; 128u ]
+        let int' = [ 2u ; 4u ; 64u ]
+        let linger = [ 4u ; 6u ; 8u ; 64u ]
+
+        let lingerSeconds =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> []
+            | SimulatedUnixFlavour.Darwin -> [ "SO_LINGER_SEC", linger ]
+
+        [
+            "getsockname", address
+            "getpeername", address
+            "accept", address
+            "recvfrom", address
+            "getsockname6", address6
+            "getpeername6", address6
+            "SO_REUSEADDR", int'
+            "SO_ERROR", int'
+            "SO_LINGER", linger
+        ]
+        @ lingerSeconds
+        @ [ "TCP_NODELAY", int' ; "IPV6_V6ONLY", int' ]
+
+    /// The probe puts the cell at every offset from -3 to 30 from the buffer.
+    let private offsets : int list = [ -3 .. 30 ]
+
+    /// Every recording holds the probe's whole schedule, in order: for each
+    /// call and declared length a control, then a row at every offset. So no
+    /// recording can lose a sweep, or the end of one, and still pass.
+    [<Test>]
+    let ``every overlap recording holds the probe's whole schedule`` () : unit =
+        for recording in overlapRecordings.Force () do
+            let expected =
+                [
+                    for call, lengths in schedule recording.Platform do
+                        for declared in lengths do
+                            yield call, declared, None
+
+                            for offset in offsets do
+                                yield call, declared, Some offset
+                ]
+
+            let actual =
+                recording.Lines
+                |> List.map (fun line ->
+                    match line with
+                    | OverlapLine.Control (call, declared, _, _, _, _, _, _) -> call, declared, None
+                    | OverlapLine.Overlap (call, declared, offset, _, _, _) -> call, declared, Some offset
+                )
+
+            (recording.Resource, actual) |> shouldEqual (recording.Resource, expected)
+
+    /// The calls whose successful store order `GetSockNameAnswer.Reported` and
+    /// `PeerAddressCopy.Written` say follows `getSockNameFaultLength`.
+    let private nameCalls : Set<string> =
+        Set.ofList
+            [
+                "getsockname"
+                "getpeername"
+                "getsockname6"
+                "getpeername6"
+                "accept"
+                "recvfrom"
+            ]
+
+    /// A successful name call stores its two outputs in the order in which a
+    /// call whose copy faults stores them, on every recorded kernel.
+    [<Test>]
+    let ``a successful name call stores in the fault path's order on every measured kernel`` () : unit =
+        for recording in overlapRecordings.Force () do
+            let expected =
+                match SimulatedUnixPlatform.getSockNameFaultLength recording.Platform with
+                | GetSockNameFaultLength.AlreadyReported -> "length-first"
+                | GetSockNameFaultLength.Untouched -> "addr-first"
+
+            let rows = decisive recording
+
+            for call in nameCalls do
+                let verdicts = rows |> Map.tryFind call |> Option.defaultValue [] |> List.map snd
+
+                (recording.Resource, call, List.isEmpty verdicts)
+                |> shouldEqual (recording.Resource, call, false)
+
+                (recording.Resource, call, List.distinct verdicts)
+                |> shouldEqual (recording.Resource, call, [ expected ])
+
+    /// The option labels a recording can hold, with the domain of the socket
+    /// that carries each, and its level and name on `platform`.
+    let private optionOf (platform : SimulatedUnixPlatform) (label : string) : SocketDomain * int * int =
+        let socket = SimulatedUnixPlatform.socketOptionLevel platform
+
+        match label with
+        | "SO_REUSEADDR" -> SocketDomain.Inet, socket, SimulatedUnixPlatform.reuseAddressOption platform
+        | "SO_ERROR" -> SocketDomain.Inet, socket, SimulatedUnixPlatform.socketErrorOption platform
+        | "SO_LINGER" -> SocketDomain.Inet, socket, SimulatedUnixPlatform.lingerOption platform
+        | "SO_LINGER_SEC" ->
+            match SimulatedUnixPlatform.lingerSecondsOption platform with
+            | Some name -> SocketDomain.Inet, socket, name
+            | None -> failwith $"%O{platform} has no SO_LINGER_SEC"
+        | "TCP_NODELAY" ->
+            SocketDomain.Inet,
+            SimulatedUnixPlatform.tcpOptionLevel platform,
+            SimulatedUnixPlatform.noDelayOption platform
+        | "IPV6_V6ONLY" ->
+            SocketDomain.Inet6,
+            SimulatedUnixPlatform.ipv6OptionLevel platform,
+            SimulatedUnixPlatform.ipv6OnlyOption platform
+        | other -> failwith $"unknown option %s{other}"
+
+    /// The getsockopt options each flavour's recording measures.
+    let private recordedOptions (platform : SimulatedUnixPlatform) : Set<string> =
+        let common =
+            Set.ofList [ "SO_REUSEADDR" ; "SO_ERROR" ; "SO_LINGER" ; "TCP_NODELAY" ; "IPV6_V6ONLY" ]
+
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> common
+        | SimulatedUnixFlavour.Darwin -> Set.add "SO_LINGER_SEC" common
+
+    /// A successful getsockopt stores the value and the length in the order in
+    /// which the model's faulting getsockopt of the same option, at the same
+    /// declared length, says the kernel does: the length first exactly when
+    /// the fault finds it already written.
+    [<Test>]
+    let ``a successful getsockopt stores in the model's fault order for every recorded option`` () : unit =
+        for recording in overlapRecordings.Force () do
+            let rows = decisive recording
+
+            for label in recordedOptions recording.Platform do
+                let domain, level, name = optionOf recording.Platform label
+
+                let system : UnixSystem<int, string> =
+                    UnixSystem.initial recording.Platform
+                    |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+                let fd, system =
+                    NewSocket.create domain SocketKind.Stream SocketProtocol.Default system
+
+                let modelOrder (declared : uint32) : string =
+                    match
+                        SockOptCalls.get fd level name (UserBuffer.Unmapped 0x1000UL) UserBuffer.Mapped declared system
+                    with
+                    | Ok (GetSockOptAnswer.Failed (UnixError.EFAULT, Some _), _) -> "length-first"
+                    | Ok (GetSockOptAnswer.Failed (UnixError.EFAULT, None), _) -> "addr-first"
+                    | other ->
+                        failwith
+                            $"%s{recording.Resource} %s{label} at %d{declared}: the faulting get answered %A{other}"
+
+                let verdicts = rows |> Map.tryFind label |> Option.defaultValue []
+
+                (recording.Resource, label, List.isEmpty verdicts)
+                |> shouldEqual (recording.Resource, label, false)
+
+                for declared, verdict in verdicts do
+                    (recording.Resource, label, declared, verdict)
+                    |> shouldEqual (recording.Resource, label, declared, modelOrder declared)
+
+    /// The Linux overlap recordings must lie on both sides of 6.18, or the
+    /// comparison could not tell the versioned rule from one that ignored the
+    /// version.
+    [<Test>]
+    let ``the Linux overlap recordings reach both fault-path answers`` () : unit =
+        overlapRecordings.Force ()
+        |> List.filter (fun recording -> SimulatedUnixPlatform.flavour recording.Platform = SimulatedUnixFlavour.Linux)
+        |> List.map (fun recording -> SimulatedUnixPlatform.getSockNameFaultLength recording.Platform)
+        |> Set.ofList
+        |> shouldEqual (Set.ofList [ GetSockNameFaultLength.AlreadyReported ; GetSockNameFaultLength.Untouched ])
+
 /// `getsockname(2)`'s fault path put to the kernel running the suite and to a
 /// model of that same kernel: its flavour, its architecture and, on Linux, its
 /// own version, read from `uname`. So it holds on whichever kernel it runs on,

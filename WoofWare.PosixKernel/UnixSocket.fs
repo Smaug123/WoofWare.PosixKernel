@@ -238,6 +238,9 @@ module internal ListenRefusal =
 /// of address.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetSockNameAnswer =
+    // The store order below is measured for getsockname and getpeername, with a
+    // struct sockaddr_in and a struct sockaddr_in6, on Linux 6.12.111, 6.17.13
+    // and 6.18.5 and Darwin 27.2.0 (docs/probes/overlapping-output-order).
     /// The process's call returns 0. This library has stored nothing: the
     /// client stores `copiedOut` at the start of the process's address buffer,
     /// and `reportedLength` in the process's length cell (see "What every
@@ -249,6 +252,13 @@ type GetSockNameAnswer =
     /// the process declared. It may be empty. `reportedLength` is the size of
     /// the whole structure, which can exceed the declared length: see
     /// `UnixSocket.getsockname`.
+    ///
+    /// When the buffer and the cell overlap, the store that the kernel makes
+    /// second wins the bytes they share. Linux from 6.18 stores the length
+    /// first, so the address wins. Darwin, and Linux before 6.18, store the
+    /// address first, so the length wins. This is the order which
+    /// `SimulatedUnixPlatform.getSockNameFaultLength` describes for a copy that
+    /// faults. This library does not choose an order for the client.
     | Reported of copiedOut : ImmutableArray<byte> * reportedLength : int
     /// The process's call returns -1 and sets errno to `error`.
     ///
@@ -410,12 +420,20 @@ type internal GetSockOptAdmission =
 /// What a `getsockopt(2)` answered.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetSockOptAnswer =
+    // The store order below is measured on Linux 6.12.111, 6.17.13 and 6.18.5
+    // and Darwin 27.2.0 (docs/probes/overlapping-output-order).
     /// The process's call returns 0. This library has stored nothing: the
     /// client stores `copiedOut` at the start of the process's value buffer,
     /// and its length, as a `socklen_t`, in the process's length cell (see
-    /// "What every client does" in the README). In which order a kernel makes
-    /// those two stores when they overlap is unmeasured, and this library does
-    /// not say.
+    /// "What every client does" in the README).
+    ///
+    /// When the value buffer and the cell overlap, the store that the kernel
+    /// makes second wins the bytes they share. Darwin stores the value first
+    /// for every option here, so the length wins. Linux stores the value first
+    /// for `SO_REUSEADDR`, `SO_ERROR` and `SO_LINGER`, and the length first for
+    /// `TCP_NODELAY` and `IPV6_V6ONLY`, the two options whose faulting copy
+    /// finds the length already written, as `Failed` says. This library does
+    /// not choose an order for the client.
     ///
     /// `copiedOut` is the start of the option's value, cut to the length that
     /// the process declared. The value is a C `int`, or for `SO_LINGER` a

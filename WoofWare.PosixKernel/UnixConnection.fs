@@ -8,10 +8,16 @@ open System.Collections.Immutable
 /// "What every client does" in the README).
 [<RequireQualifiedAccess ; NoComparison>]
 type PeerAddressCopy =
+    // The store order below is measured for accept and recvfrom on Linux
+    // 6.12.111, 6.17.13 and 6.18.5 and Darwin 27.2.0
+    // (docs/probes/overlapping-output-order).
     /// The client stores `copiedOut` at the start of the process's address
-    /// buffer, and `reportedLength` in the process's length cell. In which
-    /// order a kernel makes those two stores when they overlap is unmeasured,
-    /// and this library does not say.
+    /// buffer, and `reportedLength` in the process's length cell. When the two
+    /// overlap, the store that the kernel makes second wins the bytes they
+    /// share. Linux from 6.18 stores the length first, so the address wins.
+    /// Darwin, and Linux before 6.18, store the address first, so the length
+    /// wins, for `accept` and `recvfrom` alike. This library does not choose
+    /// an order for the client.
     ///
     /// For an `accept`, `copiedOut` is the connecting socket's address, laid
     /// out as the platform's socket address structure for the listener's
