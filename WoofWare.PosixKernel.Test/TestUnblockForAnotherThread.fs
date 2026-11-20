@@ -341,24 +341,26 @@ module TestUnblockForAnotherThread =
         | Sleep.PollOfNothing ->
             UnixPoll.tryPoll
                 (Callers.thread thread system)
-                [
-                    {
-                        Fd = -1
-                        Events = 0x0001s
-                    }
-                ]
+                (PollEntriesArgument.Readable
+                    [
+                        {
+                            Fd = -1
+                            Events = 0x0001s
+                        }
+                    ])
                 -1
                 system
             |> parkedOrNot "the poll of nothing"
         | Sleep.PollListener ->
             UnixPoll.tryPoll
                 (Callers.thread thread system)
-                [
-                    {
-                        Fd = world.Listener
-                        Events = 0x0001s
-                    }
-                ]
+                (PollEntriesArgument.Readable
+                    [
+                        {
+                            Fd = world.Listener
+                            Events = 0x0001s
+                        }
+                    ])
                 -1
                 system
             |> parkedOrNot "the poll"

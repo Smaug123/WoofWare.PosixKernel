@@ -421,7 +421,7 @@ module TestHugeTimeoutMeasured =
     let private poll (platform : SimulatedUnixPlatform) (row : Row) : ProcessId * Started =
         let pid, system = boot platform 1
 
-        match step pid 0 (Syscall.Poll ([], milliseconds row)) system with
+        match step pid 0 (Syscall.Poll (PollEntriesArgument.Readable [], milliseconds row)) system with
         | SteppedCall.Poll (PollOutcome.Failed error, _) -> pid, Started.Failed error
         | SteppedCall.Poll (PollOutcome.Answered _, _) -> pid, Started.Answered
         | SteppedCall.Poll (PollOutcome.WouldBlock _, system) -> pid, Started.Parked system

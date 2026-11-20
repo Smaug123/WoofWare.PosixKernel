@@ -2201,12 +2201,13 @@ module TestShutdownAgainstHost =
                     match
                         UnixPoll.tryPoll
                             (Callers.leader system)
-                            [
-                                {
-                                    Fd = fd
-                                    Events = rdyEvents flavour
-                                }
-                            ]
+                            (PollEntriesArgument.Readable
+                                [
+                                    {
+                                        Fd = fd
+                                        Events = rdyEvents flavour
+                                    }
+                                ])
                             0
                             system
                     with

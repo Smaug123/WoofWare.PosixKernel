@@ -131,7 +131,7 @@ module TestWakeSignalCost =
                 Events = 1s
             }
 
-        match UnixPoll.poll caller [ entry ] -1 system with
+        match UnixPoll.poll caller (PollEntriesArgument.Readable [ entry ]) -1 system with
         | PollOutcome.WouldBlock _, system -> system
         | outcome, _ -> failwith $"expected the poll to sleep: %A{outcome}"
 

@@ -422,7 +422,7 @@ module TestDatagramTransferAgainstHost =
                     Events = 0x23c7s
                 }
 
-            match UnixPoll.tryPoll (Callers.leader system) [ entry ] 0 system with
+            match UnixPoll.tryPoll (Callers.leader system) (PollEntriesArgument.Readable [ entry ]) 0 system with
             | Ok (PollOutcome.Answered ([ revents ], _), system) ->
                 [
                     {

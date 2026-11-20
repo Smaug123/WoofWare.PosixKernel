@@ -252,12 +252,13 @@ module TestDeviceDescriptorsAgainstHost =
                     (match
                         UnixPoll.tryPoll
                             (Callers.thread 0 system)
-                            [
-                                {
-                                    Fd = fd
-                                    Events = events
-                                }
-                            ]
+                            (PollEntriesArgument.Readable
+                                [
+                                    {
+                                        Fd = fd
+                                        Events = events
+                                    }
+                                ])
                             0
                             system
                      with

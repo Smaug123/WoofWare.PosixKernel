@@ -364,7 +364,7 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>
         =
-        UnixPoll.tryPoll (Callers.thread poller system) entries milliseconds system
+        UnixPoll.tryPoll (Callers.thread poller system) (PollEntriesArgument.Readable entries) milliseconds system
 
     let private answered (entries : PollEntry list) (system : UnixSystem<int, string>) : int16 list * int =
         match pollNow entries 0 system with
@@ -889,7 +889,7 @@ module TestDarwinPoll =
 
         for n in [ 257 ; 1024 ; 1025 ; 10240 ] do
             pollNow (entries n) 0 system
-            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, n, 256)))
+            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, uint32 n, 256)))
 
         answered (entries 256) system |> shouldEqual (List.replicate 256 0s, 0)
 

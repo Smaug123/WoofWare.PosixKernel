@@ -62,7 +62,7 @@ module TestWakeSweepCost =
                     Events = 1s
                 }
 
-            match UnixPoll.poll (Caller.make pid thread) [ entry ] -1 system with
+            match UnixPoll.poll (Caller.make pid thread) (PollEntriesArgument.Readable [ entry ]) -1 system with
             | PollOutcome.WouldBlock _, system -> system
             | outcome, _ -> failwith $"expected thread %d{thread}'s poll to sleep: %A{outcome}"
 

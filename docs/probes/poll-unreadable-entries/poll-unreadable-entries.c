@@ -1,0 +1,229 @@
+// What poll(2) answers when the kernel cannot read the process's array of
+// struct pollfd: where its EFAULT falls among poll's other answers, what an
+// array of no entries answers at an address naming no storage, and what an
+// array answers when its first entries can be read and the rest cannot.
+//
+// Sections:
+//   O  the soft limit at the flavour's default (1024 on Linux, 256 on Darwin;
+//      `SimulatedUnixPlatform.descriptorBound`): NULL and an unmapped address
+//      (8), at nfds 1, the limit, the limit + 1, the flavour's ceiling
+//      (Linux 2147483584, the most fs.nr_open takes; Darwin OPEN_MAX, 10240)
+//      and one more, and 4294967295; each with timeout 0 and timeout -1. A
+//      250 ms timer cuts a sleep short, so EINTR means the call slept.
+//   Z  nfds 0, at NULL, at an unmapped address (8), and at a PROT_NONE page;
+//      each with timeout 0, 100 and -1. `slept` says whether the call took
+//      at least 50 ms.
+//   P  the soft limit raised to 4096: an array whose first k entries lie
+//      whole on a readable page and whose next byte is the first of a
+//      PROT_NONE page (`cut=entry`), or whose (k+1)th entry has its `fd`
+//      readable and its `events` and `revents` on the PROT_NONE page
+//      (`cut=mid-entry`); nfds = k + 1. As a control, `cut=none` is the
+//      same k entries ending at the PROT_NONE page, with nfds = k, which the
+//      kernel can read whole. Entry 0 is either a pipe's write end
+//      asking for POLLOUT, which is ready (`lead=ready`), or fd -1
+//      (`lead=idle`); every other readable entry is fd -1. Each readable
+//      entry's revents is set to 0x5a5a beforehand, and `revents0` is entry
+//      0's afterwards. A ready lead with timeout 0 shows whether the kernel
+//      answers from the entries it could read; an idle lead with timeout -1
+//      shows whether it sleeps on them.
+//   W  a whole array on a page mapped PROT_READ: readable, but revents cannot
+//      be written back. Entry 0 ready (timeout 0) or fd -1 (timeout 100).
+//
+// Every row is `section label nfds=N timeout=T rv=R errno=E` and what else it
+// names; errno is `-` when the call succeeded.
+//
+// Build and run, from this directory:
+//   Darwin: cc -Wall -O1 -o /tmp/pue poll-unreadable-entries.c && /tmp/pue
+//   Linux, root (Apple's `container`, gcc:14 image):
+//     container run --rm -v "$PWD":/probe gcc:14 sh -c 'gcc -Wall -O1 -o /tmp/pue /probe/poll-unreadable-entries.c && /tmp/pue'
+//   Linux, uid 1000:
+//     container run --rm -v "$PWD":/probe gcc:14 sh -c 'gcc -Wall -O1 -o /tmp/pue /probe/poll-unreadable-entries.c && setpriv --reuid=1000 --regid=1000 --clear-groups /tmp/pue'
+//
+// Measured 2026-11-20 on Darwin 27.2.0 arm64 (uid 501) and Linux 6.18.5
+// aarch64 (Apple `container`, as root and as uid 1000); each `measured-*.txt`
+// is one run's output, the Linux ones with `container`'s progress lines
+// (written to stderr) removed. Not measured on x86-64. Every run agrees:
+//   O  a count above the soft limit is EINVAL whatever the pointer, and one
+//      at or below it is EFAULT, at once, under timeout -1 as under 0. Linux
+//      answers alike for root and uid 1000.
+//   Z  nfds 0 is answered as an empty array wherever it points: 0 at once
+//      for timeout 0, 0 after sleeping for timeout 100, and a sleep that the
+//      timer ends (EINTR) for timeout -1.
+//   P  every partly readable array, at every k and either cut, is EFAULT at
+//      once: a ready lead is not reported, an idle lead under timeout -1
+//      does not sleep, and entry 0's revents keeps 0x5a5a. The control,
+//      readable whole, reports the ready lead (rv 1, revents0 0x4) and sleeps
+//      on the idle one.
+//   W  a read-only array is EFAULT on both, at the write-back: the idle lead
+//      sleeps its 100 ms first, and the ready lead's revents is not written.
+#define _GNU_SOURCE
+#include <errno.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <sys/utsname.h>
+#include <time.h>
+#include <unistd.h>
+
+static void on_alarm(int sig) { (void)sig; }
+
+static void arm_timer_ms(int ms)
+{
+    struct itimerval it = { { 0, 0 }, { ms / 1000, (ms % 1000) * 1000 } };
+    setitimer(ITIMER_REAL, &it, NULL);
+}
+
+static void disarm_timer(void)
+{
+    struct itimerval it = { { 0, 0 }, { 0, 0 } };
+    setitimer(ITIMER_REAL, &it, NULL);
+}
+
+static long long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void *const unmapped = (void *)(uintptr_t)8;
+
+// One poll: its answer, whether it took 50 ms or more, and entry 0's revents
+// when `revents0` is given.
+static void row(const char *section, const char *label, void *buf, unsigned int nfds, int timeout,
+                volatile short *revents0)
+{
+    arm_timer_ms(250);
+    long long start = now_ms();
+    errno = 0;
+    int rv = poll(buf, nfds, timeout);
+    int e = errno;
+    long long elapsed = now_ms() - start;
+    disarm_timer();
+    char after[16] = "-";
+    if (revents0) snprintf(after, sizeof after, "0x%hx", (unsigned short)*revents0);
+    printf("%s %s nfds=%u timeout=%d rv=%d errno=%s slept=%s revents0=%s\n", section, label, nfds, timeout, rv,
+           rv < 0 ? strerror(e) : "-", elapsed >= 50 ? "yes" : "no", after);
+}
+
+static void set_soft(rlim_t soft)
+{
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) { perror("getrlimit"); exit(1); }
+    if (rl.rlim_max != RLIM_INFINITY && soft > rl.rlim_max) soft = rl.rlim_max;
+    rl.rlim_cur = soft;
+    if (setrlimit(RLIMIT_NOFILE, &rl) != 0) { perror("setrlimit"); exit(1); }
+    getrlimit(RLIMIT_NOFILE, &rl);
+    printf("soft limit set to %llu\n", (unsigned long long)rl.rlim_cur);
+}
+
+static void section_o(unsigned int limit)
+{
+    set_soft(limit);
+#ifdef __linux__
+    unsigned int ceiling = 2147483584u;
+#else
+    unsigned int ceiling = 10240u;
+#endif
+    unsigned int counts[] = { 1, limit, limit + 1, ceiling, ceiling + 1, 4294967295u };
+    int timeouts[] = { 0, -1 };
+    for (size_t t = 0; t < 2; t++)
+        for (size_t k = 0; k < sizeof counts / sizeof counts[0]; k++)
+        {
+            row("O", "null", NULL, counts[k], timeouts[t], NULL);
+            row("O", "unmapped", unmapped, counts[k], timeouts[t], NULL);
+        }
+}
+
+static void section_z(long page)
+{
+    void *none = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (none == MAP_FAILED) { perror("mmap"); exit(1); }
+    int timeouts[] = { 0, 100, -1 };
+    for (size_t t = 0; t < 3; t++)
+    {
+        row("Z", "null", NULL, 0, timeouts[t], NULL);
+        row("Z", "unmapped", unmapped, 0, timeouts[t], NULL);
+        row("Z", "prot-none", none, 0, timeouts[t], NULL);
+    }
+    munmap(none, page);
+}
+
+static void section_p(long page, int ready_fd)
+{
+    set_soft(4096);
+    unsigned int ks[] = { 1, 2, 29, 30, 31, 32, 63, 64, 255, 256, 509, 510, 511, 512, 513, 1000, 2000 };
+    size_t pages = (2000 + 1) * sizeof(struct pollfd) / page + 2;
+    for (size_t i = 0; i < sizeof ks / sizeof ks[0]; i++)
+        for (int cut = 0; cut < 3; cut++)
+            for (int ready = 0; ready < 2; ready++)
+            {
+                unsigned int k = ks[i];
+                char *base = mmap(NULL, (pages + 1) * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+                if (base == MAP_FAILED) { perror("mmap"); exit(1); }
+                char *boundary = base + pages * page;
+                if (mprotect(boundary, page, PROT_NONE) != 0) { perror("mprotect"); exit(1); }
+                // `cut=mid-entry` puts entry k's fd (4 bytes) on the readable page.
+                char *start = boundary - (size_t)k * sizeof(struct pollfd) - (cut == 1 ? sizeof(int) : 0);
+                struct pollfd *p = (struct pollfd *)start;
+                for (unsigned int j = 0; j < k; j++) { p[j].fd = -1; p[j].events = POLLIN; p[j].revents = 0x5a5a; }
+                if (cut == 1) p[k].fd = -1;
+                if (ready) { p[0].fd = ready_fd; p[0].events = POLLOUT; }
+                char label[64];
+                const char *cuts[] = { "entry", "mid-entry", "none" };
+                snprintf(label, sizeof label, "k=%u cut=%s lead=%s", k, cuts[cut], ready ? "ready" : "idle");
+                row("P", label, p, cut == 2 ? k : k + 1, ready ? 0 : -1, &p[0].revents);
+                munmap(base, (pages + 1) * page);
+            }
+}
+
+static void section_w(long page, int ready_fd)
+{
+    for (int ready = 0; ready < 2; ready++)
+    {
+        struct pollfd *p = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (p == MAP_FAILED) { perror("mmap"); exit(1); }
+        p[0].fd = ready ? ready_fd : -1;
+        p[0].events = ready ? POLLOUT : POLLIN;
+        p[0].revents = 0x5a5a;
+        if (mprotect(p, page, PROT_READ) != 0) { perror("mprotect"); exit(1); }
+        row("W", ready ? "read-only lead=ready" : "read-only lead=idle", p, 1, ready ? 0 : 100, &p[0].revents);
+        munmap(p, page);
+    }
+}
+
+int main(void)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    struct utsname u;
+    uname(&u);
+    printf("uname %s %s %s uid=%d\n", u.sysname, u.release, u.machine, (int)getuid());
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_alarm;
+    sigaction(SIGALRM, &sa, NULL);
+
+    long page = sysconf(_SC_PAGESIZE);
+    int fds[2];
+    if (pipe(fds) != 0) { perror("pipe"); exit(1); }
+    // fds[1] is the write end: an empty pipe's is ready for POLLOUT.
+    int ready_fd = fds[1];
+    printf("page=%ld ready_fd=%d (a pipe's write end)\n", page, ready_fd);
+
+#ifdef __linux__
+    section_o(1024);
+#else
+    section_o(256);
+#endif
+    section_z(page);
+    section_p(page, ready_fd);
+    section_w(page, ready_fd);
+    return 0;
+}

@@ -323,12 +323,13 @@ module TestInotifyMeasured =
         match
             UnixPoll.tryPoll
                 (Callers.thread 0 system)
-                [
-                    {
-                        Fd = fd
-                        Events = events
-                    }
-                ]
+                (PollEntriesArgument.Readable
+                    [
+                        {
+                            Fd = fd
+                            Events = events
+                        }
+                    ])
                 0
                 system
         with
@@ -414,12 +415,13 @@ module TestInotifyMeasured =
             match
                 UnixPoll.tryPoll
                     (Callers.thread 0 system)
-                    [
-                        {
-                            Fd = a
-                            Events = pollAll
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = a
+                                Events = pollAll
+                            }
+                        ])
                     0
                     system
             with

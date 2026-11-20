@@ -263,12 +263,13 @@ module TestDispositionBeforeReturn =
 
             UnixPoll.tryPoll
                 (s system)
-                [
-                    {
-                        Fd = r
-                        Events = 0x0001s
-                    }
-                ]
+                (PollEntriesArgument.Readable
+                    [
+                        {
+                            Fd = r
+                            Events = 0x0001s
+                        }
+                    ])
                 milliseconds
                 system
             |> sleeps

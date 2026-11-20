@@ -254,12 +254,13 @@ module TestSocketAddressLength =
                         match
                             UnixPoll.tryPoll
                                 (Callers.thread 0 after)
-                                [
-                                    {
-                                        Fd = clientFd
-                                        Events = 0x2001s
-                                    }
-                                ]
+                                (PollEntriesArgument.Readable
+                                    [
+                                        {
+                                            Fd = clientFd
+                                            Events = 0x2001s
+                                        }
+                                    ])
                                 0
                                 after
                         with

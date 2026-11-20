@@ -574,12 +574,14 @@ A UDP socket holds the datagrams that reach it, connected or not, and `read` and
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `poll(2)` | `UnixPoll.poll (caller : Caller) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
+| `poll(2)` | `UnixPoll.poll (caller : Caller) (entries : PollEntriesArgument) (milliseconds : int)` | `PollOutcome * UnixSystem` |
 | `epoll_create1(2)` | `UnixPoll.epollCreate1 (caller : Caller) (flags : int)` | `DescriptorAnswer * UnixSystem` |
 | `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
 | `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `DescriptorAnswer * UnixSystem` |
 | Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
+
+A `poll` takes the process's array of `struct pollfd` as a `PollEntriesArgument`: the entries the client read there, or `Unreadable` with the call's `nfds` where the client could not read them all. Both flavours screen the count first, and then read every entry before they poll any, so an unreadable array fails with `EFAULT` at once, reporting nothing and never sleeping, unless it has no entries, when it is answered as an empty one.
 
 An epoll registration is level-triggered, or edge-triggered with `EPOLLET`, and with `EPOLLONESHOT` it reports once until an `EPOLL_CTL_MOD` re-arms it, all as Linux's are. A registration with `EPOLLEXCLUSIVE` or `EPOLLWAKEUP` is refused, as is one of another epoll instance, of a pipe the process made, or of an `AF_UNIX` `SOCK_SEQPACKET` socket.
 

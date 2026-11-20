@@ -251,12 +251,13 @@ module TestSyscallInterruption =
                 "the poll"
                 (UnixPoll.tryPoll
                     (Callers.thread thread world.System)
-                    [
-                        {
-                            Fd = world.Listener
-                            Events = 0x0001s
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = world.Listener
+                                Events = 0x0001s
+                            }
+                        ])
                     milliseconds
                     world.System)
                 (function
@@ -268,12 +269,13 @@ module TestSyscallInterruption =
                 "the poll of nothing"
                 (UnixPoll.tryPoll
                     (Callers.thread thread world.System)
-                    [
-                        {
-                            Fd = -1
-                            Events = 0x0001s
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = -1
+                                Events = 0x0001s
+                            }
+                        ])
                     -1
                     world.System)
                 (function

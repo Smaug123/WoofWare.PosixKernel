@@ -329,12 +329,13 @@ module TestInotifyAgainstHost =
                                 match
                                     UnixPoll.tryPoll
                                         (Callers.thread 0 system)
-                                        [
-                                            {
-                                                Fd = modelFd
-                                                Events = events
-                                            }
-                                        ]
+                                        (PollEntriesArgument.Readable
+                                            [
+                                                {
+                                                    Fd = modelFd
+                                                    Events = events
+                                                }
+                                            ])
                                         0
                                         system
                                 with

@@ -1863,8 +1863,15 @@ module TestStepOracle =
                             (Gen.frequency [ 6, socketFd ; 1, Gen.constant -1 ])
                             (Gen.elements [ 0x1s ; 0x4s ; 0x5s ; 0x2s ; 0s ; 0x40s ]))
 
+                let! argument =
+                    Gen.frequency
+                        [
+                            6, Gen.constant (PollEntriesArgument.Readable entries)
+                            1, Gen.constant (PollEntriesArgument.Unreadable (uint32 count))
+                        ]
+
                 let! milliseconds = Gen.elements [ 0 ; 1 ; 10 ; -1 ; -2 ]
-                return Syscall.Poll (entries, milliseconds)
+                return Syscall.Poll (argument, milliseconds)
             }
             "EpollCreate1", Gen.elements [ 0 ; 0x80000 ; 1 ; -1 ; 0x800 ] |> Gen.map Syscall.EpollCreate1
             "EpollCtl",

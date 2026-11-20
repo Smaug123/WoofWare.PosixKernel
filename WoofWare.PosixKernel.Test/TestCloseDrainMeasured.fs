@@ -596,12 +596,13 @@ module TestCloseDrainMeasured =
                 match
                     UnixPoll.tryPoll
                         (Callers.thread 0 system)
-                        [
-                            {
-                                Fd = dup
-                                Events = 0x5s
-                            }
-                        ]
+                        (PollEntriesArgument.Readable
+                            [
+                                {
+                                    Fd = dup
+                                    Events = 0x5s
+                                }
+                            ])
                         0
                         system
                 with

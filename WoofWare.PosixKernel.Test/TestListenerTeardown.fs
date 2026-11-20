@@ -185,12 +185,13 @@ module TestListenerTeardown =
             match
                 UnixPoll.tryPoll
                     (Callers.thread 1 system)
-                    [
-                        {
-                            Fd = fd
-                            Events = events
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = fd
+                                Events = events
+                            }
+                        ])
                     0
                     system
             with
@@ -562,12 +563,13 @@ module TestListenerTeardown =
             match
                 UnixPoll.tryPoll
                     (Callers.thread 1 system)
-                    [
-                        {
-                            Fd = listener
-                            Events = 0x1s
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = listener
+                                Events = 0x1s
+                            }
+                        ])
                     0
                     system
             with

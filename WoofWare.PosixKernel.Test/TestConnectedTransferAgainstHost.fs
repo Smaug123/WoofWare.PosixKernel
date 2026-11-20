@@ -694,12 +694,13 @@ module TestConnectedTransferAgainstHost =
             match
                 UnixPoll.tryPoll
                     (Callers.leader system)
-                    [
-                        {
-                            Fd = fd
-                            Events = everyEvent flavour
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = fd
+                                Events = everyEvent flavour
+                            }
+                        ])
                     0
                     system
             with

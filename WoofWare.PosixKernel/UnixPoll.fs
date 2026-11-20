@@ -52,7 +52,7 @@ type internal PollRefusal =
     /// not, under Linux for every process and under Darwin for one that is
     /// not root. Darwin fails root's only when it also exceeds `FD_SETSIZE`
     /// (1024), so for root this is a count from 1025 to `OPEN_MAX`.
-    | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : int * assumedLimit : int
+    | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : uint32 * assumedLimit : int
     /// Under Darwin, a sleeping call was woken both with something to report
     /// and past its deadline, and has something to report now. Darwin answers
     /// whichever reached the sleeping thread first, which a wake that found
@@ -67,6 +67,27 @@ type internal PollRefusal =
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
+/// The array of `struct pollfd` which a `poll(2)` names, as the client found
+/// it when it read the array from the process's memory.
+///
+/// The kernel reads every entry before it polls any, so an array which the
+/// client cannot read to its end is `Unreadable`, however many of its entries
+/// the client could read.
+[<RequireQualifiedAccess>]
+type PollEntriesArgument =
+    /// The client read every entry of the array: `nfds` is the length of
+    /// `entries`.
+    | Readable of entries : PollEntry list
+    /// Some byte of the array's `count` entries could not be read: the
+    /// pointer is NULL, or the memory it names stops being readable before
+    /// the end of the `count` entries. `count` is the call's `nfds`, which the
+    /// kernel takes as an unsigned 32-bit count on both flavours.
+    ///
+    /// The kernel screens `count` before it reads the array, so the call can
+    /// fail with `EINVAL` rather than `EFAULT`. A `count` of 0 reads nothing,
+    /// so `Unreadable 0u` answers as `Readable []` does, whatever the pointer.
+    | Unreadable of count : uint32
+
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
 type PollOutcome =
@@ -80,8 +101,9 @@ type PollOutcome =
     /// matching `struct pollfd` (see "What every client does" in the README).
     | Answered of revents : int16 list * count : int
     /// `poll` failed with this errno. This library answers only `EINVAL`, for
-    /// more entries than any process's `RLIMIT_NOFILE` lets it name: more than
-    /// 10240 under Darwin, and more than 2147483584 under Linux.
+    /// more entries than any process's `RLIMIT_NOFILE` lets it name (more than
+    /// 10240 under Darwin, and more than 2147483584 under Linux); and `EFAULT`,
+    /// for an array which the kernel could not read (`PollEntriesArgument.Unreadable`).
     | Failed of error : UnixError
     /// `poll` did not return, and the calling thread is now asleep in it.
     /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
@@ -107,7 +129,7 @@ module internal PollEntryCount =
     /// screen against the process's `RLIMIT_NOFILE`, for the largest limit a
     /// process can have: every count above it fails with `EINVAL`, whatever
     /// the limit.
-    let ceiling (flavour : SimulatedUnixFlavour) : int =
+    let ceiling (flavour : SimulatedUnixFlavour) : uint32 =
         // Measured by `docs/probes/poll-entry-count` and `poll-darwin.c`
         // section N.
         match flavour with
@@ -115,9 +137,9 @@ module internal PollEntryCount =
         // C): `setrlimit` refuses a limit above `fs.nr_open` even to root, and
         // a process keeps its limit when `fs.nr_open` is lowered, so no soft
         // limit exceeds the most it ever was. Linux screens nothing else.
-        | SimulatedUnixFlavour.Linux -> 2147483584
+        | SimulatedUnixFlavour.Linux -> 2147483584u
         // `OPEN_MAX`, which Darwin screens beside the limit.
-        | SimulatedUnixFlavour.Darwin -> 10240
+        | SimulatedUnixFlavour.Darwin -> 10240u
 
     /// The most entries a `poll(2)` under `flavour`, by a process with
     /// `privilege`, passes the screen with whatever its soft limit: Darwin
@@ -137,7 +159,7 @@ module internal PollEntryCount =
     let screen
         (platform : SimulatedUnixPlatform)
         (privilege : CallerPrivilege)
-        (count : int)
+        (count : uint32)
         : Result<UnixError option, PollRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -145,7 +167,7 @@ module internal PollEntryCount =
 
         if count > ceiling flavour then
             Ok (Some UnixError.EINVAL)
-        elif count > limitFree flavour privilege assumedLimit then
+        elif int64 count > int64 (limitFree flavour privilege assumedLimit) then
             Error (PollRefusal.UnmodelledEntryCount (flavour, count, assumedLimit))
         else
             Ok None
@@ -1031,18 +1053,6 @@ module UnixPoll =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
-        // Measured (`docs/probes/poll-entry-count`, section A): ahead of the
-        // scan, and of the timeout.
-        match
-            PollEntryCount.screen
-                system.Machine.UnixPlatform
-                (UnixProcessState.callerPrivilege system.Process)
-                (List.length entries)
-        with
-        | Error refusal -> Error refusal
-        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
-        | Ok None ->
-
         match scan system entries with
         | Error refusal -> Error refusal
         | Ok (reported, triggered) ->
@@ -1317,15 +1327,6 @@ module UnixPoll =
         =
         let count = List.length entries
 
-        // Measured (`docs/probes/poll-entry-count`, and `poll-darwin.c`
-        // section N): ahead of the registrations, and of the copy-in's EFAULT.
-        match
-            PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) count
-        with
-        | Error refusal -> Error refusal
-        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
-        | Ok None ->
-
         match darwinRegister entries system with
         | Error refusal -> Error refusal
         | Ok (revents, registrations, vnodes) ->
@@ -1496,14 +1497,52 @@ module UnixPoll =
                 Parking.parkWaiting thread parkedAgain system
             )
 
+    /// The entries the kernel copies in from `argument`, or `EFAULT` where it
+    /// cannot read them.
+    let private copyIn (argument : PollEntriesArgument) : Result<PollEntry list, UnixError> =
+        // Measured on both flavours (`docs/probes/poll-unreadable-entries`):
+        // every entry is copied in before any is polled, so an array readable
+        // for only its first entries fails at once, reporting nothing and
+        // never sleeping (section P); and an array of no entries reads
+        // nothing, so it is answered as an empty one wherever it points
+        // (section Z).
+        match argument with
+        | PollEntriesArgument.Readable entries -> Ok entries
+        | PollEntriesArgument.Unreadable 0u -> Ok []
+        | PollEntriesArgument.Unreadable _ -> Error UnixError.EFAULT
+
+    /// `nfds`: how many entries `argument` names.
+    let private entryCount (argument : PollEntriesArgument) : uint32 =
+        match argument with
+        | PollEntriesArgument.Readable entries -> uint32 (List.length entries)
+        | PollEntriesArgument.Unreadable count -> count
+
     /// `tryPoll` once `Entry` has admitted its caller.
     let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (entries : PollEntry list)
+        (argument : PollEntriesArgument)
         (milliseconds : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
+        // Measured on both flavours (`docs/probes/poll-entry-count`, section
+        // A; `docs/probes/poll-unreadable-entries`, section O; and Darwin's
+        // `poll-darwin.c`, section N): the count is screened ahead of the
+        // copy-in, the scan, Darwin's registrations, and the timeout.
+        match
+            PollEntryCount.screen
+                system.Machine.UnixPlatform
+                (UnixProcessState.callerPrivilege system.Process)
+                (entryCount argument)
+        with
+        | Error refusal -> Error refusal
+        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
+        | Ok None ->
+
+        match copyIn argument with
+        | Error error -> Ok (PollOutcome.Failed error, system)
+        | Ok entries ->
+
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
         | SimulatedUnixFlavour.Darwin -> darwinPoll thread entries milliseconds system
@@ -1511,7 +1550,7 @@ module UnixPoll =
     /// `poll`, with a refusal answered as the `Error` rather than raised.
     let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntry list)
+        (entries : PollEntriesArgument)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
@@ -1529,12 +1568,13 @@ module UnixPoll =
     /// thread goes to sleep in the call.
     ///
     /// `entries` is the process's array of `struct pollfd`, as the client read
-    /// it from the process's memory. This function has no way to say that the
-    /// array could not be read, so a client whose process passed an unreadable
-    /// array answers that call itself. The kernel screens the number of
-    /// entries before it reads the array, so a count that this function
-    /// answers with `EINVAL`, or refuses, gets that answer whether or not the
-    /// array is readable.
+    /// it from the process's memory: its entries, or `Unreadable` with the
+    /// call's `nfds` when the client could not read all of them. The kernel
+    /// screens the number of entries before it reads the array, so a count
+    /// that this function answers with `EINVAL`, or refuses, gets that answer
+    /// whether or not the array is readable. Otherwise an unreadable array
+    /// fails with `EFAULT` at once, whatever the timeout, unless it has no
+    /// entries.
     ///
     /// Each entry's `Events`, and each `revents` answered for it, is raw bits in
     /// the simulated flavour's own `<poll.h>` numbering. The client stores each
@@ -1592,7 +1632,7 @@ module UnixPoll =
     /// call at a time.
     let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntry list)
+        (entries : PollEntriesArgument)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : PollOutcome * UnixSystem<'Thread, 'Handler>

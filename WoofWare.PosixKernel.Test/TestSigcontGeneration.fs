@@ -410,7 +410,13 @@ module TestSigcontGeneration =
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | other -> failwith $"sigsuspend did not sleep: %A{other}"
             else
-                match UnixPoll.tryPoll (Callers.thread row.Sleeper r.System) [] 300 r.System with
+                match
+                    UnixPoll.tryPoll
+                        (Callers.thread row.Sleeper r.System)
+                        (PollEntriesArgument.Readable [])
+                        300
+                        r.System
+                with
                 | Ok (PollOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | other -> failwith $"poll did not sleep: %A{other}"
 

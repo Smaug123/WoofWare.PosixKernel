@@ -26,7 +26,7 @@ module internal ParkedCall =
         | ParkedSyscall.Kevent _ -> Syscall.Kevent (0, [], 0, UserBuffer.Mapped, 1, TimespecArgument.Null)
         | ParkedSyscall.Flock _ -> Syscall.FLock (0, 0)
         | ParkedSyscall.Poll _
-        | ParkedSyscall.KqueuePoll _ -> Syscall.Poll ([], -1)
+        | ParkedSyscall.KqueuePoll _ -> Syscall.Poll (PollEntriesArgument.Readable [], -1)
         | ParkedSyscall.Accept _ -> Syscall.Accept (0, UserBuffer.Mapped, Some 16u, 0)
         | ParkedSyscall.PipeRead _
         | ParkedSyscall.InotifyRead _ -> Syscall.Read (0, UserBuffer.Mapped, 0UL)

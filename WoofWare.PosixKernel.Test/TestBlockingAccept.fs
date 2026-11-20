@@ -506,12 +506,13 @@ module TestBlockingAccept =
             match
                 UnixPoll.tryPoll
                     (Callers.thread 2 system)
-                    [
-                        {
-                            Fd = fd
-                            Events = 0x0001s
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = fd
+                                Events = 0x0001s
+                            }
+                        ])
                     -1
                     system
             with

@@ -561,12 +561,13 @@ module TestConnectedTransfer =
                 match
                     UnixPoll.tryPoll
                         (Callers.thread 0 system)
-                        [
-                            {
-                                Fd = c
-                                Events = 0x4s
-                            }
-                        ]
+                        (PollEntriesArgument.Readable
+                            [
+                                {
+                                    Fd = c
+                                    Events = 0x4s
+                                }
+                            ])
                         0
                         system
                 with
@@ -629,12 +630,13 @@ module TestConnectedTransfer =
                     match
                         UnixPoll.tryPoll
                             (Callers.thread 0 system)
-                            [
-                                {
-                                    Fd = c
-                                    Events = 0x1s
-                                }
-                            ]
+                            (PollEntriesArgument.Readable
+                                [
+                                    {
+                                        Fd = c
+                                        Events = 0x1s
+                                    }
+                                ])
                             0
                             system
                     with
@@ -699,12 +701,13 @@ module TestConnectedTransfer =
             match
                 UnixPoll.tryPoll
                     (Callers.thread 0 system)
-                    [
-                        {
-                            Fd = c
-                            Events = 0x2001s
-                        }
-                    ]
+                    (PollEntriesArgument.Readable
+                        [
+                            {
+                                Fd = c
+                                Events = 0x2001s
+                            }
+                        ])
                     0
                     system
             with
@@ -1974,12 +1977,13 @@ module TestConnectedTransfer =
                         match
                             UnixPoll.tryPoll
                                 (Caller.make b 2)
-                                [
-                                    {
-                                        Fd = accepted
-                                        Events = 0x1s
-                                    }
-                                ]
+                                (PollEntriesArgument.Readable
+                                    [
+                                        {
+                                            Fd = accepted
+                                            Events = 0x1s
+                                        }
+                                    ])
                                 -1
                                 view
                         with

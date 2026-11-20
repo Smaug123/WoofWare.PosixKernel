@@ -254,7 +254,7 @@ module TestKqueueTimerReserved =
         let mutable slept = 0
 
         let property (entries : PollEntry list) (connect : bool) : unit =
-            match UnixPoll.tryPoll (Callers.thread 2 system) entries 1000 system with
+            match UnixPoll.tryPoll (Callers.thread 2 system) (PollEntriesArgument.Readable entries) 1000 system with
             | Ok (PollOutcome.WouldBlock _, parked) ->
                 slept <- slept + 1
                 noTimerAnywhere parked
@@ -287,12 +287,13 @@ module TestKqueueTimerReserved =
         match
             UnixPoll.tryPoll
                 (Callers.thread 2 system)
-                [
-                    {
-                        Fd = listener
-                        Events = 0x0001s
-                    }
-                ]
+                (PollEntriesArgument.Readable
+                    [
+                        {
+                            Fd = listener
+                            Events = 0x0001s
+                        }
+                    ])
                 1000
                 system
         with
