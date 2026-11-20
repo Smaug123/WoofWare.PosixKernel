@@ -283,6 +283,119 @@ module TestSockNameFaultLength =
         SimulatedUnixPlatform.getSockNameFaultLength SimulatedUnixPlatform.macOsArm64
         |> shouldEqual GetSockNameFaultLength.Untouched
 
+    /// The recordings of `docs/probes/overlapping-output-order`.
+    let private overlapResources : string list =
+        [
+            "darwin-27.2.0-arm64.txt"
+            "linux-6.12.111-x86_64.txt"
+            "linux-6.17.13-x86_64.txt"
+            "linux-6.18.5-x86_64.txt"
+            "linux-6.18.5-aarch64.txt"
+        ]
+
+    /// The lines of one recording of `docs/probes/overlapping-output-order`.
+    let private overlapLines (resource : string) : string list =
+        let name = $"WoofWare.PosixKernel.Test.overlapping-output-order.%s{resource}"
+
+        use stream =
+            match Assembly.GetExecutingAssembly().GetManifestResourceStream name with
+            | null -> failwith $"no embedded resource %s{name}"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> List.ofArray
+
+    /// The calls whose successful store order `GetSockNameAnswer.Reported` and
+    /// `PeerAddressCopy.Written` say follows `getSockNameFaultLength`.
+    let private nameCalls : Set<string> =
+        Set.ofList
+            [
+                "getsockname"
+                "getpeername"
+                "getsockname6"
+                "getpeername6"
+                "accept"
+                "recvfrom"
+            ]
+
+    let private overlapControl : Regex =
+        Regex
+            @"^(\S+)\s+D=([0-9]+)\s+control\s+r=([-0-9]+),([-0-9]+)\s+errno=([0-9]+),([0-9]+)\s+n=([0-9]+)\s.*expected=(\S+)"
+
+    let private overlapRow : Regex =
+        Regex
+            @"^(\S+)\s+D=([0-9]+)\s+k=-?[0-9]+\s+r=([-0-9]+)\s+errno=([0-9]+)\s+(addr-first|length-first|either|NEITHER)\b"
+
+    /// A successful call stores its two outputs in the order in which a call
+    /// whose copy faults stores them. Every recording's decisive rows for the
+    /// name calls are held to the rule for the kernel that made it. Each
+    /// control must have succeeded and stored something, since a failed
+    /// control would skip its overlapping rows and leave a partial recording
+    /// that looks complete.
+    [<Test>]
+    let ``a successful name call stores in the fault path's order on every measured kernel`` () : unit =
+        for resource in overlapResources do
+            let header, rows =
+                match overlapLines resource with
+                | header :: _layout :: rows -> header, rows
+                | _ -> failwith $"%s{resource} has no rows"
+
+            let platform = platformOf resource header
+
+            let expected =
+                match SimulatedUnixPlatform.getSockNameFaultLength platform with
+                | GetSockNameFaultLength.AlreadyReported -> "length-first"
+                | GetSockNameFaultLength.Untouched -> "addr-first"
+
+            let mutable decisive = Map.empty<string, int>
+
+            for line in rows do
+                let control = overlapControl.Match line
+                let row = overlapRow.Match line
+
+                if control.Success then
+                    let call = control.Groups.[1].Value
+
+                    (resource, call, control.Groups.[3].Value, control.Groups.[4].Value)
+                    |> shouldEqual (resource, call, "0", "0")
+
+                    Int32.Parse control.Groups.[7].Value > 0 |> shouldEqual true
+                    control.Groups.[8].Value |> shouldEqual "yes"
+                elif row.Success then
+                    let call = row.Groups.[1].Value
+                    let verdict = row.Groups.[5].Value
+
+                    (resource, line, row.Groups.[3].Value) |> shouldEqual (resource, line, "0")
+                    verdict |> shouldNotEqual "NEITHER"
+
+                    if nameCalls.Contains call && verdict <> "either" then
+                        (resource, line, verdict) |> shouldEqual (resource, line, expected)
+
+                        decisive <- decisive |> Map.change call (fun n -> Some (1 + Option.defaultValue 0 n))
+                else
+                    failwith $"%s{resource}: unparsed row %s{line}"
+
+            // Every name call must have rows that tell the orders apart.
+            (resource, decisive |> Map.keys |> Set.ofSeq)
+            |> shouldEqual (resource, nameCalls)
+
+    /// The overlap recordings must reach both orders, or the comparison above
+    /// could not tell a rule that ignored the version from the real one.
+    [<Test>]
+    let ``the overlap recordings reach both fault-path answers`` () : unit =
+        let answers =
+            overlapResources
+            |> List.map (fun resource ->
+                platformOf resource (List.head (overlapLines resource))
+                |> SimulatedUnixPlatform.getSockNameFaultLength
+            )
+            |> Set.ofList
+
+        answers
+        |> shouldEqual (Set.ofList [ GetSockNameFaultLength.AlreadyReported ; GetSockNameFaultLength.Untouched ])
+
 /// `getsockname(2)`'s fault path put to the kernel running the suite and to a
 /// model of that same kernel: its flavour, its architecture and, on Linux, its
 /// own version, read from `uname`. So it holds on whichever kernel it runs on,
