@@ -249,6 +249,16 @@ type GetSockNameAnswer =
     /// the process declared. It may be empty. `reportedLength` is the size of
     /// the whole structure, which can exceed the declared length: see
     /// `UnixSocket.getsockname`.
+    ///
+    /// When the buffer and the cell overlap, the store that the kernel makes
+    /// second wins the bytes they share. Linux 6.18.5 stores the length first,
+    /// so the address wins; Darwin 27.2.0 stores the address first, so the
+    /// length wins. That was measured for `getsockname` and `getpeername`
+    /// alike, with the cell at every offset from three bytes before the buffer
+    /// to past the end of what was stored, and with declared lengths of 6, 10,
+    /// 16 and 128 (`docs/probes/overlapping-output-order`). No Linux before
+    /// 6.18 has been measured. This library does not choose an order for the
+    /// client.
     | Reported of copiedOut : ImmutableArray<byte> * reportedLength : int
     /// The process's call returns -1 and sets errno to `error`.
     ///
@@ -413,9 +423,19 @@ type GetSockOptAnswer =
     /// The process's call returns 0. This library has stored nothing: the
     /// client stores `copiedOut` at the start of the process's value buffer,
     /// and its length, as a `socklen_t`, in the process's length cell (see
-    /// "What every client does" in the README). In which order a kernel makes
-    /// those two stores when they overlap is unmeasured, and this library does
-    /// not say.
+    /// "What every client does" in the README).
+    ///
+    /// When the value buffer and the cell overlap, the store that the kernel
+    /// makes second wins the bytes they share. Darwin 27.2.0 stores the value
+    /// first for every option here, so the length wins. Linux 6.18.5 stores
+    /// the value first for `SO_REUSEADDR`, `SO_ERROR` and `SO_LINGER`, and the
+    /// length first for `TCP_NODELAY` and `IPV6_V6ONLY`, the two options whose
+    /// faulting copy finds the length already written (see `Failed`). That was
+    /// measured with the cell at every offset from three bytes before the
+    /// buffer to past the end of what was stored, and with declared lengths
+    /// shorter than, equal to and longer than the value
+    /// (`docs/probes/overlapping-output-order`). No other Linux has been
+    /// measured. This library does not choose an order for the client.
     ///
     /// `copiedOut` is the start of the option's value, cut to the length that
     /// the process declared. The value is a C `int`, or for `SO_LINGER` a

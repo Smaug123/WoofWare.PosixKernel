@@ -271,9 +271,9 @@ type GetCwdDestinationFault =
 /// the kernel stored the length first, its `GetSockNameAnswer.Failed` carries
 /// that length, and the client stores it. A client reads this rule only to
 /// learn what the kernel will do (see "Flavours and divergence from host
-/// platforms" in the README). This rule is about a failed copy: in which
-/// order a successful call stores the address and the length, when the two
-/// overlap, is unmeasured.
+/// platforms" in the README). This rule is about a failed copy. A successful
+/// call stores both, in the order `GetSockNameAnswer.Reported` gives: Linux
+/// 6.18.5 stores the length first and Darwin 27.2.0 the address first.
 ///
 /// The kernels order the two stores differently, so a call that fails leaves
 /// the process's `socklen_t` reading different things. Darwin, and Linux before
