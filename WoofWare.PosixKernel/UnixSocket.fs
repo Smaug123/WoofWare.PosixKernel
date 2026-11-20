@@ -412,8 +412,11 @@ type internal GetSockOptAdmission =
 type GetSockOptAnswer =
     /// The process's call returns 0. This library has stored nothing: the
     /// client stores `copiedOut` at the start of the process's value buffer,
-    /// and then stores its length, as a `socklen_t`, in the process's length
-    /// cell (see "What every client does" in the README).
+    /// and its length, as a `socklen_t`, in the process's length cell (see
+    /// "What every client does" in the README). The order matters when the
+    /// two overlap: Linux stores the length first for `TCP_NODELAY` and
+    /// `IPV6_V6ONLY`, and the value first for every other option; Darwin
+    /// stores the value first for every option.
     ///
     /// `copiedOut` is the start of the option's value, cut to the length that
     /// the process declared. The value is a C `int`, or for `SO_LINGER` a

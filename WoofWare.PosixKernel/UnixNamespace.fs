@@ -226,9 +226,10 @@ module DirectoryEntryKind =
 /// layout. The client stores it into the process's buffer in that layout.
 ///
 /// There is no offset (`d_off`, or Darwin's `d_seekoff`): this library
-/// positions a directory description by name, not by offset. Whatever offset
-/// the client stores there, an `lseek` of the description to any offset but 0
-/// makes the next read refused (see `UnixNamespace.readDirectoryEntry`).
+/// positions a directory description by name, not by offset, so whatever
+/// offset the client stores there cannot be sought back to.
+/// `UnixNamespace.readDirectoryEntry` says what a read after an `lseek`
+/// answers.
 type DirectoryRecord =
     {
         /// `d_ino`: the inode which the entry names. For `.` that is the

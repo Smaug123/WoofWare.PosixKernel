@@ -610,8 +610,9 @@ type SocketDescription =
         SocketAddressing.ipv4Binding this.Addressing
 
 /// What an open file description refers to, for deciding whether two `flock(2)`
-/// locks contend: two descriptions contend exactly when their objects are
-/// equal.
+/// locks can contend: two descriptions' locks can contend only when their
+/// objects are equal, and then do when their owners differ and their modes
+/// conflict.
 ///
 /// This is the contention key, not a general identity. Every Linux epoll and
 /// inotify instance is `AnonymousInode`, because they all share one inode, so
@@ -1250,8 +1251,8 @@ module OpenFileDescription =
     /// are `description`: what it refers to, without the per-description
     /// position.
     ///
-    /// Two descriptions contend exactly when their objects are equal, whatever
-    /// their offsets. Equal objects do not always mean the same kernel object:
+    /// Two descriptions' locks can contend only when their objects are equal,
+    /// whatever their offsets. Equal objects do not always mean the same kernel object:
     /// every Linux epoll and inotify instance is
     /// `OpenFileObject.AnonymousInode` (see `OpenFileObject`).
     ///

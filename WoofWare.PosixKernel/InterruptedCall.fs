@@ -4,9 +4,9 @@ namespace WoofWare.PosixKernel
 /// handler is about to be delivered to that thread, before the syscall has
 /// anything else to answer.
 ///
-/// No public function in this version answers or takes one: a client learns
-/// how an interrupted call ends from the return to user mode, as an
-/// `InterruptedCall`.
+/// `SyscallInterruption.ruleOf` answers the rule for a flavour and a parked
+/// call, for a client that wants to inspect it. How an actual interrupted
+/// call ends comes from the return to user mode, as an `InterruptedCall`.
 [<RequireQualifiedAccess>]
 type SignalRestartRule =
     /// The syscall fails with `EINTR`, whatever flags the handler was

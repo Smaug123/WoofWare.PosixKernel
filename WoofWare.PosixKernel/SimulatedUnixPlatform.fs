@@ -378,11 +378,14 @@ type internal EphemeralSearchCall =
 
 /// Building a `SimulatedUnixPlatform`, and reading its facts.
 ///
-/// The accessors answer two kinds of value. A few are what a client needs to
-/// speak the platform's numbers: `rawErrnoNumbering`, `signalNumbering`, the
-/// socket-option numbers, and the `sockaddr` and C `int` encoders and
-/// decoders. The rest describe a rule that the simulated kernel already
-/// applies. A client may read one of those to learn what the kernel will do,
+/// The accessors answer two kinds of value. Some are what a client needs to
+/// move the process's bytes and speak the platform's numbers:
+/// `rawErrnoNumbering`, `signalNumbering`, the socket-option numbers, the
+/// `sockaddr` and C `int` encoders and decoders, `pathLimits` (whose
+/// `PathLimits.pathMaxBytes` says how far to read a path argument), and
+/// `getSockNameFaultLength` (the order in which to store a `getsockname`
+/// answer whose outputs overlap). The rest describe a rule that the simulated
+/// kernel already applies. A client may read one of those to learn what the kernel will do,
 /// but has no other use for it. See "Flavours and divergence from host
 /// platforms" in the README.
 [<RequireQualifiedAccess>]

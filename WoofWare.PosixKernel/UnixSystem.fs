@@ -1483,11 +1483,11 @@ module UnixSystem =
         system.Machine.ProtectedFiles
 
     /// Every pipe that still has an end open, by identity. An end is open while
-    /// an open file description names it, or while the client holds it. The
-    /// client holds the far end of each pipe that a `ProcessLaunch` set up as
-    /// one of the process's descriptors, standing in for the world outside the
-    /// machine (`PipeState.heldByClient`; see "The far end of a launched pipe"
-    /// in the README).
+    /// an open file description names it, or while the world outside the
+    /// machine holds it. For a pipe that a `ProcessLaunch` set up as one of the
+    /// process's descriptors, the outside world may hold the far end, until it
+    /// closes it; `PipeState.heldByClient` says whether it still does (see
+    /// "The far end of a launched pipe" in the README).
     let pipes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<PipeId, PipeState>
@@ -2250,8 +2250,9 @@ module UnixSystem =
     /// exactly which bytes it copies.
     ///
     /// Whatever the call, `caller` must be a thread of one of the system's
-    /// processes, which is not asleep in a syscall and does not owe a return
-    /// to user mode, as the call's own function requires. Where the call's own
+    /// processes, which is not parked in a syscall and does not owe a return
+    /// to user mode, as the call's own function requires. A thread that
+    /// `UnixWait.wake` has woken is still parked until its call is finished. Where the call's own
     /// function throws for arguments that a client following its documentation
     /// would never pass, such as a `SigReturn` of a frame that is not the
     /// thread's innermost, `step` throws the same.

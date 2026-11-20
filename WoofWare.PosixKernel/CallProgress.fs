@@ -7,8 +7,8 @@ open System.Collections.Immutable
 ///
 /// This library never reads the process's memory, so the client reads it and
 /// hands over what it found. A call stops at the copy because what happens
-/// before the copy is observable: a bad descriptor answers `EBADF` whatever
-/// the buffer holds. Every answer that the call gives without reading that
+/// before the copy is observable: a Linux `write` to a bad descriptor answers
+/// `EBADF` whatever the buffer holds. Every answer that the call gives without reading that
 /// memory therefore comes first, as `Answered`, and the client reads the
 /// memory only where a real kernel would. A client that holds every argument
 /// already can make the call through `UnixSystem.step` instead, which never

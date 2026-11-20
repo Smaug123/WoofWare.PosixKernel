@@ -2953,7 +2953,10 @@ module UnixConnection =
     /// (`UnixSignal.onReturnToUser`) then says whether the call fails with
     /// `EINTR` or restarts. Either way the thread leaves the listener's queue
     /// of accepting threads, and a new accept puts it at the back. Every
-    /// answer, `Interrupted` included, leaves the thread no longer asleep.
+    /// answer but `AcceptOutcome.WouldBlock`, `Interrupted` included, leaves
+    /// the thread no longer asleep. `WouldBlock` means another thread took the
+    /// connection first: the thread is asleep again, and the client waits for
+    /// another wake.
     /// Under Linux a queued connection takes priority over such a signal.
     /// Under Darwin the signal takes priority, and the connection stays
     /// queued. Under Darwin, a call that a connection woke is refused when such
