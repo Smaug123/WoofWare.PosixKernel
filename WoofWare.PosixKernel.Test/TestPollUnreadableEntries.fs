@@ -194,7 +194,10 @@ module TestPollUnreadableEntries =
                 fail ()
 
     /// `EFAULT`, with the system unchanged, for a row the kernel answered
-    /// `EFAULT` at once, having written no `revents`.
+    /// `EFAULT`, having written no `revents`. A row under timeout -1 that had
+    /// slept would have been ended by the probe's timer, with `EINTR`, so the
+    /// errno alone says it did not sleep; `slept`, which a delay in scheduling
+    /// the probe can set, is not consulted.
     let private faulted
         (system : UnixSystem<int, string>)
         (row : Row)
@@ -202,7 +205,6 @@ module TestPollUnreadableEntries =
         : bool
         =
         row.Errno = "Bad address"
-        && not row.Slept
         && (row.Revents0 = "-" || row.Revents0 = "0x5a5a")
         && answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
 
@@ -231,7 +233,7 @@ module TestPollUnreadableEntries =
                     let expected (answer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>) : bool =
                         answer = asEmpty
                         && match answer with
-                           | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0 && not row.Slept
+                           | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0
                            | Ok (PollOutcome.WouldBlock _, _) -> row.Slept && row.Timeout <> 0
                            | _ -> false
 
@@ -298,11 +300,11 @@ module TestPollUnreadableEntries =
             skipped |> shouldEqual 2
 
     /// The partly-readable rows of section P are answered EFAULT by the
-    /// measured kernel without polling the entries it could read: a ready
-    /// lead is not reported, an idle lead under timeout -1 does not sleep,
-    /// and entry 0's revents keeps the value set beforehand.
+    /// measured kernel: a ready lead is not reported, an idle lead under
+    /// timeout -1 does not sleep (it would end in EINTR), and entry 0's
+    /// revents keeps the value set beforehand.
     [<Test>]
-    let ``a partly readable array was measured to fault without polling anything`` () : unit =
+    let ``a partly readable array was measured to fault without reporting or sleeping`` () : unit =
         for run in runs do
             let partial =
                 rows run
@@ -311,7 +313,7 @@ module TestPollUnreadableEntries =
             List.length partial |> shouldEqual 68
 
             for row in partial do
-                if row.Errno <> "Bad address" || row.Slept || row.Revents0 <> "0x5a5a" then
+                if row.Errno <> "Bad address" || row.Revents0 <> "0x5a5a" then
                     failwith $"%s{run.Name}: %A{row}"
 
     /// Section S, replayed through the model: on Linux, a partly readable

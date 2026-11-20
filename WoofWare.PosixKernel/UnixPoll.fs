@@ -70,9 +70,9 @@ type internal PollRefusal =
 /// The array of `struct pollfd` which a `poll(2)` names, as the client found
 /// it when it read the array from the process's memory.
 ///
-/// The kernel reads every entry before it polls any, so an array which the
-/// client cannot read to its end is `Unreadable`, however many of its entries
-/// the client could read.
+/// An array which the client cannot read to its end is `Unreadable`, however
+/// many of its entries the client could read: the kernel fails such a call
+/// without reporting any of them.
 [<RequireQualifiedAccess>]
 type PollEntriesArgument =
     /// The client read every entry of the array: `nfds` is the length of
@@ -1502,12 +1502,13 @@ module UnixPoll =
     /// The entries the kernel copies in from `argument`, or `EFAULT` where it
     /// cannot read them.
     let private copyIn (argument : PollEntriesArgument) : Result<PollEntry list, UnixError> =
-        // Measured on both flavours (`docs/probes/poll-unreadable-entries`):
-        // every entry is copied in before any is polled, so an array readable
-        // for only its first entries fails at once, reporting nothing and
-        // never sleeping (section P); and an array of no entries reads
-        // nothing, so it is answered as an empty one wherever it points
-        // (section Z).
+        // Measured (`docs/probes/poll-unreadable-entries`): on both flavours
+        // an array readable for only its first entries fails at once,
+        // reporting nothing and never sleeping (section P), and under Linux
+        // without polling the entries it could read (section S; Darwin's
+        // poll changes nothing this kernel models by polling); and an array
+        // of no entries reads nothing, so it is answered as an empty one
+        // wherever it points (section Z).
         match argument with
         | PollEntriesArgument.Readable entries -> Ok entries
         | PollEntriesArgument.Unreadable 0u -> Ok []

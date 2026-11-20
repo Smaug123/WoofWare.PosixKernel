@@ -12,7 +12,8 @@
 //      250 ms timer cuts a sleep short, so EINTR means the call slept.
 //   Z  nfds 0, at NULL, at an unmapped address (8), and at a PROT_NONE page;
 //      each with timeout 0, 100 and -1. `slept` says whether the call took
-//      at least 50 ms.
+//      at least 50 ms; a delay in scheduling the probe can set it too, so it
+//      means something only for a call that should sleep.
 //   P  the soft limit raised to 4096: an array whose first k entries lie
 //      whole on a readable page and whose next byte is the first of a
 //      PROT_NONE page (`cut=entry`), or whose (k+1)th entry has its `fd`
@@ -141,7 +142,13 @@ static void set_soft(rlim_t soft)
 {
     struct rlimit rl;
     if (getrlimit(RLIMIT_NOFILE, &rl) != 0) { perror("getrlimit"); exit(1); }
-    if (rl.rlim_max != RLIM_INFINITY && soft > rl.rlim_max) soft = rl.rlim_max;
+    // A lower limit would change which check a row measures.
+    if (rl.rlim_max != RLIM_INFINITY && soft > rl.rlim_max)
+    {
+        fprintf(stderr, "the hard RLIMIT_NOFILE (%llu) is below %llu\n", (unsigned long long)rl.rlim_max,
+                (unsigned long long)soft);
+        exit(1);
+    }
     rl.rlim_cur = soft;
     if (setrlimit(RLIMIT_NOFILE, &rl) != 0) { perror("setrlimit"); exit(1); }
     getrlimit(RLIMIT_NOFILE, &rl);
