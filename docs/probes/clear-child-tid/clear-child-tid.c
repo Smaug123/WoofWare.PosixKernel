@@ -23,12 +23,13 @@
 // its value and nothing is woken. A thread which never set the address leaves
 // the word alone. A word the process cannot write (read-only, PROT_NONE, or
 // in the unmapped page at 0) is left as it was, and the thread exits as any
-// other does: the process carries on, unsignalled. set_tid_address returns
-// the caller's thread ID.
+// other does: the process carries on, unsignalled. Nor is a shared waiter on
+// such a word woken: one asleep on the word before its page became read-only
+// or PROT_NONE times out. set_tid_address returns the caller's thread ID.
 //
 // Output beside this file, measured 2026-11-20, three runs with the same rows
-// (timings aside, and which of the two-shared row's waiters woke, since the
-// two begin their waits concurrently; one woke in every run):
+// (timings aside; which of the two-shared row's waiters woke could differ,
+// since the two begin their waits concurrently, but one woke in every run):
 // measured-linux-6.18.5-aarch64.txt, in Apple's `container` (gcc:14 image,
 // glibc 2.41, 5 CPUs), by the command at the end of this header. The probe
 // exits nonzero if any row failed to run to its end, or if a waiter was not
@@ -40,7 +41,8 @@
 // thread in a futex wait on that word for SENTINEL, with a 1 s timeout. The
 // exiting thread waits to be released until every waiter is asleep in its
 // wait (its /proc state is S), and each waiter row reports whether the exit
-// came before the waiter's deadline. Every row runs in a fresh forked child.
+// was seen complete (the thread gone, or the child process reaped) before the
+// waiter's deadline. Every row runs in a fresh forked child.
 //
 // Rows:
 //   store            the word and its neighbours after the thread has gone,
@@ -57,22 +59,27 @@
 //   unwritable=<kind> the address in a read-only page holding SENTINEL, in a
 //                    PROT_NONE page, and at 0x10, in the page at 0 which
 //                    Linux never maps: whether the thread's exit is otherwise
-//                    ordinary, and (read-only) what the word holds after.
+//                    ordinary, and what the word holds after (read access
+//                    restored to read it).
+//   wait-then-protect=<kind> a shared FUTEX_WAIT waiter asleep on the word,
+//                    whose page then becomes read-only or PROT_NONE before
+//                    the exit: whether the waiter wakes.
 //   last-thread=<how> the word in a MAP_SHARED page, set by a single-threaded
 //                    forked child process which then ends by SYS_exit or by
 //                    SYS_exit_group; a thread of the parent waits on the word
 //                    (shared), and the parent reads it after the child is
 //                    reaped.
 //   last-thread=control the same page and parent, with a two-threaded child
-//                    whose second thread exits while its first lives on.
+//                    whose second thread exits while its first lives on, and
+//                    then ends the child.
 //   last-thread=clone-vm a child made by clone(CLONE_VM | SIGCHLD), which
 //                    shares the parent's address space but is a process of
 //                    its own, sets a word of the parent's and exits by
 //                    SYS_exit; a thread of the parent waits on the word.
 //
 // Fields: `asleep` is whether every waiter was asleep in its wait when the
-// exit was released; `exit-before-deadline` whether the exiting thread made
-// its exit call before each waiter's 1 s had run out; `ret` and `errno` are
+// exit was released; `exit-seen-before-deadline` whether the exit was seen
+// complete before each waiter's 1 s had run out; `ret` and `errno` are
 // what a wait returned (errno=0 on success), `took` its duration in
 // milliseconds; `before`, `word` and `after` are the word and the 32-bit words
 // either side of it, all three of which start as SENTINEL.
@@ -204,7 +211,6 @@ struct exiter {
     volatile int release;
     volatile long tid;
     long set_returned; // what set_tid_address returned
-    long exited_at;    // ms from the row's start of the exit call
 };
 
 static void *exiter_main(void *arg) {
@@ -214,7 +220,6 @@ static void *exiter_main(void *arg) {
     long tid = syscall(SYS_gettid);
     if (e->word != NULL)
         e->set_returned = syscall(SYS_set_tid_address, e->word);
-    e->exited_at = now_ms();
     __atomic_store_n(&e->tid, tid, __ATOMIC_SEQ_CST);
     syscall(SYS_exit, 0);
     return NULL;
@@ -233,32 +238,40 @@ static void start_exiter(struct exiter *e) {
     pthread_create(&t, NULL, exiter_main, e);
 }
 
-// Start `n` waiters, wait until each is asleep, release `e`, and wait for the
-// waiters to return and for `e`'s thread to go. Answers whether the row's
-// preconditions held, having printed them.
-static int run_waiters(struct waiter *ws, int n, struct exiter *e) {
+// Start `n` waiters, wait until each is asleep, change the protection of
+// `protect`'s page to `prot` if `protect` is not NULL, release `e`, wait for
+// `e`'s thread to go, and then for the waiters to return. Answers whether the
+// row's preconditions held, having printed them: every waiter asleep before
+// the release, and `e`'s thread seen gone (which a thread is only once its
+// exit has dealt with its clear_child_tid word) before any waiter's 1 s ran
+// out.
+static int run_waiters(struct waiter *ws, int n, struct exiter *e, void *protect, int prot) {
     pthread_t ts[4];
     for (int i = 0; i < n; i++)
         pthread_create(&ts[i], NULL, waiter_main, &ws[i]);
     int asleep = 1;
     for (int i = 0; i < n; i++)
         asleep &= wait_asleep(&ws[i]);
+    int protected_ok = protect == NULL || mprotect(protect, sysconf(_SC_PAGESIZE), prot) == 0;
     __atomic_store_n(&e->release, 1, __ATOMIC_SEQ_CST);
+    await_gone(e);
+    long gone_at = now_ms();
     for (int i = 0; i < n; i++)
         pthread_join(ts[i], NULL);
-    await_gone(e);
-    int before = 1;
+    int seen = 1;
     for (int i = 0; i < n; i++)
-        before &= e->exited_at < ws[i].started + 1000;
-    printf("asleep=%d exit-before-deadline=%s ", asleep, before ? "yes" : "no");
-    return asleep && before;
+        seen &= gone_at < ws[i].started + 1000;
+    printf("asleep=%d exit-seen-before-deadline=%s ", asleep, seen ? "yes" : "no");
+    if (!protected_ok)
+        printf("mprotect-failed ");
+    return asleep && seen && protected_ok;
 }
 
 // ------------------------------------------------------------------- rows
 
 static int row_store(int set_address) {
     struct cell c = fresh_cell();
-    struct exiter e = {set_address ? &c.word : NULL, 1, 0, 0, 0};
+    struct exiter e = {set_address ? &c.word : NULL, 1, 0, 0};
     start_exiter(&e);
     await_gone(&e);
     printf("%s: ", set_address ? "store" : "store-control");
@@ -272,10 +285,10 @@ static int row_store(int set_address) {
 static int row_wait(const char *name, int op) {
     struct cell c = fresh_cell();
     struct waiter w = {&c.word, op, 0, 0, 0, 0, 0};
-    struct exiter e = {&c.word, 0, 0, 0, 0};
+    struct exiter e = {&c.word, 0, 0, 0};
     start_exiter(&e);
     printf("wait=%s: ", name);
-    int ok = run_waiters(&w, 1, &e);
+    int ok = run_waiters(&w, 1, &e, NULL, 0);
     print_waiter(&w);
     printf(" ");
     print_cell(&c);
@@ -286,10 +299,10 @@ static int row_wait(const char *name, int op) {
 static int row_two_shared(void) {
     struct cell c = fresh_cell();
     struct waiter w[2] = {{&c.word, FUTEX_WAIT, 0, 0, 0, 0, 0}, {&c.word, FUTEX_WAIT, 0, 0, 0, 0, 0}};
-    struct exiter e = {&c.word, 0, 0, 0, 0};
+    struct exiter e = {&c.word, 0, 0, 0};
     start_exiter(&e);
     printf("two-shared: ");
-    int ok = run_waiters(w, 2, &e);
+    int ok = run_waiters(w, 2, &e, NULL, 0);
     printf("woken=%d", (w[0].ret == 0) + (w[1].ret == 0));
     for (int i = 0; i < 2; i++) {
         printf(" waiter%d: ", i);
@@ -301,25 +314,63 @@ static int row_two_shared(void) {
     return ok ? 0 : ROW_INVALID;
 }
 
+// A process-private page holding SENTINEL at offset 64.
+static unsigned char *sentinel_page(void) {
+    unsigned char *map =
+        mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    *(uint32_t *)(map + 64) = SENTINEL;
+    return map;
+}
+
 static int row_unwritable(const char *kind) {
     long page = sysconf(_SC_PAGESIZE);
     uint32_t *word;
+    unsigned char *map = NULL;
     if (strcmp(kind, "null-page") == 0) {
         word = (uint32_t *)0x10;
     } else {
-        unsigned char *map = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        map = sentinel_page();
         word = (uint32_t *)(map + 64);
-        *word = SENTINEL;
-        mprotect(map, page, strcmp(kind, "read-only") == 0 ? PROT_READ : PROT_NONE);
+        if (mprotect(map, page, strcmp(kind, "read-only") == 0 ? PROT_READ : PROT_NONE) != 0) {
+            printf("unwritable=%s: mprotect-failed\n", kind);
+            return ROW_INVALID;
+        }
     }
-    struct exiter e = {word, 1, 0, 0, 0};
+    struct exiter e = {word, 1, 0, 0};
     start_exiter(&e);
     await_gone(&e);
+    // Reaching here at all, with the thread gone, is the measurement that the
+    // exit was otherwise ordinary: a signal would have ended this row's child.
     printf("unwritable=%s: thread-gone=yes process-runs=yes", kind);
-    if (strcmp(kind, "read-only") == 0)
+    if (map != NULL) {
+        if (mprotect(map, page, PROT_READ) != 0) {
+            printf(" mprotect-failed\n");
+            return ROW_INVALID;
+        }
         printf(" word=0x%08x", *word);
+    }
     printf("\n");
     return 0;
+}
+
+// A shared FUTEX_WAIT waiter asleep on a word of a process-private page, whose
+// protection then becomes `prot`, so that the process cannot write the word,
+// before the thread whose clear_child_tid it is exits.
+static int row_wait_then_protect(const char *kind, int prot) {
+    unsigned char *map = sentinel_page();
+    uint32_t *word = (uint32_t *)(map + 64);
+    struct waiter w = {word, FUTEX_WAIT, 0, 0, 0, 0, 0};
+    struct exiter e = {word, 0, 0, 0};
+    start_exiter(&e);
+    printf("wait-then-protect=%s: ", kind);
+    int ok = run_waiters(&w, 1, &e, map, prot);
+    print_waiter(&w);
+    if (mprotect(map, sysconf(_SC_PAGESIZE), PROT_READ) != 0) {
+        printf(" mprotect-failed\n");
+        return ROW_INVALID;
+    }
+    printf(" word=0x%08x\n", *word);
+    return ok ? 0 : ROW_INVALID;
 }
 
 // A forked child process, or its second thread in the control row, sets the
@@ -327,6 +378,7 @@ static int row_unwritable(const char *kind) {
 struct shared_page {
     struct cell cell;
     volatile int release;
+    volatile long control_tid; // the control row's second thread
 };
 
 static void await_release(struct shared_page *p) {
@@ -337,6 +389,7 @@ static void await_release(struct shared_page *p) {
 static void *control_thread(void *arg) {
     struct shared_page *p = arg;
     syscall(SYS_set_tid_address, &p->cell.word);
+    __atomic_store_n(&p->control_tid, syscall(SYS_gettid), __ATOMIC_SEQ_CST);
     await_release(p);
     syscall(SYS_exit, 0);
     return NULL;
@@ -357,6 +410,7 @@ static int row_last_thread(const char *how) {
     struct shared_page *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     p->cell = fresh_cell();
     p->release = 0;
+    p->control_tid = 0;
     pid_t child;
     if (strcmp(how, "clone-vm") == 0) {
         size_t stack_size = 1 << 16;
@@ -366,9 +420,14 @@ static int row_last_thread(const char *how) {
         child = fork();
         if (child == 0) {
             if (strcmp(how, "control") == 0) {
+                // The child's first thread outlives its second, and ends the
+                // child once the second has gone.
                 pthread_t t;
                 pthread_create(&t, NULL, control_thread, p);
-                usleep(3000000);
+                while (__atomic_load_n(&p->control_tid, __ATOMIC_SEQ_CST) == 0)
+                    usleep(1000);
+                while (syscall(SYS_tgkill, getpid(), p->control_tid, 0) == 0)
+                    usleep(1000);
                 _exit(0);
             }
             syscall(SYS_set_tid_address, &p->cell.word);
@@ -380,24 +439,31 @@ static int row_last_thread(const char *how) {
             _exit(99);
         }
     }
+    if (child <= 0) {
+        printf("last-thread=%s: no-child\n", how);
+        return ROW_INVALID;
+    }
     struct waiter w = {&p->cell.word, FUTEX_WAIT, 0, 0, 0, 0, 0};
     pthread_t t;
     pthread_create(&t, NULL, waiter_main, &w);
     int asleep = wait_asleep(&w);
-    long released_at = now_ms();
     __atomic_store_n(&p->release, 1, __ATOMIC_SEQ_CST);
+    // A child is reaped only once its exit is complete.
+    int status = 0;
+    pid_t reaped = waitpid(child, &status, 0);
+    long reaped_at = now_ms();
     pthread_join(t, NULL);
-    int status;
-    waitpid(child, &status, 0);
-    int before = released_at < w.started + 1000;
-    // The control row's child outlives the wait; its second thread exits at
-    // the release.
-    printf("last-thread=%s: asleep=%d released-before-deadline=%s ", how, asleep, before ? "yes" : "no");
+    if (reaped != child) {
+        printf("last-thread=%s: waitpid-failed\n", how);
+        return ROW_INVALID;
+    }
+    int seen = reaped_at < w.started + 1000;
+    printf("last-thread=%s: asleep=%d exit-seen-before-deadline=%s ", how, asleep, seen ? "yes" : "no");
     print_waiter(&w);
     printf(" ");
     print_cell(&p->cell);
     printf(" child-exited=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-    return asleep && before ? 0 : ROW_INVALID;
+    return asleep && seen ? 0 : ROW_INVALID;
 }
 
 // ------------------------------------------------------------------- main
@@ -434,6 +500,8 @@ static int r_wait_bitset_private(void) { return row_wait("FUTEX_WAIT_BITSET_PRIV
 static int r_unwritable_read_only(void) { return row_unwritable("read-only"); }
 static int r_unwritable_prot_none(void) { return row_unwritable("prot-none"); }
 static int r_unwritable_null_page(void) { return row_unwritable("null-page"); }
+static int r_protect_read_only(void) { return row_wait_then_protect("read-only", PROT_READ); }
+static int r_protect_none(void) { return row_wait_then_protect("prot-none", PROT_NONE); }
 static int r_last_exit(void) { return row_last_thread("exit"); }
 static int r_last_exit_group(void) { return row_last_thread("exit_group"); }
 static int r_last_control(void) { return row_last_thread("control"); }
@@ -451,6 +519,8 @@ int main(void) {
     in_child(r_unwritable_read_only);
     in_child(r_unwritable_prot_none);
     in_child(r_unwritable_null_page);
+    in_child(r_protect_read_only);
+    in_child(r_protect_none);
     in_child(r_last_exit);
     in_child(r_last_exit_group);
     in_child(r_last_control);

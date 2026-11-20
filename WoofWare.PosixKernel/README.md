@@ -1220,7 +1220,7 @@ match read restarted with
 `UnixThreadLifecycle.spawn caller child cpu` starts a thread the client names `child`, on processor `cpu`, with a copy of the caller's signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
 `UnixThreadLifecycle.exitThread caller status` ends the caller's thread, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
 It throws `InvalidOperationException` for a thread parked in a syscall, and refuses the process's leader while any other thread lives and, on Darwin, the process's last thread: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
-On Linux, a thread with a `clear_child_tid` address (`CLONE_CHILD_CLEARTID`, `set_tid_address(2)`) that is not the process's last has the kernel store 0 into the word there at its exit, where the process can write it, and wake one shared futex waiter on it.
+On Linux, a thread with a `clear_child_tid` address (`CLONE_CHILD_CLEARTID`, `set_tid_address(2)`) that shares its address space with another thread, as every thread of a process with more than one does, has the kernel store 0 into the word there at its exit and wake one shared futex waiter on it, where the process can write the word.
 This library holds no such address, so the client does both (see `UnixThreadLifecycle.exitThread`).
 `UnixThreadLifecycle.exitGroup caller status` ends every thread at once, parked ones included.
 

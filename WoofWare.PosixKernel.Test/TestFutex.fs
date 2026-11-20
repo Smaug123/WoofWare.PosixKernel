@@ -975,7 +975,7 @@ module TestFutex =
                 let row =
                     Regex.Match (
                         line,
-                        @"^wait=(\S+): asleep=1 exit-before-deadline=yes ret=(-?\d+) errno=(\S+) took=\d+ "
+                        @"^wait=(\S+): asleep=1 exit-seen-before-deadline=yes ret=(-?\d+) errno=(\S+) took=\d+ "
                     )
 
                 if row.Success then

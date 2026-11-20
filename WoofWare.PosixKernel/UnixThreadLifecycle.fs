@@ -403,8 +403,8 @@ module UnixThreadLifecycle =
     /// does two more things at its exit: it stores 0 into the four bytes at that
     /// address, and it wakes one waiter in a shared futex wait on that word
     /// (`FUTEX_WAIT` or `FUTEX_WAIT_BITSET`, without `FUTEX_PRIVATE_FLAG`). If the
-    /// process cannot write those bytes, the store does not happen, and the thread
-    /// still exits as any other does, with no signal.
+    /// process cannot write those bytes, the kernel does neither, and the thread still
+    /// exits as any other does, with no signal.
     /// This library holds no such address, so the client does both: it stores the 0
     /// into the process's memory, and it wakes the waiter, which is asleep in a block
     /// of the client's own, since `UnixFutex.futex` refuses a futex wait without
