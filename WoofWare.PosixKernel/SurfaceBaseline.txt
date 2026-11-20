@@ -197,34 +197,6 @@ WoofWare.PosixKernel.BootRefusal.Equals [method]: (WoofWare.PosixKernel.BootRefu
 WoofWare.PosixKernel.BootRefusalModule inherit obj
 WoofWare.PosixKernel.BootRefusalModule.describe [static method]: WoofWare.PosixKernel.BootRefusal -> string
 WoofWare.PosixKernel.BootRefusalModule.launch [static method]: WoofWare.PosixKernel.BootRefusal -> WoofWare.PosixKernel.LaunchRefusal Microsoft.FSharp.Core.FSharpValueOption
-WoofWare.PosixKernel.BrokenWriteTarget inherit obj, implements WoofWare.PosixKernel.BrokenWriteTarget System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.BrokenWriteTarget System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
-WoofWare.PosixKernel.BrokenWriteTarget+Connection inherit WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget+Connection.get_socket [method]: unit -> WoofWare.PosixKernel.SocketId
-WoofWare.PosixKernel.BrokenWriteTarget+Connection.socket [property]: [read-only] WoofWare.PosixKernel.SocketId
-WoofWare.PosixKernel.BrokenWriteTarget+Pipe inherit WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget+Pipe.get_pipe [method]: unit -> WoofWare.PosixKernel.PipeId
-WoofWare.PosixKernel.BrokenWriteTarget+Pipe.pipe [property]: [read-only] WoofWare.PosixKernel.PipeId
-WoofWare.PosixKernel.BrokenWriteTarget+Socket inherit WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget+Socket.get_socket [method]: unit -> WoofWare.PosixKernel.SocketId
-WoofWare.PosixKernel.BrokenWriteTarget+Socket.socket [property]: [read-only] WoofWare.PosixKernel.SocketId
-WoofWare.PosixKernel.BrokenWriteTarget+Tags inherit obj
-WoofWare.PosixKernel.BrokenWriteTarget+Tags.Connection [static field]: int = 2
-WoofWare.PosixKernel.BrokenWriteTarget+Tags.Pipe [static field]: int = 0
-WoofWare.PosixKernel.BrokenWriteTarget+Tags.Socket [static field]: int = 1
-WoofWare.PosixKernel.BrokenWriteTarget.Equals [method]: (WoofWare.PosixKernel.BrokenWriteTarget, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.BrokenWriteTarget.get_IsConnection [method]: unit -> bool
-WoofWare.PosixKernel.BrokenWriteTarget.get_IsPipe [method]: unit -> bool
-WoofWare.PosixKernel.BrokenWriteTarget.get_IsSocket [method]: unit -> bool
-WoofWare.PosixKernel.BrokenWriteTarget.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.BrokenWriteTarget.IsConnection [property]: [read-only] bool
-WoofWare.PosixKernel.BrokenWriteTarget.IsPipe [property]: [read-only] bool
-WoofWare.PosixKernel.BrokenWriteTarget.IsSocket [property]: [read-only] bool
-WoofWare.PosixKernel.BrokenWriteTarget.NewConnection [static method]: WoofWare.PosixKernel.SocketId -> WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget.NewPipe [static method]: WoofWare.PosixKernel.PipeId -> WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget.NewSocket [static method]: WoofWare.PosixKernel.SocketId -> WoofWare.PosixKernel.BrokenWriteTarget
-WoofWare.PosixKernel.BrokenWriteTarget.Tag [property]: [read-only] int
-WoofWare.PosixKernel.BrokenWriteTargetModule inherit obj
-WoofWare.PosixKernel.BrokenWriteTargetModule.describe [static method]: WoofWare.PosixKernel.BrokenWriteTarget -> string
 WoofWare.PosixKernel.BufferRefusal inherit obj, implements WoofWare.PosixKernel.BufferRefusal System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.BufferRefusal System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.BufferRefusal+Tags inherit obj
 WoofWare.PosixKernel.BufferRefusal+Tags.AddresslessAtScreen [static field]: int = 1
@@ -9128,33 +9100,6 @@ WoofWare.PosixKernel.UnmodelledOpenFlag.TemporaryFile [static property]: [read-o
 WoofWare.PosixKernel.UnmodelledOpenFlag.Unique [static property]: [read-only] WoofWare.PosixKernel.UnmodelledOpenFlag
 WoofWare.PosixKernel.UnmodelledOpenFlagModule inherit obj
 WoofWare.PosixKernel.UnmodelledOpenFlagModule.name [static method]: WoofWare.PosixKernel.UnmodelledOpenFlag -> string
-WoofWare.PosixKernel.UnmodelledStatusFlag inherit obj, implements WoofWare.PosixKernel.UnmodelledStatusFlag System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.UnmodelledStatusFlag System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 4 cases
-WoofWare.PosixKernel.UnmodelledStatusFlag+Tags inherit obj
-WoofWare.PosixKernel.UnmodelledStatusFlag+Tags.Append [static field]: int = 0
-WoofWare.PosixKernel.UnmodelledStatusFlag+Tags.Asynchronous [static field]: int = 1
-WoofWare.PosixKernel.UnmodelledStatusFlag+Tags.Direct [static field]: int = 2
-WoofWare.PosixKernel.UnmodelledStatusFlag+Tags.NoAccessTime [static field]: int = 3
-WoofWare.PosixKernel.UnmodelledStatusFlag.Append [static property]: [read-only] WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.Asynchronous [static property]: [read-only] WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.Direct [static property]: [read-only] WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.Equals [method]: (WoofWare.PosixKernel.UnmodelledStatusFlag, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_Append [static method]: unit -> WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_Asynchronous [static method]: unit -> WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_Direct [static method]: unit -> WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_IsAppend [method]: unit -> bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_IsAsynchronous [method]: unit -> bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_IsDirect [method]: unit -> bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_IsNoAccessTime [method]: unit -> bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_NoAccessTime [static method]: unit -> WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.UnmodelledStatusFlag.IsAppend [property]: [read-only] bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.IsAsynchronous [property]: [read-only] bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.IsDirect [property]: [read-only] bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.IsNoAccessTime [property]: [read-only] bool
-WoofWare.PosixKernel.UnmodelledStatusFlag.NoAccessTime [static property]: [read-only] WoofWare.PosixKernel.UnmodelledStatusFlag
-WoofWare.PosixKernel.UnmodelledStatusFlag.Tag [property]: [read-only] int
-WoofWare.PosixKernel.UnmodelledStatusFlagModule inherit obj
-WoofWare.PosixKernel.UnmodelledStatusFlagModule.name [static method]: WoofWare.PosixKernel.UnmodelledStatusFlag -> string
 WoofWare.PosixKernel.UnwrittenBytes inherit obj
 WoofWare.PosixKernel.UnwrittenBytes.get_Length [method]: unit -> int
 WoofWare.PosixKernel.UnwrittenBytes.Length [property]: [read-only] int

@@ -344,9 +344,8 @@ type internal WriteResumption =
 
 /// What a write that answers `EPIPE` and raises `SIGPIPE` was writing to, as
 /// the message of an exception from this library's write functions names it.
-/// No public function in this version answers one.
 [<RequireQualifiedAccess>]
-type BrokenWriteTarget =
+type internal BrokenWriteTarget =
     /// The write end of a pipe with no reader.
     | Pipe of pipe : PipeId
     /// A Linux stream socket with no peer.
@@ -356,7 +355,7 @@ type BrokenWriteTarget =
     | Connection of socket : SocketId
 
 [<RequireQualifiedAccess>]
-module BrokenWriteTarget =
+module internal BrokenWriteTarget =
     /// The descriptor's object, for a message: "the write end of pipe ...".
     let describe (target : BrokenWriteTarget) : string =
         match target with
