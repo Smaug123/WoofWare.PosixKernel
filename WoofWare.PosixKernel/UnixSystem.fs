@@ -2048,12 +2048,20 @@ module UnixSystem =
             UnixConnection.tryShutdown caller fd how system
             |> Result.map SteppedCall.Shutdown
             |> Result.mapError SyscallRefusal.Shutdown
-        | Syscall.GetSockName (fd, destination, declaredLength) ->
-            UnixSocket.tryGetsockname caller fd destination declaredLength system
+        | Syscall.GetSockName (fd, destination, length) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.GetSockName"
+                UnixSocket.tryGetsocknameWithLength
+                length
+                (fun length -> UnixSocket.tryGetsockname caller fd destination length system)
             |> Result.map SteppedCall.GetSockName
             |> Result.mapError SyscallRefusal.GetSockName
-        | Syscall.GetPeerName (fd, destination, declaredLength) ->
-            UnixSocket.tryGetpeername caller fd destination declaredLength system
+        | Syscall.GetPeerName (fd, destination, length) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.GetPeerName"
+                UnixSocket.tryGetpeernameWithLength
+                length
+                (fun length -> UnixSocket.tryGetpeername caller fd destination length system)
             |> Result.map SteppedCall.GetPeerName
             |> Result.mapError SyscallRefusal.GetPeerName
         | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->

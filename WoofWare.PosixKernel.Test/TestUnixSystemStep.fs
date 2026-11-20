@@ -5727,7 +5727,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withSocket flavour
 
-            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
+            SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system
             |> sockNameReported
             |> shouldEqual (Ipv4Endpoint.ofParts Ipv4Address.any 0us, 16)
 
@@ -5738,7 +5738,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withBoundSocket flavour
 
-            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
+            SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system
             |> sockNameReported
             |> shouldEqual (Ipv4Endpoint.ofParts Ipv4Address.loopback 8080us, 16)
 
@@ -5752,7 +5752,13 @@ module TestUnixSystemStep =
 
             for declared in [ 1u ; 2u ; 4u ; 8u ; 15u ; 16u ; 17u ; 128u ] do
                 let copiedOut, reportedLength =
-                    UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped declared system
+                    SockNameCalls.getsockname
+                        (Callers.leader system)
+                        fd
+                        UserBuffer.Mapped
+                        UserBuffer.Mapped
+                        declared
+                        system
                     |> sockNameCopied
 
                 copiedOut.Length |> shouldEqual (int (min declared 16u))
@@ -5766,24 +5772,36 @@ module TestUnixSystemStep =
         // fault, which is what makes this an ordering row rather than a
         // restatement of the two errnos.
         for flavour in [ linux ; darwin ] do
-            UnixSocket.tryGetsockname (Callers.leader flavour) 7 (UserBuffer.Unmapped 8UL) 16u flavour
+            SockNameCalls.getsockname (Callers.leader flavour) 7 (UserBuffer.Unmapped 8UL) UserBuffer.Mapped 16u flavour
             |> sockNameFailed
             |> shouldEqual (UnixError.EBADF, None)
 
             let fileFd, fileSystem = withOpenFile flavour
 
-            UnixSocket.tryGetsockname (Callers.leader fileSystem) fileFd (UserBuffer.Unmapped 8UL) 16u fileSystem
+            SockNameCalls.getsockname
+                (Callers.leader fileSystem)
+                fileFd
+                (UserBuffer.Unmapped 8UL)
+                UserBuffer.Mapped
+                16u
+                fileSystem
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
             let queueFd, queueSystem = withEpoll flavour
 
-            UnixSocket.tryGetsockname (Callers.leader queueSystem) queueFd (UserBuffer.Unmapped 8UL) 16u queueSystem
+            SockNameCalls.getsockname
+                (Callers.leader queueSystem)
+                queueFd
+                (UserBuffer.Unmapped 8UL)
+                UserBuffer.Mapped
+                16u
+                queueSystem
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
             // Standard input is a pipe end here, and a pipe is ENOTSOCK on both.
-            UnixSocket.tryGetsockname (Callers.leader flavour) 0 (UserBuffer.Unmapped 8UL) 16u flavour
+            SockNameCalls.getsockname (Callers.leader flavour) 0 (UserBuffer.Unmapped 8UL) UserBuffer.Mapped 16u flavour
             |> sockNameFailed
             |> shouldEqual (UnixError.ENOTSOCK, None)
 
@@ -5804,7 +5822,7 @@ module TestUnixSystemStep =
                     UserBuffer.Mapped
                 ] do
                 let copiedOut, reportedLength =
-                    UnixSocket.tryGetsockname (Callers.leader system) fd destination 0u system
+                    SockNameCalls.getsockname (Callers.leader system) fd destination UserBuffer.Mapped 0u system
                     |> sockNameCopied
 
                 copiedOut.IsEmpty |> shouldEqual true
@@ -5818,17 +5836,17 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withBoundSocket flavour
 
-            UnixSocket.tryGetsockname (Callers.leader system) fd (UserBuffer.Unmapped 8UL) 1u system
+            SockNameCalls.getsockname (Callers.leader system) fd (UserBuffer.Unmapped 8UL) UserBuffer.Mapped 1u system
             |> sockNameFailed
             |> fst
             |> shouldEqual UnixError.EFAULT
 
-            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Opaque 1u system
+            SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Opaque UserBuffer.Mapped 1u system
             |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
             // At the transfer rather than at a screen: neither flavour checks
             // the destination's address before deciding it has bytes to move.
-            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Addressless 1u system
+            SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Addressless UserBuffer.Mapped 1u system
             |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
@@ -5842,10 +5860,11 @@ module TestUnixSystemStep =
         let since618Fd, since618System =
             withBoundSocket (systemOn SimulatedUnixPlatform.linuxArm64)
 
-        UnixSocket.tryGetsockname
+        SockNameCalls.getsockname
             (Callers.leader since618System)
             since618Fd
             (UserBuffer.Unmapped 8UL)
+            UserBuffer.Mapped
             13u
             since618System
         |> sockNameFailed
@@ -5853,13 +5872,25 @@ module TestUnixSystemStep =
 
         let linuxFd, linuxSystem = withBoundSocket linux
 
-        UnixSocket.tryGetsockname (Callers.leader linuxSystem) linuxFd (UserBuffer.Unmapped 8UL) 13u linuxSystem
+        SockNameCalls.getsockname
+            (Callers.leader linuxSystem)
+            linuxFd
+            (UserBuffer.Unmapped 8UL)
+            UserBuffer.Mapped
+            13u
+            linuxSystem
         |> sockNameFailed
         |> shouldEqual (UnixError.EFAULT, None)
 
         let darwinFd, darwinSystem = withBoundSocket darwin
 
-        UnixSocket.tryGetsockname (Callers.leader darwinSystem) darwinFd (UserBuffer.Unmapped 8UL) 13u darwinSystem
+        SockNameCalls.getsockname
+            (Callers.leader darwinSystem)
+            darwinFd
+            (UserBuffer.Unmapped 8UL)
+            UserBuffer.Mapped
+            13u
+            darwinSystem
         |> sockNameFailed
         |> shouldEqual (UnixError.EFAULT, None)
 
@@ -5890,7 +5921,7 @@ module TestUnixSystemStep =
                     )
                     system
 
-            UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system
+            SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system
             |> shouldEqual (Error (GetSockNameRefusal.UnmodelledDomain (socketZero, domain)))
 
     [<Test>]

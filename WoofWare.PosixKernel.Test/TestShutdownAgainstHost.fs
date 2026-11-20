@@ -2464,7 +2464,15 @@ module TestShutdownAgainstHost =
                     failwith $"getsockopt(SO_REUSEADDR) refused: %s{SocketOptionRefusal.describe refusal}"
 
             member this.PeerName e =
-                match UnixSocket.tryGetpeername (Callers.leader system) (this.Fd e) UserBuffer.Mapped 16u system with
+                match
+                    SockNameCalls.getpeername
+                        (Callers.leader system)
+                        (this.Fd e)
+                        UserBuffer.Mapped
+                        UserBuffer.Mapped
+                        16u
+                        system
+                with
                 | Ok (GetSockNameAnswer.Reported _) -> "ok"
                 | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
                 | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"

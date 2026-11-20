@@ -440,12 +440,14 @@ module TestStepOracle =
             UnixConnection.tryShutdown caller fd how system
             |> Result.map SteppedCall.Shutdown
             |> Result.mapError SyscallRefusal.Shutdown
-        | Syscall.GetSockName (fd, destination, declaredLength) ->
-            UnixSocket.tryGetsockname caller fd destination declaredLength system
+        | Syscall.GetSockName (fd, destination, length) ->
+            UnixSocket.tryGetsockname caller fd destination (bufferOf length) system
+            |> CallProgress.resumeWith (fun paused -> UnixSocket.tryGetsocknameWithLength (cell length) paused)
             |> Result.map SteppedCall.GetSockName
             |> Result.mapError SyscallRefusal.GetSockName
-        | Syscall.GetPeerName (fd, destination, declaredLength) ->
-            UnixSocket.tryGetpeername caller fd destination declaredLength system
+        | Syscall.GetPeerName (fd, destination, length) ->
+            UnixSocket.tryGetpeername caller fd destination (bufferOf length) system
+            |> CallProgress.resumeWith (fun paused -> UnixSocket.tryGetpeernameWithLength (cell length) paused)
             |> Result.map SteppedCall.GetPeerName
             |> Result.mapError SyscallRefusal.GetPeerName
         | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->
@@ -1825,8 +1827,12 @@ module TestStepOracle =
             Gen.zip socketFd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ])
             |> Gen.filter (fun (fd, how) -> fd <> how)
             |> Gen.map Syscall.Shutdown
-            "GetSockName", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.GetSockName
-            "GetPeerName", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.GetPeerName
+            "GetSockName",
+            Gen.zip3 socketFd userBufferGen (copiedGen socklenGen)
+            |> Gen.map Syscall.GetSockName
+            "GetPeerName",
+            Gen.zip3 socketFd userBufferGen (copiedGen socklenGen)
+            |> Gen.map Syscall.GetPeerName
             "SetSockOpt",
             gen {
                 let! fd, level, optionName = socketOption
@@ -2153,6 +2159,12 @@ module TestStepOracle =
         | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->
             UnixSocket.trySetsockopt caller fd level optionName (bufferOf value) optionLength system
             |> stopped
+        | Syscall.GetSockName (fd, destination, length) ->
+            UnixSocket.tryGetsockname caller fd destination (bufferOf length) system
+            |> stopped
+        | Syscall.GetPeerName (fd, destination, length) ->
+            UnixSocket.tryGetpeername caller fd destination (bufferOf length) system
+            |> stopped
         | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
             UnixSocket.tryGetsockopt caller fd level optionName value (bufferOf length) system
             |> stopped
@@ -2174,6 +2186,8 @@ module TestStepOracle =
             "Bind"
             "Connect"
             "SetSockOpt"
+            "GetSockName"
+            "GetPeerName"
             "GetSockOpt"
             "Futex"
         ]
@@ -2419,6 +2433,8 @@ module TestStepOracle =
                         CopiedArgument.Readable reuse,
                         4u
                     )
+                    Syscall.GetSockName (8, UserBuffer.Mapped, CopiedArgument.Readable 16u)
+                    Syscall.GetPeerName (10, UserBuffer.Mapped, CopiedArgument.Readable 16u)
                     Syscall.GetSockOpt (
                         8,
                         SimulatedUnixPlatform.socketOptionLevel platform,
@@ -2569,6 +2585,18 @@ module TestStepOracle =
                             |> answered
                             |> Result.map SteppedCall.SetSockOpt
                             |> Result.mapError SyscallRefusal.SetSockOpt
+                        Syscall.GetSockName (8, UserBuffer.Mapped, CopiedArgument.Unmapped address),
+                        fun () ->
+                            UnixSocket.tryGetsockname leader 8 UserBuffer.Mapped unmapped system
+                            |> answered
+                            |> Result.map SteppedCall.GetSockName
+                            |> Result.mapError SyscallRefusal.GetSockName
+                        Syscall.GetPeerName (10, UserBuffer.Mapped, CopiedArgument.Unmapped address),
+                        fun () ->
+                            UnixSocket.tryGetpeername leader 10 UserBuffer.Mapped unmapped system
+                            |> answered
+                            |> Result.map SteppedCall.GetPeerName
+                            |> Result.mapError SyscallRefusal.GetPeerName
                         Syscall.GetSockOpt (8, level, reuse, UserBuffer.Mapped, CopiedArgument.Unmapped address),
                         fun () ->
                             UnixSocket.tryGetsockopt leader 8 level reuse UserBuffer.Mapped unmapped system

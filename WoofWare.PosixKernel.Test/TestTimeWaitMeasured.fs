@@ -276,7 +276,9 @@ module TestTimeWaitMeasured =
 
     /// What `getsockname(2)` reports of the socket behind `fd`.
     let private nameOf (fd : int) (row : Row) : Ipv4Endpoint =
-        match UnixSocket.tryGetsockname (Callers.leader row.System) fd UserBuffer.Mapped 16u row.System with
+        match
+            SockNameCalls.getsockname (Callers.leader row.System) fd UserBuffer.Mapped UserBuffer.Mapped 16u row.System
+        with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform row.System) bytes).Endpoint with
             | Some endpoint -> endpoint

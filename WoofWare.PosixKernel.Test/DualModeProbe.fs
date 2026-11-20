@@ -322,8 +322,27 @@ module DualModeProbe =
 
         output.AppendLine () |> ignore
 
-    let private getsockname = UnixSocket.tryGetsockname<int, string>
-    let private getpeername = UnixSocket.tryGetpeername<int, string>
+    /// `getsockname` through a length cell of real storage holding `cell`.
+    let private getsockname
+        (caller : Caller<int>)
+        (fd : int)
+        (destination : UserBuffer)
+        (cell : uint32)
+        (system : UnixSystem<int, string>)
+        : Result<GetSockNameAnswer, GetSockNameRefusal>
+        =
+        SockNameCalls.getsockname caller fd destination UserBuffer.Mapped cell system
+
+    /// `getpeername` through a length cell of real storage holding `cell`.
+    let private getpeername
+        (caller : Caller<int>)
+        (fd : int)
+        (destination : UserBuffer)
+        (cell : uint32)
+        (system : UnixSystem<int, string>)
+        : Result<GetSockNameAnswer, GetSockNameRefusal>
+        =
+        SockNameCalls.getpeername caller fd destination UserBuffer.Mapped cell system
 
     let private line (output : StringBuilder) (label : string) (answer : Answer) : unit =
         output.AppendLine ($"%s{label} -> %s{en answer}") |> ignore

@@ -108,7 +108,7 @@ module TestSocketAddressLength =
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private localAddress (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
+        match SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (copiedOut, _)) -> CopyOut.endpoint copiedOut
         | other -> failwith $"getsockname of fd %d{fd}: %A{other}"
 
@@ -209,7 +209,9 @@ module TestSocketAddressLength =
                                 GetSockNameAnswer.Failed (UnixError.EFAULT, lengthAfterFault platform)
                             | _ -> GetSockNameAnswer.Reported (CopyOut.expected platform (loopback 6000us) word, 16)
 
-                    match UnixSocket.tryGetsockname (Callers.leader system) fd destination word system with
+                    match
+                        SockNameCalls.getsockname (Callers.leader system) fd destination UserBuffer.Mapped word system
+                    with
                     | Ok actual when actual = expected -> ()
                     | actual ->
                         failwith
@@ -565,7 +567,13 @@ module TestSocketAddressLength =
                     admit syscall closedFd (UserBuffer.Unmapped 4096UL) word system
                     |> shouldEqual (SockaddrCopyAdmission.Answered UnixError.EBADF)
 
-                UnixSocket.tryGetsockname (Callers.leader system) closedFd UserBuffer.Mapped word system
+                SockNameCalls.getsockname
+                    (Callers.leader system)
+                    closedFd
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    word
+                    system
                 |> shouldEqual (Ok (GetSockNameAnswer.Failed (UnixError.EBADF, None)))
 
                 match

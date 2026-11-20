@@ -209,14 +209,14 @@ module TestCallerChecks =
             running
                 "UnixSocket.getsockname"
                 (fun caller system ->
-                    UnixSocket.getsockname caller 0 UserBuffer.Mapped 16u system
-                    |> ignore<GetSockNameAnswer>
+                    UnixSocket.getsockname caller 0 UserBuffer.Mapped UserBuffer.Mapped system
+                    |> ignore
                 )
             running
                 "UnixSocket.getpeername"
                 (fun caller system ->
-                    UnixSocket.getpeername caller 0 UserBuffer.Mapped 16u system
-                    |> ignore<GetSockNameAnswer>
+                    UnixSocket.getpeername caller 0 UserBuffer.Mapped UserBuffer.Mapped system
+                    |> ignore
                 )
             running
                 "UnixSocket.setsockopt"

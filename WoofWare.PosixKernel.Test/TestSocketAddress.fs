@@ -353,7 +353,8 @@ module TestSocketAddress =
             failwith
                 $"%s{call} on a %O{domain} socket answered %s{SocketAddress.toString answered}, which is not in the socket's own family"
 
-        let getsockname = Syscall.GetSockName (fd, UserBuffer.Mapped, 128u)
+        let getsockname =
+            Syscall.GetSockName (fd, UserBuffer.Mapped, CopiedArgument.Readable 128u)
 
         match stepped getsockname system with
         | Ok (SteppedCall.GetSockName (GetSockNameAnswer.Reported (copiedOut, _))) ->

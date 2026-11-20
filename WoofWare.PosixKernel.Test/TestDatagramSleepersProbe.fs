@@ -246,7 +246,7 @@ module TestDatagramSleepersProbe =
         | other -> failwith $"bind: %A{other}"
 
     let private portOf (fd : int) (system : World) : uint16 =
-        match leaderStep (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
+        match leaderStep (Syscall.GetSockName (fd, UserBuffer.Mapped, CopiedArgument.Readable 16u)) system with
         | SteppedCall.GetSockName (GetSockNameAnswer.Reported (copied, _)) -> (CopyOut.endpoint copied).Port
         | other -> failwith $"getsockname: %A{other}"
 

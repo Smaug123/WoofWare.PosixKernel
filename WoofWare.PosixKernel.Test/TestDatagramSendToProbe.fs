@@ -159,7 +159,7 @@ module TestDatagramSendToProbe =
 
     /// The address `fd` reports for itself.
     let private name (fd : int) (system : World) : Ipv4Endpoint =
-        match stepped (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
+        match stepped (Syscall.GetSockName (fd, UserBuffer.Mapped, CopiedArgument.Readable 16u)) system with
         | SteppedCall.GetSockName (GetSockNameAnswer.Reported (copied, _)) -> CopyOut.endpoint copied
         | other -> failwith $"getsockname: %A{other}"
 

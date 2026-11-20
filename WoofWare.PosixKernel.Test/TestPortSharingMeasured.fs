@@ -182,7 +182,7 @@ module TestPortSharingMeasured =
 
     /// What getsockname reports for `fd` of `pid`, as the probe prints it.
     let private nameOf (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : string =
-        match step pid (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
+        match step pid (Syscall.GetSockName (fd, UserBuffer.Mapped, CopiedArgument.Readable 16u)) system with
         | Ok (SteppedCall.GetSockName (GetSockNameAnswer.Reported (bytes, _))) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint

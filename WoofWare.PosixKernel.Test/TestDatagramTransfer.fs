@@ -1002,21 +1002,28 @@ module TestDatagramTransfer =
     /// `getpeername` or `getsockname`, as `udp-error.c` prints it.
     let private nameShown
         (label : string)
-        (call : Caller<int> -> int -> UserBuffer -> uint32 -> UnixSystem<int, string> -> Result<GetSockNameAnswer, _>)
+        (call :
+            Caller<int>
+                -> int
+                -> UserBuffer
+                -> UserBuffer
+                -> uint32
+                -> UnixSystem<int, string>
+                -> Result<GetSockNameAnswer, _>)
         (fd : int)
         (system : UnixSystem<int, string>)
         : string
         =
-        match call (Callers.leader system) fd UserBuffer.Mapped 16u system with
+        match call (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) -> $"%s{label} %s{endpointText (CopyOut.endpoint bytes)}"
         | Ok (GetSockNameAnswer.Failed (error, _)) -> $"get%s{label}name %O{error}"
         | Error _ -> failwith $"get%s{label}name refused"
 
     let private peerShown (fd : int) (system : UnixSystem<int, string>) : string =
-        nameShown "peer" UnixSocket.tryGetpeername fd system
+        nameShown "peer" SockNameCalls.getpeername fd system
 
     let private selfShown (fd : int) (system : UnixSystem<int, string>) : string =
-        nameShown "self" UnixSocket.tryGetsockname fd system
+        nameShown "self" SockNameCalls.getsockname fd system
 
     /// A socket bound to 127.0.0.1, connected to a port nobody holds, that
     /// has sent a byte there, and so has ECONNREFUSED pending: the probe's
@@ -1487,7 +1494,9 @@ module TestDatagramTransfer =
         let error, system = soError c system
 
         let peerPort =
-            match UnixSocket.tryGetpeername (Callers.leader system) c UserBuffer.Mapped 16u system with
+            match
+                SockNameCalls.getpeername (Callers.leader system) c UserBuffer.Mapped UserBuffer.Mapped 16u system
+            with
             | Ok (GetSockNameAnswer.Reported (bytes, _)) -> (CopyOut.endpoint bytes).Port
             | other -> failwith $"getpeername: %A{other}"
 
