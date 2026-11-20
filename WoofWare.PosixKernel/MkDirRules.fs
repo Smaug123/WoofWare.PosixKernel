@@ -1,9 +1,17 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Everything a kernel does differently when <c>mkdir(2)</c> creates a directory.
+/// The ways a kernel's <c>mkdir(2)</c> differs in the permission bits it gives a new directory.
 /// </summary>
 /// <remarks>
+/// Other differences in <c>mkdir(2)</c> are elsewhere: <c>SimulatedUnixPlatform.finalNameTrailingSeparator</c>
+/// (the walk of the new name), <c>SimulatedUnixPlatform.newInodeGroupRule</c> (the new directory's group) and
+/// <c>SimulatedUnixPlatform.umaskStoredBits</c> (the umask).
+/// <para />
+/// <c>SimulatedUnixPlatform.mkDirRules</c> hands this out, and the simulated kernel already applies it.
+/// A client reads it only to learn what the kernel will do; no function takes one, and building one changes nothing
+/// (see "Flavours and divergence from host platforms" in the README).
+/// <para />
 /// Measured at <c>umask 022</c> on macOS 25.6/APFS at uid 501 and Linux 6.x arm64 at
 /// uid 1000.
 /// </remarks>

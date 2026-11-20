@@ -4,10 +4,14 @@ namespace WoofWare.PosixKernel
 /// layout of the structures a syscall reads and writes.
 ///
 /// A kernel image is built for one instruction set, so this is a fact about the
-/// kernel a process is running on, not about the machine underneath it.
+/// kernel on which a process is running, not about the machine underneath it.
+///
+/// `SimulatedUnixPlatform.create` admits only the measured combinations: Linux
+/// on either architecture, and Darwin on `Arm64` alone.
 [<RequireQualifiedAccess>]
 type SimulatedUnixArchitecture =
-    /// 64-bit x86. `uname -m` reports `x86_64` on Linux and Darwin alike.
+    /// 64-bit x86. `uname -m` reports `x86_64` on Linux and Darwin alike, but
+    /// no Darwin platform on x86-64 can be built.
     | X64
     /// 64-bit ARM. `uname -m` reports `aarch64` on Linux and `arm64` on Darwin.
     | Arm64
@@ -18,13 +22,19 @@ type SimulatedUnixArchitecture =
 /// A kernel image is built for one page size. x86-64 has only 4 KiB base pages;
 /// a Linux kernel for 64-bit ARM may be built for 4, 16 or 64 KiB; Darwin on
 /// 64-bit ARM uses 16 KiB.
+///
+/// `SimulatedUnixPlatform.create` admits only the measured combinations: 4 KiB
+/// pages for Linux, and 16 KiB pages for Darwin.
 [<RequireQualifiedAccess>]
 type SimulatedPageSize =
-    /// 4096 bytes.
+    /// 4096 bytes. Linux's, on either architecture.
     | FourKiB
-    /// 16384 bytes.
+    /// 16384 bytes. Darwin's; no Linux platform with this page size can be
+    /// built.
     | SixteenKiB
     /// 65536 bytes.
+    ///
+    /// Reserved: no platform with this page size can be built.
     | SixtyFourKiB
 
 [<RequireQualifiedAccess>]

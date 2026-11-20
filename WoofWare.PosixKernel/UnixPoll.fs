@@ -70,22 +70,32 @@ type internal PollRefusal =
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
 type PollOutcome =
-    /// `poll` returned: the `revents` for each entry, in order, raw bits in the
-    /// flavour's own `<poll.h>` numbering, and the return value, which counts
-    /// the entries carrying anything.
+    /// `poll` returned. `revents` holds one value for each entry, in the order
+    /// of the entries, as raw bits in the flavour's own `<poll.h>` numbering.
+    /// `count` is the return value: the number of entries whose `revents` is
+    /// not zero.
+    ///
+    /// The library has written nothing into the process's memory. The client
+    /// stores each value into the `revents` field (an `int16`) of the
+    /// matching `struct pollfd` (see "What every client does" in the README).
     | Answered of revents : int16 list * count : int
-    /// `poll` failed with this errno: `EINVAL` for more entries than any
-    /// process's `RLIMIT_NOFILE` lets it name, which is more than 10240 under
-    /// Darwin and more than 2147483584 under Linux.
+    /// `poll` failed with this errno. This library answers only `EINVAL`, for
+    /// more entries than any process's `RLIMIT_NOFILE` lets it name: more than
+    /// 10240 under Darwin, and more than 2147483584 under Linux.
     | Failed of error : UnixError
-    /// `poll` did not return. The calling thread is parked, and sleeps until
-    /// `UnixWait.wake` wakes it; then
-    /// `UnixPoll.finishPoll` finishes the call.
+    /// `poll` did not return, and the calling thread is now asleep in it.
+    /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
+    /// and once that has woken the thread, finishes the call with
+    /// `UnixPoll.finishPoll` (see "What every client does" in the README).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no
-    /// longer parked, and owes a return to user mode
-    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
-    /// that return says whether the call fails with `EINTR` or restarts.
+    /// longer asleep in the call, and owes a return to user mode.
+    ///
+    /// Before the thread makes any other call, the client calls
+    /// `UnixSignal.onReturnToUser` for it; until then, any other call by the
+    /// thread throws `InvalidOperationException`. That return says whether the
+    /// call fails with `EINTR` or restarts. To restart it, the client makes the
+    /// same call again, with the arguments the process first passed.
     ///
     /// Only a finishing call answers this.
     | Interrupted
@@ -221,20 +231,30 @@ type EpollWaitOutcome =
     /// never fails: a signal interrupts it (`Interrupted`), and what its walk
     /// of the epoll instance consumed stays consumed.
     | Failed of error : UnixError
-    /// `epoll_wait` returned these events, in delivery order: each the
-    /// registration's `data` and the `events` written for it, in Linux's
-    /// `<sys/epoll.h>` numbering (`EpollEvents`). Empty when the call timed
-    /// out, or had a timeout of 0 and found nothing.
+    /// `epoll_wait` returned these events, in delivery order. Each pairs the
+    /// registration's `data` with the event bits reported for it, in Linux's
+    /// `<sys/epoll.h>` numbering (`EpollEvents`). The list is empty when the
+    /// call timed out, or had a timeout of 0 and found nothing.
+    ///
+    /// The library has written nothing into the process's memory. The client
+    /// stores the events into the process's buffer, one `struct epoll_event`
+    /// each, in the layout of the platform's architecture: 12 bytes each on
+    /// x86-64 and 16 on arm64 (`LinuxEpollLimits.eventSize`). See "What every
+    /// client does" in the README.
     | Answered of events : (uint64 * uint32) list
-    /// `epoll_wait` did not return. The calling thread is parked, and sleeps
-    /// until `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wake` wakes it; then `UnixPoll.finishEpollWait` finishes the
-    /// call.
+    /// `epoll_wait` did not return, and the calling thread is now asleep in it.
+    /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
+    /// and once that has woken the thread, finishes the call with
+    /// `UnixPoll.finishEpollWait` (see "What every client does" in the README).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no
-    /// longer parked, and owes a return to user mode
-    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
-    /// that return says whether the call fails with `EINTR` or restarts.
+    /// longer asleep in the call, and owes a return to user mode.
+    ///
+    /// Before the thread makes any other call, the client calls
+    /// `UnixSignal.onReturnToUser` for it; until then, any other call by the
+    /// thread throws `InvalidOperationException`. That return says whether the
+    /// call fails with `EINTR` or restarts. To restart it, the client makes the
+    /// same call again, with the arguments the process first passed.
     ///
     /// Only a finishing call answers this.
     | Interrupted
@@ -287,16 +307,21 @@ module internal EpollWaitRefusal =
         | EpollWaitRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | EpollWaitRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
 
-/// The `event` argument of `epoll_ctl(2)`, as the kernel's copy-in finds it.
+/// The `event` argument of `epoll_ctl(2)`: what the client found when it read
+/// the `struct epoll_event` at the process's pointer.
 ///
-/// The caller classifies it, because only the caller knows what its memory
-/// holds; the consequence is the kernel's, which is `EFAULT` for any operation
-/// but `EPOLL_CTL_DEL` (which never reads it) ahead of every other check.
+/// This library never reads the process's memory, so the client reads the
+/// struct and describes what it found (see "What every client does" in the
+/// README). The kernel decides what an unreadable struct means: `EFAULT`,
+/// ahead of every other check, for every operation except `EPOLL_CTL_DEL`,
+/// which never reads the struct.
 [<RequireQualifiedAccess>]
 type EpollEventArgument =
     /// The pointer names a whole readable `struct epoll_event`, holding these.
-    /// `events` is in Linux's `<sys/epoll.h>` numbering (`EpollEvents`), and
-    /// may carry any bits: `epoll_ctl` rejects none of them outright.
+    /// The struct is 12 bytes on x86-64 and 16 on arm64
+    /// (`LinuxEpollLimits.eventSize`). `events` is in Linux's
+    /// `<sys/epoll.h>` numbering (`EpollEvents`), and may carry any bits:
+    /// `epoll_ctl` rejects none of them outright.
     | Readable of events : uint32 * data : uint64
     /// The pointer is null, or does not name a whole readable
     /// `struct epoll_event`.
@@ -829,7 +854,8 @@ module UnixPoll =
     /// An `ADD` or `MOD` that would succeed with `EPOLLEXCLUSIVE` or
     /// `EPOLLWAKEUP`, which this library does not model, and an `ADD` of
     /// another epoll instance, are refused.
-    /// Under the Darwin flavour every call is refused: Darwin has no epoll.
+    /// Under the Darwin flavour every call throws
+    /// `PlatformNotSupportedException`: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1498,14 +1524,25 @@ module UnixPoll =
             (tryPollIn (Caller.thread caller) entries milliseconds)
             system
 
-    /// `poll(2)`: what each entry reports, and how many entries carry anything;
-    /// or, when nothing does and the timeout lets it, the calling thread sleeps.
+    /// `poll(2)`: what each entry reports, and how many entries report
+    /// anything; or, when none does and the timeout allows it, the calling
+    /// thread goes to sleep in the call.
     ///
-    /// Each entry's `Events`, and each `revents` answered for it, is the raw
-    /// bits in the simulated flavour's own `<poll.h>` numbering. The count is
-    /// `poll(2)`'s own return value, and it is neither the number of entries
-    /// nor the number of *conditions*: it counts entries carrying something.
-    /// A negative descriptor reports nothing and is not counted.
+    /// `entries` is the process's array of `struct pollfd`, as the client read
+    /// it from the process's memory. This function has no way to say that the
+    /// array could not be read, so a client whose process passed an unreadable
+    /// array answers that call itself. The kernel screens the number of
+    /// entries before it reads the array, so a count that this function
+    /// answers with `EINVAL`, or refuses, gets that answer whether or not the
+    /// array is readable.
+    ///
+    /// Each entry's `Events`, and each `revents` answered for it, is raw bits in
+    /// the simulated flavour's own `<poll.h>` numbering. The client stores each
+    /// answered `revents` into the matching entry of the process's array; this
+    /// library writes nothing there. The count is the return value of the
+    /// process's call: the number of entries whose `revents` is not zero, which
+    /// is neither the number of entries nor the number of conditions. A negative
+    /// descriptor reports nothing and is not counted.
     ///
     /// **Under Linux** every bit is answered as a real kernel answers it: each
     /// named bit is reported when the descriptor presents it and the entry
@@ -1526,25 +1563,33 @@ module UnixPoll =
     /// open; one descriptor named by several entries reports into the last of
     /// them alone; and a reported hang-up suppresses `POLLOUT`. A call with
     /// more than 10240 entries fails with `EINVAL`. Refused: more than 256
-    /// entries and at most 10240; a socket
-    /// whose filters are not modelled; a kqueue asked for a read bit; and a
-    /// call that would sleep with a vnode filter registered, or with a
-    /// negative timeout other than -1.
+    /// entries and at most 10240, for a process without privilege; more than
+    /// 1024 entries and at most 10240, for a privileged one; a socket whose
+    /// filters are not modelled; a kqueue asked for a read bit; and a call that
+    /// would sleep with a vnode filter registered, or with a negative timeout
+    /// other than -1.
     ///
-    /// `milliseconds` is read as the flavour reads it. Zero answers now. A
-    /// positive timeout, when nothing is reported, parks the caller's thread
-    /// until something is or `milliseconds` have passed on the machine's
-    /// monotonic clock, whichever is first; at the deadline and not before, the call finishes
-    /// with 0. -1 is infinite on both, and under Linux so is every negative
-    /// timeout. A wait with nothing to watch and no deadline parks until a
-    /// signal ends it. A foreign-function layer that screens some negative
-    /// values itself does that before calling.
+    /// `milliseconds` is read as the flavour reads it. Zero answers at once.
+    /// When nothing is reported, a positive timeout puts the caller to sleep in
+    /// the call until something is reported or until `milliseconds` have passed
+    /// on the machine's monotonic clock, whichever comes first. The call
+    /// finishes with 0 at the deadline and not before. -1 is infinite on both
+    /// flavours, and under Linux so is every negative timeout. A wait with
+    /// nothing to watch and no deadline sleeps until a signal ends it. A client
+    /// whose foreign-function layer screens some negative values itself does
+    /// that before calling.
     ///
-    /// A poll with anything to report is answered at every timeout. The system
-    /// comes back unchanged unless the thread parked.
+    /// Nothing wakes a sleeping caller by itself, and the clock moves only when
+    /// the client advances it (`UnixSystem.advanceClock`; `UnixWait.deadlines`
+    /// says when the next deadline falls due). The client calls `UnixWait.wake`,
+    /// and finishes a woken caller's call with `finishPoll` (see "What every
+    /// client does" in the README).
     ///
-    /// The caller's thread must not already be parked: a thread blocks in one
-    /// syscall at a time, and a parked `poll` is finished with `finishPoll`.
+    /// A poll with anything to report is answered whatever its timeout. The
+    /// system comes back unchanged unless the caller went to sleep.
+    ///
+    /// The caller must not already be asleep in a call: a thread blocks in one
+    /// call at a time.
     let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (entries : PollEntry list)
@@ -1707,7 +1752,8 @@ module UnixPoll =
     /// the new descriptor `FD_CLOEXEC`. Any other bit is `EINVAL`, and changes
     /// nothing.
     ///
-    /// Under the Darwin flavour every call is refused: Darwin has no epoll.
+    /// Under the Darwin flavour every call throws
+    /// `PlatformNotSupportedException`: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1830,26 +1876,31 @@ module UnixPoll =
     /// behind those, in the order reported, so that the next wait polls its
     /// target again; each `EPOLLONESHOT` registration it reports is disarmed,
     /// and nothing makes it pending again until an `epollCtl` `MOD` re-arms
-    /// it. A wait
-    /// that finds something answers it
-    /// whatever the timeout. One that finds nothing answers no events at once
-    /// for a timeout of 0; parks the caller's thread for a positive timeout
-    /// until an event is deliverable or `milliseconds` have passed on the
-    /// machine's monotonic clock; and parks it until an event is deliverable for any negative
-    /// timeout, which is infinite. A parked wait is finished with
-    /// `finishEpollWait`. The walk's consumption stands whether or not the call
-    /// then sleeps.
+    /// it. A wait that finds something answers it whatever the timeout. A wait
+    /// that finds nothing answers no events at once for a timeout of 0. For a
+    /// positive timeout, the caller goes to sleep in the call until an event is
+    /// deliverable or `milliseconds` have passed on the machine's monotonic
+    /// clock. For any negative timeout, which is infinite, it sleeps until an
+    /// event is deliverable. The client finishes a sleeping wait with
+    /// `finishEpollWait`. What the walk consumed stays consumed, whether or not
+    /// the caller then sleeps.
     ///
-    /// A call that delivers events copies them out to `buffer`, which must be
-    /// `Mapped`: this library does not answer for a copy that faults or a buffer
-    /// whose bytes it cannot hold, and refuses it. A call that delivers
-    /// nothing never looks at the buffer past the screen.
+    /// Nothing wakes a sleeping caller by itself, and the clock moves only when
+    /// the client advances it (`UnixSystem.advanceClock`). See "What every
+    /// client does" in the README. Of several threads asleep on one epoll
+    /// instance, `UnixWait.wake` wakes one for each event.
     ///
-    /// Of several threads parked on one epoll instance, one event wakes one of them (see
-    /// `UnixWait.wake`).
+    /// The events come back in `EpollWaitOutcome.Answered`, and the client
+    /// stores them into the process's buffer: this library writes nothing
+    /// there. `buffer` only describes where that buffer is. A call that
+    /// delivers events needs it to be `UserBuffer.Mapped`: for any other
+    /// buffer, this library cannot say what the store does, and refuses the
+    /// call. A call that delivers nothing never looks at the buffer after the
+    /// screen.
     ///
-    /// The caller's thread must not already be parked. Under the Darwin flavour
-    /// every call is refused: Darwin has no epoll.
+    /// The caller must not already be asleep in a call. Under the Darwin
+    /// flavour every call throws `PlatformNotSupportedException`: Darwin has no
+    /// epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1961,8 +2012,9 @@ module UnixPoll =
     /// clears the park. A call with a timeout whose waking signal has gone is
     /// refused, since what it does is unmeasured.
     ///
-    /// Delivering events copies them out to the buffer the call was made with;
-    /// see `epollWait` for the buffers that refuses.
+    /// The events come back in `EpollWaitOutcome.Answered`, and the client
+    /// stores them into the buffer the call was made with; see `epollWait` for
+    /// the buffers for which this library refuses the call.
     ///
     /// `caller` must be parked in an `epoll_wait`, and woken (`UnixWait.wake`).
     /// </summary>

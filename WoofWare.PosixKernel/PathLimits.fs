@@ -1,11 +1,14 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// The longest a single path component is allowed to be, before the kernel
-/// starts refusing syscalls that try to use that path.
+/// The longest a single path component is allowed to be. A syscall whose path holds a longer
+/// component answers <c>ENAMETOOLONG</c>.
 /// </summary>
 /// <remarks>
 /// Our modelled platforms differ on how they measure this, so this is a DU.
+/// <para />
+/// The kernel already applies its platform's limit, which <c>SimulatedUnixPlatform.pathLimits</c> holds.
+/// A client needs this type only to build a <c>PathLimits</c> by hand with <c>PathLimits.create</c>.
 /// <para />
 /// This is actually a property of the filesystem, not the kernel, but for now
 /// WoofWare.PosixKernel models one filesystem per flavour.
@@ -93,6 +96,10 @@ type SpliceLengthRecheck =
 /// <remarks>
 /// These differ substantially between platforms.
 /// Use <c>SimulatedUnixPlatform.pathLimits</c> to produce one of these for a given platform.
+/// <para />
+/// The kernel already applies its platform's limits. A client reads them to learn what the kernel will do
+/// (see "Flavours and divergence from host platforms" in the README), and passes them to
+/// <c>PathWalk.resolveExistingFromRoot</c>.
 /// </remarks>
 [<Struct>]
 type PathLimits =
@@ -351,20 +358,22 @@ type PathArgumentBytes =
 [<RequireQualifiedAccess>]
 module internal PathArgument =
 
-    /// What path the kernel would look up, given a syscall's path argument:
-    /// what `getname()` answers when it copies the argument in. `limits` is the
-    /// kernel's, from `SimulatedUnixPlatform.pathLimits`.
+    /// The path which the kernel would look up, given a syscall's path
+    /// argument: what `getname()` answers when it copies the argument in.
+    /// `limits` is the kernel's, from `SimulatedUnixPlatform.pathLimits`.
     ///
-    /// The error is `EFAULT`, when the bytes could not be read at all, or
-    /// `ENAMETOOLONG`, when they hold no NUL within `PATH_MAX` bytes. Those are
-    /// the only ways a pathname's *bytes* can be wrong, everything else being a
-    /// question about what they resolve to.
+    /// The error is `EFAULT` when the client could not read the process's
+    /// memory at all (`PathArgumentBytes.Unreadable`), or `ENAMETOOLONG` when
+    /// that memory held no NUL within `PATH_MAX` bytes, so that the client
+    /// passed `pathMaxBytes` bytes or more. Those are the only ways in which a
+    /// pathname's *bytes* can be wrong. Everything else is a question about
+    /// what they resolve to.
     ///
-    /// Which one it is never changes where the failure surfaces. Measured on
-    /// both kernels: with a source that does not exist, an unreadable
-    /// destination pointer and an over-long destination path are reported at the
-    /// same point in `rename(2)` — above the source's resolution on Linux, below
-    /// it on Darwin — so a caller orders "the argument was copied in" as one
+    /// Both errors surface at the same point in a call. Measured on both
+    /// kernels: when the source of a `rename(2)` does not exist, an unreadable
+    /// destination pointer and an over-long destination path are reported at
+    /// the same point (before the source is resolved on Linux, after it on
+    /// Darwin). So each syscall treats "the argument was copied in" as one
     /// step. See `RenameWalkOrder`.
     let copyIn (limits : PathLimits) (argument : PathArgumentBytes) : Result<UnixPath, UnixError> =
         // A forged `PathLimits` has a `PathMaxBytes` of zero, which is not very

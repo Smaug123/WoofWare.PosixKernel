@@ -2,29 +2,43 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// How far a syscall got: it is over, or it has stopped at the point where the
-/// kernel copies from the caller's memory.
+/// How far a syscall got: either it is over, or it has stopped at the point
+/// where the kernel copies from the process's memory.
 ///
-/// A call stops there because the client may not be able to produce the bytes
-/// without failing: a foreign-function layer whose memory is not a flat array
-/// has to resolve the pointer, and resolving it can be a mistake in itself.
-/// Every answer the call gives *without* reading that memory comes first, so
-/// that the client reads it only where a real kernel would.
+/// This library never reads the process's memory, so the client reads it and
+/// hands over what it found. A call stops at the copy because what happens
+/// before the copy is observable: a bad descriptor answers `EBADF` whatever
+/// the buffer holds. Every answer that the call gives without reading that
+/// memory therefore comes first, as `Answered`, and the client reads the
+/// memory only where a real kernel would. A client that holds every argument
+/// already can make the call through `UnixSystem.step` instead, which never
+/// stops (see "Calls that copy in from the caller's memory" in the README).
 ///
-/// Resuming a `'Paused` with what it asks for answers `'Answer`, the same type
-/// `Answered` carries, or, where the call copies again after that, another
-/// `CallProgress` with the same `'Answer`. The one exception is a write's:
-/// `UnixReadWrite.writeWithBytes` answers beside the `'Answer` the bytes the
-/// write delivered out of the machine, which a write answered before its copy
-/// has none of. Each paused type says what to copy: one that copies bytes has
-/// a `copyRange`, and its module the function that resumes it.
+/// Each paused type says what to copy: one that copies bytes has a
+/// `copyRange` (or `copyRanges`) in its own module. The function that resumes
+/// it is in the call's family module, such as `UnixReadWrite.writeWithBytes`
+/// for a `PausedWrite`. The resumption answers `'Answer`, the type that
+/// `Answered` carries; where the call copies again after that, it answers
+/// another `CallProgress` with the same `'Answer`. The one exception is
+/// `UnixReadWrite.writeWithBytes`, which also answers the bytes that the write
+/// delivered to a client that drains a pipe (`Delivery`).
+///
+/// The paused value holds the whole system as it stood at the copy, so the
+/// client resumes it before it does anything else to the system (see "What
+/// every client does" in the README). Resuming the same paused value twice
+/// gives two independent answers from the same system.
+///
+/// The resumption takes bytes and nothing else. It has no way to say that the
+/// copy faulted, or that only some of the bytes could be read: a buffer that
+/// faults is described before the call, as `UserBuffer.Unmapped`, and this
+/// library cannot express a buffer that is readable only in part.
 [<RequireQualifiedAccess>]
 type CallProgress<'Paused, 'Answer> =
-    /// The call is over, without reading (any more of) the caller's memory.
+    /// The call is over, without reading (any more of) the process's memory.
     | Answered of answer : 'Answer
-    /// The call has stopped where the kernel copies from the caller's memory.
+    /// The call has stopped where the kernel copies from the process's memory.
     /// `paused` holds the system and everything the call has decided so far,
-    /// so nothing else can be made to happen in between.
+    /// so nothing else can happen to the system in between.
     | NeedsCopyIn of paused : 'Paused
 
 [<RequireQualifiedAccess>]
@@ -68,14 +82,18 @@ module internal CallProgress =
             )
         | _ -> ()
 
-/// The bytes of a buffer the caller passed that a paused call copies next:
-/// `ByteCount` bytes, starting `FirstByte` bytes into the buffer.
+/// The bytes that a paused call copies next from a buffer which the process
+/// passed: `ByteCount` bytes, starting `FirstByte` bytes after the pointer the
+/// process passed.
 type CopyRange =
     {
-        /// How far into the caller's buffer the bytes start. Zero unless part of
-        /// the buffer was copied before, as by a write that slept partway.
+        /// How many bytes into the buffer the copy starts, counted from the
+        /// pointer the process passed. Zero unless part of the buffer was
+        /// copied before, as by a write that slept partway.
         FirstByte : int
-        /// How many bytes the call copies: exactly this many must be supplied.
+        /// How many bytes the call copies. The client supplies exactly this
+        /// many; the resuming function throws `InvalidOperationException` for
+        /// any other number.
         ByteCount : int
     }
 

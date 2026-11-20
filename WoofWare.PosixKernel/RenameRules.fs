@@ -35,9 +35,10 @@ type RenameWalkOrder =
     /// "/", "." or ".." is EBUSY before either final name is looked up, so
     /// `rename("nope", ".")` is EBUSY, not ENOENT.
     | ParentsThenFinals
-    /// The source finished before the destination is looked at at all — its
-    /// pathname included, and including the two refusals Darwin's source-side
-    /// `namei` makes for itself under rename semantics.
+    /// The kernel finishes with the source before it looks at the destination
+    /// at all, even at the destination's pathname. Finishing with the source
+    /// includes the two errnos that Darwin's lookup of the source answers for
+    /// itself under rename semantics.
     | SourceThenDestination
 
 /// Where Linux's `rename(2)` refuses a destination that is the source's own
@@ -70,12 +71,19 @@ type RenameRefusalOrder =
 
 // The ordering half lives in `RenameRules.linuxVerdict` and
 // `RenameRules.darwinVerdict`, for the reason `UnlinkRules.verdict` gives.
-/// Everything a kernel does differently when `rename(2)` moves a name.
+/// The orders in which a kernel's `rename(2)` resolves its paths and answers
+/// its errnos, where the flavours, and Linux's versions, differ.
 ///
-/// `rename` diverges more than any operation before it: the two flavours
-/// disagree about where the permission checks sit, about *which* directory's
-/// write bit a directory-over-directory rename even consults, and about where
-/// the no-op sits.
+/// The flavours disagree about where the permission checks come, about which
+/// directory's write bit a rename of a directory over a directory consults,
+/// and about whether a rename that changes nothing succeeds before or after the
+/// permission checks. The walk
+/// of each path is `SimulatedUnixPlatform.finalNameTrailingSeparator`'s.
+///
+/// `SimulatedUnixPlatform.renameRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 ///
 /// Measured on macOS 26.6/APFS at uid 501 and Linux 6.x arm64 at uid 1000 and
 /// uid 0, one fresh tree per row; `docs/probes/rename/` holds the probes.
@@ -84,8 +92,8 @@ type RenameRules =
         /// Which path is resolved first, and how far, before the other is
         /// looked at. See `RenameWalkOrder`.
         WalkOrder : RenameWalkOrder
-        /// The order of the refusals judged once both paths are resolved. See
-        /// `RenameRefusalOrder`.
+        /// The order of the errnos that the kernel judges once both paths are
+        /// resolved. See `RenameRefusalOrder`.
         RefusalOrder : RenameRefusalOrder
     }
 

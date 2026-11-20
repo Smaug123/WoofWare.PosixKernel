@@ -171,21 +171,21 @@ module internal ReadLinkRefusal =
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
 
-/// What `readlink(2)` puts in the caller's buffer and what it returns.
+/// What the process's `readlink(2)` stores in its buffer, and what it returns.
+/// This library has stored nothing.
 [<RequireQualifiedAccess ; NoComparison>]
 type ReadLinkAnswer =
-    /// Place these bytes in the caller's buffer; the entry point returns how
-    /// many there are.
+    /// The client stores these bytes at the start of the process's buffer, and
+    /// the process's call returns how many there are.
     ///
-    /// **No terminator**, and truncated to the capacity rather than refused:
-    /// `readlink` writes exactly the bytes it reports and reports success by a
+    /// **No terminator**, and already cut to the buffer's capacity: `readlink`
+    /// writes exactly the bytes it reports and reports success by a
     /// non-negative count, so a NUL would corrupt the byte after a target that
-    /// exactly fits. Truncation is not an error path: `readlink(2)` truncates
-    /// silently, so a result that fills the buffer is how a caller learns to
+    /// exactly fits. Truncation is not an error: `readlink(2)` truncates
+    /// silently, and a result that fills the buffer is how a process learns to
     /// retry with a larger one.
     | Reported of bytes : ImmutableArray<byte>
-    /// The entry point returns -1 and the caller stores `error` wherever its
-    /// libc keeps errno.
+    /// The process's call returns -1 with errno set to `error`.
     | Failed of error : UnixError
 
 /// What kind of object one directory entry names.
@@ -223,13 +223,21 @@ module DirectoryEntryKind =
 
 /// One entry of a directory, as `getdents(2)` reports it: the facts in a
 /// `struct linux_dirent64` or a Darwin `struct direntry`, without either's
-/// layout.
+/// layout. The client stores it into the process's buffer in that layout.
+///
+/// There is no offset (`d_off`, or Darwin's `d_seekoff`): this library
+/// positions a directory description by name, not by offset. Whatever offset
+/// the client stores there, an `lseek` of the description to any offset but 0
+/// makes the next read refused (see `UnixNamespace.readDirectoryEntry`).
 type DirectoryRecord =
     {
-        /// `d_ino`: the inode the entry names. For `.` that is the directory
-        /// itself and for `..` its parent, as `stat` would report them, but
-        /// for the root of the device filesystem `..` is that root itself,
-        /// its own parent within the filesystem mounted there.
+        /// `d_ino`: the inode which the entry names. For `.` that is the
+        /// directory itself and for `..` its parent, as `stat` would report
+        /// them, except that for the root of the device filesystem `..` is
+        /// that root itself. For a name over which a filesystem is mounted,
+        /// such as `dev` in the root directory, it is the number of the
+        /// covered directory (`Mount.Covered`), not the mounted root which
+        /// `stat` of the name reports.
         Inode : InodeNumber
         /// `d_name`.
         Name : PathComponent
@@ -241,11 +249,12 @@ type DirectoryRecord =
 /// What reading the next entry of a directory descriptor answers.
 [<RequireQualifiedAccess>]
 type ReadDirectoryAnswer =
-    /// The next entry. The description's position has moved past it.
+    /// The next entry, which the client stores into the process's buffer. The
+    /// description's position has moved past it.
     | Entry of record : DirectoryRecord
-    /// There is nothing further: `getdents` returns 0.
+    /// There is nothing further: the process's `getdents` returns 0.
     | EndOfDirectory
-    /// `getdents` returns -1 with this errno.
+    /// The process's `getdents` returns -1 with errno set to `error`.
     | Failed of error : UnixError
 
 /// Why this kernel will not say what reading a directory descriptor yields.
@@ -286,11 +295,12 @@ type internal RenameSourceProgress =
 /// A `rename(2)` or `renameat(2)` that has run as far as the point where the
 /// kernel copies its destination pathname in, and stopped there.
 ///
-/// It stops rather than taking both pathnames up front because *reading* a
-/// pathname out of a process's address space can fail — and on both flavours
-/// there are calls that finish without ever reading the destination, where
-/// failing to read it would answer about a pathname `rename(2)` never touched.
-/// The caller supplies the bytes when handed one of these, and not before.
+/// It stops rather than taking both pathnames up front because the client may
+/// fail to read a pathname out of the process's memory. On both flavours some
+/// calls finish without ever reading the destination, and there a failure to
+/// read it must not decide the answer. The client reads the destination's
+/// bytes when it is handed one of these, and not before (see "What every
+/// client does" in the README).
 ///
 /// Opaque: the only thing to do with one is give it to
 /// `UnixNamespace.renameWithDestination`.
@@ -780,6 +790,26 @@ module internal OpenFlagWord =
         else
             Decoding.Decoded decoded
 
+/// The syscalls that open, list, create, remove, rename and link names in the
+/// filesystem.
+///
+/// Each path argument is a `PathArgumentBytes`: the bytes which the client
+/// read at the process's pointer, or the client's report that it could not
+/// read them. The kernel copies the argument in at the point where the real
+/// call does.
+///
+/// "A path this kernel will not resolve" is one whose walk this library
+/// refuses. On Darwin the usual case is a lookup of a name which a directory
+/// does not bind byte for byte, while the directory binds another name that
+/// might be an equivalent Unicode spelling of it (see "Names in the
+/// filesystem" in the README). The rarer cases are a name longer than
+/// `NAME_MAX` on Darwin's devfs, an empty path that names a pipe, a socket or
+/// an event queue, and, under Linux's `fs.protected_symlinks`, a protected
+/// symbolic link far down a chain of links.
+///
+/// The device filesystem has refusals of its own, for some calls that would
+/// create, remove or rename a name there; "Flavours and divergence from host
+/// platforms" in the README says which.
 [<RequireQualifiedAccess>]
 module UnixNamespace =
 
@@ -1318,35 +1348,46 @@ module UnixNamespace =
     ///
     /// `flags` is raw, in the simulated flavour's own `<fcntl.h>` numbering,
     /// which differs between Linux's architectures as well as between
-    /// flavours. A bit the flavour does not define is ignored, as both
-    /// kernels ignore it. A bit it defines is either one this kernel models
-    /// or a refusal naming it, never silently
-    /// dropped.
+    /// flavours. A bit which the flavour does not define is ignored, as both
+    /// kernels ignore it. A bit which it defines is either modelled or
+    /// refused (`UnmodelledOpenFlag`), never silently dropped.
     ///
-    /// The word is screened before the path is copied in, so its EINVAL comes
-    /// ahead of EFAULT, ENAMETOOLONG, EEXIST and EISDIR: on both flavours for
-    /// `O_CREAT|O_DIRECTORY`, and on Darwin for access mode 3. Then `path` is
-    /// the argument's bytes, copied in: EFAULT if they were unreadable,
-    /// ENAMETOOLONG if they run past `PATH_MAX`.
+    /// The kernel screens the flag word before it copies the path in, so the
+    /// word's EINVAL comes ahead of EFAULT, ENAMETOOLONG, EEXIST and EISDIR:
+    /// on both flavours for `O_CREAT|O_DIRECTORY`, and on Darwin for access
+    /// mode 3. Then the kernel copies `path` in. It answers EFAULT if the
+    /// client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     ///
     /// Named for the path it takes, `open` being an F# keyword. It opens
     /// directories too, for reading.
     ///
-    /// `mode` is raw and **unvalidated**, and must stay that way:
-    /// callers commonly pass 0666 even for a read-only open of an existing file,
-    /// and a kernel accepts that, so refusing a nonzero mode without `O_CREAT`
-    /// would refuse an ordinary read. It is read only when a file is actually created,
-    /// and then masked rather than rejected: measured, `mode` 0o10777 creates
-    /// 0o0755 on both flavours, so a bit above the permission word is dropped
-    /// exactly as the platform's own mask drops it.
+    /// `mode` is raw and **unvalidated**, and must stay that way: processes
+    /// commonly pass 0666 even for a read-only open of an existing file, and a
+    /// kernel accepts that, so refusing a nonzero mode without `O_CREAT` would
+    /// refuse an ordinary read. The kernel reads `mode` only when it creates a
+    /// file, and then masks it rather than rejecting it: measured, `mode`
+    /// 0o10777 creates 0o0755 on both flavours, so a bit above the permission
+    /// word is dropped exactly as the platform's own mask drops it.
     ///
-    /// Refused, before anything is read or changed, for a flag word this kernel
-    /// does not model, for an `O_TRUNC` open whose effect
-    /// on set-ID bits is unmeasured, and when no descriptor below the bound
-    /// (`SimulatedUnixPlatform.descriptorBound`) is free: under Darwin ahead of
-    /// every errno, and under Linux after the word's and the copy-in's (an
-    /// empty path's ENOENT among them) and before the walk's. Every other
-    /// outcome is a descriptor or an errno.
+    /// Refused:
+    ///  * before anything is read or changed, for a flag word holding a bit
+    ///    which this kernel does not model, for Linux's access mode 3, and for
+    ///    `O_DIRECTORY` with a write access mode, `O_TRUNC` or `O_NOFOLLOW`;
+    ///  * when no descriptor below the bound
+    ///    (`SimulatedUnixPlatform.descriptorBound`) is free: under Darwin
+    ///    ahead of every errno, and under Linux after the flag word's and the
+    ///    copy-in's errnos (an empty path's ENOENT among them) and before the
+    ///    walk's;
+    ///  * for a path this kernel will not resolve, and where the device
+    ///    filesystem refuses the open (see `UnixNamespace`);
+    ///  * for a character device node for which this kernel has no driver,
+    ///    once every other check has passed. On Darwin that is every node,
+    ///    `/dev/null` included; on Linux, every node but those of the devices
+    ///    in `CharacterDevice.all`.
+    ///
+    /// Every other outcome is a descriptor or an errno.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -1580,28 +1621,35 @@ module UnixNamespace =
             (tryReadlinkIn path destination capacity)
             system
 
-    /// `readlink(2)`: report what the symbolic link at `path` points at. It is
+    /// `readlink(2)`: report the target of the symbolic link at `path`. It is
     /// `readlinkat` from `AT_FDCWD`.
     ///
-    /// Changes nothing and returns no system. POSIX lets a successful
+    /// This changes nothing and returns no system. POSIX lets a successful
     /// `readlink` mark the link's access time for update, but neither
     /// flavour's filesystem moves it as this kernel mounts it: APFS never
     /// does, and Linux's tmpfs is mounted `noatime`.
     ///
-    /// `capacity` is the caller's buffer size. A size that is not positive is
-    /// answered as this system's flavour answers it: EINVAL before the path is
-    /// copied in on Linux and for a negative size on Darwin, and zero bytes
-    /// from a resolved link on Darwin for a size of zero.
+    /// `capacity` is the size of the process's buffer. A size that is not
+    /// positive is answered as this system's flavour answers it: on Linux,
+    /// EINVAL before the path is copied in; on Darwin, EINVAL for a negative
+    /// size, and zero bytes from a resolved link for a size of zero.
     ///
-    /// The link's own mode is consulted as this system's flavour consults it
-    /// (`SimulatedUnixPlatform.linkReadRule`): never on Linux, and on Darwin a
-    /// caller whose standing selects a triple without the read bit gets
-    /// EACCES, ahead of a size of zero and of the buffer. A privileged Darwin
-    /// caller is refused an answer.
+    /// The kernel then copies `path` in. It answers EFAULT if the client could
+    /// not read it (`PathArgumentBytes.Unreadable`), and ENAMETOOLONG if the
+    /// process's memory held no NUL within `PathLimits.pathMaxBytes` bytes.
     ///
-    /// `path` is the argument's bytes, copied in after that screen and before
-    /// anything else: EFAULT if they were unreadable, ENAMETOOLONG if they run
-    /// past `PATH_MAX`.
+    /// Whether the link's own mode matters is the flavour's rule
+    /// (`SimulatedUnixPlatform.linkReadRule`). On Linux it never does. On
+    /// Darwin an unprivileged caller without the read bit in the triple which
+    /// its standing selects gets EACCES, ahead of a size of zero and of the
+    /// buffer; a privileged caller reads every link.
+    ///
+    /// `destination` is the client's description of the process's buffer. The
+    /// kernel looks at it only when it has bytes to report, last of all:
+    /// `UserBuffer.Unmapped` is EFAULT, and `UserBuffer.Opaque` or
+    /// `UserBuffer.Addressless` is refused. On success the client stores the
+    /// bytes of `ReadLinkAnswer.Reported` there (see "What every client does"
+    /// in the README).
     let readlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -1822,23 +1870,37 @@ module UnixNamespace =
             (tryReadDirectoryEntryIn fd)
             system
 
-    /// Read the next entry of the directory `fd` names, and move its open file
-    /// description's position past it: one record of `getdents(2)` (Linux) or
-    /// `getdirentries(2)` (Darwin), without either's byte layout.
+    /// Read the next entry of the directory which `fd` names, and move its open
+    /// file description's position past it: one record of `getdents(2)`
+    /// (Linux) or `getdirentries(2)` (Darwin), without either's byte layout.
+    /// The client stores the record into the process's buffer in the
+    /// platform's layout (see `DirectoryRecord`).
     ///
-    /// The position is the description's, so every descriptor `dup(2)` made
-    /// for it reads onward from the same place, and `lseek(fd, 0, SEEK_SET)`
-    /// starts again from the first entry.
+    /// To fill a buffer with several records, the client calls this once per
+    /// record. Every system is an immutable value, so when a record does not
+    /// fit, the client carries on from the system it had before that call, and
+    /// the entry stays next. This library takes no buffer, so what the
+    /// process's call answers for a buffer too small for even one record, or
+    /// one the client cannot write, is for the client to decide.
+    ///
+    /// The position belongs to the description, so every descriptor which
+    /// `dup(2)` made for it reads onward from the same place, and
+    /// `lseek(fd, 0, SEEK_SET)` starts again from the first entry. After an
+    /// `lseek` to any other offset, the next read is refused (see
+    /// `DirectoryPosition.Unenumerable`), except that on Linux a removed
+    /// directory still answers ENOENT.
     ///
     /// The names come in this library's own order, which matches no real
     /// filesystem, followed by `..` and `.`, at the *end*, where ext4 has been
     /// seen to put them; `readdir(3)` fixes no position for either. A
-    /// directory that `rmdir` has since removed yields nothing more.
+    /// directory which `rmdir` has since removed yields nothing more: Linux
+    /// answers ENOENT, and Darwin answers the end of the directory.
     ///
     /// A call that yields an entry moves the directory's access time as
     /// `UnixReadWrite.read` moves a file's: it is a `getdents(2)` into a
     /// buffer with room for one record. A call at the end moves it the same
-    /// way on Linux, and moves nothing on Darwin.
+    /// way on Linux and on Darwin's devfs, and moves nothing elsewhere on
+    /// Darwin.
     let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -1959,16 +2021,18 @@ module UnixNamespace =
     /// `mkdir(2)`: bind a new directory at `path`. It is `mkdirat` from
     /// `AT_FDCWD`.
     ///
-    /// `mode` is raw, exactly as the caller passed it, so what the created
-    /// directory's permissions actually are depends on the umask and, on one
-    /// flavour, on the parent's set-group-ID bit. `MkDirRules` holds that.
+    /// `mode` is raw, exactly as the caller passed it, so the new directory's
+    /// permissions depend on the umask and, on one flavour, on the parent's
+    /// set-group-ID bit. `MkDirRules` holds that rule.
     ///
-    /// Refuses only a path this kernel will not resolve:
-    /// every other outcome is a success or an errno, the rules having been
-    /// measured on both flavours.
+    /// Refused only for a path this kernel will not resolve, and where the
+    /// device filesystem refuses the call (see `UnixNamespace`). Every other
+    /// outcome is a success or an errno, measured on both flavours.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let mkdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -2173,7 +2237,7 @@ module UnixNamespace =
     /// any type but a FIFO EPERM to a caller without privilege, each before
     /// the path is copied in. Darwin's privileged caller is EINVAL for any
     /// type but a FIFO or a device only once the path has been found free.
-    /// Then `path` is copied in (EFAULT, ENAMETOOLONG),
+    /// Then `path` is copied in (EFAULT or ENAMETOOLONG; see `PathArgumentBytes`),
     /// a relative path starts where `dirfd` says, as every `*at` call's does,
     /// and the walk never follows a final
     /// symbolic link. A regular file (`S_IFREG`, or a type field of 0) is
@@ -2296,12 +2360,14 @@ module UnixNamespace =
     /// `unlink(2)`: remove the name `path`, and the inode it named if nothing
     /// else holds it. It is `unlinkat` from `AT_FDCWD` with no flags.
     ///
-    /// Every outcome is a success or an errno, except where this kernel will
-    /// not resolve the path, and where the name is on the device filesystem. A
-    /// refusal changes nothing.
+    /// Every outcome is a success or an errno, except that the call is refused
+    /// for a path this kernel will not resolve, and where the device
+    /// filesystem refuses it (see `UnixNamespace`). A refusal changes nothing.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let unlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -2406,12 +2472,14 @@ module UnixNamespace =
     /// `rmdir(2)`: remove the empty directory `path` names. It is `unlinkat`
     /// from `AT_FDCWD` with `AT_REMOVEDIR`.
     ///
-    /// Every outcome is a success or an errno, except where this kernel will
-    /// not resolve the path, and where the name is on the device filesystem. A
-    /// refusal changes nothing.
+    /// Every outcome is a success or an errno, except that the call is refused
+    /// for a path this kernel will not resolve, and where the device
+    /// filesystem refuses it (see `UnixNamespace`). A refusal changes nothing.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let rmdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -2921,9 +2989,10 @@ module UnixNamespace =
     /// pathname the kernel has just reached the point of copying in. A
     /// relative destination starts where the paused call's `newdirfd` says.
     ///
-    /// Every outcome is a success or an errno, except where this kernel will
-    /// not resolve a path, where a path names a mount point in an unmeasured way,
-    /// and where the source is on the device filesystem. A refusal changes
+    /// Every outcome is a success or an errno, except that the call is refused
+    /// for a path this kernel will not resolve (see `UnixNamespace`), for a
+    /// combination of paths naming a mount point whose answer has not been
+    /// measured, and for a source on the device filesystem. A refusal changes
     /// nothing.
     let renameWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : PathArgumentBytes)

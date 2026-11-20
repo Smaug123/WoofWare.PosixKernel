@@ -272,6 +272,12 @@ type DarwinFileSystemStatistics =
 
 /// What a successful `statfs(2)` or `fstatfs(2)` reports, in the flavour's own
 /// struct.
+///
+/// The kernel may decline to state some groups of fields, and reading such a
+/// group throws `UnmodelledException`. A client that fills the process's
+/// whole `struct statfs` reads every group, so it meets those refusals then:
+/// on Darwin's default APFS mount, for example, the block and file counts are
+/// always refused.
 [<RequireQualifiedAccess>]
 type FileSystemStatistics =
     /// Linux's `struct statfs`.
@@ -282,9 +288,12 @@ type FileSystemStatistics =
 /// What `statfs(2)` or `fstatfs(2)` does.
 [<RequireQualifiedAccess>]
 type FileSystemStatisticsAnswer =
-    /// The call succeeded and reported these fields.
+    /// The call succeeded. The client stores these fields into the process's
+    /// `struct statfs`, in the platform's layout, and the process's call
+    /// returns 0. Reading some groups of fields may throw
+    /// `UnmodelledException` (see `FileSystemStatistics`).
     | Reported of statistics : FileSystemStatistics
-    /// The call failed with this errno.
+    /// The process's call returns -1 with errno set to `error`.
     | Failed of error : UnixError
 
 [<RequireQualifiedAccess>]

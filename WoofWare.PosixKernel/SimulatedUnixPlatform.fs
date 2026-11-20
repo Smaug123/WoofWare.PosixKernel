@@ -117,37 +117,37 @@ type SimulatedUnixPlatformError =
         architecture : SimulatedUnixArchitecture *
         pageSize : SimulatedPageSize
 
-/// Identity of the Unix-shaped platform the simulated process believes it is
-/// running on: what `uname(2)` reports, and the flavour every other
-/// platform-dependent answer follows.
+/// The Unix platform which the simulated process believes it is running on: a
+/// kernel (its flavour, the version of the source from which it was built, and
+/// for Linux how it was built), an architecture, a page size, and the release
+/// string that `uname(2)` reports.
 ///
-/// This is a value in kernel state rather than a host read, for the same
-/// reason `ProcessorCount` is: reading the host's `uname(2)` would make a
-/// replay depend on the machine that produced it — and worse, programs branch
-/// on the platform they find (feature detection, quirk workarounds), so
-/// letting the host leak in here would change their *control flow* between
-/// runs.
+/// The client chooses one and passes it to `UnixSystem.initial`. Construct one
+/// with `SimulatedUnixPlatform.linuxX64`, `linuxArm64` or `macOsArm64`, or with
+/// `create` for a specific kernel and release string. `create` admits only the
+/// combinations whose facts have been measured, so every accessor in the
+/// `SimulatedUnixPlatform` module answers for every platform.
 ///
-/// Modelled as a kernel (a flavour, the version of the source it was built
-/// from, and for Linux how it was built), an architecture, a page size and a release string, each of
-/// which a kernel image is built with, rather than as a bag of loose
-/// `utsname` fields, so that the facts we report stay mutually consistent as
-/// more of `utsname` gets modelled: its machine field would be a total
-/// *function* of the flavour and the architecture, not an independently-settable
-/// string that could claim an x86_64 machine alongside arm64's struct layouts.
+/// The platform decides what the kernel does. Most differences follow its
+/// flavour (`SimulatedUnixPlatform.flavour`); a fact that changed between
+/// versions of a kernel follows the kernel's version (`LinuxKernelVersion` or
+/// `DarwinKernelVersion`). The release string is identity alone: no fact
+/// follows from it. See "Flavours and divergence from host platforms" in the
+/// README.
 ///
-/// Every platform-dependent fact below is a total function of these, with no
-/// failure arms for an unclassifiable platform, because `create` admits only
-/// combinations whose facts have been measured.
-///
-/// The release string is identity alone: no fact follows from it. A fact that
-/// changed between versions of a kernel follows the kernel's version
-/// (`LinuxKernelVersion` or `DarwinKernelVersion`).
-///
-/// Construct with `SimulatedUnixPlatform.linuxX64`, `linuxArm64`, `macOsArm64`,
-/// or `create` for a specific kernel and release string.
+/// The platform is a value in the simulated kernel, and this library never
+/// reads the host's `uname(2)`: a replay would otherwise depend on the machine
+/// that produced it, and a program that branches on the platform it finds
+/// would take different paths on different machines.
 [<CustomEquality ; NoComparison>]
 type SimulatedUnixPlatform =
+    // Modelled as a kernel, an architecture, a page size and a release string,
+    // each of which a kernel image is built with, rather than as a bag of loose
+    // `utsname` fields, so that the facts reported stay mutually consistent as
+    // more of `utsname` gets modelled: its machine field would be a total
+    // function of the flavour and the architecture, not an independently
+    // settable string that could claim an x86_64 machine alongside arm64's
+    // struct layouts.
     private
         {
             Kernel : SimulatedUnixKernel
@@ -185,7 +185,11 @@ type SimulatedUnixPlatform =
 /// there is no path to report — and how small a buffer can still change that
 /// answer.
 ///
-/// Only reachable since `rmdir` could orphan a current directory. Measured on
+/// `UnixPathResolution.getcwd` already applies this rule; a client reads it
+/// only to learn what the kernel will do (see "Flavours and divergence from
+/// host platforms" in the README).
+///
+/// Measured on
 /// both with the cwd removed out from under the process, sweeping the size from
 /// 1 past the length of the path that used to be there: a zero-length buffer is
 /// EINVAL everywhere (libc's own `getcwd(3)` guard, before the kernel is asked),
@@ -237,6 +241,10 @@ type GetCwdOrphanAnswer =
 /// storing into it — which is a question about *where the bytes are copied*,
 /// and so splits by flavour rather than by kernel behaviour.
 ///
+/// `UnixPathResolution.getcwd` already applies this rule; a client reads it
+/// only to learn what the kernel will do (see "Flavours and divergence from
+/// host platforms" in the README).
+///
 /// Measured with a destination that is mapped `PROT_READ` only, which
 /// discriminates the two mechanisms where an unmapped address cannot: a kernel
 /// copying with `copy_to_user` reports EFAULT, while a store executed in user
@@ -256,11 +264,16 @@ type GetCwdDestinationFault =
     /// `UnixPathResolution.getcwd` refuses it.
     | FatalToTheProcess
 
-/// What a `getsockname(2)` that faults copying the address out has already put
-/// in the caller's length cell.
+/// What a kernel has already stored in the process's length cell when its
+/// `getsockname(2)` faults while copying the address out.
+///
+/// `UnixSocket.getsockname` already applies this rule: when the kernel stored
+/// the length first, its `GetSockNameAnswer.Failed` carries that length, and
+/// the client stores it. A client reads this only to learn what the kernel
+/// will do (see "Flavours and divergence from host platforms" in the README).
 ///
 /// The kernels order the two stores differently, so a call that fails leaves
-/// the caller's `socklen_t` reading different things. Darwin, and Linux before
+/// the process's `socklen_t` reading different things. Darwin, and Linux before
 /// 6.18, store the length only once the copy has succeeded; Linux from 6.18
 /// stores it first. Measured through a null destination and an unmapped page,
 /// with declared lengths of 1, 7, 13, 16, 100 and 4096, so that a value that
@@ -273,7 +286,7 @@ type GetCwdDestinationFault =
 /// failure path's in general.
 [<RequireQualifiedAccess>]
 type GetSockNameFaultLength =
-    /// The cell still holds what the caller put there: the kernel copies the
+    /// The cell still holds what the process put there: the kernel copies the
     /// address out first and reports the length only once that has succeeded.
     | Untouched
     /// The cell holds the address's *untruncated* length -- what a successful
@@ -317,6 +330,10 @@ type internal ReadLinkCapacityVerdict =
 /// What a platform's `read(2)`, `write(2)`, `pread(2)` and `pwrite(2)` do with
 /// a count larger than one call moves. The count itself is a `size_t`, so any
 /// value up to `UInt64.MaxValue` can be asked for.
+///
+/// The simulated kernel already applies this rule; a client reads it only to
+/// learn what the kernel will do (see "Flavours and divergence from host
+/// platforms" in the README).
 [<RequireQualifiedAccess>]
 type TransferCountLimit =
     /// A larger count is not an error: the call moves at most `maxTransfer`
@@ -354,6 +371,15 @@ type internal EphemeralSearchCall =
     /// Linux binds as `bind(2)` of port 0 would before the call goes on.
     | DatagramAutobind
 
+/// Building a `SimulatedUnixPlatform`, and reading its facts.
+///
+/// The accessors answer two kinds of value. A few are what a client needs to
+/// speak the platform's numbers: `rawErrnoNumbering`, `signalNumbering`, the
+/// socket-option numbers, and the `sockaddr` and C `int` encoders and
+/// decoders. The rest describe a rule that the simulated kernel already
+/// applies. A client may read one of those to learn what the kernel will do,
+/// but has no other use for it. See "Flavours and divergence from host
+/// platforms" in the README.
 [<RequireQualifiedAccess>]
 module SimulatedUnixPlatform =
     /// Loosest ceiling any Unix we model imposes on `utsname.release`:
@@ -626,7 +652,7 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> GetCwdDestinationFault.ReportedAsEfault
         | SimulatedUnixFlavour.Darwin -> GetCwdDestinationFault.FatalToTheProcess
 
-    /// What this platform's `getsockname(2)` has already stored in the caller's
+    /// What this platform's `getsockname(2)` has already stored in the process's
     /// length cell when the address copy faults. See `GetSockNameFaultLength`.
     let getSockNameFaultLength (platform : SimulatedUnixPlatform) : GetSockNameFaultLength =
         match kernel platform with
@@ -1137,9 +1163,9 @@ module SimulatedUnixPlatform =
     /// `(u65)addr + (u65)size <= (u65)TASK_SIZE_MAX` that
     /// arch/arm64/include/asm/uaccess.h documents), and that value varies with
     /// paging depth and virtual-address width — measured, two GitHub runners in
-    /// one CI run disagreed. A caller combines the two: this predicate decides
-    /// *whether* there is an up-front check, and its own configured limit says
-    /// what that check compares against.
+    /// one CI run disagreed. So this predicate says only *whether* there is an
+    /// up-front check; the limit against which that check compares is the
+    /// client's configuration (`UnixBootImage.withUserAddressLimit`).
     let screensUserBufferUpFront (platform : SimulatedUnixPlatform) : bool =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> true
@@ -1612,9 +1638,9 @@ module SimulatedUnixPlatform =
     /// every Unix — it is one of the handful of `AF_*` values that predate the
     /// BSD/Linux split and never moved.
     ///
-    /// Exposed alongside `internetV6AddressFamily` because a caller reading a
-    /// `sockaddr` switches on the raw `sa_family` in the blob, in the platform's
-    /// own numbering.
+    /// Exposed alongside `internetV6AddressFamily` because a client reading a
+    /// `sockaddr` from the process's memory switches on the raw `sa_family` in
+    /// it, which is in the platform's own numbering.
     let internetAddressFamily : int = 2
 
     /// Whether this platform's `bind(2)` keeps a port below the machine's
@@ -1915,14 +1941,16 @@ module SimulatedUnixPlatform =
     ///
     /// The copy-*out* direction specifically. Measured: a Darwin `getsockname`
     /// on a bound socket reports `10 02 ...`, the leading `0x10` being the
-    /// 16-byte length, so the kernel fills `sa_len` in even though the caller
-    /// never wrote it. `SockaddrFamilyField.OneByteAtOffsetOne`
-    /// describes the same byte travelling the other way, where it is a caller's
-    /// own store; the two do not disagree.
+    /// 16-byte length, so the kernel fills `sa_len` in even though the process
+    /// never wrote it. `SockaddrFamilyField.OneByteAtOffsetOne` describes the
+    /// same byte travelling the other way, where the process stores it itself;
+    /// the two do not disagree.
     ///
-    /// Answers the struct's full length for the platform; what a syscall copies
-    /// out to a caller's shorter buffer is `copyOutInternetSockaddr`'s prefix
-    /// of it.
+    /// Answers the whole struct, at its full length for the platform. A call
+    /// such as `UnixSocket.getsockname` already answers the bytes that the
+    /// client stores: only the first `min(declaredLength, sizeof(struct
+    /// sockaddr_in))` bytes, where `declaredLength` is the room the process
+    /// declared.
     let encodeInternetSockaddr (platform : SimulatedUnixPlatform) (endpoint : Ipv4Endpoint) : byte[] =
         let realLength = internetSocketAddressSize
         let blob = Array.zeroCreate<byte> realLength

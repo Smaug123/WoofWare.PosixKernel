@@ -29,6 +29,9 @@ module WatchDescriptor =
 [<RequireQualifiedAccess>]
 type InotifyEvent =
     /// `IN_ACCESS`: the file was read.
+    ///
+    /// Reserved: this kernel never raises it, and `UnixInotify.inotifyAddWatch`
+    /// refuses a watch that asks for it (see `InotifyEvent.modelled`).
     | Access
     /// `IN_MODIFY`: the file's contents changed.
     | Modify
@@ -39,6 +42,9 @@ type InotifyEvent =
     /// `IN_CLOSE_NOWRITE`: a description not opened for writing was released.
     | CloseNoWrite
     /// `IN_OPEN`: the file was opened.
+    ///
+    /// Reserved: this kernel never raises it, and `UnixInotify.inotifyAddWatch`
+    /// refuses a watch that asks for it (see `InotifyEvent.modelled`).
     | Open
     /// `IN_MOVED_FROM`: a name left the watched directory.
     | MovedFrom
@@ -53,6 +59,9 @@ type InotifyEvent =
     /// `IN_MOVE_SELF`: the watched inode itself was renamed.
     | MoveSelf
     /// `IN_UNMOUNT`: the filesystem holding the watched inode was unmounted.
+    ///
+    /// Reserved: this kernel never raises it, and `UnixInotify.inotifyAddWatch`
+    /// refuses a watch that asks for it (see `InotifyEvent.modelled`).
     | Unmount
 
 [<RequireQualifiedAccess>]
@@ -117,6 +126,11 @@ module InotifyEvent =
 
 /// What a watch asks for: the events it reports, and whether it ignores events
 /// raised through a name that has since been unlinked.
+///
+/// A client reads it from the `OpenFileTarget.Inotify` of an inotify
+/// instance's open file description (for example through
+/// `UnixSystem.descriptorTarget`). It is a snapshot: building one by hand
+/// changes nothing, since no function takes one.
 type InotifyMask =
     {
         /// The events the watch reports. Every one is `InotifyEvent.modelled`.
@@ -130,6 +144,11 @@ type InotifyMask =
 
 /// One watch an inotify instance holds: the inode it watches, and what it
 /// asks for.
+///
+/// A client reads it from the `OpenFileTarget.Inotify` of an inotify
+/// instance's open file description (for example through
+/// `UnixSystem.descriptorTarget`). It is a snapshot: building one by hand
+/// changes nothing, since no function takes one.
 type InotifyWatch =
     {
         /// The watched inode.
@@ -459,6 +478,11 @@ module InotifyQueue =
 
 /// Everything one inotify instance holds: its watches and the records it has
 /// queued for `read(2)`.
+///
+/// A client reads it from the `OpenFileTarget.Inotify` of an inotify
+/// instance's open file description (for example through
+/// `UnixSystem.descriptorTarget`). It is a snapshot: building one by hand
+/// changes nothing, since no function takes one.
 type InotifyState =
     {
         /// The effective user ID of the process that created the instance,
@@ -477,6 +501,11 @@ type InotifyState =
 
 /// The machine's inotify limits: Linux's `fs.inotify` sysctls, which an
 /// administrator sets.
+///
+/// This is machine configuration: the client sets it on a Linux boot image
+/// with `UnixBootImage.withInotifyLimits`, and a machine that the client does
+/// not configure has `UnixSystem.defaultInotifyLimits`. A Darwin boot image
+/// does not accept it, since Darwin has no inotify.
 type InotifyLimits =
     {
         /// `fs.inotify.max_user_instances`: how many instances one user may

@@ -7,8 +7,11 @@ open System
 /// thread.
 /// </summary>
 /// <remarks>
-/// Only this library mints one: <c>UnixSystem.initial</c> for a process's first
-/// thread, and <c>UnixThreadLifecycle.spawn</c> for every later one.
+/// Only this library mints one: the machine's boot image holds the first
+/// process's leader's ID (<c>UnixSystem.initial</c>, <c>UnixBootImage.boot</c>),
+/// <c>UnixSystem.launch</c> mints the leader's ID for each process launched later,
+/// and <c>UnixThreadLifecycle.spawn</c> mints the ID of every other thread.
+/// <c>UnixThreadState.osThreadId</c> reads a thread's ID.
 /// </remarks>
 /// <example>
 /// This is what <c>gettid(2)</c> returns on Linux, and what

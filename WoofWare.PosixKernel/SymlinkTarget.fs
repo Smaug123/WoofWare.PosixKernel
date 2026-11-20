@@ -39,8 +39,10 @@ type SymlinkTargetError =
     /// <c>symlink(2)</c> on Linux rejects an empty target with <c>ENOENT</c>.
     /// Darwin instead accepts it, creating a link that then fails to resolve.
     ///
-    /// WoofWare.PosixKernel doesn't parameterise over those options, but simply
-    /// refuses to represent the situation at all.
+    /// A <c>SymlinkTarget</c> is never empty, so this library cannot hold the link Darwin would create.
+    /// The process's <c>symlink(2)</c> with an empty target still reaches the kernel: on Linux it answers
+    /// <c>ENOENT</c>, and on Darwin every other check is made, and the call is refused only if all of them pass
+    /// (see <c>UnixNamespace.symlinkWithPath</c>).
     /// </remarks>
     | Empty
     /// <summary>

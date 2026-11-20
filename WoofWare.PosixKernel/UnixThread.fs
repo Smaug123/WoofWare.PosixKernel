@@ -1,8 +1,14 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Index of one of the simulated process's logical processors.
+/// Index of one of the machine's logical processors, from 0 up to one less than
+/// <c>UnixSystem.processorCount</c>.
 /// </summary>
+/// <remarks>
+/// The processors are the machine's, shared by every process on it. The client
+/// chooses which thread runs on which processor, and reports each choice with
+/// <c>UnixScheduling.dispatch</c>.
+/// </remarks>
 /// <example>
 /// As reported to a process by <c>sched_getcpu(3)</c>.
 /// </example>
@@ -32,7 +38,7 @@ type ParkedEpollWait =
         /// The <c>maxevents</c> the call was made with.
         /// </summary>
         MaxEvents : int
-        /// The buffer the call was given to copy events out to, as the caller
+        /// The buffer the call was given to copy events out to, as the client
         /// classified it when the call was entered.
         Buffer : UserBuffer
         /// The instant, in nanoseconds since boot, at which the wait stops and
@@ -60,7 +66,7 @@ type ParkedKevent =
         /// none to take returns at once.
         MaxEvents : int
         /// The eventlist the call was given to copy events out to, as the
-        /// caller classified it when the call was entered.
+        /// client classified it when the call was entered.
         Buffer : UserBuffer
         /// The instant, in nanoseconds since boot, at which the wait stops and
         /// returns no events; or `None` for a wait with a null timeout.
@@ -317,18 +323,19 @@ type ParkedAccept =
         /// Under Linux the descriptor the call came through can be closed while
         /// it sleeps, the last one included, leaving the listener to the call.
         Listener : SleepTarget<SocketId>
-        /// Where the peer address is to be copied out to, as the caller
+        /// Where the peer address is to be copied out to, as the client
         /// classified it when the call was entered.
         Destination : UserBuffer
-        /// How many bytes of the peer address the caller's length cell allows
+        /// How many bytes of the peer address the process's length cell allows
         /// to be written: the 32-bit word in the cell, which Linux reads as an
         /// `int` and Darwin as a `socklen_t` (see `UnixConnection.accept`).
         ///
-        /// This is the length the call was entered with. Darwin reads the
-        /// caller's cell then; Linux reads it only when it copies the address
-        /// out, after the wait, so under Linux this is right for a caller whose
-        /// cell nothing writes while the call sleeps. `None` for a NULL
-        /// destination, whose cell neither flavour reads.
+        /// This is the length the cell held when the call was entered. Darwin
+        /// reads the cell then. Linux reads it only when it copies the address
+        /// out, after the wait, but this library keeps the value from entry, so
+        /// under Linux it is right only if nothing writes the cell while the
+        /// call sleeps. `None` for a NULL destination, whose cell neither
+        /// flavour reads.
         DeclaredLength : uint32 option
         /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
         /// the socket it makes is non-blocking. Never under Darwin, which has
@@ -347,7 +354,7 @@ type ParkedPipeRead =
         /// through, and the descriptor it was made through; or the pipe, once a
         /// close has ended the call.
         Reader : SleepTarget<PipeId>
-        /// Where the bytes are to be copied out to, as the caller classified it
+        /// Where the bytes are to be copied out to, as the client classified it
         /// when the call was entered. Nothing is copied before the call sleeps,
         /// so a buffer naming no storage faults only once there is something to
         /// copy.
@@ -361,17 +368,18 @@ type ParkedPipeRead =
 /// One thread's in-flight blocking `write(2)` into a pipe that had no room for all
 /// of it.
 ///
-/// Holds no bytes. A sleeping write copies from the caller's buffer as room
-/// appears, so bytes a process writes into its buffer while the call sleeps
-/// are the bytes that reach the pipe; the call that finishes the write asks
-/// the caller for them then.
+/// Holds no bytes. A sleeping write copies from the process's buffer as room
+/// appears, so the bytes that reach the pipe are those the buffer holds when
+/// the write goes on, including any the process wrote into it while the call
+/// slept. The function that finishes the write asks the client for those
+/// bytes then (see `UnixReadWrite.finishWrite`).
 type ParkedPipeWrite =
     {
         /// The open file description of the pipe's write end the call was made
         /// through, and the descriptor it was made through; or the pipe, once a
         /// close has ended the call.
         Writer : SleepTarget<PipeId>
-        /// Where the bytes come from, as the caller classified it when the call
+        /// Where the bytes come from, as the client classified it when the call
         /// was entered.
         Buffer : UserBuffer
         /// How many bytes the call writes in all: its count, after the
@@ -413,7 +421,7 @@ type ParkedConnectionRead =
         /// and the descriptor it was made through; or the socket, once a close
         /// has ended the call.
         Socket : SleepTarget<SocketId>
-        /// Where the bytes are to be copied out to, as the caller classified it
+        /// Where the bytes are to be copied out to, as the client classified it
         /// when the call was entered. Nothing is copied before the call sleeps.
         Buffer : UserBuffer
         /// The most bytes the call takes: its count, after the platform's limit
@@ -429,15 +437,15 @@ type ParkedConnectionRead =
 /// One thread's in-flight blocking `write(2)` or `send(2)` to a connected stream
 /// socket whose buffers had no room for all of it.
 ///
-/// Holds no bytes, as `ParkedPipeWrite` holds none: the call that finishes the
-/// write asks the caller for the next of them as room appears.
+/// Holds no bytes, like `ParkedPipeWrite`: the function that finishes the
+/// write asks the client for the next bytes as room appears.
 type ParkedConnectionWrite =
     {
         /// The open file description of the socket the call was made through,
         /// and the descriptor it was made through; or the socket, once a close
         /// has ended the call.
         Socket : SleepTarget<SocketId>
-        /// Where the bytes come from, as the caller classified it when the call
+        /// Where the bytes come from, as the client classified it when the call
         /// was entered.
         Buffer : UserBuffer
         /// How many bytes the call writes in all: its count, after the
@@ -468,7 +476,7 @@ type SleepRemainder =
     /// completion time, which its 32-bit arithmetic on seconds makes differ
     /// from the deadline for requests of about 2^32 seconds or more.
     ///
-    /// `destination` is `rem` as the caller classified it when the call was
+    /// `destination` is `rem` as the client classified it when the call was
     /// entered. Under Linux the kernel writes it, and an interrupted call whose
     /// `destination` it cannot write fails with `EFAULT` instead of `EINTR`.
     /// Under Darwin the C library writes it, so the kernel does not consult it.
@@ -522,7 +530,7 @@ type ParkedInotifyRead =
         /// naming it leaves the call asleep (measured, `inotify-probe.c`
         /// section B), so nothing ends the call but a record or a signal.
         Instance : OpenFileDescriptionId
-        /// Where the records are to be copied out to, as the caller classified
+        /// Where the records are to be copied out to, as the client classified
         /// it when the call was entered. Nothing is copied before the call
         /// sleeps, so a buffer naming no storage faults only once there is a
         /// record to copy.
@@ -572,7 +580,7 @@ type ParkedSignalWait =
         /// back. `None` for a call with no timeout, which is every Darwin call,
         /// since Darwin has `sigwait(3)` alone.
         Deadline : int64 option
-        /// Where the kernel reports the signal the call takes, as the caller
+        /// Where the kernel reports the signal the call takes, as the client
         /// classified it when the call was entered: Linux writes a `siginfo_t`
         /// to `info`, and Darwin an `int` to `sig`. `None` when that pointer
         /// is null, which both kernels test for, and then write nothing. On
@@ -615,7 +623,7 @@ type ParkedDatagramReceive =
             /// the call.
             Socket : SleepTarget<SocketId>
             /// Where the datagram's bytes are to be copied out to, as the
-            /// caller classified it when the call was entered.
+            /// client classified it when the call was entered.
             Buffer : UserBuffer
             /// The most bytes the call takes: its count, as at most one call's
             /// worth.
@@ -729,25 +737,37 @@ type ParkedFutex =
 /// The syscall a thread is blocked in, if it is blocked in one.
 /// </summary>
 /// <remarks>
-/// One case per parking syscall.
+/// One case per syscall that can block. A thread blocks in at most one syscall at a time.
 ///
-/// This is stored as a single field on the thread holding it, because
-/// a thread blocks in at most one syscall at a time.
+/// Each case holds the state that its syscall captured when it went to sleep.
 ///
-/// Each case's payload is its own syscall's business: what parks a
-/// thread is generally arbitrary state specific to that syscall.
+/// This is data for the client to read, through <c>UnixThreadState.parkedIn</c> or
+/// <c>UnixThreadState.park</c>: the client never builds one, and does not act on
+/// one directly. To let a parked thread go on, the client calls
+/// <c>UnixWait.wake</c>, and then <c>UnixWait.finish</c> or the finishing function
+/// of the call's family (see "Sleeping and waking" in the README).
 /// </remarks>
 [<RequireQualifiedAccess>]
 type ParkedSyscall =
+    /// A blocking `epoll_wait(2)`.
     | EpollWait of ParkedEpollWait
+    /// A blocking `kevent(2)` wait on a kqueue.
     | Kevent of ParkedKevent
+    /// A blocking `flock(2)` acquisition.
     | Flock of ParkedFlock
+    /// A blocking Linux `poll(2)`.
     | Poll of ParkedPoll
+    /// A blocking Darwin `poll(2)`.
     | KqueuePoll of ParkedKqueuePoll
+    /// A blocking `accept(2)`.
     | Accept of ParkedAccept
+    /// A blocking `read(2)` of a pipe.
     | PipeRead of ParkedPipeRead
+    /// A blocking `write(2)` to a pipe.
     | PipeWrite of ParkedPipeWrite
+    /// A blocking `read(2)` or `recv(2)` of a connected stream socket.
     | ConnectionRead of ParkedConnectionRead
+    /// A blocking `write(2)` or `send(2)` to a connected stream socket.
     | ConnectionWrite of ParkedConnectionWrite
     /// `sigsuspend(2)`, or `pause(2)`, which is `sigsuspend` with the mask the
     /// thread already has (`UnixSignal.pause`). Carries nothing: the temporary
@@ -896,13 +916,16 @@ type ParkState =
     /// The thread sleeps. `UnixWait.wake` asks its call's wake condition, and
     /// wakes it once the condition holds.
     | Asleep
-    /// `UnixWait.wake` has woken the thread, for `fired`, the primitives of its
-    /// call's wake condition that held then, and the call's finishing function
-    /// has not yet run. Never empty.
+    /// `UnixWait.wake` has woken the thread, and the client has not yet
+    /// finished its call. `fired` is the primitives of the call's wake
+    /// condition that held when the thread was woken. Never empty.
     ///
-    /// On each queue its call waits on whose waiters a kernel wakes one at a
-    /// time, the thread stands for whatever woke it, so no other waiter there
-    /// wakes until the thread has finished its call or slept again.
+    /// Some queues have their waiters woken one at a time, such as an epoll
+    /// instance's or a listener's. While this thread is woken and unfinished,
+    /// no other waiter on such a queue that its call waits on is woken, because
+    /// this thread is expected to take whatever woke it. So the client should
+    /// finish a woken thread's call (which may put it to sleep again) rather
+    /// than leave it woken indefinitely.
     | Woken of fired : Set<WakePrimitive>
 
 /// One thread's park: the syscall it is blocked in, where the park stands in the

@@ -89,8 +89,13 @@ type internal DarwinPipeBuffer =
 /// an empty read is end-of-file or would block, and whether a write is EPIPE,
 /// is a question about the pipe's ends, not about its buffer.
 ///
-/// Two buffers are equal when a process could tell neither apart from the other
-/// by any sequence of reads and writes: the same bytes, stored the same way.
+/// Two buffers are equal when a process could not tell them apart by any
+/// sequence of reads and writes: the same bytes, stored the same way.
+///
+/// A client sees a pipe's buffer through `UnixSystem.pipes` (`PipeState.Buffer`).
+/// Every function on a `PipeBuffer` works on that value alone: none of them
+/// changes a system, so a client reads or drains a pipe only through the
+/// process's calls, or as a launched pipe's outside end (`LaunchDescriptor`).
 [<NoComparison>]
 type PipeBuffer =
     private
@@ -121,7 +126,8 @@ module PipeBuffer =
     [<Literal>]
     let private DarwinPipeBuf = 512
 
-    /// An empty buffer, as `pipe(2)` creates one on `platform`'s kernel.
+    /// An empty buffer, as `pipe(2)` creates one on `platform`'s kernel. This
+    /// is a value only: no system holds it.
     let empty (platform : SimulatedUnixPlatform) : PipeBuffer =
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
@@ -533,11 +539,11 @@ module PipeBuffer =
         let taken = resumeTakes bytes.Length offset buffer
         taken, resumeWith bytes.Length offset (ImmutableArray.Create (bytes, offset, taken)) buffer
 
-    /// A read of up to `count` bytes: the oldest `min count (held buffer)` bytes,
-    /// and the buffer without them. Returns no bytes when the buffer is empty,
-    /// which a caller answers as end-of-file, `EAGAIN` or by waiting, according
-    /// to the pipe's write end and the read's blocking mode. A negative `count`
-    /// throws `ArgumentOutOfRangeException`.
+    /// The oldest `min count (held buffer)` bytes of `buffer`, and the buffer
+    /// without them: what a read of up to `count` bytes would take. It changes
+    /// no system, so the pipe in the system still holds those bytes. It
+    /// returns no bytes when the buffer is empty. A negative `count` throws
+    /// `ArgumentOutOfRangeException`.
     let read (count : int) (buffer : PipeBuffer) : ImmutableArray<byte> * PipeBuffer =
         if count < 0 then
             raise (

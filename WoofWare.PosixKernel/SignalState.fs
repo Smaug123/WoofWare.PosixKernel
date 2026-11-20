@@ -1,11 +1,18 @@
 namespace WoofWare.PosixKernel
 
 /// A handler as `sigaction(2)` installs it: the handler itself, and the mask
-/// and flags that say what happens around it.
+/// and flags that change what the kernel does around it.
+///
+/// Only the flags that change the kernel's behaviour are here: `SA_NODEFER`,
+/// `SA_RESETHAND` and `SA_RESTART`. `SA_SIGINFO` and `SA_ONSTACK` choose how,
+/// and on which stack, the client calls the handler, so a client that honours
+/// them keeps them in its own `'Handler` (see "Running a signal handler" in
+/// the README).
 type SignalCatch<'Handler> =
     {
-        /// What runs. What it is belongs to the client; this library stores it
-        /// and hands it back in the handler frame of each delivery.
+        /// What runs: the client's own value for the handler. This library
+        /// never looks inside it. It stores it, and hands it back in the
+        /// handler frame of each delivery.
         Handler : 'Handler
         /// `sa_mask`: the signals blocked while the handler runs, on top of the
         /// mask in force when it was delivered. The kernel drops SIGKILL and
@@ -84,11 +91,21 @@ type PendingSignal<'Thread> =
 [<Struct>]
 type HandlerFrameId = | HandlerFrameId of int64
 
-/// One handler the kernel has set up to run on a thread: the frame it pushes on
-/// the thread's stack when it delivers a caught signal, which the handler's
-/// return (`sigreturn(2)`) pops.
+/// One handler that the kernel has set up to run on a thread, as a delivery of
+/// a caught signal records it: the kernel's record of the frame that a real
+/// kernel pushes on the thread's stack, which the handler's return
+/// (`sigreturn(2)`) pops.
+///
+/// This library has written nothing to the process's stack. The client runs
+/// the handler: it builds whatever the handler's code expects (its arguments,
+/// and the stack it runs on), runs the handler in `HandlerFrame.Action` for
+/// the signal in `HandlerFrame.Entry`, and when the handler returns calls
+/// `UnixSignal.sigreturn` with `HandlerFrame.Id`. See
+/// `ReturnToUserOutcome.RunHandlers`, and "Running a signal handler" in the
+/// README.
 type HandlerFrame<'Thread, 'Handler> =
     {
+        /// The name by which `UnixSignal.sigreturn` pops this frame.
         Id : HandlerFrameId
         /// The signal delivered, and the pending set it was taken from.
         Entry : PendingSignal<'Thread>
@@ -177,36 +194,25 @@ type internal QueueAccount =
     /// process's `RLIMIT_SIGPENDING`, and how the signal was sent.
     | Limited of user : UserId * queuedElsewhere : int * limit : uint64 * sender : SignalSender
 
-/// Pure, deterministic model of the simulator's signal-handling state.
+/// One process's signal state: what `sigaction(2)` has set for each signal,
+/// each thread's signal mask, each thread's handler frames, the mask each
+/// thread in `sigsuspend(2)` or `pause(2)` gets back, and the pending signals,
+/// both the process's own set and each thread's.
 ///
-/// The shape is deliberately small:
-///   * `Dispositions` — what `sigaction(2)` has set for each signal: its
-///     default, ignored, or caught by a client's handler. A signal absent
-///     from the map has its default.
-///   * `Blocked` — each thread's signal mask, which `sigprocmask(2)` and
-///     delivery set and `sigreturn(2)` restores. A thread absent from the map
-///     blocks nothing.
-///   * `Frames` — each thread's stack of handler frames, each holding the mask
-///     its `sigreturn` restores.
-///   * `MasksToRestore` — for each thread in `sigsuspend(2)`, the mask it had
-///     before the call replaced it, which it gets back as the call returns.
-///   * `Pending` — the signals generated and not yet delivered: the process's
-///     own set, and each thread's.
+/// A client reads it out of a system with `UnixSystem.signals`, and reads it
+/// with the queries in the `SignalState` module: `disposition`, `maskOf`,
+/// `framesOf`, `maskToRestore`, `pending`, `pendingFor` and `pendingBlocked`.
+/// It changes only through the signal calls (`UnixSignal`) and a thread's
+/// leaving (`UnixThreadLifecycle`).
 ///
-/// One instance of this type belongs to each simulated process. A client reads
-/// it out of a system (`UnixSystem.signals`), and changes it only through the
-/// signal calls (`UnixSignal`) and a thread's leaving (`UnixThreadLifecycle`);
-/// the data shape is exercised by property tests against a
-/// structurally-different reference oracle.
+/// Its signals are read under the machine's numbering
+/// (`SimulatedUnixPlatform.signalNumbering`), which the state does not hold,
+/// so a query that reads a signal takes the numbering as `numbering`. The
+/// state never holds SIGKILL or SIGSTOP in a mask or a disposition, nor a
+/// signal that the numbering does not have.
 ///
-/// The state's signals are read under its machine's numbering
-/// (`SimulatedUnixPlatform.signalNumbering`), which the state does not hold:
-/// every operation that reads a signal is handed it as `numbering`. Every
-/// `Signal` stored here is one that numbering has, and every operation
-/// checks the signal it is handed before touching the state. The operations
-/// are the only route in (the representation is private), so the tables and
-/// queue never hold SIGKILL or SIGSTOP in a mask, a disposition for SIGKILL
-/// or SIGSTOP, a stored `Default`, or a signal the numbering does not have.
+/// Generic in the client's names for threads (`'Thread`) and its values for
+/// handlers (`'Handler`), which this library compares but never looks inside.
 type SignalState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {

@@ -2,32 +2,32 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// One entry in the filesystem a host hands to the emulated kernel.
+/// One entry in the filesystem which the client hands to the kernel at boot
+/// (see "Giving the machine files" in the README).
 ///
 /// A tree, so duplicate paths, orphaned children, and declaration order are
 /// unrepresentable rather than checked.
 ///
-/// The tree cannot express a hard link, since every inode has exactly one
-/// container here. `VirtualFileSystem` can, so a seeded hard link would mean
-/// growing a case here; it is not a limit of the model.
+/// The tree cannot express a hard link, since every entry here has exactly
+/// one containing directory. A `VirtualFileSystem` can hold hard links, so
+/// seeding one would need a new case here, not a change to the model.
 ///
 /// A file's or directory's permission bits are part of the seed, and are
-/// required rather than optional: the differential oracle chmods the host tree
-/// to the same bits, so the mode is a fact the model and the host kernel share.
+/// required rather than optional.
 ///
 /// `SeedEntry.file` and `SeedEntry.directory` supply the modes a `umask 022`
 /// process would have created, for the many seeds that only care about shape.
 ///
 /// A symlink has no mode field: Linux gives every link 0o777 and never changes
-/// it, and a seeded link gets what its flavour gives a link created under
-/// `SeedEntry.symlinkCreatorsUmask`. A Darwin link whose own mode was later
-/// changed is not seedable.
+/// it, and a seeded link gets the mode which its flavour gives a link created
+/// under `SeedEntry.symlinkCreatorsUmask`. A Darwin link whose own mode was
+/// changed after it was created cannot be seeded.
 ///
-/// Every entry has an optional owner. `None` means the owner the seed is
-/// realised with, which whoever realises it states explicitly
-/// (`UnixBootImage.withFileSystem`'s `defaultOwner`, and root for the device
-/// filesystem's contents, as devtmpfs makes its own nodes); it does not mean
-/// "the same owner as the directory holding this entry".
+/// Every entry has an optional owner. `None` means the default owner, which
+/// the setter that takes the seed states: `UnixBootImage.withFileSystem`
+/// takes it as `defaultOwner`, and the device filesystem's contents belong to
+/// root, as devtmpfs makes its own nodes. `None` does not mean "the same
+/// owner as the directory holding this entry".
 [<RequireQualifiedAccess ; NoComparison>]
 type SeedEntry =
     | File of contents : ImmutableArray<byte> * permissions : PermissionBits * owner : InodeOwner option
@@ -39,8 +39,8 @@ type SeedEntry =
     /// target is a string to the kernel, so it may dangle, may be absolute, and
     /// may point outside anything the seed declares.
     | Symlink of target : SymlinkTarget * owner : InodeOwner option
-    /// A character device node holding `number`, which `open(2)` looks the
-    /// driver up by. Only the device filesystem's contents may hold one
+    /// A character device node holding `number`, by which `open(2)` looks up
+    /// the driver. Only the device filesystem's contents may hold one
     /// (`UnixBootImage.withDeviceFileSystem`): `UnixBootImage.withFileSystem`
     /// refuses a seed that does.
     | CharacterDevice of number : DeviceNumber * permissions : PermissionBits * owner : InodeOwner option
@@ -58,10 +58,10 @@ module SeedEntry =
     /// What a <c>umask 022</c> process inherits from <c>mkdir(2)</c>'s <c>0o777</c>.
     /// </summary>
     /// <remarks>
-    /// <c>022</c> (-rw-r--r--) is the default umask on the emulated Unixes, although apparently Ubuntu
-    /// relaxed this to <c>002</c> (-rw-rw-r--) starting at version 11.10.
+    /// <c>022</c> (which gives files <c>-rw-r--r--</c>) is the default umask on the emulated Unixes,
+    /// although apparently Ubuntu relaxed this to <c>002</c> (<c>-rw-rw-r--</c>) starting at version 11.10.
     ///
-    /// See <c>defaultForRegularFile</c> for the files version.
+    /// See <c>defaultPermsForRegularFile</c> for the files version.
     /// </remarks>
     let defaultPermsForDirectory : PermissionBits = PermissionBits (0o777 &&& ~~~0o022)
 

@@ -87,9 +87,17 @@ module internal InotifyAddWatchRefusal =
         | InotifyAddWatchRefusal.WatchDescriptorsExhausted -> RefusalKind.Unmodelled
 
 /// An `inotify_add_watch(2)` whose mask and descriptor this kernel has
-/// screened and accepted, paused at the point where it copies its path in.
-/// Obtain one from `UnixInotify.inotifyAddWatch`, and finish it with
+/// screened and accepted, paused at the point where the kernel copies the path
+/// in from the process's memory.
+///
+/// `UnixInotify.inotifyAddWatch` answers one. The client reads the path from
+/// the process's memory and finishes the call with
 /// `UnixInotify.inotifyAddWatchWithPath`.
+///
+/// It holds the whole system as it stood when the call paused, and finishing
+/// it answers a system built from that one. So the client finishes it before
+/// it does anything else to the system: anything done in between is lost (see
+/// "What every client does" in the README).
 [<NoEquality ; NoComparison>]
 type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -225,7 +233,8 @@ module UnixInotify =
     /// already holds `InotifyLimits.MaxUserInstances` instances, in any process
     /// on the machine, is answered `EMFILE` (section U).
     ///
-    /// Under the Darwin flavour every call is refused: Darwin has no inotify.
+    /// Under the Darwin flavour every call throws
+    /// `PlatformNotSupportedException`: Darwin has no inotify.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let inotifyInit1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -335,8 +344,8 @@ module UnixInotify =
     /// succeed asking for an event this kernel does not raise, or with
     /// `IN_ONESHOT`, is refused; one that fails answers its errno.
     ///
-    /// Adding a watch queues nothing. Under the Darwin flavour every call is
-    /// refused.
+    /// Adding a watch queues nothing. Under the Darwin flavour every call
+    /// throws `PlatformNotSupportedException`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify.</exception>
     let inotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -574,8 +583,9 @@ module UnixInotify =
 
     /// <summary>
     /// `inotify_rm_watch(2)`: remove the watch `wd` names from the inotify
-    /// instance `fd` names, and queue an `IN_IGNORED` record for it, which
-    /// wakes a reader asleep on the instance.
+    /// instance `fd` names, and queue an `IN_IGNORED` record for it. A reader
+    /// asleep on the instance can then go on: the next `UnixWait.wake` wakes
+    /// it (see "What every client does" in the README).
     ///
     /// `EBADF` for a descriptor not open, `EINVAL` for one naming anything but
     /// an inotify instance, and `EINVAL` for a `wd` the instance does not hold
@@ -584,7 +594,8 @@ module UnixInotify =
     /// records drops the record, and takes an `IN_Q_OVERFLOW` record in its
     /// place unless it holds one.
     ///
-    /// Under the Darwin flavour every call is refused.
+    /// Under the Darwin flavour every call throws
+    /// `PlatformNotSupportedException`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let inotifyRmWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

@@ -7,14 +7,20 @@ namespace WoofWare.PosixKernel
 /// <remarks>
 /// WoofWare.PosixKernel generally only offers behaviour that has been measured
 /// on its target kernels, and throws this exception if you ask for something
-/// which hasn't been measured.
+/// which hasn't been measured, or whose answer the model cannot hold.
 /// This exception indicates a feature request for PosixKernel.
 ///
 /// Any library function may throw this exception at any time.
 /// ("WITHOUT WARRANTY… INCLUDING… FITNESS FOR A PARTICULAR PURPOSE")
 ///
-/// WoofWare.PosixKernel operates only with immutable data structures, so you
-/// can at least catch this and try to carry on yourself.
+/// This is not an errno, and should not be turned into one: answering the
+/// process's call with <c>ENOSYS</c> or any other error would tell the program
+/// something no real kernel told it. The call has no answer.
+///
+/// WoofWare.PosixKernel operates only with immutable data structures, so the
+/// system you passed in is still valid after this is thrown. You can catch this
+/// and carry on from that system, but the process's call still has no answer,
+/// and retrying it will not give one.
 /// </remarks>
 [<Sealed>]
 type UnmodelledException internal (message : string) =

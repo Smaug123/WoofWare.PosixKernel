@@ -3,11 +3,13 @@ namespace WoofWare.PosixKernel
 /// What `pipe2(2)` answered, for a request this kernel could answer.
 [<RequireQualifiedAccess>]
 type Pipe2Answer =
-    /// A pipe now exists. The call returned 0, having stored `readFd` and
-    /// `writeFd` in the caller's two-`int` array, in that order.
+    /// A pipe now exists. The process's call returns 0. The client stores
+    /// `readFd` and then `writeFd` in the process's two-`int` array at the
+    /// destination; this library has stored nothing (see "What every client
+    /// does" in the README).
     | Created of readFd : int * writeFd : int
-    /// The call returned -1 with this errno. No pipe exists, and no descriptor
-    /// was taken.
+    /// The process's call returns -1, and the client sets the process's errno
+    /// to `error`. No pipe exists, and no descriptor was taken.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer a `pipe2(2)`.
@@ -256,26 +258,27 @@ module UnixPipe =
             (tryPipe2In flags destination)
             system
 
-    /// `pipe2(2)`: make a pipe, with a descriptor onto each end, and store the
-    /// two in the caller's array at `destination`.
+    /// `pipe2(2)`: make a pipe, with a descriptor onto each end. The answer
+    /// carries the two descriptors, and the client stores them in the
+    /// process's array at `destination`.
     ///
     /// `flags` is raw, in the simulated flavour's own `<fcntl.h>` numbering.
     /// `pipe(2)` is `pipe2` with flags 0. `O_NONBLOCK` makes both descriptions
     /// non-blocking, and `O_CLOEXEC` (and Darwin's `O_CLOFORK`) gives both
     /// descriptors `FD_CLOEXEC` (`FD_CLOFORK`).
     ///
-    /// The flags are screened first, on both flavours: a flag word the flavour
-    /// rejects is EINVAL whatever the destination. Then Linux copies the two
-    /// descriptors out, answering EFAULT for an unmapped destination and
-    /// leaving no pipe and no descriptor behind (measured: the next descriptor
-    /// allocated is the one the pipe would have taken). Darwin's C library
-    /// stores them itself, so an unmapped destination there kills the process,
-    /// which this kernel cannot answer, and is refused.
+    /// The flags are screened first, on both flavours: a flag word that the
+    /// flavour rejects answers EINVAL whatever the destination. Then a Linux
+    /// kernel copies the two descriptors out: an unmapped destination answers
+    /// EFAULT and leaves no pipe and no descriptor behind (measured: the next
+    /// descriptor allocated is the one the pipe would have taken). On Darwin
+    /// the C library stores the descriptors itself, so an unmapped destination
+    /// kills the process. This library cannot answer that, so the call is
+    /// refused.
     ///
-    /// The read end takes the lowest descriptor not in use and the write end
-    /// the next. Both are owned by
-    /// the process's effective user and group, and stamped with the machine's
-    /// realtime clock.
+    /// The read end takes the lowest descriptor not in use, and the write end
+    /// takes the next. Both ends are owned by the process's effective user and
+    /// group, and their timestamps are the machine's realtime clock.
     let pipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (flags : int)

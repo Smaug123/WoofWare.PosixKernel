@@ -1,23 +1,41 @@
 namespace WoofWare.PosixKernel
 
-/// The `times` argument of `utimensat(2)`, as the caller found it.
+/// The `times` argument of `utimensat(2)`: what the client found when it read
+/// the process's pointer.
+///
+/// This library never reads the process's memory, so the client reads the two
+/// `struct timespec`s and describes what it found (see "What every client
+/// does" in the README). The kernel decides when in the call an unreadable
+/// pointer matters.
 [<RequireQualifiedAccess>]
 type TimesArgument =
     /// The null pointer: both times are now.
     | Null
-    /// A pointer to memory the caller could not read.
+    /// A pointer from which the client could not read both `struct timespec`s,
+    /// including one from which it could read only the first.
     | Unreadable
-    /// The two `struct timespec`s the pointer names: the access time, then the
+    /// The two `struct timespec`s at the pointer: the access time, then the
     /// modification time.
+    ///
+    /// The client passes each field as the process stored it. In particular, a
+    /// `tv_nsec` holding `UTIME_NOW` or `UTIME_OMIT` stays as that raw value,
+    /// in the flavour's own numbering (`TimestampChangeRules.utimeNow` and
+    /// `TimestampChangeRules.utimeOmit`): the kernel decodes it.
     | Fields of access : TimespecFields * modification : TimespecFields
 
-/// A pathname argument for a call that reads the null pointer differently
-/// from any other address it cannot read: `utimensat(2)`'s.
+/// The pathname argument of `utimensat(2)`, which treats the null pointer
+/// differently from any other address it cannot read.
 [<RequireQualifiedAccess>]
 type NullablePathArgument =
     /// The null pointer.
+    ///
+    /// Under Linux, with a `dirfd` other than `AT_FDCWD` and a flag word of 0,
+    /// the call sets the times of the object that `dirfd` names; with any flag
+    /// it answers `EINVAL`. With `AT_FDCWD`, and always under Darwin, the call
+    /// answers `EFAULT` at the point where it would copy the path in.
     | Null
-    /// Any other pointer, and what the caller found there.
+    /// Any other pointer, and what the client found there (see
+    /// `PathArgumentBytes`).
     | NotNull of PathArgumentBytes
 
 /// What one of `utimensat(2)`'s two times asks for, as its flavour reads the
@@ -38,6 +56,10 @@ type internal TimestampRequest =
 
 /// The range of times a filesystem stores, and what it stores for a time
 /// outside it.
+///
+/// `TimestampChangeRules.rangeOf` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do
+/// (see "Flavours and divergence from host platforms" in the README).
 [<RequireQualifiedAccess>]
 type TimestampRange =
     /// Any `tv_sec`, with the nanoseconds as given except at either end of

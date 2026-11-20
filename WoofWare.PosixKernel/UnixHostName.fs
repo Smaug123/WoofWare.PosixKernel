@@ -2,22 +2,25 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// What `gethostname(3)` places in the caller's buffer and returns.
+/// What `gethostname(3)` places in the process's buffer and returns. This
+/// library has stored nothing: the client stores what the answer says.
 ///
 /// Neither flavour's C library answers a buffer too short for the name the
 /// same way, and neither is POSIX's "truncated, and unspecified whether
 /// terminated" in full: see `UnixHostName.getHostName`.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetHostNameAnswer =
-    /// Place `placed` at the start of the caller's buffer; the call returns 0.
+    /// The client stores `placed` at the start of the process's buffer; the
+    /// process's call returns 0.
     ///
     /// `placed` is never longer than the capacity, and the bytes past it are
     /// untouched. It is empty only for Darwin's null destination at a
     /// capacity of `MAXHOSTNAMELEN + 1` or more, which `sysctl(3)` takes as a
     /// request for the name's length alone.
     | Returned of placed : ImmutableArray<byte>
-    /// Place `placed` at the start of the caller's buffer; the call returns -1
-    /// and the caller stores `error` wherever its libc keeps errno.
+    /// The client stores `placed` at the start of the process's buffer; the
+    /// process's call returns -1, and the client sets the process's errno to
+    /// `error`.
     ///
     /// `placed` is empty except on Linux's ENAMETOOLONG, which glibc reports
     /// after copying as much of the name as fits, with no terminator.
@@ -143,25 +146,30 @@ module UnixHostName =
             system
 
     /// <summary>
-    /// <c>gethostname(3)</c>: copy the machine's name into the caller's buffer
-    /// of <c>capacity</c> bytes.
+    /// <c>gethostname(3)</c>: the bytes that the process's buffer of
+    /// <c>capacity</c> bytes receives from the machine's name, which the client
+    /// stores there.
     /// </summary>
     /// <remarks>
     /// <para>
     /// This has no side-effects on the kernel.
     /// </para>
     /// <para>
-    /// A buffer with room for the name and its terminator gets exactly those
-    /// bytes on both flavours. A shorter one is where they part. On Linux the
-    /// call places as much of the name as fits, unterminated, and fails with
-    /// ENAMETOOLONG. On Darwin it succeeds, placing the name truncated to
-    /// <c>capacity - 1</c> bytes and padding with NULs to fill the buffer;
-    /// Darwin pads any capacity up to <c>MAXHOSTNAMELEN</c> (256) that way.
+    /// On Linux, a buffer with room for the name and its terminator gets
+    /// exactly those bytes. A shorter one gets as much of the name as fits,
+    /// unterminated, and the call fails with ENAMETOOLONG.
+    /// </para>
+    /// <para>
+    /// On Darwin, at every capacity from 1 to <c>MAXHOSTNAMELEN</c> (256), the
+    /// call succeeds and fills the whole buffer: it places the name, truncated
+    /// to <c>capacity - 1</c> bytes if the name is longer than that, and pads
+    /// with NULs to the end. A larger buffer gets exactly the name and its
+    /// terminator.
     /// </para>
     /// </remarks>
     /// <param name="caller">The thread making the call.</param>
-    /// <param name="destination">Where the call writes the name.</param>
-    /// <param name="capacity">The caller's buffer size, as the <c>size_t</c> it is.</param>
+    /// <param name="destination">The process's buffer, in which the client stores the name.</param>
+    /// <param name="capacity">The size of the process's buffer, as the <c>size_t</c> it is.</param>
     /// <param name="system">The kernel the name is read from.</param>
     /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">The destination cannot be written at a capacity where the C library stores into it itself, which kills the real process; or Darwin's capacity is zero, where it stores before the buffer; or the destination is <c>Opaque</c> or <c>Addressless</c> where bytes would be placed.</exception>
     let getHostName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

@@ -161,7 +161,8 @@ type DeviceNumber =
 /// A well-known character device.
 /// </summary>
 /// <remarks>
-/// Not all of these are necessarily implemented yet; see <c>CharacterDevice.all</c> for the implemented ones.
+/// Not all of these are implemented yet. On Linux, <c>CharacterDevice.all</c> lists the devices for which this
+/// kernel has a driver. On Darwin this kernel has no driver for any device, so opening any device node is refused.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type CharacterDevice =
@@ -239,18 +240,19 @@ type InodeContent =
     /// <summary>
     /// A socket special file: what <c>stat(2)</c> reports as <c>S_IFSOCK</c>.
     /// </summary>
-    /// <example>
-    /// Created, for example, by a `bind(2)` of a Unix-domain socket.
-    /// </example>
+    /// <remarks>
+    /// Reserved: nothing in this version makes one. A real kernel makes one for a <c>bind(2)</c> of a
+    /// Unix-domain socket, which this library refuses.
+    /// </remarks>
     | Socket of permissions : PermissionBits
     /// <summary>
     /// A FIFO special file, or named pipe: what <c>stat(2)</c> reports as
     /// <c>S_IFIFO</c>.
     /// </summary>
-    /// <example>
-    /// Created, for example, by <c>mkfifo</c> or <c>mknod(2)</c> of <c>S_IFIFO</c>.
-    /// </example>
     /// <remarks>
+    /// Reserved: nothing in this version makes one. A real kernel makes one for <c>mkfifo</c>, or for
+    /// <c>mknod(2)</c> of <c>S_IFIFO</c>, which this library refuses.
+    /// <para />
     /// The bytes in transit are not part of the content: they live only while
     /// some end of the FIFO is open, and go at the last close.
     /// </remarks>

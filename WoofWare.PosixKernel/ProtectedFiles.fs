@@ -4,7 +4,8 @@ namespace WoofWare.PosixKernel
 /// Configuration for when a platform refuses to follow symlinks.
 /// </summary>
 /// <remarks>
-/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// This applies only to Linux. Darwin has no such setting, and a Darwin boot image accepts only <c>Off</c>
+/// (see <c>ProtectedFiles</c>).
 /// <para />
 /// This is Linux's <c>fs.protected_symlinks</c> sysctl.
 /// </remarks>
@@ -40,7 +41,8 @@ type SymlinkProtection =
 /// Configuration for when a platform refuses to create an existing file or FIFO with <c>O_CREAT</c> in <c>open(2)</c>.
 /// </summary>
 /// <remarks>
-/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// This applies only to Linux. Darwin has no such setting, and a Darwin boot image accepts only <c>Off</c>
+/// (see <c>ProtectedFiles</c>).
 /// <para />
 /// This models Linux's <c>fs.protected_regular</c> and <c>fs.protected_fifos</c> sysctls.
 /// </remarks>
@@ -80,14 +82,15 @@ type CreationProtection =
 /// Configuration for when a platform refuses to create a hardlink.
 /// </summary>
 /// <remarks>
-/// This applies only to Linux. Darwin behaves as <c>Off</c>.
+/// This applies only to Linux. Darwin has no such setting, and a Darwin boot image accepts only <c>Off</c>
+/// (see <c>ProtectedFiles</c>).
 /// <para />
 /// This is Linux's <c>fs.protected_hardlinks</c> sysctl.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type HardlinkProtection =
     /// <summary>
-    /// A caller may link any inode.
+    /// This setting does not forbid any link.
     /// </summary>
     /// <remarks>
     /// On Linux, this is what you'd get by setting <c>fs.protected_hardlinks</c> to 0 (the default).
@@ -101,9 +104,9 @@ type HardlinkProtection =
     /// <remarks>
     /// Darwin doesn't have this.
     /// <para />
-    /// The condition takes a lot of words to say, but the gist is "you can only link the file if: you can
-    /// already access it, and setsid/setgid are such that you can't execute its contents as someone else after you
-    /// write them".
+    /// The condition takes a lot of words to say, but the gist is "you can only link the file if: it is a regular
+    /// file, you can already access it, and its setuid/setgid bits are such that you can't execute its contents as
+    /// someone else after you write them".
     /// <para />
     /// On Linux, this is what you'd get by setting <c>fs.protected_hardlinks</c> to 1.
     /// <para />
@@ -117,6 +120,13 @@ type HardlinkProtection =
 /// Linux's <c>fs.protected_*</c> sysctls that decide what a caller may do with
 /// another user's files.
 /// </summary>
+/// <remarks>
+/// This is machine configuration: the client sets it on a boot image with <c>UnixBootImage.withProtectedFiles</c>.
+/// A machine that the client does not configure has <c>ProtectedFiles.off</c>.
+/// <para />
+/// Darwin has none of these sysctls, so <c>UnixBootImage.withProtectedFiles</c> throws
+/// <c>ArgumentException</c> on a Darwin boot image for anything but <c>ProtectedFiles.off</c>.
+/// </remarks>
 type ProtectedFiles =
     // This is machine configuration, not a fact of the kernel, because an administrator
     // sets these.

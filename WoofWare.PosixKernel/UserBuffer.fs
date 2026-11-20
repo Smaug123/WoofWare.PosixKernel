@@ -91,30 +91,44 @@ module LinuxEpollLimits =
         // 134217727 on aarch64, each the quotient exactly.
         System.Int32.MaxValue / eventSize architecture
 
-/// Where a buffer argument to a syscall is, as far as this kernel's own address
-/// check can see.
+/// The client's description of a pointer that the process passed to a call, as
+/// far as the kernel's own address check can see it.
 ///
-/// Only buffers *the kernel itself* would dereference are described here. A
-/// client whose foreign-function layer dereferences a pointer on its own account
-/// — a wrapper reading a caller's length out-parameter before it makes the call
-/// — answers for that itself, because a fault there happens in the client's code
-/// and no kernel is involved.
+/// This library never reads or writes the process's memory, so a `UserBuffer`
+/// carries no bytes. Where the call reads the buffer, the client hands over
+/// the bytes when the call stops at its copy (`CallProgress.NeedsCopyIn`);
+/// where the call writes the buffer, its answer carries the bytes, and the
+/// client stores them (see "What every client does" in the README).
 ///
-/// There is deliberately no `Null` case. A null pointer is an ordinary low
-/// address to a kernel: it passes the range check like any other, and faults
-/// where any unmapped address would. Foreign-function layers commonly screen for
-/// null before calling, and that screen belongs to whoever wrote it.
+/// Only buffers that *the kernel itself* would dereference are described here.
+/// A client whose own code dereferences a pointer, such as a wrapper that reads
+/// a length out-parameter before it makes the call, answers for that itself,
+/// because a fault there happens in the client's code and no kernel is
+/// involved.
+///
+/// There is deliberately no `Null` case: a NULL pointer is `Unmapped 0UL`. To a
+/// kernel, NULL is an ordinary low address, which passes the range check like
+/// any other and faults where any unmapped address would. Some calls give
+/// NULL a meaning of its own, such as "no address" for `sendto(2)`'s
+/// destination, and their functions say so.
 [<RequireQualifiedAccess>]
 type UserBuffer =
-    /// An address naming no storage the client can transfer bytes through. The
-    /// kernel's answer is EFAULT — at whichever step it first looks, which is
-    /// not necessarily the first step of the syscall.
+    /// An address naming no storage that the client can transfer bytes through.
+    /// Where the kernel looks at it, the usual answer is EFAULT, at whichever
+    /// step the kernel first looks, which is not necessarily the first step of
+    /// the call. Some calls give another answer, or are refused, and their
+    /// functions say so.
     | Unmapped of address : uint64
-    /// Real storage. The kernel never learns where, so a platform that screens
-    /// a buffer's range up front can only decide the ranges no placement fits:
-    /// one longer than the whole user address space faults wherever it starts.
-    /// Any shorter range is taken to fit, which is exact while the count is
-    /// within the storage and an assumption once it reaches past it.
+    /// Real storage. The kernel never learns where it is, so a platform that
+    /// screens a buffer's range up front can reject only a range that fits
+    /// nowhere: one longer than the whole user address space faults wherever
+    /// it starts. Any shorter range is taken to fit.
+    ///
+    /// That is exact while the count is within the storage, and an assumption
+    /// once the count reaches past it. This library cannot express a buffer
+    /// that is readable or writable only in part: a call given `Mapped` goes on
+    /// as though the whole range were there, and asks the client for, or
+    /// answers, every byte of the range it names.
     | Mapped
     /// A real user address whose bytes the client cannot produce.
     ///

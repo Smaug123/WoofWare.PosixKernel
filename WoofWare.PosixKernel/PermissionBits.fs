@@ -198,15 +198,18 @@ type PermissionBits =
 /// <remarks>
 /// This specifies the behaviour of <c>X_OK</c> access checks on a regular file or a symbolic link.
 /// <para />
-/// There's no corresponding configuration for an <i>unprivileged</i> caller,
-/// which is always refused EACCES unless the target has the appropriate execute bit.
+/// There's no corresponding rule for an <i>unprivileged</i> caller,
+/// which always gets <c>EACCES</c> unless the target has the appropriate execute bit.
+/// <para />
+/// This is a fact of the flavour, which the kernel already applies.
+/// <c>SimulatedUnixPlatform.privilegedExecution</c> hands it out only so that a client can learn what the kernel will do.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type PrivilegedExecution =
     /// <summary>
     /// The caller is granted exactly when at least one of the three execute bits is set,
     /// whether or not the caller owns the inode or is in its group.
-    /// Otherwise, it's refused with EACCES.
+    /// Otherwise, it gets <c>EACCES</c>.
     /// </summary>
     ///
     /// <example>
@@ -215,12 +218,12 @@ type PrivilegedExecution =
     | NeedsAnExecuteBit
     /// <summary>
     /// For <i>regular files</i>, the caller is granted exactly when at least
-    /// one of the three execute bits is set, and otherwise is refused with EPERM.
+    /// one of the three execute bits is set, and otherwise gets <c>EPERM</c>.
     /// For <i>symlinks</i>, the caller is granted unconditionally.
     /// </summary>
     /// <remarks>
-    /// Behaviour is not yet measured on FIFOs/sockets/devices, so those currently
-    /// throw.
+    /// Behaviour is not yet measured on FIFOs/sockets/devices, so a privileged caller's execute question
+    /// about one is refused.
     /// </remarks>
     /// <example>
     /// Darwin does this.
@@ -285,7 +288,7 @@ type LinkReadRule =
     /// </example>
     | ModeIgnored
     /// <summary>
-    /// An unprivileged caller is refused unless it has the read bit on the symlink.
+    /// An unprivileged caller gets <c>EACCES</c> unless the triple which its standing selects has the read bit.
     /// A privileged caller can read any link.
     /// </summary>
     /// <example>

@@ -238,23 +238,25 @@ module internal ListenRefusal =
 /// of address.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetSockNameAnswer =
-    /// The call succeeded: the kernel wrote `copiedOut` to the start of the
-    /// caller's buffer and `reportedLength` to its length cell.
+    /// The process's call returns 0. This library has stored nothing: the
+    /// client stores `copiedOut` at the start of the process's address buffer,
+    /// and `reportedLength` in the process's length cell (see "What every
+    /// client does" in the README).
     ///
-    /// `copiedOut` is the address as this platform's socket address structure
-    /// for the socket's family (a `struct sockaddr_in` for an IPv4 socket, a
-    /// `struct sockaddr_in6` for an IPv6 one), cut to the length the caller
-    /// declared, and so possibly empty; `reportedLength` is that structure's
-    /// *untruncated* size, which the declared length does not bound -- see the
-    /// entry point.
+    /// `copiedOut` is the address laid out as the platform's socket address
+    /// structure for the socket's family (a `struct sockaddr_in` for an IPv4
+    /// socket, a `struct sockaddr_in6` for an IPv6 one), cut to the length that
+    /// the process declared. It may be empty. `reportedLength` is the size of
+    /// the whole structure, which can exceed the declared length: see
+    /// `UnixSocket.getsockname`.
     | Reported of copiedOut : ImmutableArray<byte> * reportedLength : int
-    /// The entry point returns -1, the caller stores `error` wherever its libc
-    /// keeps errno, and `lengthOverwritten` is what the kernel had already put
-    /// in the caller's length cell before it discovered the fault.
+    /// The process's call returns -1 and sets errno to `error`.
     ///
-    /// `None` on a kernel that had stored nothing yet, and on every failure
-    /// that precedes the copy on any. See `GetSockNameFaultLength`, which is
-    /// where the divergence and its measurement are written down.
+    /// When `lengthOverwritten` is `Some`, the kernel wrote that length to the
+    /// process's length cell before it found the fault, and the client stores
+    /// it there even though the call failed. `None` means that the cell keeps
+    /// what it held. `GetSockNameFaultLength` says which kernels write the
+    /// length first.
     | Failed of error : UnixError * lengthOverwritten : int option
 
 /// Why this kernel will not answer a `getsockname` or a `getpeername`.
@@ -408,22 +410,28 @@ type internal GetSockOptAdmission =
 /// What a `getsockopt(2)` answered.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetSockOptAnswer =
-    /// The call succeeded. The kernel wrote `copiedOut` to the start of the
-    /// caller's value buffer, and then its length to the caller's length cell.
+    /// The process's call returns 0. This library has stored nothing: the
+    /// client stores `copiedOut` at the start of the process's value buffer,
+    /// and then stores its length, as a `socklen_t`, in the process's length
+    /// cell (see "What every client does" in the README).
     ///
-    /// `copiedOut` is the start of the option's value -- a C `int`, or for
-    /// `SO_LINGER` a `struct linger`, in the simulated machine's byte order --
-    /// cut to the length the caller declared. It may be empty, and the value
-    /// buffer is then untouched.
+    /// `copiedOut` is the start of the option's value, cut to the length that
+    /// the process declared. The value is a C `int`, or for `SO_LINGER` a
+    /// `struct linger`, in the simulated machine's byte order. When
+    /// `copiedOut` is empty, the value buffer stays as it was, and the length
+    /// stored is 0.
     | Reported of copiedOut : ImmutableArray<byte>
-    /// The call failed with this errno, and the value buffer was not written.
-    /// `lengthOverwritten` is what the kernel had already put in the caller's
-    /// length cell before it discovered the fault: Linux writes the length
-    /// first for `TCP_NODELAY` and `IPV6_V6ONLY` (measured), and nothing
-    /// else writes it before failing.
+    /// The process's call returns -1 and sets errno to `error`. The value
+    /// buffer stays as it was.
     ///
-    /// A call that fails while copying out has still read the option, which
-    /// for `SO_ERROR` takes a pending refusal: see `UnixSocket.getsockopt`.
+    /// When `lengthOverwritten` is `Some`, the kernel wrote that length to the
+    /// process's length cell before it found the fault, and the client stores
+    /// it there even though the call failed. Only Linux does this, and only
+    /// for `TCP_NODELAY` and `IPV6_V6ONLY`.
+    ///
+    /// A call that fails while copying out has still read the option. For
+    /// `SO_ERROR`, that read takes the pending error: see
+    /// `UnixSocket.getsockopt`.
     | Failed of error : UnixError * lengthOverwritten : uint32 option
 
 /// Why this library will not answer a `socket(2)`.
@@ -509,10 +517,17 @@ type private DarwinAttach =
     | IcmpDatagram
     | NotSupported
 
-/// A `bind(2)` stopped where the kernel copies the caller's `struct sockaddr`
-/// in: `UnixSocket.bind` answers it, `PausedBind.copyRange` says which bytes
-/// of the address buffer to copy, and `UnixSocket.bindWithAddress` takes them
-/// and finishes the call.
+/// A `bind(2)` that has stopped at the point where the kernel copies the
+/// process's `struct sockaddr` in. `UnixSocket.bind` answers one.
+///
+/// To finish the call, the client reads the bytes that
+/// `PausedBind.copyRange` names from the process's address buffer, and passes
+/// them to `UnixSocket.bindWithAddress`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `bindWithAddress` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
 [<NoEquality ; NoComparison>]
 type PausedBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -528,20 +543,28 @@ type PausedBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
 
 [<RequireQualifiedAccess>]
 module PausedBind =
-    /// The bytes of the address buffer the kernel copies: what
-    /// `UnixSocket.bindWithAddress` takes. Always from the start of the
-    /// buffer, and the whole of the length the caller declared, as far as the
-    /// kernel reads one.
+    /// Which bytes of the process's address buffer the kernel copies, and so
+    /// which bytes `UnixSocket.bindWithAddress` takes: the first
+    /// `declaredLength` bytes, since the kernel copies the whole declared
+    /// length before it looks at any field. Never empty: a `bind` that copies
+    /// nothing answers without stopping.
     let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (paused : PausedBind<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
 
-/// A `setsockopt(2)` stopped where the kernel copies the option's value in:
-/// `UnixSocket.setsockopt` answers it, `PausedSetSockOpt.copyRange` says which
-/// bytes of the value buffer to copy, and `UnixSocket.setsockoptWithValue`
-/// takes them and finishes the call.
+/// A `setsockopt(2)` that has stopped at the point where the kernel copies the
+/// option's value in. `UnixSocket.setsockopt` answers one.
+///
+/// To finish the call, the client reads the bytes that
+/// `PausedSetSockOpt.copyRange` names from the process's value buffer, and
+/// passes them to `UnixSocket.setsockoptWithValue`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `setsockoptWithValue` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
 [<NoEquality ; NoComparison>]
 type PausedSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -559,21 +582,29 @@ type PausedSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler :
 
 [<RequireQualifiedAccess>]
 module PausedSetSockOpt =
-    /// The bytes of the value buffer the kernel copies: what
-    /// `UnixSocket.setsockoptWithValue` takes. Always from the start of the
-    /// buffer: a C `int`, or for `SO_LINGER` a `struct linger` of two, in the
-    /// simulated machine's byte order (`SimulatedUnixPlatform.encodeCInt`),
-    /// whatever length the caller declared.
+    /// Which bytes of the process's value buffer the kernel copies, and so
+    /// which bytes `UnixSocket.setsockoptWithValue` takes. They start at the
+    /// beginning of the buffer and are the size of the option's value,
+    /// whatever length the process declared: a C `int`, or for `SO_LINGER` a
+    /// `struct linger` of two `int`s, in the simulated machine's byte order
+    /// (`SimulatedUnixPlatform.encodeCInt`).
     let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (paused : PausedSetSockOpt<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
 
-/// A `getsockopt(2)` stopped where the kernel reads the caller's length cell, a
-/// `socklen_t` of four bytes in the simulated machine's byte order:
-/// `UnixSocket.getsockopt` answers it, and `UnixSocket.getsockoptWithLength`
-/// takes what the cell holds and finishes the call.
+/// A `getsockopt(2)` that has stopped at the point where the kernel reads the
+/// process's length cell. `UnixSocket.getsockopt` answers one.
+///
+/// To finish the call, the client reads the cell, a `socklen_t` of four bytes
+/// in the simulated machine's byte order, from the process's memory, and
+/// passes its value to `UnixSocket.getsockoptWithLength`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `getsockoptWithLength` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
 [<NoEquality ; NoComparison>]
 type PausedGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -1951,14 +1982,13 @@ module UnixSocket =
     /// `listen(2)`: make `fd` a passive socket, and give it an address if it has
     /// none.
     ///
-    /// `backlog` is recorded verbatim rather than clamped: every value is
-    /// accepted -- measured, 0, -1 and `INT_MAX` all succeed on both -- and the
-    /// accept-queue capacity a later `connect` enforces is derived from it per
-    /// flavour, so storing the input keeps one flavour's arithmetic out of the
-    /// stored value.
+    /// Every `backlog` succeeds, 0, -1 and `INT_MAX` included, and the socket
+    /// records it as given (`ListenState.Backlog`). A later `connect` derives
+    /// from it how many completed connections the accept queue holds: see
+    /// `ListenState.Backlog`.
     ///
-    /// A re-listen keeps the queue and updates the backlog, which is Linux's
-    /// documented behaviour (`sk_max_ack_backlog` is simply re-assigned).
+    /// A second `listen` on a listening socket keeps the queue and replaces
+    /// the backlog.
     let listen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -2104,22 +2134,28 @@ module UnixSocket =
             (tryGetsocknameIn fd destination declaredLength)
             system
 
-    /// `getsockname(2)`: report the local address the socket `fd` names.
+    /// `getsockname(2)`: report the local address of the socket that `fd`
+    /// names.
     ///
-    /// Answers the bytes the kernel copies out, laid out for the platform, and
-    /// the length it writes back.
+    /// `destination` is the client's description of the process's address
+    /// buffer (see `UserBuffer`). `declaredLength` is the 32-bit value that
+    /// the client read from the process's length cell before making this
+    /// call. This library has no way to hear that the length cell itself is
+    /// NULL or unreadable, so a client facing such a cell has no answer to
+    /// give from this function.
     ///
-    /// `declaredLength` is how much of the caller's buffer may be written, and
-    /// **does not bound what is reported**. Measured on both flavours: a call
-    /// declaring 8 writes eight bytes and reports 16, and one declaring 128
-    /// writes 16 and still reports 16.
+    /// The answer carries the bytes and the length that the client stores
+    /// into the process's memory (`GetSockNameAnswer.Reported`); this library
+    /// stores nothing. `declaredLength` limits how many bytes are stored in
+    /// the buffer, but **not the length reported**. For an IPv4 socket, a call
+    /// declaring 8 stores eight bytes and reports 16, and one declaring 128
+    /// stores 16 and reports 16.
     ///
-    /// `declaredLength` is the 32-bit word the caller read out of its length
-    /// cell. Linux reads it as an `int` and answers `EINVAL` for a negative one,
-    /// before it touches the destination or the cell; Darwin reads it as the
-    /// `socklen_t` it is, so no length is an error there.
+    /// Linux reads `declaredLength` as an `int`, and answers `EINVAL` for a
+    /// negative one before it writes to the buffer or the cell. Darwin reads it
+    /// as a `socklen_t`, so no length is an error there.
     ///
-    /// Changes nothing and returns no system: a `getsockname` reads.
+    /// Changes nothing, and so returns no system.
     let getsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -2243,28 +2279,32 @@ module UnixSocket =
             (tryGetpeernameIn fd destination declaredLength)
             system
 
-    /// `getpeername(2)`: report the address of the peer the socket `fd` is
-    /// connected to.
+    /// `getpeername(2)`: report the address of the peer to which the socket
+    /// `fd` is connected.
     ///
     /// A connected stream socket reports the other end of its connection, and
-    /// keeps reporting it after that end closes with a FIN; a connected
-    /// datagram socket reports its default peer. The answer and its length
-    /// rules are exactly `getsockname`'s, including that `declaredLength` does
-    /// not bound what is reported.
+    /// goes on reporting it after that end closes with a FIN. A connected
+    /// datagram socket reports its default peer. The parameters and the
+    /// answer are exactly as for `getsockname`: the client passes the value it
+    /// read from the process's length cell, this library cannot hear that the
+    /// cell is NULL or unreadable, the client stores what the answer carries,
+    /// and `declaredLength` does not limit the length reported.
     ///
-    /// A socket with no peer answers `ENOTCONN` -- one never connected, a
-    /// listener, and a datagram socket connected to port 0, which Linux allows
-    /// -- in every address family, and before the declared length is judged.
-    /// A refused connect leaves no peer either, nor does a reset that reached
-    /// a connected socket, whether or not its error has been taken: `ENOTCONN`
-    /// on Linux, and `EINVAL` on Darwin, which answers that for any socket
-    /// that can neither send nor receive.
+    /// A socket without a peer answers `ENOTCONN` in every address family,
+    /// before the declared length is checked. Such sockets include one never
+    /// connected, a listener, and a datagram socket connected to port 0 (which
+    /// Linux allows). A socket whose connect answered `ECONNREFUSED` has no
+    /// peer either, nor does a connected socket that a reset reached, whether
+    /// or not its error has been read: these answer `ENOTCONN` on Linux and
+    /// `EINVAL` on Darwin, which answers `EINVAL` for any socket that can
+    /// neither send nor receive.
     ///
-    /// A connect this kernel answered `EINPROGRESS` has already completed, so
-    /// the peer is reported at once. Darwin answers `ENOTCONN` there until the
-    /// loopback handshake lands, which a deterministic kernel need not wait for.
+    /// When this library has answered a connect with `EINPROGRESS`, the
+    /// connection has already completed, so `getpeername` reports the peer at
+    /// once. Darwin answers `ENOTCONN` until the loopback handshake lands,
+    /// and this library does not model that delay.
     ///
-    /// Changes nothing and returns no system: a `getpeername` reads.
+    /// Changes nothing, and so returns no system.
     let getpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -3118,28 +3158,31 @@ module UnixSocket =
             system
 
     /// <summary>
-    /// `bind(2)`: give `fd` the local address in the `struct sockaddr` the
-    /// caller declared `declaredLength` bytes long at `address`.
+    /// `bind(2)`: give `fd` the local address held in the process's
+    /// `struct sockaddr`, which the process declared to be `declaredLength`
+    /// bytes long.
     /// </summary>
     /// <remarks>
-    /// Every answer the call gives before the kernel copies the sockaddr in
-    /// comes first, as `CallProgress.Answered`, with the system unchanged: a
-    /// bad descriptor, a non-socket, a length the copy rejects outright, or a
-    /// faulting address. Otherwise the call stops at the copy, and
-    /// `bindWithAddress`, given the bytes `PausedBind.copyRange` names, decodes
-    /// the family, port and address out of them itself. Whether the copy
-    /// happens at all is a measured per-flavour rule rather than a length
-    /// test: Darwin's `getsockaddr` reads nothing at a length too short to
-    /// reach `sa_family`, and Linux's `move_addr_to_kernel` reads at any
-    /// positive length. Both copy the whole declared length before they look
-    /// at any field, so a fault anywhere in those bytes is `EFAULT`, whichever
-    /// field it lies in: a client that cannot say whether its buffer holds
-    /// that many bytes has no answer to give, and should refuse rather than
-    /// guess.
+    /// `address` is the client's description of the process's address buffer
+    /// (see `UserBuffer`), not the address itself. The kernel copies the whole
+    /// declared length before it looks at any field, so a fault anywhere in
+    /// those bytes is `EFAULT`. The client therefore passes
+    /// `UserBuffer.Mapped` only when every one of the `declaredLength` bytes
+    /// is readable, and `UserBuffer.Unmapped` when any of them is not.
     ///
-    /// `declaredLength` is the caller's 32-bit length exactly as passed: Linux
+    /// Every answer that the call gives before the kernel copies the sockaddr
+    /// in comes first, as `CallProgress.Answered`, with the system unchanged: a
+    /// bad descriptor, a non-socket, a length that the copy rejects outright,
+    /// or a faulting address. Otherwise the call stops at the copy
+    /// (`CallProgress.NeedsCopyIn`). The client then reads the bytes that
+    /// `PausedBind.copyRange` names and passes them to `bindWithAddress`, which
+    /// decodes the family, port and address itself. Darwin copies nothing at a
+    /// length too short to reach `sa_family`, and Linux copies at any positive
+    /// length; a call that copies nothing does not stop.
+    ///
+    /// `declaredLength` is the process's 32-bit length exactly as passed. Linux
     /// reads it as an `int` and Darwin as a `socklen_t`, so the platforms
-    /// disagree about whether one at or above 2^31 is negative.
+    /// disagree about whether a length at or above 2^31 is negative.
     ///
     /// Which existing bindings the new one conflicts with depends on
     /// `SO_REUSEADDR` as `setsockopt` last left it, on this socket and on the
@@ -3187,10 +3230,15 @@ module UnixSocket =
         Entry.resume (Shape.result Shape.withSystem) (tryBindWithAddressIn copied paused)
 
     /// <summary>
-    /// The rest of the `bind` `paused` stopped: `copied`, exactly the bytes
-    /// `PausedBind.copyRange` names, is the sockaddr the kernel reads the
-    /// family, port and address out of. See `bind`.
+    /// Finish the `bind` that `paused` holds. `copied` is exactly the bytes that
+    /// `PausedBind.copyRange` names, read by the client from the process's
+    /// address buffer; the kernel reads the family, port and address from
+    /// them. See `bind`.
     /// </summary>
+    /// <remarks>
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see `PausedBind`).
+    /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedBind.copyRange`'s `ByteCount` long.</exception>
     let bindWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
@@ -3256,23 +3304,29 @@ module UnixSocket =
 
     /// <summary>
     /// `setsockopt(2)`: set the socket option `optionName` at `level` to the
-    /// value at `value`, which the caller declared `optionLength` bytes long.
+    /// value held in the process's value buffer, which the process declared to
+    /// be `optionLength` bytes long.
     /// </summary>
     /// <remarks>
-    /// Every answer the call gives before the kernel copies the value in comes
-    /// first, as `CallProgress.Answered`, with the system unchanged; so does
-    /// the answer of a call that copies no value at all, as Linux's
-    /// `IPV6_V6ONLY` through a null pointer, which it takes as 0 (measured).
-    /// Otherwise the call stops at the copy, and `setsockoptWithValue`, given
-    /// the bytes `PausedSetSockOpt.copyRange` names, finishes it.
+    /// `value` is the client's description of the process's value buffer (see
+    /// `UserBuffer`), not the value itself.
+    ///
+    /// Every answer that the call gives before the kernel copies the value in
+    /// comes first, as `CallProgress.Answered`, with the system unchanged. So
+    /// does the answer of a call that copies no value at all, such as Linux's
+    /// `IPV6_V6ONLY` through a null pointer, which Linux takes as 0. Otherwise
+    /// the call stops at the copy (`CallProgress.NeedsCopyIn`). The client then
+    /// reads the bytes that `PausedSetSockOpt.copyRange` names and passes them
+    /// to `setsockoptWithValue`, which finishes the call.
     ///
     /// `level` and `optionName` are in the simulated platform's own numbering;
     /// `SimulatedUnixPlatform`'s `socketOptionLevel`, `tcpOptionLevel` and
     /// `ipv6OptionLevel`, with the option names beside them, name the pairs
     /// modelled. Setting `SO_ERROR` is refused as an unmodelled option: both
     /// kernels answer ENOPROTOOPT, but where among the other screens is
-    /// unmeasured. `optionLength` is the caller's `socklen_t` exactly as passed:
-    /// the platforms disagree about whether one at or above 2^31 is negative.
+    /// unmeasured. `optionLength` is the process's `socklen_t` exactly as
+    /// passed: the platforms disagree about whether a length at or above 2^31
+    /// is negative.
     ///
     /// What each option takes, measured on both (`docs/probes/sockopt-options/`):
     ///
@@ -3352,10 +3406,15 @@ module UnixSocket =
         Entry.resume (Shape.result Shape.withSystem) (trySetsockoptWithValueIn copied paused)
 
     /// <summary>
-    /// The rest of the `setsockopt` `paused` stopped: `copied`, exactly the
-    /// bytes `PausedSetSockOpt.copyRange` names, is the option's value. See
-    /// `setsockopt`.
+    /// Finish the `setsockopt` that `paused` holds. `copied` is exactly the
+    /// bytes that `PausedSetSockOpt.copyRange` names, read by the client from
+    /// the process's value buffer: the option's value. See `setsockopt`.
     /// </summary>
+    /// <remarks>
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see
+    /// `PausedSetSockOpt`).
+    /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedSetSockOpt.copyRange`'s `ByteCount` long.</exception>
     let setsockoptWithValue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
@@ -3420,17 +3479,25 @@ module UnixSocket =
 
     /// <summary>
     /// `getsockopt(2)`: read the socket option `optionName` at `level` into
-    /// `value`, whose length the caller keeps in the cell at `length`.
+    /// the process's value buffer, whose length the process keeps in its
+    /// length cell.
     /// </summary>
     /// <remarks>
-    /// Every answer the call gives before the kernel reads the length cell
-    /// comes first, as `CallProgress.Answered`; so does the answer of a call
-    /// that never reads it, Darwin's for a null value buffer, which reads the
-    /// option and writes a length of 0 back to the cell. Otherwise the call
-    /// stops at the read of the cell, and `getsockoptWithLength`, given the
-    /// `socklen_t` the cell holds, finishes it. What is copied out is the
-    /// first that many bytes of the option's value, at most its size, and
-    /// that count is what is written back to the cell.
+    /// `value` and `length` are the client's descriptions of the process's
+    /// value buffer and length cell (see `UserBuffer`), not their contents.
+    /// The answer carries what the client stores into them
+    /// (`GetSockOptAnswer`); this library stores nothing.
+    ///
+    /// Every answer that the call gives before the kernel reads the length
+    /// cell comes first, as `CallProgress.Answered`. So does the answer of a
+    /// call that never reads the cell: Darwin's for a null value buffer, which
+    /// reads the option and has the client store a length of 0 in the cell.
+    /// Otherwise the call stops at the read of the cell
+    /// (`CallProgress.NeedsCopyIn`). The client then reads the `socklen_t` in
+    /// the cell and passes it to `getsockoptWithLength`, which finishes the
+    /// call. The bytes copied out are the first that many bytes of the option's
+    /// value, and at most its size; their count is the length stored back in
+    /// the cell.
     ///
     /// `level` and `optionName` are numbered as for `setsockopt`.
     ///
@@ -3445,14 +3512,14 @@ module UnixSocket =
     ///   `l_linger` is the time in seconds on Linux, in hundredths of a second
     ///   on Darwin, and in seconds through Darwin's `SO_LINGER_SEC` (the
     ///   hundredths over 100, rounded toward zero).
-    /// - `SO_ERROR` is the raw ECONNREFUSED of a refusal still pending
-    ///   (`SocketPhase.Refused RefusalError.Pending`), the raw error a reset
-    ///   left pending on a connected socket, the raw ECONNREFUSED an ICMP
-    ///   port-unreachable error left pending on a UDP socket, and 0
-    ///   otherwise. Reading a pending error takes it: a refused socket is left
-    ///   `Refused RefusalError.Reported`, and a connected or UDP one with
-    ///   nothing pending, whether the copy-out then succeeds
-    ///   or not. Only a call that fails before reading the option leaves the
+    /// - `SO_ERROR` is the raw ECONNREFUSED that a refused connection left
+    ///   pending (`SocketPhase.Refused RefusalError.Pending`), the raw error
+    ///   that a reset left pending on a connected socket, the raw ECONNREFUSED
+    ///   that an ICMP port-unreachable error left pending on a UDP socket, and
+    ///   0 otherwise. Reading a pending error takes it, whether or not the
+    ///   copy-out then succeeds: a socket in `SocketPhase.Refused` is left
+    ///   `Refused RefusalError.Reported`, and a connected or UDP socket is left
+    ///   with nothing pending. Only a call that fails before reading the option leaves the
     ///   error pending: one answered before the cell is read, or a Linux one
     ///   declaring a negative length.
     ///
@@ -3497,8 +3564,13 @@ module UnixSocket =
         =
         Entry.resume (Shape.result Shape.withSystem) (tryGetsockoptWithLengthIn declaredLength paused)
 
-    /// The rest of the `getsockopt` `paused` stopped: `declaredLength` is the
-    /// `socklen_t` the caller's length cell holds. See `getsockopt`.
+    /// Finish the `getsockopt` that `paused` holds. `declaredLength` is the
+    /// `socklen_t` that the client read from the process's length cell. See
+    /// `getsockopt`.
+    ///
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see
+    /// `PausedGetSockOpt`).
     let getsockoptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (declaredLength : uint32)
         (paused : PausedGetSockOpt<'Thread, 'Handler>)

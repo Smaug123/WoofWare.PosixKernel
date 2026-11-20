@@ -8,6 +8,11 @@ type KillOutcome =
     /// was no signal to send.
     | ProcessRuns
     /// The signal stops the whole process.
+    ///
+    /// This library keeps no stopped state, and nothing in it continues a
+    /// stopped process. So a client should treat the stop as unsupported and
+    /// stop running the process, rather than carry on as if the process were
+    /// still running (see "Signals" in the README).
     | ProcessStopped of signal : Signal
 
 /// What a `kill(2)` or `pthread_kill(3)` answered, if it did not end the
@@ -16,9 +21,10 @@ type KillOutcome =
 type KillAnswer =
     /// The call returned 0, and did `outcome` to the calling process.
     | Completed of outcome : KillOutcome
-    /// The call sent nothing, and failed with `error`: `kill` returns -1 and
-    /// the client stores `error` wherever its libc keeps errno, and
-    /// `pthread_kill` returns `error` itself, leaving errno alone.
+    /// The process's call sent nothing, and failed with `error`. The client
+    /// delivers `error` to the process as that call reports failure: `kill`
+    /// returns -1 and sets errno, and `pthread_kill` returns `error` itself,
+    /// leaving errno alone.
     | Failed of error : UnixError
 
 /// Why this library will not end a process: what closing its descriptors
@@ -380,25 +386,28 @@ module UnixThreadLifecycle =
             system
 
     /// <summary>
-    /// The thread-exit syscall: `thread` ends. This is `SYS_exit` on Linux, which is
-    /// what `pthread_exit` and a thread's return from its start routine end in; it
-    /// is not `exit(3)` or `exit_group(2)` (see `exitGroup`).
-    ///
-    /// Removes `thread` from the table, and with it everything the process holds for
-    /// that thread alone: its signal mask, and the signals pending on it alone, which
-    /// are discarded rather than passed on to another thread. Its thread ID is no
-    /// longer live, so the machine may hand it out again, and the processor it
-    /// was running on, if any, is idle. The process carries on
-    /// unless `thread` was its last, in which case the process ends, on Linux, having
-    /// exited with `status`, and is removed from the system at once, its
-    /// descriptors closed as `exitGroup` closes them. `status` is otherwise ignored.
-    ///
-    /// Refuses a thread that is parked in a syscall, the process's leader while any
-    /// other thread lives, the process's last thread on Darwin, and the last
-    /// thread where closing the process's descriptors would be refused (see
+    /// The thread-exit syscall, made by the thread that `caller` names: that thread
+    /// ends. This is `SYS_exit` on Linux, in which `pthread_exit` and a thread's return
+    /// from its start routine end. It is not `exit(3)` or `exit_group(2)` (see
     /// `exitGroup`).
     ///
-    /// Fails loudly if `thread` names no thread, which is a bug in the client.
+    /// The thread leaves the process, and with it goes everything the process holds
+    /// for that thread alone: its signal mask, and the signals pending on it alone,
+    /// which are discarded rather than passed on to another thread. Its thread ID is no
+    /// longer live, so the machine may hand it out again, and the processor on which
+    /// it was running, if any, becomes idle. The client stops running the thread.
+    ///
+    /// The process carries on unless this was its last thread. Then, on Linux, the
+    /// process ends, having exited with `status`, and is removed from the system at
+    /// once, its descriptors closed as `exitGroup` closes them. Otherwise `status` is
+    /// ignored.
+    ///
+    /// Refuses the process's leader while any other thread lives, the process's last
+    /// thread on Darwin, and the last thread where closing the process's descriptors
+    /// would be refused (see `exitGroup`).
+    ///
+    /// Throws `InvalidOperationException` if `caller` names no thread, or a thread
+    /// asleep in a syscall: each is a bug in the client.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">The thread is blocked in a syscall, so it cannot be making another one.</exception>
     let exitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

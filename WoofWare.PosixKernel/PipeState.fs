@@ -57,14 +57,16 @@ type PipeStatus =
         Times : PipeTimes
     }
 
-/// The end of a launched pipe that the client kept, named by the process it
-/// launched the pipe into and the descriptor that process was given onto the
-/// pipe's other end in the launch table that `UnixSystem.initial` took.
+/// The end of a launched pipe that stays outside the machine, on the client's
+/// side. It is named by the process into which the pipe was launched, and by
+/// the descriptor that the launch table (`ProcessLaunch.create`, used by
+/// `UnixBootImage.boot` or `UnixSystem.launch`) gave that process onto the
+/// pipe's other end.
 ///
-/// So the client that launched process `pid` with its output on descriptor 1
+/// So a client that launched process `pid` with its output on descriptor 1
 /// finds what the process wrote there under `ExternalEndpoint (pid, 1)`,
-/// whatever the process has since done with descriptor 1, and apart from what
-/// any other process wrote on its own descriptor 1.
+/// whatever the process has since done with descriptor 1, and separately from
+/// what any other process wrote on its own descriptor 1.
 [<Struct>]
 type ExternalEndpoint =
     | ExternalEndpoint of launchedInto : ProcessId * launchedOn : int
@@ -73,35 +75,43 @@ type ExternalEndpoint =
         match this with
         | ExternalEndpoint (pid, fd) -> $"the client's end of process %O{pid}'s launch descriptor %d{fd}"
 
-/// What one descriptor of a launch table is: a pipe end the launcher made
-/// before the process started, whose other end is the client's.
+/// What one descriptor of a launch table is: an end of a pipe that exists
+/// before the process starts, whose other end is outside the machine, on the
+/// client's side.
+///
+/// The client does nothing at that outside end itself. It chooses one of these
+/// cases at launch, and the kernel then acts at the outside end as the case
+/// says, as a program outside the machine would.
 ///
 /// Each entry makes a pipe of its own, with a description of its own, so no two
 /// launch descriptors share a description or a pipe.
 [<RequireQualifiedAccess ; NoComparison>]
 type LaunchDescriptor =
-    /// The read end of a pipe, opened `O_RDONLY`. The client holds the write end
-    /// and writes `bytes` into it with one blocking `write(2)`, then closes it.
+    /// The read end of a pipe, opened `O_RDONLY`. The kernel puts `bytes` into
+    /// the pipe as one blocking `write(2)` at the outside end would, and then
+    /// closes the outside end.
     ///
-    /// Bytes the pipe cannot hold yet go in as the process reads, so a read
-    /// finds the pipe as full as that sleeping write could have made it, and
-    /// end of file comes only once the process has read every one. With no
-    /// bytes, a read answers end of file at once.
+    /// Bytes that the pipe cannot hold yet go in as the process reads, so a
+    /// read finds the pipe as full as that sleeping write could have made it,
+    /// and end of file comes only once the process has read every byte. With
+    /// no bytes, a read answers end of file at once.
     ///
-    /// More bytes than one `write(2)` moves on the platform are refused.
+    /// Booting or launching with more bytes than one `write(2)` moves on the
+    /// platform throws.
     | Supplied of bytes : ImmutableArray<byte>
-    /// The write end of a pipe, opened `O_WRONLY`. The client holds the read end
-    /// and reads every byte the moment it is written, so a blocking write is
-    /// never short and never waits. What the client read is the `Delivery`
-    /// that `UnixReadWrite.writeWithBytes` answers beside each write's fate.
+    /// The write end of a pipe, opened `O_WRONLY`. The outside end reads every
+    /// byte the moment it is written, so a blocking write is never short and
+    /// never waits. Each write hands its bytes to the client as the `Delivery`
+    /// that `UnixReadWrite.writeWithBytes` answers beside the write's fate.
     | Drained
-    /// The write end of a pipe, opened `O_WRONLY`, whose read end the client
-    /// closed before the process started. Nothing will ever read it, so a write
+    /// The write end of a pipe, opened `O_WRONLY`, whose outside end was closed
+    /// before the process started. Nothing will ever read it, so a write
     /// answers `EPIPE` and raises `SIGPIPE`, as `UnixReadWrite.write` describes.
     | Gone
 
-/// The bytes a client has still to write into a pipe, oldest first. Never
-/// none: a client with nothing left to write has closed its end.
+/// The supplied bytes that are not yet in a launched pipe, oldest first
+/// (`ClientEnd.Supplying`). Never none: once the last byte is in, the outside
+/// end is closed instead.
 ///
 /// Two are equal when they hold the same bytes.
 [<CustomEquality ; NoComparison>]
@@ -134,22 +144,24 @@ type UnwrittenBytes =
 
     override this.GetHashCode () : int = this.Length
 
-/// The end of a launched pipe that the client holds, as it stands now.
+/// The outside end of a launched pipe (see `LaunchDescriptor`), as it stands
+/// now. The kernel acts at this end; the client only reads it.
 [<RequireQualifiedAccess>]
 type ClientEnd =
-    /// The read end, from which the client reads every byte the moment it is
-    /// written.
+    /// The read end, which takes every byte the moment it is written
+    /// (`LaunchDescriptor.Drained`).
     | Draining
-    /// The write end, the client asleep in its one write of the bytes it
-    /// supplied because the pipe has no room for `unwritten`, the rest of them.
-    /// It writes more each time a read makes room, and closes the end once the
-    /// last byte is in.
+    /// The write end, in the middle of the one write of the supplied bytes
+    /// (`LaunchDescriptor.Supplied`): the pipe has had no room for
+    /// `unwritten`, the rest of them. The kernel puts more in each time a read
+    /// makes room, and closes this end once the last byte is in.
     | Supplying of unwritten : UnwrittenBytes
-    /// Nothing: the client has closed the write end, either because every byte
-    /// it supplied went in, or because no reader was left to take the rest.
+    /// Nothing: the write end is closed, either because every supplied byte
+    /// went in, or because no reader was left to take the rest.
     | WriteEndClosed
-    /// Nothing: the client closed the read end before the process started, so
-    /// the pipe has no reader outside the process.
+    /// Nothing: the read end was closed before the process started
+    /// (`LaunchDescriptor.Gone`), so the pipe has no reader outside the
+    /// process.
     | ReadEndClosed
 
 /// Where a pipe came from, and so what is known about it besides its bytes.
@@ -159,8 +171,8 @@ type PipeOrigin =
     /// `fstat(2)` reports about it.
     | Made of status : PipeStatus
     /// The launch table's entry for `endpoint`'s descriptor, before the process
-    /// started. The client holds the pipe's other end, and `client` is what it
-    /// is doing with it now.
+    /// started. The pipe's other end is outside the machine, and `client` is
+    /// what that end is doing now.
     ///
     /// Its owner and timestamps are the launcher's, which the launch table does
     /// not state, so `fstat(2)`, and `fchmod(2)` where it would consult the
@@ -168,12 +180,13 @@ type PipeOrigin =
     | Launched of endpoint : ExternalEndpoint * client : ClientEnd
 
 /// A pipe, as the kernel's pipe table holds it: the bytes in flight between its
-/// ends, and where it came from.
+/// ends, and where it came from. A client reads the table with
+/// `UnixSystem.pipes`.
 ///
-/// Holds nothing about which of its ends are open. That is derived from the
-/// machine's open file descriptions, which are the only thing that can say it
-/// truthfully: an end is open while some open file description names it, or
-/// while the client holds it (`PipeState.heldByClient`).
+/// It does not record which of its ends are open, because only the machine's
+/// open file descriptions can say that truthfully. An end is open while some
+/// open file description names it, or while it is held open outside the
+/// machine (`PipeState.heldByClient`).
 [<NoComparison>]
 type PipeState =
     {
@@ -239,9 +252,10 @@ module internal PipeStatus =
 
 [<RequireQualifiedAccess>]
 module PipeState =
-    /// Whether the client holds `pipeEnd` of `pipe` open: the read end of a
-    /// pipe it drains, the write end of one it is still writing into, and no
-    /// other. A pipe the process made has no end outside it.
+    /// Whether `pipeEnd` of `pipe` is held open outside the machine: the read
+    /// end of a drained pipe, the write end of a supplied pipe whose bytes are
+    /// not all in yet, and no other. A pipe that the process made has no end
+    /// outside it.
     let heldByClient (pipeEnd : PipeEnd) (pipe : PipeState) : bool =
         match pipe.Origin, pipeEnd with
         | PipeOrigin.Launched (_, ClientEnd.Draining), PipeEnd.Read
@@ -252,7 +266,8 @@ module PipeState =
         | PipeOrigin.Launched (_, ClientEnd.ReadEndClosed), _
         | PipeOrigin.Made _, _ -> false
 
-    /// The client that reads `pipe` as fast as it is written, if one does.
+    /// The outside end that reads `pipe` as fast as it is written, if the pipe
+    /// was launched as `LaunchDescriptor.Drained`.
     let drainedBy (pipe : PipeState) : ExternalEndpoint option =
         match pipe.Origin with
         | PipeOrigin.Launched (endpoint, ClientEnd.Draining) -> Some endpoint

@@ -45,6 +45,29 @@ WoofWare.PosixKernel never calls back into the client.
 The rest of this document follows a client through the life of a process: booting a machine, making calls, moving bytes, sleeping and waking, signals, threads, and the end of the process, then several processes on one machine.
 After that come the parts of a running process that are the client's rather than the kernel's, and how the simulated platforms relate to real ones.
 
+### Words the documentation uses
+
+The docstrings use these words in one sense each.
+
+* **client**: the program using this library. It is never the connecting end of a TCP connection, which the documentation calls the connecting socket.
+* **process** and **thread**: the simulated ones, whose calls the client hands to this library.
+* **caller**: the thread making a call, which a `Caller` names. The caller is never the client.
+* **the process's memory**: memory the client holds for the simulated process. This library has no copy of it.
+* **the process's call** and **this library's function**: the syscall or C library function the simulated process made, and the F# function the client calls to answer it. A process's call "returns -1 and sets errno"; this library's function answers a value, such as `SyscallAnswer.Failed`.
+* **refused**: this library's function throws `UnmodelledException`, because nobody has measured what a real kernel answers (see "Answers, and what this library will not answer"). An errno is never called a refusal, and neither is the `PlatformNotSupportedException` thrown for a call the flavour does not have.
+* **woken**: `UnixWait.wake` has marked a thread asleep in a call as able to go on (see "Sleeping and waking"). It has nothing to do with POSIX signals.
+* **reserved**: a union case that nothing in this version produces. It exists so that a client's matches already handle it when the library starts producing it.
+* **host**: the real machine running this library, which the library never reads.
+
+### What every client does
+
+Four duties fall to every client, and almost every docstring assumes them.
+
+1. **The client moves every byte.** This library never reads or writes the process's memory. An argument the process passes by pointer reaches this library as the bytes the client read there, or as the client's description of the pointer (a `UserBuffer`, or a case such as `PathArgumentBytes.Unreadable`). An answer that carries bytes or numbers, such as `ReadAnswer.Completed` or a `struct timespec`'s fields, is what the client must store into the process's memory, in the platform's layout, before the process sees the call return. The library has stored nothing. See "Moving bytes".
+2. **The client resumes a paused call before doing anything else.** A call that stops to copy from the process's memory (`CallProgress.NeedsCopyIn`) holds the whole system as it stood at that point, and resuming it answers a system built from that one. Anything else done to the system in between is lost. See "Calls that copy in from the caller's memory".
+3. **The client wakes sleeping threads and moves the clock.** A call that would block answers `WouldBlock` and leaves its thread asleep in it. Nothing wakes that thread by itself. After each step, the client calls `UnixWait.wake`, and then finishes each woken thread's call with `UnixWait.finish`. Time passes only when the client calls `UnixSystem.advanceClock`, so a timeout expires only then; `UnixWait.deadlines` says when the next one falls due. See "Sleeping and waking".
+4. **The client makes the return to user mode.** After a call, and whenever `UnixSignal.owesReturn` is true, the client calls `UnixSignal.onReturnToUser`, which delivers pending signals. Running a signal handler is the client's job. See "The return to user mode".
+
 ### The system
 
 The whole kernel is one value, a `UnixSystem<'Thread, 'Handler>`: the machine, and every process on it.
@@ -817,7 +840,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 **Writing.** A write stops where the kernel copies from the caller's buffer, as every call that copies in does (see "Calls that copy in from the caller's memory").
 
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
-2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step. `UnixWait.finish` makes the whole step, copying the bytes from the buffer of the `Syscall` it is given (see "Sleeping and waking").
+2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.FirstByte` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step. `UnixWait.finish` makes the whole step, copying the bytes from the buffer of the `Syscall` it is given (see "Sleeping and waking").
 
 Every answer is a `ProcessFate<WriteOutcome>` (`writeWithBytes` answers a `Delivery option` beside it, as "The far end of a launched pipe" describes): the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
@@ -1032,7 +1055,7 @@ Under Darwin, which put such a signal in its leader's own set as it was sent, a 
 Either answer is `ProcessFate.ProcessEnded` of the `EndedProcess`, killed by the signal (`ProcessTermination.Signaled`, with the core flag), and the system without the process, which ended as an exit ends it; no handler runs, not even one whose frame was pushed at the same return.
 
 A signal whose default stops the process is reported (`KillOutcome.ProcessStopped`, `ReturnToUserOutcome.ProcessStopped`) for the client to act on.
-The library holds no stopped state, and nothing here continues a stopped process, so a client should refuse a stop rather than carry on as if the process were still running.
+The library holds no stopped state, and nothing here continues a stopped process, so a client should treat a stop as something it does not support, and stop running the process, rather than carry on as if the process were still running.
 
 This client blocks `SIGTERM`, sends it to itself, and dies of it as it unblocks it:
 
@@ -1432,8 +1455,14 @@ Every time on a devfs and its nodes is the whole second of the instant `withBoot
 Mounting `/dev` moves none of the root directory's times.
 `CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so a node holding one of their numbers, `/dev/zero` and `/dev/random` among them, is listed and reported but cannot be opened.
 
-Some interfaces are one flavour's alone, and the other flavour refuses every call of them rather than answering: no kernel of that flavour has the call, so there is no answer to measure.
-Linux has epoll and inotify, and Darwin kqueue.
+Some interfaces belong to one flavour alone: Linux has epoll and inotify, and Darwin has kqueue.
+No kernel of the other flavour has those calls, so there is no answer to measure, and each such call throws `PlatformNotSupportedException` on that flavour.
+
+`SimulatedUnixPlatform`'s accessors hand out two kinds of value.
+A few are what a client needs to speak the platform's numbers: `SimulatedUnixPlatform.rawErrnoNumbering`, `SimulatedUnixPlatform.signalNumbering`, the socket-option numbers, and the `sockaddr` encoders and decoders.
+The rest describe a rule the simulated kernel already applies, such as `SimulatedUnixPlatform.renameRules` or `SimulatedUnixPlatform.pathLimits`.
+A client may read one of those to learn what the kernel will do, but has no use for one otherwise: no syscall takes one, and building one by hand changes nothing. (`PathWalk.resolveExistingFromRoot`, which resolves a path outside any syscall, takes a `PathLimits` and a `SymlinkProtection` from the machine.)
+What a different administrator could change is configuration instead, set on the boot image by one of `UnixBootImage`'s setters.
 
 WoofWare.PosixKernel is intended to be fully POSIX-compliant eventually.
 A design goal of WoofWare.PosixKernel is that the library refuses rather than providing an answer which has not been measured on the platform it's been told to simulate.

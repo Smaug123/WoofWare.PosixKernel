@@ -101,11 +101,13 @@ module internal SortedEntryNames =
 [<RequireQualifiedAccess>]
 type MountedFileSystem =
     /// Linux's devtmpfs, which holds what the machine's configuration says it
-    /// holds (`UnixBootImage.withDeviceFileSystem`): no name can be created in
-    /// it, and none removed.
+    /// holds (`UnixBootImage.withDeviceFileSystem`). Its names never change: a
+    /// call that would create, remove or rename one answers an errno or is
+    /// refused (see "Flavours and divergence from host platforms" in the
+    /// README).
     | Devtmpfs
     /// Darwin's devfs, which likewise holds what the machine's configuration
-    /// says it holds: no name can be created in it, and none removed.
+    /// says it holds, and whose names likewise never change.
     | Devfs
 
 /// One mounted filesystem.
@@ -122,6 +124,13 @@ type Mount =
 /// <summary>
 /// A whole emulated filesystem: an inode graph rooted at a single directory.
 /// </summary>
+/// <remarks>
+/// A client reads a running system's filesystem with <c>UnixSystem.fileSystem</c>. It is a value which the client
+/// can only query: before boot the client sets its contents with <c>UnixBootImage.withFileSystem</c>, and after
+/// boot only syscalls change it.
+/// <para />
+/// The graph includes the device filesystem mounted over <c>/dev</c> (see <c>VirtualFileSystem.mountOf</c>).
+/// </remarks>
 type VirtualFileSystem =
     private
         {
@@ -479,6 +488,7 @@ module VirtualFileSystem =
             RemovedDirectoryNames = Map.empty
         }
 
+    /// The root directory, from which absolute paths resolve.
     let root (vfs : VirtualFileSystem) : InodeNumber = vfs.Root
 
     /// The mount whose root is `inode`, or `None` if `inode` is not the root of
@@ -524,8 +534,12 @@ module VirtualFileSystem =
 
     let internal nextInode (vfs : VirtualFileSystem) : InodeNumber = vfs.NextInode
 
+    /// Every inode in the graph, those on the device filesystem included. A
+    /// covered directory's number (`Mount.Covered`) is not among them.
     let inodes (vfs : VirtualFileSystem) : Map<InodeNumber, Inode> = vfs.Inodes
 
+    /// The inode with number `inode`, or `None` if the graph holds none. A
+    /// covered directory's number (`Mount.Covered`) holds none.
     let tryGet (inode : InodeNumber) (vfs : VirtualFileSystem) : Inode option = Map.tryFind inode vfs.Inodes
 
     /// What lives at `inode`, discarding its metadata. A projection, for the

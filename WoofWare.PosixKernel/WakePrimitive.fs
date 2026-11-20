@@ -1,13 +1,17 @@
 namespace WoofWare.PosixKernel
 
-/// One thing a thread parked in a syscall can be waiting for, which holds or does
-/// not of a given system.
+/// One thing for which a thread parked in a syscall can be waiting. In any
+/// given system, it either holds or does not.
+///
+/// This library decides when a primitive holds. The client reads primitives in
+/// a `WakeCondition`, and in the sets that `UnixWait.wake` and
+/// `UnixWait.satisfied` answer, which say what woke a thread; it never needs to
+/// evaluate one itself (see "Sleeping and waking" in the README).
 ///
 /// A primitive names live kernel objects rather than a snapshot of them, and
-/// stays true to what a real kernel waits on rather than to what is convenient
-/// to evaluate. The park a primitive comes from holds the open file
-/// descriptions it names (`ParkedSyscall.descriptions`), so they stay alive
-/// while something waits on them.
+/// follows what a real kernel waits on. The park from which a primitive comes
+/// holds the open file descriptions it names (`ParkedSyscall.descriptions`), so
+/// they stay alive while a thread waits on them.
 [<RequireQualifiedAccess>]
 type WakePrimitive =
     /// An `flock` acquisition of `mode` by the open file description
@@ -27,10 +31,10 @@ type WakePrimitive =
     /// A wait for events on the epoll instance the open file description
     /// `epoll` names, parked because the instance had nothing to deliver.
     ///
-    /// Carries no event count, unlike the record a client parks with: how many
-    /// events the caller asked for decides what the *finishing* call copies out,
-    /// and says nothing about whether it can finish at all. A single deliverable
-    /// event satisfies a wait for any number of them.
+    /// Carries no event count, unlike the park (`ParkedEpollWait.MaxEvents`):
+    /// the number of events the caller asked for decides how many the
+    /// finishing function copies out, not whether the call can finish at all.
+    /// A single deliverable event satisfies a wait for any number of them.
     ///
     /// `epoll` is the open file description rather than the descriptor, for the
     /// reason `FlockGrantable`'s requester is: the number can be closed and

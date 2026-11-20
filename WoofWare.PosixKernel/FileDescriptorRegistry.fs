@@ -12,17 +12,17 @@ type OpenFileDescriptionId =
         match this with
         | OpenFileDescriptionId value -> string<int64> value
 
-/// Identity of a socket. Never visible to the simulated process:
+/// Identity of a socket. The simulated process never sees one:
 /// `UnixPathResolution.fstat` refuses a socket, so no modelled syscall reports
-/// one.
+/// a socket's identity.
 ///
-/// Deliberately *not* an inode number, despite Linux putting sockets on
-/// `sockfs` and giving each one an inode. Measured, a Darwin `AF_INET` socket
-/// reports `st_dev` and `st_ino` of 0, so there is no number here that both
-/// platforms would agree this value *is*. Its jobs are to keep two sockets from
-/// contending under `flock` (see `OpenFileObject.Socket`) and to be what a
-/// socket table keys on if one is ever needed; it is `OpenFileDescriptionId`'s
-/// sibling, not `InodeNumber`'s.
+/// It is deliberately *not* an inode number, although Linux puts sockets on
+/// `sockfs` and gives each one an inode: a Darwin `AF_INET` socket reports
+/// `st_dev` and `st_ino` of 0, so no number exists on which both platforms
+/// agree. It is the key of the machine's socket table, which a client reads
+/// with `UnixSystem.socket`, and it keeps two sockets from contending under
+/// `flock` (see `OpenFileObject.Socket`). It is a sibling of
+/// `OpenFileDescriptionId`, not of `InodeNumber`.
 [<Struct>]
 type SocketId =
     | SocketId of value : int64
@@ -34,12 +34,12 @@ type SocketId =
 /// Identity of one TCP connection — the kernel object a completed loopback
 /// handshake creates. Never visible to a process.
 ///
-/// Distinct from either endpoint's `SocketId` because a connection outlives
-/// the sockets that made it: measured, a client closed while its connection
-/// sits in a listener's accept queue leaves the connection acceptable, and
-/// `accept(2)` then returns a working descriptor onto it. The server side has
-/// no socket at all until that accept. The connection table itself lives on
-/// `UnixMachineState`, beside the socket table.
+/// Distinct from either endpoint's `SocketId`, because a connection can
+/// outlive the sockets that made it. When the connecting socket closes while
+/// its connection waits in a listener's accept queue, the connection can still
+/// be accepted, and `accept(2)` returns a working descriptor onto it. The
+/// server end has no socket at all until that accept. The kernel keeps its
+/// connections in a table of its own, which a client does not read.
 [<Struct>]
 type ConnectionId =
     | ConnectionId of value : int64
@@ -55,10 +55,10 @@ type ConnectionId =
 /// address at both ends.
 [<RequireQualifiedAccess>]
 type ConnectionEnd =
-    /// The socket whose `connect(2)` opened the connection, at its
-    /// `ClientAddress`.
+    /// The connecting socket: the one whose `connect(2)` opened the
+    /// connection.
     | Client
-    /// The socket `accept(2)` made for the connection, at its `ServerAddress`.
+    /// The socket that `accept(2)` made for the connection.
     | Server
 
 /// Identity of a pipe. Never visible to the simulated process: `fstat` reports
@@ -139,12 +139,12 @@ type PortHold =
     /// port shares such a port towards another destination, where it passes
     /// over a reserved one.
     | Connected
-    /// A refused TCP connect gave the port back: on Linux unless `bind(2)`
-    /// chose it (`InetBinding.LockedPort`), and on Darwin whatever chose it.
-    /// `getsockname` goes on reporting the port, but the socket holds it
-    /// against nothing. A Linux socket that has given its port back binds,
-    /// listens and connects as one with no port, choosing a new one at its
-    /// binding's address.
+    /// A TCP connect that met `ECONNREFUSED` gave the port back: on Linux
+    /// unless `bind(2)` chose the port (`InetBinding.LockedPort`), and on
+    /// Darwin whatever chose it. `getsockname` goes on reporting the port, but
+    /// the socket no longer keeps other sockets off it. A Linux socket that has
+    /// given its port back binds, listens and connects as a socket without a
+    /// port does, choosing a new port at its binding's address.
     | GivenBack
 
 [<RequireQualifiedAccess>]
@@ -169,10 +169,10 @@ type InetBinding<'Endpoint, 'Address> =
         Endpoint : 'Endpoint
         /// The address the process's own `bind(2)` gave the socket, or `None`
         /// when the binding arose implicitly (a connect or listen minted it).
-        /// The kernel state Linux calls SOCK_BINDADDR_LOCK: a Linux refusal
-        /// delivery reverts `Endpoint`'s address to this (the wildcard when
-        /// `None`) while keeping the port — measured for all three
-        /// provenances over IPv4 — where Darwin keeps the resolved address.
+        /// This is the kernel state that Linux calls SOCK_BINDADDR_LOCK. When
+        /// `ECONNREFUSED` reaches a Linux connect, Linux reverts `Endpoint`'s
+        /// address to this one (the wildcard when `None`) and keeps the port.
+        /// Darwin keeps the resolved address.
         LockedAddress : 'Address option
         /// Whether the process's own `bind(2)` chose the port: true only when it
         /// asked for a non-zero one. The kernel state Linux calls
@@ -183,8 +183,8 @@ type InetBinding<'Endpoint, 'Address> =
         /// `0.0.0.0:0` dissolves to nothing.
         LockedPort : bool
         /// How the socket holds `Endpoint`'s port: reserved, chosen by a
-        /// stream connect for its four-tuple, or given back by a refused
-        /// connect.
+        /// stream connect for its four-tuple, or given back by a connect that
+        /// met `ECONNREFUSED`.
         PortHold : PortHold
     }
 
@@ -219,10 +219,12 @@ type SocketLinger =
         Hundredths : int64
     }
 
-/// The socket options `setsockopt(2)` sets and `getsockopt(2)` reads that this
-/// kernel stores and nothing else in it consults. The socket `accept(2)`
-/// returns has the listener's as they were when its connection completed: see
-/// `QueuedConnection`.
+/// Socket options that `setsockopt(2)` sets and `getsockopt(2)` reads. The
+/// socket keeps `SO_REUSEADDR` in `SocketDescription.ReuseAddress` and
+/// `IPV6_V6ONLY` in its `SocketAddressing` instead.
+///
+/// The socket that `accept(2)` returns has the listener's options as they
+/// were when its connection completed: see `QueuedConnection`.
 type SocketOptions =
     {
         /// `TCP_NODELAY`, which turns Nagle's algorithm off. It has no
@@ -230,13 +232,11 @@ type SocketOptions =
         /// whatever its size, so there is nothing for the algorithm to hold
         /// back.
         NoDelay : bool
-        /// `SO_LINGER`. Stored only: what a close does with it belongs with
-        /// `close`, which does not model it yet, and so refuses the
-        /// close of a connected socket where it would differ from the ordinary
-        /// close. With a linger time of zero that close is a reset instead of
-        /// an orderly shutdown, refused while the connection is still
-        /// referenced; with a positive time it waits for bytes still in the
-        /// send buffer, refused where a real kernel waits.
+        /// `SO_LINGER`, which changes what a close of a connected socket does.
+        /// With lingering on and a time of zero, the close is abortive: a
+        /// reset, unless both FINs have arrived. A close that a positive time
+        /// would make wait, for bytes still in the send buffer, is refused.
+        /// `UnixSocket.setsockopt` states the rules in full.
         Linger : SocketLinger
     }
 
@@ -278,20 +278,28 @@ type QueuedConnection =
         Options : SocketOptions
     }
 
-/// What `listen(2)` gave a socket: the number it was called with, and the
-/// queue of completed connections `accept(2)` drains.
+/// What `listen(2)` gave a socket: the backlog it was called with, and the
+/// queue from which `accept(2)` takes completed connections.
 type ListenState =
     {
-        /// The backlog argument `listen(2)` recorded, verbatim. Its one reader
-        /// is the accept-queue capacity check in `UnixConnection.connect`,
-        /// which derives the flavour's admission bound from it — measured,
-        /// Linux admits `backlog + 1` completed connections and Darwin exactly
-        /// `backlog` — so this stores the input to that rule rather than a
-        /// pre-computed capacity that would bake one flavour's arithmetic in.
+        /// The backlog that the process passed to `listen(2)`, exactly as
+        /// passed. `UnixConnection.connect` derives from it how many completed
+        /// connections the accept queue holds, using the machine's
+        /// `somaxconn` (`UnixSystem.soMaxConn`, set by
+        /// `UnixBootImage.withSoMaxConn`):
+        ///
+        /// - Linux holds `backlog + 1` connections. A negative backlog, or one
+        ///   above `somaxconn`, counts as `somaxconn`, so the queue then holds
+        ///   `somaxconn + 1`.
+        /// - Darwin holds `backlog` connections. A backlog of 0 or less, or one
+        ///   above `somaxconn`, counts as `somaxconn`, so `listen(fd, 0)`
+        ///   holds `somaxconn` connections, not none.
+        ///
+        /// A connect to a listener whose queue is full is refused.
         Backlog : int
-        /// Completed connections not yet accepted, oldest first: `accept(2)`
-        /// dequeues from the head. Measured on both flavours: accept returns
-        /// connections in the order the connects completed.
+        /// Completed connections not yet accepted, oldest first. `accept(2)`
+        /// takes from the head, so it returns connections in the order in
+        /// which their connects completed.
         Queue : QueuedConnection list
     }
 
@@ -301,9 +309,10 @@ module internal ListenState =
     let connections (listenState : ListenState) : ConnectionId list =
         listenState.Queue |> List.map (fun queued -> queued.Connection)
 
-/// Whether a refused connection's error is still waiting to be reported. The
-/// kernels keep it in a slot of its own beside the socket's state (Linux's
-/// `sk_err`, Darwin's `so_error`), and so does `SocketPhase.Refused`.
+/// Whether the `ECONNREFUSED` that ended a connect is still waiting to be
+/// reported. The kernels keep it in a slot of its own beside the socket's
+/// state (Linux's `sk_err`, Darwin's `so_error`), and this library keeps it in
+/// `SocketPhase.Refused`.
 [<RequireQualifiedAccess>]
 type RefusalError =
     /// ECONNREFUSED is pending, and an `SO_ERROR` read will report it.
@@ -343,8 +352,8 @@ type ConnectAttempt =
 [<RequireQualifiedAccess>]
 type SocketPhase =
     /// Fresh from `socket(2)`, dissolved by a Linux `AF_UNSPEC` connect, or
-    /// reset by a Linux refusal delivery. Bound or not is `Binding`'s
-    /// business, not this one's.
+    /// reset when `ECONNREFUSED` reached a Linux connect. Whether the socket is
+    /// bound is recorded in `SocketDescription.Addressing`, not here.
     | Idle
     /// `listen(2)` has been called.
     | Listening of ListenState
@@ -360,12 +369,13 @@ type SocketPhase =
     /// Connected, as the given end of the connection. `connect(2)` answers
     /// EISCONN.
     | Established of connection : ConnectionId * connectionEnd : ConnectionEnd
-    /// A connect was refused.
+    /// A connect met `ECONNREFUSED`. (This is the errno, not a refusal by this
+    /// library.)
     ///
-    /// A non-blocking refusal leaves its ECONNREFUSED `Pending`, and an
-    /// `SO_ERROR` read reports it and leaves it `Reported`. A blocking refusal
-    /// reports it inline: Darwin's socket is then here with the error
-    /// `Reported`, and Linux's goes to `Idle` instead.
+    /// After a non-blocking connect, the `ECONNREFUSED` is `Pending`, and an
+    /// `SO_ERROR` read reports it and leaves it `Reported`. A blocking connect
+    /// reports it as the call's own errno: Darwin's socket is then here with
+    /// the error `Reported`, and Linux's goes to `Idle` instead.
     ///
     /// On Linux the next `connect(2)` resets the socket to `Idle`, wherever it
     /// is aimed, and answers ECONNREFUSED if the error is `Pending` and
@@ -373,10 +383,11 @@ type SocketPhase =
     /// it: every one answers EISCONN, whatever the destination, and the socket
     /// stays here.
     | Refused of error : RefusalError
-    /// A datagram socket's default peer, set by `connect(2)` on it. Filters
-    /// nothing yet — no receive path exists — but re-connect re-targets it
-    /// and a Linux `AF_UNSPEC` connect dissolves it back to `Idle`, both
-    /// visible to the process through the return codes.
+    /// A datagram socket's default peer, which `connect(2)` on the socket set.
+    /// A `write` or `send` on the socket sends to the peer, and the socket
+    /// receives only datagrams whose source is the peer. A later connect
+    /// changes the peer, and a Linux `AF_UNSPEC` connect dissolves it, which
+    /// returns the socket to `Idle`.
     ///
     /// The peer is in the socket's own family, which
     /// `UnixSystem.checkInvariants` checks. This kernel connects only an IPv4
@@ -388,9 +399,10 @@ type SocketPhase =
     /// and so does a blocking one a signal interrupts without `SA_RESTART`;
     /// either completes at a later retransmit.
     ///
-    /// Reserved: nothing puts a socket here yet, since a connect to a full
-    /// listener is refused. `UnixSystem.checkInvariants` reports a socket here
-    /// as a defect.
+    /// Reserved: nothing puts a socket here yet, because this library refuses a
+    /// connect to a full listener (it throws `UnmodelledException`, and does
+    /// not answer `ECONNREFUSED`). `UnixSystem.checkInvariants` reports a
+    /// socket here as a defect.
     | Connecting of attempt : ConnectAttempt
 
 [<RequireQualifiedAccess>]
@@ -407,10 +419,12 @@ module SocketPhase =
         | SocketPhase.DatagramPeer _
         | SocketPhase.Connecting _ -> false
 
-    /// The connection a connected stream socket is one end of, and which end:
-    /// `EstablishedPendingReport` is the client end, as only `connect(2)`
-    /// enters it. `None` in every phase without a connection of its own, a
-    /// listener's among them, whose queued connections are not its own ends.
+    /// The connection of which a connected stream socket is one end, and which
+    /// end: `EstablishedPendingReport` is the connecting socket's end
+    /// (`ConnectionEnd.Client`), because only `connect(2)` enters it.
+    ///
+    /// `None` in every phase without a connection of its own. A listener is
+    /// one of those: the connections in its queue are not its own ends.
     let connectionEnd (phase : SocketPhase) : (ConnectionId * ConnectionEnd) option =
         match phase with
         | SocketPhase.Established (connection, connectionEnd) -> Some (connection, connectionEnd)
@@ -550,11 +564,11 @@ type SocketDescription =
         /// `SocketOptions`.
         Options : SocketOptions
         /// Where this socket is in its connection lifecycle: idle, listening
-        /// (with the accept queue), connected, or latched by a refusal.
+        /// (with the accept queue), connected, or stopped by `ECONNREFUSED`.
         ///
-        /// Load-bearing for `bind(2)` too: a listening socket's address
-        /// conflicts with a second bind on both flavours, where a merely-bound
-        /// one may not.
+        /// `bind(2)` reads it too: on both flavours, a listening socket's
+        /// address conflicts with a second bind, where a socket that is only
+        /// bound may not.
         Phase : SocketPhase
         /// Under Darwin, whether a close has drained the socket: xnu's
         /// `SS_DRAINING`, which a close of a descriptor sets when an `accept(2)`,
@@ -595,8 +609,15 @@ type SocketDescription =
     member internal this.Ipv4Binding : Ipv4Binding option =
         SocketAddressing.ipv4Binding this.Addressing
 
-/// What an open file description refers to — the kernel object on the far side
-/// of the descriptor.
+/// What an open file description refers to, for deciding whether two `flock(2)`
+/// locks contend: two descriptions contend exactly when their objects are
+/// equal.
+///
+/// This is the contention key, not a general identity. Every Linux epoll and
+/// inotify instance is `AnonymousInode`, because they all share one inode, so
+/// equal objects do not mean the same instance. To tell two kernel objects
+/// apart, compare `OpenFileDescriptionId`s, or the `SocketId` or `PipeId` in
+/// an `OpenFileTarget`.
 [<RequireQualifiedAccess>]
 type OpenFileObject =
     /// A regular file, directory, or anything else `open(2)` returned a
@@ -790,13 +811,13 @@ type EpollRegistration =
         Events : uint32
         /// The caller's `epoll_data`, delivered verbatim when an event fires.
         Data : uint64
-        /// When this registration's ADD committed, as an ordinal from the
-        /// kernel's counter. One signal can make several registrations of the
-        /// same socket pending at once (they share the socket's wait queue),
-        /// and the measured delivery order for that tie is newest-registered
-        /// first — the wait queue is LIFO. A MOD preserves this: the wait
-        /// queue entry the order comes from is created at ADD and untouched
-        /// by MOD.
+        /// When this registration's `EPOLL_CTL_ADD` took effect, as an ordinal
+        /// from the kernel's counter. One event on a socket can make several
+        /// registrations of that socket pending at once, because they share
+        /// the socket's wait queue. They are then delivered newest first,
+        /// because that wait queue is last-in, first-out. An `EPOLL_CTL_MOD`
+        /// leaves this unchanged, as it leaves the wait-queue entry that the
+        /// order comes from.
         RegisteredAt : int64
     }
 
@@ -867,15 +888,20 @@ type EpollState =
         /// the (fd number, open file description) pair of the target.
         Registrations : Map<int * OpenFileDescriptionId, EpollRegistration>
         /// The pending registrations, in delivery order.
-        /// A registration enters when the driver signals it, it is armed and
-        /// it is not already here, or when an ADD/MOD finds its target ready;
-        /// delivery walks the prefix, re-polls each entry against the target's
-        /// current readiness, and removes what it walked — reporting the
-        /// nonempty re-polls and silently dropping the stale ones — leaving
-        /// what batch truncation spared, followed by the level-triggered
-        /// entries it reported, in the order it reported them. Always a subset
-        /// of `Registrations`, with no duplicates and no disarmed registration
-        /// (`checkInvariants` states all three).
+        ///
+        /// A registration joins this list when an event on its target reaches
+        /// it while it is armed and not already listed, or when an
+        /// `EPOLL_CTL_ADD` or `EPOLL_CTL_MOD` finds its target ready. An
+        /// `epoll_wait` walks a prefix of the list, checks each entry against
+        /// its target's current readiness, and removes the entries it walked:
+        /// it reports those still ready and drops the rest. Afterwards the list
+        /// holds the entries that the batch limit left unwalked, followed by
+        /// the level-triggered entries the wait reported, in the order it
+        /// reported them.
+        ///
+        /// Always a subset of `Registrations`, with no duplicates and no
+        /// disarmed registration (`UnixSystem.checkInvariants` checks all
+        /// three).
         Ready : (int * OpenFileDescriptionId) list
     }
 
@@ -1217,14 +1243,14 @@ type OpenFileDescription =
 
 [<RequireQualifiedAccess>]
 module OpenFileDescription =
-    /// Which kernel object the description `id` names — its *identity*, with
-    /// the per-description position discarded. `description` is what `id`
-    /// names in the table.
+    /// The `flock(2)` contention key of the description `id`, whose contents
+    /// are `description`: what it refers to, without the per-description
+    /// position.
     ///
-    /// `flock(2)` contention is decided on this: two descriptions contend
-    /// exactly when they name the same object, whatever their offsets. Callers
-    /// asking "are these the same file?" must compare these rather than the
-    /// descriptions.
+    /// Two descriptions contend exactly when their objects are equal, whatever
+    /// their offsets. Equal objects do not always mean the same kernel object:
+    /// every Linux epoll and inotify instance is
+    /// `OpenFileObject.AnonymousInode` (see `OpenFileObject`).
     ///
     let object (id : OpenFileDescriptionId) (description : OpenFileDescription) : OpenFileObject =
         match description.Target with
@@ -4317,8 +4343,10 @@ module FileDescriptorRegistry =
     let tryFind (fd : int) (registry : FileDescriptorRegistry) : OpenFileDescription option =
         tryFindWithId fd registry |> Option.map snd
 
-    /// What `fd` refers to, if `fd` is live. Discards the offset, so it is the
-    /// wrong lookup for `read(2)` and `lseek(2)`; they want `tryFindTarget`.
+    /// The `flock(2)` contention key of the description that `fd` names, if
+    /// `fd` is live (see `OpenFileDescription.object`). It discards the
+    /// offset, and every Linux epoll and inotify instance gives the same key;
+    /// `tryFindTarget` and `tryFindId` say more.
     let tryFindObject (fd : int) (registry : FileDescriptorRegistry) : OpenFileObject option =
         tryFindWithId fd registry
         |> Option.map (fun (id, description) -> OpenFileDescription.object id description)

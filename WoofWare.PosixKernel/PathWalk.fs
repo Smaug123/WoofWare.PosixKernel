@@ -26,19 +26,29 @@ type SymlinkPolicy =
     /// </example>
     | NoFollowFinal
 
-/// What a trailing separator on the *final* component means to this walk.
+/// What a trailing separator on the *final* component means to a path walk.
 ///
-/// A second axis from `SymlinkPolicy`, and independent of it: this one is not
-/// about what the walk follows, but about whether "the final component must name
-/// a directory" is a demand to record or a refusal to make.
+/// This is a fact of the flavour, not configuration. The kernel already
+/// applies it; a client reads it, through
+/// `SimulatedUnixPlatform.finalNameTrailingSeparator`, only to learn what the
+/// calls that bind or remove a name will do (see "Flavours and divergence from
+/// host platforms" in the README).
 ///
-/// The two Unixes split here for a *creating* open, and the split is not a
-/// choice this library makes — it is measured. Linux refuses such a path outright,
-/// XNU resolves it as any other lookup would.
+/// It is independent of `SymlinkPolicy`. That one says what the walk follows;
+/// this one says whether "the final component must name a directory" is a
+/// requirement which the call checks after the walk, a check which the walk
+/// makes at once, or neither.
+///
+/// The two Unixes differ here for a *creating* open, and this is measured, not
+/// chosen: Linux answers EISDIR for such a path at once, and XNU resolves it as
+/// any other lookup.
 [<RequireQualifiedAccess>]
 type TrailingSeparatorPolicy =
-    /// Record the demand on the resolution and let the caller enforce it. Every lookup (`stat`, `lstat`, `readlink`), every
-    /// non-creating `open`, and -- on Darwin -- a creating `open` and `mkdir`.
+    /// The walk resolves the final component as any lookup does, following a
+    /// symbolic link there, and the call then requires a directory. This is
+    /// what every lookup (`stat`, `lstat`, `readlink`) and every non-creating
+    /// `open` does, and on Darwin a creating `open` and every call that binds
+    /// or removes a name.
     | Demand
     /// Answer EISDIR on *reaching* a final component that carries a trailing
     /// separator — before that component's length is checked, before it is
@@ -1047,14 +1057,24 @@ module PathWalk =
         =
         resolveExisting limits credentials symlinkProtection (VirtualFileSystem.root vfs) policy path vfs
 
-    /// The inode `path` names in `vfs`, walked from its root as a process with
-    /// `credentials` would walk it: the inode `stat` would describe, or the
-    /// errno the walk fails with. A relative `path` is taken relative to the
-    /// root.
+    /// The inode which `path` names in `vfs`, walked from the root as a process
+    /// with `credentials` would walk it: the inode which `stat` would
+    /// describe, or the errno with which the walk fails. A relative `path` is
+    /// taken relative to the root. This is for a client that wants to look a
+    /// path up outside any syscall; it changes nothing.
     ///
-    /// Throws `ArgumentException` for `limits` that did not come from
-    /// `SimulatedUnixPlatform.pathLimits` or `PathLimits.create`, such as
-    /// `Unchecked.defaultof`.
+    /// The client takes `vfs` from `UnixSystem.fileSystem`, `limits` from
+    /// `SimulatedUnixPlatform.pathLimits`, `credentials` from a process's
+    /// `UnixSystem.credentials`, and `symlinkProtection` from the `Symlinks`
+    /// of `UnixSystem.protectedFiles`. Nothing is copied in, so the walk never
+    /// answers ENAMETOOLONG for the length of `path` itself. It still answers
+    /// it for a component longer than `NAME_MAX`, and on Darwin for a symbolic
+    /// link whose expansion no longer fits in `PATH_MAX`.
+    ///
+    /// Refused for a path this kernel will not resolve (see "Names in the
+    /// filesystem" in the README). Throws `ArgumentException` for `limits`
+    /// that did not come from `SimulatedUnixPlatform.pathLimits` or
+    /// `PathLimits.create`, such as `Unchecked.defaultof`.
     let resolveExistingFromRoot
         (limits : PathLimits)
         (credentials : Credentials)

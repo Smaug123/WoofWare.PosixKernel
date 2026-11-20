@@ -487,38 +487,46 @@ module internal UTimensAtRefusal =
         | UTimensAtRefusal.DevfsTimes _ -> RefusalKind.Unmodelled
 
 /// <summary>
-/// What <c>fstat(2)</c> reported.
+/// What <c>stat(2)</c>, <c>lstat(2)</c>, <c>fstat(2)</c> or <c>fstatat(2)</c> reported.
 /// </summary>
+/// <remarks>
+/// This library's functions for those calls take no output buffer, so they never answer <c>EFAULT</c>
+/// for the process's <c>struct stat</c>. What the process's call answers when the client cannot write
+/// that struct is for the client to decide.
+/// </remarks>
 [<RequireQualifiedAccess>]
 type FileStatusAnswer =
     /// <summary>
-    /// The status of the inode named by the file descriptor.
+    /// The status of the inode which the path or descriptor named.
     /// </summary>
+    /// <remarks>
+    /// The client stores these fields into the process's <c>struct stat</c>, in the platform's layout
+    /// (see "What every client does" in the README), and the process's call returns 0.
+    /// </remarks>
     | Reported of status : FileStatus
     /// <summary>
-    /// The entry point returns -1, stores `error` wherever its libc keeps errno,
-    /// and leaves the caller's output struct untouched.
+    /// The process's call returns -1 with errno set to <c>error</c>, and the client leaves the process's
+    /// <c>struct stat</c> untouched.
     /// </summary>
     | Failed of error : UnixError
 
-/// What `getcwd(3)` does to the caller's buffer and what it returns.
+/// What the process's `getcwd(3)` stores in its buffer, and what it returns.
 ///
-/// The success value of a real `getcwd` is the caller's own buffer pointer,
-/// which this library never possesses; the client composes that from the
-/// pointer it already holds.
+/// On success the process's `getcwd` returns the pointer to its own buffer.
+/// This library never sees that pointer, so the client returns the pointer it
+/// already holds.
 [<RequireQualifiedAccess ; NoComparison>]
 type GetCwdAnswer =
-    /// Place these bytes in the caller's buffer. They are NUL-terminated
-    /// already, because terminating is `getcwd`'s job rather than its caller's,
-    /// and they fit: the length comparison that produces ERANGE has already been
-    /// made against this exact sequence.
+    /// The client stores these bytes at the start of the process's buffer.
+    /// They already end with a NUL, because `getcwd` writes the terminator
+    /// itself. They fit: the kernel has compared the buffer's capacity with
+    /// this exact sequence, NUL included, before answering.
     | Reported of path : ImmutableArray<byte>
-    /// The call returns NULL and the caller stores `error` wherever its libc
-    /// keeps errno.
+    /// The process's call returns NULL with errno set to `error`.
     ///
-    /// Says nothing about the destination's *contents*. Every Linux failure
-    /// path leaves it untouched, and Darwin's do not: see
-    /// `GetCwdOrphanAnswer.ShortestPathFirst` for what was measured there and
+    /// This says nothing about what the buffer holds afterwards. On Linux
+    /// every failure leaves it untouched, and on Darwin they do not: see
+    /// `GetCwdOrphanAnswer.ShortestPathFirst` for what was measured there, and
     /// why this library does not reproduce it.
     | Failed of error : UnixError
 
@@ -583,6 +591,23 @@ type internal PathStart =
     /// and need not be a directory.
     | StartingObject of inode : InodeNumber
 
+/// The syscalls that resolve a path or a descriptor to an inode and report or
+/// change its attributes, and those that report or change the current
+/// directory.
+///
+/// Each path argument is a `PathArgumentBytes`: the bytes which the client
+/// read at the process's pointer, or the client's report that it could not
+/// read them. The kernel copies the argument in at the point where the real
+/// call does.
+///
+/// "A path this kernel will not resolve" is one whose walk this library
+/// refuses. On Darwin the usual case is a lookup of a name which a directory
+/// does not bind byte for byte, while the directory binds another name that
+/// might be an equivalent Unicode spelling of it (see "Names in the
+/// filesystem" in the README). The rarer cases are a name longer than
+/// `NAME_MAX` on Darwin's devfs, an empty path that names a pipe, a socket or
+/// an event queue, and, under Linux's `fs.protected_symlinks`, a protected
+/// symbolic link far down a chain of links.
 [<RequireQualifiedAccess>]
 module UnixPathResolution =
 
@@ -991,23 +1016,23 @@ module UnixPathResolution =
             (tryStatIn policy path)
             system
 
-    /// `stat(2)` and `lstat(2)`: report the status of the inode `path` names,
-    /// the two differing only in whether a symbolic link in the final position
-    /// is followed. Each is `fstatat` from `AT_FDCWD`, with
-    /// `AT_SYMLINK_NOFOLLOW` for `lstat`.
+    /// `stat(2)` and `lstat(2)`: report the status of the inode which `path`
+    /// names. The two differ only in whether a symbolic link in the final
+    /// position is followed. Each is `fstatat` from `AT_FDCWD`, and `lstat`
+    /// adds `AT_SYMLINK_NOFOLLOW`.
     ///
-    /// Changes nothing and returns no system, for the reason `fstat` does not:
-    /// a `stat` records no access.
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     ///
-    /// Refuses for a directory on an NFS mount and for the device filesystem's
-    /// root, whose size and link count this kernel cannot state, and for a
-    /// path this kernel will not resolve. The three
-    /// descriptor kinds `fstat` also refuses for are unreachable from here:
-    /// every inode a path resolves to is one this filesystem holds, since a
-    /// name for an inode-free object cannot be created in it.
+    /// This changes nothing and returns no system, because a `stat` records no
+    /// access. It takes no output buffer: the client stores the answer into
+    /// the process's `struct stat` (see `FileStatusAnswer`).
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// Refused for a directory on an NFS mount, whose size and link count
+    /// this kernel cannot state, and for a path this kernel will not resolve
+    /// (see "Names in the filesystem" in the README).
     let stat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (policy : SymlinkPolicy)
@@ -1151,22 +1176,21 @@ module UnixPathResolution =
         =
         Entry.call "UnixPathResolution.fstat" CallerRequirement.Running caller Shape.answer (tryFstatIn fd) system
 
-    /// `fstat(2)`: report the status of the inode `fd` names.
+    /// `fstat(2)`: report the status of the inode which `fd` names.
     ///
-    /// Changes nothing and returns no system, which is not merely today's
-    /// implementation: a real `fstat` records no access, and neither does this
-    /// one, so there is nothing for a caller to write back.
+    /// This changes nothing and returns no system, because a real `fstat`
+    /// records no access. It takes no output buffer: the client stores the
+    /// answer into the process's `struct stat` (see `FileStatusAnswer`).
     ///
-    /// An end of a pipe the process made reports `S_IFIFO`, and each flavour's
-    /// own permission bits, size, timestamps and identity: see `PipeInodes`,
-    /// `PipeTimes` and `UnixBootImage.withPipeDevice`.
+    /// An end of a pipe which the process made reports `S_IFIFO`, with each
+    /// flavour's own permission bits, size, timestamps and identity: see
+    /// `PipeInodes`, `PipeTimes` and `UnixBootImage.withPipeDevice`.
     ///
-    /// Refuses for a descriptor this kernel holds no inode for — an event
-    /// queue, a socket — and for an end of a pipe the process was launched with,
-    /// whose owner and timestamps are the launcher's. That is a limit of the
-    /// model rather than an absent kernel answer. Also
-    /// refuses for a directory on an NFS mount and for the device filesystem's
-    /// root, as `stat` does.
+    /// Refused for a descriptor for which this kernel holds no inode (an event
+    /// queue or a socket), and for an end of a pipe with which the process was
+    /// launched, because that pipe's owner and timestamps come from whatever
+    /// launched the process, which this kernel does not model. Also refused
+    /// for a directory on an NFS mount, as `stat` is.
     let fstat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -1258,11 +1282,14 @@ module UnixPathResolution =
     /// `AT_FDCWD`. A path that is not empty is resolved as if the flag were
     /// absent.
     ///
-    /// Changes nothing and returns no system, as `stat` and `fstat` do not.
+    /// Like `stat` and `fstat`, this changes nothing, returns no system and
+    /// takes no output buffer (see `FileStatusAnswer`).
     ///
-    /// Refuses the flags this library does not model, a pathname this
-    /// kernel cannot read under `AT_EMPTY_PATH`, and whatever `stat` or
-    /// `fstat` refuses of what the call reaches.
+    /// Refused for the flags which this library does not model, for
+    /// `PathArgumentBytes.Unreadable` under Linux's `AT_EMPTY_PATH` (Linux
+    /// reads a NULL pathname there as the empty one, and `Unreadable` does not
+    /// say whether the pointer was NULL), and for whatever `stat` or `fstat`
+    /// refuses about the object the call reaches.
     let fstatat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (dirfd : int)
@@ -1405,21 +1432,27 @@ module UnixPathResolution =
             (tryChmodIn path mode)
             system
 
-    /// `chmod(2)`: change the mode of the inode `path` names. This is
+    /// `chmod(2)`: change the mode of the inode which `path` names. This is
     /// `fchmodat` from `AT_FDCWD` with no flags.
     ///
     /// `mode` is the raw mode word, of which only the low twelve bits are read.
     /// An unprivileged caller that does not own the inode is answered EPERM.
     /// One that owns it gets every bit it asks for, except that `S_ISGID` is
-    /// silently dropped when it is not in the inode's group. A privileged
-    /// caller gets exactly the twelve bits it asks for.
+    /// silently dropped when the caller is not in the inode's group. A
+    /// privileged caller gets exactly the twelve bits it asks for.
     ///
     /// A symbolic link in the final position is followed, so the link's target
-    /// changes and a dangling link is ENOENT. Every other failure but EPERM is
-    /// the path resolution's own.
+    /// changes and a dangling link is ENOENT. Every failure other than EPERM
+    /// comes from resolving the path.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// Refused for a path this kernel will not resolve (see "Names in the
+    /// filesystem" in the README), and for a privileged caller's change to an
+    /// inode on Darwin's devfs.
+    ///
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let chmod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -1720,12 +1753,18 @@ module UnixPathResolution =
     /// platform's `OwnerChangeRule` (`SimulatedUnixPlatform.ownerChangeRule`).
     ///
     /// A symbolic link in the final position is followed, so the link's target
-    /// changes and a dangling link is ENOENT. Every other failure but EPERM is
-    /// the path resolution's own, and comes first: a path through a directory
-    /// the caller may not search is EACCES whatever it asks.
+    /// changes and a dangling link is ENOENT. Every failure other than EPERM
+    /// comes from resolving the path, and comes first: a path through a
+    /// directory which the caller may not search is EACCES whatever it asks.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// Refused for a path this kernel will not resolve (see "Names in the
+    /// filesystem" in the README), and on Darwin's devfs for a privileged
+    /// caller's change and for an owner change that names an ID.
+    ///
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let chown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -1775,8 +1814,10 @@ module UnixPathResolution =
     /// a link to a directory changes the directory, and for a link to anything
     /// else is ENOTDIR. Otherwise as `chown`.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let lchown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -1958,8 +1999,8 @@ module UnixPathResolution =
     /// On Linux, glibc's `lchmod(3)` is this call from `AT_FDCWD` with
     /// `AT_SYMLINK_NOFOLLOW`. Darwin's is not: its libc calls `setattrlist(2)`
     /// instead, which answers a non-owner EACCES rather than EPERM, and
-    /// refuses `S_ISGID` outside the inode's group with EPERM rather than
-    /// dropping it. This library does not model `setattrlist`.
+    /// answers EPERM for `S_ISGID` outside the inode's group rather than
+    /// dropping the bit. This library does not model `setattrlist`.
     ///
     /// Under Linux's `AT_EMPTY_PATH` the empty path is `fchmod(2)` of
     /// `dirfd`, whatever kind of descriptor it is, or `chmod` of the current
@@ -2467,18 +2508,27 @@ module UnixPathResolution =
         =
         Entry.call "UnixPathResolution.statfs" CallerRequirement.Running caller Shape.answer (tryStatfsIn path) system
 
-    /// `statfs(2)`: report the filesystem the inode `path` names is on.
+    /// `statfs(2)`: report the filesystem which holds the inode that `path`
+    /// names.
     ///
     /// A symbolic link in the final position is followed, as `statfs` always
-    /// does, so a dangling link is ENOENT. Every failure is the path
-    /// resolution's own, as for `stat(2)`.
+    /// does, so a dangling link is ENOENT. Every failure comes from resolving
+    /// the path, as for `stat(2)`.
     ///
-    /// Changes nothing and returns no system. Refuses a path this kernel will
-    /// not resolve, and throws for a machine whose platform
-    /// and mount do not describe one machine, whatever the path.
+    /// This changes nothing and returns no system. It takes no output buffer:
+    /// the client stores the answer into the process's `struct statfs`.
+    /// Reading some of the answer's field groups throws `UnmodelledException`
+    /// (see `FileSystemStatistics`), so the client finds out only when it
+    /// reads them.
     ///
-    /// `path` is the argument's bytes, copied in before anything else: EFAULT
-    /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
+    /// Refused for a path this kernel will not resolve (see "Names in the
+    /// filesystem" in the README). Throws for a machine whose platform and
+    /// mount do not describe one machine, whatever the path.
+    ///
+    /// The kernel copies `path` in before anything else. It answers EFAULT if
+    /// the client could not read it (`PathArgumentBytes.Unreadable`), and
+    /// ENAMETOOLONG if the process's memory held no NUL within
+    /// `PathLimits.pathMaxBytes` bytes.
     let statfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
@@ -2504,15 +2554,22 @@ module UnixPathResolution =
         | Some (OpenFileObject.File inode) -> statisticsOfInode inode system
         | Some target -> FileSystemStatistics.ofObject system.Machine.UnixPlatform system.Machine.Mount target
 
-    /// `fstatfs(2)`: report the filesystem the object `fd` names is on.
+    /// `fstatfs(2)`: report the filesystem which holds the object that `fd`
+    /// names.
     ///
-    /// EBADF for a descriptor the process does not hold. A file or directory
-    /// is on the root filesystem or the device filesystem. Every other object
-    /// is on one of Linux's internal filesystems, and Darwin answers EINVAL for
-    /// it.
+    /// A descriptor which the process does not hold is EBADF. A file or
+    /// directory is on the root filesystem or the device filesystem. On Linux
+    /// every other object is on one of the kernel's internal filesystems, and
+    /// on Darwin such an object is EINVAL.
     ///
-    /// Changes nothing and returns no system. Refuses a machine whose platform
-    /// and mount do not describe one machine, whatever the descriptor.
+    /// This changes nothing and returns no system. It takes no output buffer:
+    /// the client stores the answer into the process's `struct statfs`.
+    /// Reading some of the answer's field groups throws `UnmodelledException`
+    /// (see `FileSystemStatistics`), so the client finds out only when it
+    /// reads them.
+    ///
+    /// Throws for a machine whose platform and mount do not describe one
+    /// machine, whatever the descriptor.
     let fstatfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -2666,19 +2723,33 @@ module UnixPathResolution =
             system
 
     /// <summary>
-    /// <c>getcwd(3)</c>: report the current directory's path into the caller's buffer.
+    /// <c>getcwd(3)</c>: report the path of the caller's current directory, for the client to store
+    /// into the process's buffer.
     /// </summary>
     /// <remarks>
-    /// This has no side-effects on the kernel.
+    /// This changes nothing, so it returns no system. This library writes nothing: on success the client
+    /// stores the bytes of <c>GetCwdAnswer.Reported</c> (see "What every client does" in the README).
+    /// <para />
+    /// The answers, in the order the kernel decides them:
+    /// a <c>capacity</c> of 0 is <c>EINVAL</c>;
+    /// on Darwin, whose <c>getcwd</c> stores from the process's own context and so kills the process
+    /// for a buffer it cannot write, an <c>Unmapped</c> destination with a capacity of 2 or more is refused,
+    /// whatever else the call would answer (see <c>SimulatedUnixPlatform.getCwdDestinationFault</c>);
+    /// if no path reaches the current directory any more, the call answers <c>ENOENT</c>, or <c>ERANGE</c>
+    /// on Darwin for a capacity below 2;
+    /// a capacity smaller than the path plus its NUL is <c>ERANGE</c>;
+    /// last, on Linux an <c>Unmapped</c> destination is <c>EFAULT</c>, and on either flavour an
+    /// <c>Opaque</c> or <c>Addressless</c> one is refused.
     /// </remarks>
     /// <param name="caller">
     /// The thread making the call.
     /// </param>
     /// <param name="destination">
-    /// Where the kernel writes the result.
+    /// The client's description of the process's buffer. The kernel looks at it only to decide whether
+    /// the call answers <c>EFAULT</c> or is refused; it never writes there.
     /// </param>
     /// <param name="capacity">
-    /// The caller's buffer size, as the <c>size_t</c> it is.
+    /// The size of the process's buffer, as the <c>size_t</c> it is. It must have room for the path's NUL.
     /// </param>
     /// <param name="system">
     /// The state of the kernel we're reading data out of.
@@ -2811,10 +2882,11 @@ module UnixPathResolution =
     /// <c>chdir(2)</c>: set the relative-path resolution base directory to <c>path</c>.
     /// </summary>
     /// <remarks>
-    /// <c>path</c> is the argument's bytes, copied in before anything else: <c>EFAULT</c> if they
-    /// were unreadable, <c>ENAMETOOLONG</c> if they run past <c>PATH_MAX</c>.
+    /// The kernel copies <c>path</c> in before anything else. It answers <c>EFAULT</c> if the client could
+    /// not read it (<c>PathArgumentBytes.Unreadable</c>), and <c>ENAMETOOLONG</c> if the process's memory held
+    /// no NUL within <c>PathLimits.pathMaxBytes</c> bytes.
     ///
-    /// Refuses a path this kernel will not resolve.
+    /// Refused for a path this kernel will not resolve (see "Names in the filesystem" in the README).
     /// </remarks>
     let chdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

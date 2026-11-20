@@ -14,7 +14,10 @@ open System.Runtime.InteropServices
 /// The pool is initialised from the moment it exists, so a draw never has to
 /// wait for entropy to accumulate.
 ///
-/// A process gets bytes from it through `UnixEntropy`'s syscalls.
+/// A process gets bytes from it through `UnixEntropy`'s syscalls, and by
+/// reading `/dev/urandom`. A client seeds a machine's pool with
+/// `UnixBootImage.withEntropySeed`, and reads where it stands with
+/// `UnixSystem.entropyPool`.
 [<Struct>]
 type EntropyPool = private | EntropyPool of state : uint64
 
@@ -98,6 +101,10 @@ module EntropyDraw =
 module EntropyPool =
     /// A pool whose stream starts from `seed`. Every seed is usable, zero
     /// included.
+    ///
+    /// No function takes an `EntropyPool`, so this value is only for comparing
+    /// with `UnixSystem.entropyPool`. To seed a machine's pool, the client
+    /// passes the seed to `UnixBootImage.withEntropySeed`.
     ///
     /// The stream is splitmix64 (Vigna, <http://prng.di.unimi.it/splitmix64.c>)
     /// with `seed` as its state, so a client that must reproduce the bytes

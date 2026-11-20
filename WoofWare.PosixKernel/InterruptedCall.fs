@@ -1,7 +1,12 @@
 namespace WoofWare.PosixKernel
 
-/// What a syscall a thread is asleep in does when a signal with a handler is to
-/// be delivered to that thread before the syscall has anything else to answer.
+/// What a syscall does when a thread is asleep in it and a signal with a
+/// handler is about to be delivered to that thread, before the syscall has
+/// anything else to answer.
+///
+/// No public function in this version answers or takes one: a client learns
+/// how an interrupted call ends from the return to user mode, as an
+/// `InterruptedCall`.
 [<RequireQualifiedAccess>]
 type SignalRestartRule =
     /// The syscall fails with `EINTR`, whatever flags the handler was

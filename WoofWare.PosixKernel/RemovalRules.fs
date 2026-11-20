@@ -428,11 +428,18 @@ module internal UnlinkRules =
 
 // The ordering half lives in `RmDirRules.linuxVerdict` and
 // `RmDirRules.darwinVerdict`, for the reason `UnlinkRules.verdict` gives.
-/// Everything a kernel does differently when `rmdir(2)` removes a directory.
+/// The one difference in what a kernel's `rmdir(2)` does to the directory it
+/// removes.
 ///
-/// Two fields. The rest of the divergence — the *order* of the refusals and
-/// the errno vocabulary — follows from the platform's flavour alone, so it
-/// is not a field here.
+/// The other differences in `rmdir(2)` are not fields here. The walk of the
+/// path is `SimulatedUnixPlatform.finalNameTrailingSeparator`'s, and the order
+/// of the refusals and the errnos they answer follow from the platform's
+/// flavour alone.
+///
+/// `SimulatedUnixPlatform.rmDirRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 ///
 /// Measured on macOS 26.6/APFS at uid 501, and Linux 6.x arm64 at uid 1000 and
 /// uid 0, one fresh tree per row.
@@ -447,10 +454,9 @@ type RmDirRules =
         /// nothing about the Darwin inode changed, so its `ctime` has no reason
         /// to move.
         ///
-        /// Observable, which is why it is modelled rather than approximated:
-        /// `fstat` on a directory descriptor reports `InodeTimes.StatusChange`
-        /// as `ctime`. (`st_nlink` itself is not a `FileStatus` field, so only
-        /// its shadow on `ctime` can be read.)
+        /// A process can observe it, which is why it is modelled rather than
+        /// approximated: `fstat` on a directory descriptor reports
+        /// `InodeTimes.StatusChange` as `ctime`.
         ///
         /// `unlink` needs no such field: removing a *file*'s last name moves its
         /// `ctime` on both.

@@ -10,11 +10,19 @@ namespace WoofWare.PosixKernel
 /// does not determine a mount's type. It does *constrain* it, which is what
 /// `EmulatedFileSystemType.isReportableUnder` carries.
 ///
-/// This changes what `fstatfs(2)` reports for a file, a directory's `st_size`,
-/// and where `lseek(2)` with `SEEK_END` lands on a directory. Path resolution keeps its flavour's limits either way — `pathLimits`
-/// carries `NameLengthLimit` as an ext4-versus-APFS fact — so a kernel
-/// configured `Nfs` reports NFS while still resolving names as its flavour
-/// does.
+/// This changes what `statfs(2)` and `fstatfs(2)` report, a directory's
+/// `st_size` and `st_nlink`, every file's `st_blksize` and `st_blocks`,
+/// whether a read moves an access time, and where `lseek(2)` with `SEEK_END`
+/// lands on a directory (see "Giving the machine files" in the README). Path
+/// resolution keeps its flavour's limits either way: `pathLimits` carries
+/// `NameLengthLimit` as a fact of the flavour. So a kernel configured `Nfs`
+/// reports NFS while still resolving names as its flavour does.
+///
+/// Choosing `Nfs` also makes many calls refused, because on NFS the server,
+/// not this machine, decides what they answer: `stat` of any directory,
+/// `link(2)`, `clonefile(2)`, the `FICLONE` `ioctl(2)`, `copy_file_range(2)`,
+/// a `utimensat(2)` that sets a time, `lseek(2)` with `SEEK_END` on a directory, and
+/// reading most of what `statfs(2)` answers.
 ///
 /// Only three cases, because only three have a consumer. Note that a fourth
 /// could not be told apart as `Ext4` by `fstatfs(2)` alone: Linux reports
@@ -29,7 +37,8 @@ type EmulatedFileSystemType =
     | Apfs
     /// A network filesystem, which both flavours can mount. Code that treats
     /// network mounts specially (for example, by declining to take a `flock`
-    /// on one) sees one under this configuration.
+    /// on one) sees one under this configuration. Many calls about its files
+    /// are refused: see `EmulatedFileSystemType`.
     | Nfs
 
 /// The fields of `struct statfs` that name the type of filesystem a
@@ -286,7 +295,7 @@ module EmulatedFileSystemType =
         // `allocation` states no `st_blocks` on NFS.
         | EmulatedFileSystemType.Nfs -> FaultedWriteAllocation.Untracked
 
-    /// The type a mount reports when a host expresses no preference.
+    /// The type a mount reports when the client expresses no preference.
     ///
     /// `Tmpfs` under Linux because this library's filesystem really is in
     /// memory, and `Apfs` under Darwin because a default macOS mounts no tmpfs.

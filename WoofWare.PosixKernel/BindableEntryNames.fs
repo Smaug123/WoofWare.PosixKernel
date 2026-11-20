@@ -4,17 +4,21 @@ namespace WoofWare.PosixKernel
 /// Which names a platform's filesystem is willing to bind (that is, to create or rename onto).
 /// </summary>
 /// <remarks>
-/// This configuration doesn't apply to name lookups, since the filesystem could never have
+/// This is a fact of the flavour, not configuration: the kernel already applies the rule which
+/// <c>SimulatedUnixPlatform.bindableEntryNames</c> holds, and a client reads it only to learn what
+/// the kernel will do.
+/// <para />
+/// The rule doesn't apply to name lookups, since the filesystem could never have
 /// created an entry with an unbindable name in the first place.
 /// <para />
-/// Note that merely satisfying this configuration doesn't necessarily mean a name is valid.
-/// For example, Linux/ext4's <c>AnyBytes</c> configuration still has length limits, and
-/// the directory separator "/" still can't be part of a name.
+/// Note that a name which satisfies this rule may still be refused a binding for another reason.
+/// For example, under Linux's <c>AnyBytes</c> a name longer than <c>NAME_MAX</c> still gets
+/// <c>ENAMETOOLONG</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type BindableEntryNames =
     /// <summary>Entry names need not use any particular character encoding.</summary>
-    /// <example>Linux/ext4 does this.</example>
+    /// <example>Linux does this.</example>
     | AnyBytes
     /// <summary>
     /// Only names that are valid UTF-8 can be entry names.
@@ -34,10 +38,12 @@ module BindableEntryNames =
     /// Whether a filesystem whose character encoding follows <c>rule</c> will bind <c>name</c>.
     /// </summary>
     /// <remarks>
-    /// Our Linux filesystem will bind any bytes as a name (though that name might fail validity checks after
-    /// binding - e.g. the kernel may refuse a name which is too long even after <c>admits</c> accepted it).
+    /// Under Linux's <c>AnyBytes</c> this is always true. The kernel checks a name's length separately,
+    /// before it binds the name, so <c>admits</c> may accept a name which the call then answers
+    /// <c>ENAMETOOLONG</c> for.
     /// <para />
-    /// Darwin's filesystem is sensitive to encoding; if <c>admits</c> fails, the kernel will present EILSEQ to the caller.
+    /// Under Darwin's <c>StrictUtf8</c>, a call that would bind a name which this does not admit answers
+    /// <c>EILSEQ</c>. That is the last check such a call makes, so any other error the call has comes first.
     /// </remarks>
     let admits (rule : BindableEntryNames) (name : DirectoryEntryName) : bool =
         match rule with

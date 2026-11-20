@@ -258,13 +258,13 @@ module UnixByteString =
     /// Encode this .NET string as UTF-8 and take the result as a Unix byte string,
     /// or explain why the string has no such encoding.
     ///
-    /// This is the constructor for host-supplied configuration, where a path is
-    /// written as an F# literal. A path a process supplies arrives as bytes and goes
-    /// through `ofBytes` instead.
+    /// This is the constructor for configuration which the client writes, such
+    /// as a path written as an F# literal. A path which a process passes
+    /// arrives as bytes, and goes through `ofBytes` instead.
     ///
-    /// An unpaired surrogate is refused here rather than encoded: it has no UTF-8
-    /// encoding, so a strict encoder would throw and a lenient one would silently
-    /// substitute U+FFFD and name a different file.
+    /// An unpaired surrogate is rejected here rather than encoded: it has no
+    /// UTF-8 encoding, so a strict encoder would throw, and a lenient one would
+    /// silently substitute U+FFFD and name a different file.
     let ofString (candidate : string) : Result<UnixByteString, UnixPathTextDefect> =
         if isNull candidate then
             nullArg (nameof candidate)

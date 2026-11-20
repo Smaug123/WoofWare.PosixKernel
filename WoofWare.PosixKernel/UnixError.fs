@@ -8,7 +8,8 @@ namespace WoofWare.PosixKernel
 /// This exists because <c>&lt;errno.h&gt;</c> can be different on different platforms.
 /// </remarks>
 /// <remarks>
-/// Interpreted by <c>SimulatedUnixPlatform.rawErrnoNumbering</c>.
+/// Get the one for a platform from <c>SimulatedUnixPlatform.rawErrnoNumbering</c>, and pass it to
+/// <c>UnixError.toRawErrnoUnder</c>, <c>UnixError.tryToRawErrnoUnder</c> or <c>UnixError.ofRawErrnoUnder</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type RawErrnoNumbering =
@@ -82,6 +83,9 @@ type RawErrnoPortability =
 /// those only one of them has (such as Linux's <c>ENOKEY</c> or Darwin's <c>EAUTH</c>).
 ///
 /// A second spelling of the same error, like <c>EWOULDBLOCK</c> for <c>EAGAIN</c>, has no case of its own.
+/// The exception is <c>ENOTSUP</c> and <c>EOPNOTSUPP</c>: Darwin numbers them differently, so each has a case,
+/// but Linux gives both the number 95, which <c>UnixError.ofRawErrnoUnder</c> decodes as <c>EOPNOTSUPP</c>.
+/// So under Linux, converting <c>ENOTSUP</c> to a number and back answers <c>EOPNOTSUPP</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type UnixError =
@@ -240,7 +244,7 @@ type UnixError =
     /// Filename too long.
     /// </summary>
     /// <example>
-    /// Reported for a pathname argument longer than the platform's <c>PATH_MAX</c>,
+    /// Reported for a pathname argument with no NUL within the platform's <c>PATH_MAX</c> bytes,
     /// and for any single component longer than its <c>NAME_MAX</c>. Both those limits,
     /// and the unit components are measured in, come from <c>PathLimits</c> and are
     /// filesystem-dependent.
@@ -380,6 +384,7 @@ type UnixError =
     /// </example>
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
+    /// Linux numbers it 95; Darwin numbers it 102.
     /// </remarks>
     | EOPNOTSUPP
     /// <summary>
@@ -448,6 +453,9 @@ type UnixError =
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
     /// Linux numbers it 95; Darwin numbers it 45.
+    /// <para />
+    /// Under Linux, 95 is also <c>EOPNOTSUPP</c>, and <c>UnixError.ofRawErrnoUnder</c> decodes 95 as
+    /// <c>EOPNOTSUPP</c>, never as this.
     /// </remarks>
     | ENOTSUP
     /// <summary>The socket is not connected.</summary>

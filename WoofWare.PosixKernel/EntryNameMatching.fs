@@ -25,6 +25,7 @@ type internal EntryNameMatching =
     /// </example>
     /// <example>
     /// Compatibility equivalents, such as U+FB01 and "fi", are different names under case-sensitivity.
+    /// This library models only the case-sensitive variant: names that differ only in case never match.
     /// </example>
     /// <example>
     /// A name that is not valid UTF-8 only matches an entry which has exactly the same bytes.
@@ -33,7 +34,7 @@ type internal EntryNameMatching =
     /// WoofWare.PosixKernel stores the original spelling that was used to bind the entry,
     /// and uses that spelling to answer <c>readdir</c>. It never stores two spellings of the same name.
     /// <para />
-    /// This library doesn't contain any Unicode tables, and refuses to rely on the host's Unicode tables
+    /// This library doesn't contain any Unicode tables, and does not rely on the host's Unicode tables
     /// because that would break our determinism guarantees, so WoofWare.PosixKernel cannot always decide whether
     /// two names are canonically equivalent.
     /// If it can't decide a lookup, it generally returns <c>EntryLookup.Undecided</c>.
@@ -52,7 +53,7 @@ type internal EntryLookup =
     /// Unicode-equivalent.
     /// </summary>
     /// <remarks>
-    /// PosixKernel refuses to decide canonical equivalence, because it doesn't
+    /// PosixKernel does not decide canonical equivalence, because it doesn't
     /// bundle Unicode tables and refuses to rely on the host's Unicode tables (for determinism reasons).
     /// PosixKernel converts <c>Undecided</c> into an <c>UnmodelledException</c> before the client sees it.
     /// </remarks>

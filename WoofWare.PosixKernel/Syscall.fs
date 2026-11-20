@@ -2,17 +2,28 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// An argument a call copies in from the caller's memory, as a `Syscall` case
-/// holds it: what that memory held, or, where the caller has nothing to copy,
-/// the reason, as `UserBuffer`'s cases give it for a buffer.
+/// An argument that the process's call reads from the process's memory, as a
+/// `Syscall` case holds it. The client reads that memory before it builds the
+/// case, and gives either what it found there or, where it found nothing to
+/// read, the reason, with the same meanings as `UserBuffer`'s cases.
 [<RequireQualifiedAccess>]
 type CopiedArgument<'T> =
-    /// The address names real storage, which held `contents`: of a buffer of
-    /// bytes, at least as many bytes as the call copies.
+    /// The pointer names real storage, and `contents` is what it held.
+    ///
+    /// For a buffer of bytes, `contents` starts at the pointer the process
+    /// passed, never partway into the buffer, and holds at least as many bytes
+    /// as the call copies: the whole `count` of a `write` or `send`, or the
+    /// whole declared length of a `sockaddr`, is always enough. This library
+    /// ignores any bytes past those it copies. A later copy of the same call,
+    /// such as the rest of a write that slept, takes its bytes from further
+    /// into `contents` (see `CopyRange.FirstByte`). Contents that end before
+    /// the bytes the call copies make `UnixSystem.step` and `UnixWait.finish`
+    /// throw `InvalidOperationException`.
     | Readable of contents : 'T
-    /// As `UserBuffer.Unmapped`: an address naming no storage.
+    /// As `UserBuffer.Unmapped`: an address naming no storage. A NULL pointer
+    /// is `Unmapped 0UL`.
     | Unmapped of address : uint64
-    /// As `UserBuffer.Opaque`: real memory whose contents the caller cannot
+    /// As `UserBuffer.Opaque`: real memory whose contents the client cannot
     /// produce.
     | Opaque
     /// As `UserBuffer.Addressless`: not an address at all.
@@ -238,22 +249,30 @@ module internal SentMessage =
             VectorLength = vector.SentLength
         }
 
-/// A request to this kernel, as a value: one case for each call a thread makes
-/// of it, named for the call and holding the call's arguments, for a client
-/// that wants one surface to log, replay or generate calls through.
-/// `UnixSystem.step` makes the call a case names through that call's own
-/// function, and answers the `SteppedCall` case of the same name.
+/// A call that a thread makes, as a value. There is one case for each call,
+/// named after it and holding its arguments, for a client that wants to log,
+/// replay or generate calls through a single function. `UnixSystem.step`
+/// takes a case, makes the call through this library's function for it, and
+/// answers the `SteppedCall` case of the same name.
 ///
-/// Each argument is as the call's own function takes it, in the order the
-/// call's C prototype takes them, which is not always the function's: raw
-/// where the kernel validates it, in the flavour's own numbering, and
-/// classified where only the client can classify it.
+/// Each argument has the form that this library's function for the call takes.
+/// The arguments come in the order of the call's C prototype, which is not
+/// always the function's order. An argument is raw where the kernel validates
+/// it, in the flavour's own numbering, and classified where only the client
+/// can classify it.
 ///
-/// An argument the kernel copies in from the caller's memory is what that
-/// memory held, so that no call stops partway for it: a pathname is its bytes
-/// (`PathArgumentBytes`), and a buffer of bytes, a `sockaddr` or a length cell
-/// is a `CopiedArgument`. A buffer the call writes to stays a `UserBuffer`,
-/// since what the call writes there is in its answer.
+/// An argument that the call reads from the process's memory holds what the
+/// client found there, so that `step` never stops partway to ask for it: a
+/// pathname is its bytes (`PathArgumentBytes`), and a buffer of bytes, a
+/// `sockaddr` or a length cell is a `CopiedArgument`. A buffer that the call
+/// writes to stays a `UserBuffer`, because what the call writes is in its
+/// answer, and the client stores it (see "What every client does" in the
+/// README).
+///
+/// A call that sleeps is finished later by `UnixWait.finish`, which takes the
+/// same case again. The client gives that case what the process's memory holds
+/// when the call is finished, because a woken write copies the rest of its
+/// bytes, and a woken Linux `recvfrom` reads its length cell, only then.
 ///
 /// `Nanosleep`, `ClockNanosleep`, `Select`, `PSelect`, `SigWait`,
 /// `SigWaitInfo`, `SigTimedWait` and `RecvMsg` are reserved: this kernel does not model those calls yet, their
@@ -414,11 +433,17 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `recv(2)`, as `UnixReadWrite.recv` makes it.
     | Recv of fd : int * buffer : UserBuffer * count : uint64 * flags : int
     /// `recvfrom(2)`, as `UnixReadWrite.recvfrom` makes it, then
-    /// `UnixReadWrite.recvfromWithLength` of the `socklen_t` the length cell
-    /// `sourceLength` holds, if the call reads it, when it reads it: on Linux
-    /// after the datagram's bytes are in `buffer`. A NULL `source` is
-    /// `UserBuffer.Unmapped 0UL`, and a NULL `sourceLength`
+    /// `UnixReadWrite.recvfromWithLength` of `sourceLength`, the `socklen_t`
+    /// in the length cell, if the call reads the cell. A NULL `source` is
+    /// `UserBuffer.Unmapped 0UL`, and a NULL `sourceLength` is
     /// `CopiedArgument.Unmapped 0UL`.
+    ///
+    /// The client reads `sourceLength` before it makes the case, but a Linux
+    /// call reads the cell only after it has put the datagram's bytes in
+    /// `buffer`. So a Linux call whose length cell lies inside `buffer` cannot
+    /// be made correctly through this case: the client makes it through
+    /// `UnixReadWrite.recvfrom` instead, and stores
+    /// `PausedRecvFrom.received` before it reads the cell.
     | RecvFrom of
         fd : int *
         buffer : UserBuffer *
@@ -703,19 +728,22 @@ type SteppedRecvMsg<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
     // (`docs/design/datagram-park-options.md`).
     internal | SteppedRecvMsg
 
-/// What `UnixSystem.step` answered: one case for each case of `Syscall`, named
-/// as that case is and in the same order, holding exactly what the call's own
-/// function answers. For a call that stops partway to copy from the caller's
-/// memory, that is what its resumption answers once given what the `Syscall`
-/// case holds, since `step` never stops partway.
+/// What `UnixSystem.step` answered. There is one case for each case of
+/// `Syscall`, with the same name and in the same order, and each holds exactly
+/// what this library's function for the call answers. Where that function
+/// stops partway to copy from the process's memory, the case holds what its
+/// resumption answers, given what the `Syscall` case holds, because `step`
+/// never stops partway.
 ///
-/// So a case holds the system the call left wherever the call's function
-/// answers one, and none where the function answers none because the call
-/// cannot change anything (`GetEffectiveUserId`, `FStat`), when the system is
-/// still the one the call was made in. As the functions' answers do, a case
-/// may hold the calling thread asleep in the call, or the call interrupted by
-/// a signal (`SyscallOutcome.Interrupted`), whose end the thread's return to
-/// user mode says.
+/// A case holds a system wherever the function answers one. Where the call
+/// cannot change anything (`GetEffectiveUserId`, `FStat`), the function
+/// answers no system, and the system is still the one in which the call was
+/// made. Like the functions' answers, a case may say that the calling thread
+/// is asleep in the call, or that a signal interrupted the call
+/// (`SyscallOutcome.Interrupted`). The client finishes a sleeping call with
+/// `UnixWait.finish` once `UnixWait.wake` has woken its thread, and after an
+/// interrupted call, the return to user mode says how the call ends (see
+/// "What every client does" in the README).
 ///
 /// The cases of the reserved calls hold types whose representations are
 /// internal, and nothing in this version makes one.
@@ -985,14 +1013,14 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
 [<RequireQualifiedAccess>]
 module SteppedCall =
 
-    /// The system after the call `stepped` describes, made in `madeIn`: the
-    /// system `stepped` holds, whatever became of the call (the thread asleep
-    /// in it, interrupted, or the process ended, when it is the system without
-    /// the process), and `madeIn` where `stepped` holds none, because the call
-    /// could change nothing.
+    /// The system after the call that `stepped` describes. If `stepped` holds a
+    /// system, this is that system, whatever became of the call: the thread may
+    /// be asleep in it or interrupted, or the process may have ended, in which
+    /// case the system no longer has the process. If `stepped` holds no system,
+    /// because the call could change nothing, this is `madeIn`.
     ///
-    /// `madeIn` must be the system `UnixSystem.step` made the call in; nothing
-    /// checks that it is.
+    /// `madeIn` must be the system in which `UnixSystem.step` made the call.
+    /// Nothing checks that it is.
     let system<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (madeIn : UnixSystem<'Thread, 'Handler>)
         (stepped : SteppedCall<'Thread, 'Handler>)

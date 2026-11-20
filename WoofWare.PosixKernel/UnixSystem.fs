@@ -1335,7 +1335,8 @@ module UnixSystem =
         UnixMachineState.processorCount system.Machine
 
     /// How long the machine has been up, to the nanosecond. Only `advanceClock`
-    /// moves it. A process reads the same instant through
+    /// moves it: a syscall takes no time, so every call between two advances
+    /// sees the same instant. A process reads the same instant through
     /// `UnixClock.clockGettime`, at the granularity its flavour reports.
     let nanosecondsSinceBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
@@ -1345,6 +1346,13 @@ module UnixSystem =
 
     /// Let `nanoseconds` pass on the machine: every clock it has moves forward
     /// by that much. Advancing by zero changes nothing.
+    ///
+    /// Time passes only when the client calls this. Moving the clock wakes no
+    /// thread by itself: a sleeping call whose deadline has now passed is woken
+    /// by the client's next `UnixWait.wake`. When no thread can run,
+    /// `UnixWait.deadlines` says how far the client may advance before the
+    /// first sleeping call times out. See "What every client does" in the
+    /// README.
     ///
     /// Throws `ArgumentOutOfRangeException` for a negative amount, since no
     /// clock this kernel models runs backwards, and for one that would take the
@@ -1474,8 +1482,12 @@ module UnixSystem =
         =
         system.Machine.ProtectedFiles
 
-    /// Every pipe with an end open, by identity: an end an open file
-    /// description names, or one the client holds (`PipeState.heldByClient`).
+    /// Every pipe that still has an end open, by identity. An end is open while
+    /// an open file description names it, or while the client holds it. The
+    /// client holds the far end of each pipe that a `ProcessLaunch` set up as
+    /// one of the process's descriptors, standing in for the world outside the
+    /// machine (`PipeState.heldByClient`; see "The far end of a launched pipe"
+    /// in the README).
     let pipes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<PipeId, PipeState>
@@ -2211,24 +2223,32 @@ module UnixSystem =
     /// what the function answers.
     /// </summary>
     /// <remarks>
-    /// For a client that wants one surface to log, replay or generate calls
-    /// through. Where a call's own function has a narrower type, or answers
-    /// before the call copies from the caller's memory, that function is the
-    /// one to prefer.
+    /// For a client that wants one surface through which to log, replay or
+    /// generate calls, such as a replayer that already holds every argument.
     ///
-    /// A call that copies from the caller's memory reads what that memory held
-    /// from `call`, where the call's function stops for it, and goes on through
-    /// the function's resumption, so `step` never stops partway. A buffer the
-    /// call reads is copied from where the paused call's `copyRange` says, so
-    /// a `CopiedArgument.Readable` must hold at least the bytes up to the end
-    /// of that range; it may hold more, which are not read.
+    /// Prefer a call's own function where its answer type is narrower, or where
+    /// it stops before copying from the process's memory
+    /// (`CallProgress.NeedsCopyIn`). What happens before that copy is
+    /// observable, so with the call's own function the client reads the
+    /// process's memory only if the call gets as far as the copy, and reads
+    /// only the bytes the call copies. With `step`, the client must read
+    /// that memory before the call begins.
     ///
-    /// `caller` must be a thread of one of the system's processes, parked in no
-    /// syscall and owing no return to user mode, whatever the call, as the
-    /// call's own function requires. A call whose own function fails loudly on
-    /// arguments no client following its documentation passes, such as a
-    /// `SigReturn` of a frame that is not the thread's innermost, fails so
-    /// through `step` too.
+    /// Where a call copies from the process's memory, `call` holds what the
+    /// client read there, and `step` hands it to the call's resumption, so
+    /// `step` never stops partway. For a buffer, the client passes a
+    /// `CopiedArgument.Readable` holding the buffer's bytes, starting at its
+    /// first byte. The call copies the bytes that the paused call's
+    /// `copyRange` names, counted from that first byte. `step` never
+    /// shows the client that range, so the client passes the whole length that
+    /// the process passed for the buffer. Bytes past the range are not read.
+    ///
+    /// Whatever the call, `caller` must be a thread of one of the system's
+    /// processes, which is not asleep in a syscall and does not owe a return
+    /// to user mode, as the call's own function requires. Where the call's own
+    /// function throws for arguments that a client following its documentation
+    /// would never pass, such as a `SigReturn` of a frame that is not the
+    /// thread's innermost, `step` throws the same.
     ///
     /// A call that can end the process answers as its own function does: the
     /// `ProcessFate` of `Kill`, `PthreadKill` and `ExitThread` is
@@ -4259,24 +4279,26 @@ module UnixSystem =
         @ cpus
 
 
-    /// Every way this system's tables disagree with each other: the machine's
-    /// clauses, which read facts every process on the machine contributes to;
-    /// each process's own, read against the machine; each process's
-    /// descriptor table's, a descriptor naming a description the machine does
-    /// not hold, and a registration of a kqueue the process owns made through
-    /// a descriptor that is closed or names no socket; the open file table's
-    /// own rules, read against every process's descriptor table; that each
-    /// process is held under its own process ID, and no two have one; and that
-    /// the record the kernel keeps of which threads are parked, which a sweep
-    /// of the sleeping threads reads, names exactly the parked threads.
+    /// Every way in which this system's tables disagree with each other. Each
+    /// defect is a bug in this library, which a client reports with
+    /// `UnixSystemDefect.describe` (see "Checking the tables" in the README).
     ///
-    /// The filesystem's own rules are `VirtualFileSystem.checkInvariants`'s,
-    /// and are not repeated here. It takes a `pinned` argument, which is what
-    /// `pinnedInodes` computes, so a caller wanting the whole picture pairs this
-    /// with
-    /// `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem`.
+    /// It checks the machine's own rules, which read facts that every process
+    /// on the machine contributes to; each process's rules, read against the
+    /// machine; each process's descriptor table, for a descriptor naming a
+    /// description that the machine does not hold, and for a registration in a
+    /// kqueue that the process owns, made through a descriptor that is closed
+    /// or names no socket; the open file table's rules, read against every
+    /// process's descriptor table; that each process is held under its own
+    /// process ID, and no two share one; and that the kernel's record of which
+    /// threads are parked names exactly the parked threads.
     ///
-    /// A client that holds its own references into these tables owes its own
+    /// The filesystem's own rules are checked by
+    /// `VirtualFileSystem.checkInvariants`, not here. A client wanting the whole
+    /// picture also calls
+    /// `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)`.
+    ///
+    /// A client that holds its own references into these tables checks its own
     /// rules about them on top of these.
     let checkInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
@@ -4556,31 +4578,27 @@ module UnixSystem =
                 2, LaunchDescriptor.Drained
             ]
 
-    /// The boot image of a machine of the given platform: no processes, no
-    /// sockets, no connections, and an empty filesystem. Configure it with the
-    /// setters in `UnixBootImage`, then `UnixBootImage.boot` it, which launches
-    /// its first process, for its first syscall.
+    /// The boot image of a machine of the given platform, before anything has
+    /// happened on it: no processes, no sockets, no connections, and a
+    /// filesystem that is empty apart from the device filesystem mounted at
+    /// `/dev` (`defaultDevtmpfsContents` on Linux, `defaultDevfsContents` on
+    /// Darwin). Configure it with the setters in `UnixBootImage`, then call
+    /// `UnixBootImage.boot`, which launches its first process and answers the
+    /// system that syscalls take.
     ///
     /// The first process's ID is `defaultProcessId`, and so is its leader's
-    /// thread ID: on Linux because it always is, and on Darwin as the start of a
-    /// quiet machine's counter. A client moves them with
-    /// `UnixBootImage.withProcessId` and `UnixBootImage.withLeaderThreadId`.
+    /// thread ID: on Linux because the two are always equal, and on Darwin as
+    /// the starting point of the machine's thread ID counter. A client changes
+    /// them with `UnixBootImage.withProcessId` and
+    /// `UnixBootImage.withLeaderThreadId`.
     ///
-    /// The fields the platform *fixes* are derived from it rather than
-    /// taken as arguments — `SoMaxConn`, the TCP buffer sysctls, `Mount`, and the platform
-    /// itself — because a machine whose flavour and those disagree is one no
-    /// real system could be: `EmulatedFileSystemType.isReportableUnder` says
-    /// outright that a Darwin kernel never reports tmpfs. Building the record
-    /// by hand is what lets that state exist, so the constructor is also the
-    /// rule.
-    ///
-    /// The ephemeral port range is the flavour's shipped default too, though a
-    /// host may set it: it is what a default machine of that flavour reports,
-    /// not a fact of its kernel image. The buffer check is the platform's
-    /// default too, though its limit is a property of the machine's paging
-    /// depth rather than of its kernel. All of these are configuration a
-    /// caller overrides with the setters in `UnixBootImage`, which is also how
-    /// a caller supplies a non-empty filesystem or a different address list.
+    /// Every other setting starts at its default for the platform's flavour:
+    /// the mount, `somaxconn`, the TCP buffer sysctls, the ephemeral port range
+    /// and the buffer check among them. These defaults come from the platform
+    /// rather than from arguments, so that a fresh image is always a machine
+    /// that the flavour could be. A client changes any of them with the setters
+    /// in `UnixBootImage`, which also give the machine a filesystem and its
+    /// addresses.
     ///
     /// Throws `ArgumentNullException` for a null `platform`, which only
     /// `Unchecked.defaultof` or C# `default` makes.
@@ -4796,21 +4814,31 @@ module UnixSystem =
             )
 
     /// <summary>
-    /// Start a new process on the machine, as `launch` describes it: the
-    /// process ID the kernel chose for it, and the system with it on.
+    /// Start a new process on the machine, as `launch` describes it. Answers
+    /// the process ID that the kernel chose for it, and the system with the
+    /// process on it.
     ///
-    /// On Linux the process's ID is its leader's thread ID, the next the
-    /// machine's thread ID counter hands out, so it is no live process's or
-    /// thread's. On Darwin it is the next from a process ID counter of its own,
-    /// which started one past the first process's ID, and the leader's thread
-    /// ID is the next from the 64-bit thread ID counter.
+    /// This is the outside world starting a process, as a user running a
+    /// program does: it is not `fork(2)`. The new process has no parent
+    /// on the machine, and inherits nothing from any other process: it starts
+    /// with exactly what `launch` sets. No `wait` is modelled, so
+    /// nothing collects its exit status (see "Starting and ending processes"
+    /// in the README).
     ///
-    /// Refuses a launch `UnixBootImage.boot` would refuse, and a machine with
-    /// no process ID left to hand out. `tryLaunch` answers the refusal instead
-    /// of throwing it, and says which of the launch's settings it was.
+    /// On Linux the process's ID is its leader's thread ID: the next ID that
+    /// the machine's thread ID counter hands out, which no live process or
+    /// thread holds. On Darwin the process's ID is the next from a separate
+    /// process ID counter, which started one past the first process's ID, and
+    /// the leader's thread ID is the next from the 64-bit thread ID counter.
+    ///
+    /// Throws for a launch that `UnixBootImage.boot` would not accept. Also
+    /// refuses to launch on a machine with no process ID or thread ID left to
+    /// hand out. `tryLaunch` answers either as the `Error` of a
+    /// `Result` instead of throwing it, and says which of the launch's
+    /// settings was at fault.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory.</exception>
-    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs. The machine has no process ID or thread ID left to hand out.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">An explicit pending-signal limit was requested on Darwin.</exception>
     let launch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)

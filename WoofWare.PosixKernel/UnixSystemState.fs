@@ -194,9 +194,13 @@ type internal WakeMemo<'Thread, 'Handler when 'Thread : comparison and 'Handler 
 /// reason `SignalState` is: those are the client's identities and this library
 /// never learns them.
 ///
-/// Opaque: a client reads it through the queries in the `UnixSystem` module
-/// and changes it only through syscalls, `UnixSystem.launch`,
-/// `UnixSystem.advanceClock` and `UnixSystem.writePidMaxSysctl`.
+/// Opaque: a client reads it through the queries in the `UnixSystem` module.
+/// Every function that changes it returns a new system, which the client keeps
+/// in place of the one it passed in. These are the syscall functions, the
+/// return to user mode (`UnixSignal.onReturnToUser`), `UnixWait.wake` (which
+/// marks threads woken), `UnixScheduling.dispatch`, `UnixSystem.launch`,
+/// `UnixSystem.advanceClock` and `UnixSystem.writePidMaxSysctl`. See "What
+/// every client does" in the README.
 type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
@@ -687,16 +691,24 @@ type UnixBootImage<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
             DeviceContents : Map<DirectoryEntryName, SeedEntry>
         }
 
-/// What the entry point returns, for a request this kernel could answer.
+/// What the process's call returns, for a call this library could answer: a
+/// number, or an errno.
 [<RequireQualifiedAccess>]
 type SyscallAnswer =
-    /// The entry point returns this.
+    /// The process's call succeeds and returns `answer`.
     | Completed of answer : int64
-    /// The entry point returns its failure sentinel, and the client stores
-    /// `error` wherever its libc keeps errno.
+    /// The process's call fails with `error`.
     ///
-    /// A failure still changes the system in general: `flock` advances the
-    /// descriptor table before it can discover the conflict that fails it.
+    /// This library does not choose how the failure reaches the process. A C
+    /// library function returns -1 and sets errno, so a client answering one
+    /// stores `error` wherever that C library keeps errno. A client answering
+    /// a raw system call encodes `error` as that system call's own return
+    /// convention requires. `UnixError.toRawErrnoUnder` gives the number in
+    /// the flavour's own numbering.
+    ///
+    /// A failed call can still change the system, as a real one can: on
+    /// Linux, an `flock` that fails to convert a lock to another mode has
+    /// already dropped the lock it held (see `ParkedFlock.Mode`).
     | Failed of error : UnixError
 
 /// What a call that makes a descriptor answered: `open(2)` and `openat(2)`
@@ -704,11 +716,11 @@ type SyscallAnswer =
 /// `epoll_create1(2)`, `inotify_init1(2)` and `kqueue(2)`.
 [<RequireQualifiedAccess>]
 type DescriptorAnswer =
-    /// The entry point returns `fd`, which now names the open file
-    /// description the call made or duplicated.
+    /// The process's call succeeds and returns `fd`, which now names the open
+    /// file description that the call made or duplicated.
     | Returned of fd : int
-    /// The entry point returns its failure sentinel, and the client stores
-    /// `error` wherever its libc keeps errno.
+    /// The process's call fails with `error`, which the client delivers to
+    /// the process as `SyscallAnswer.Failed` describes.
     | Failed of error : UnixError
 
 /// A process that has ended, and how. Only a syscall that ends the process
@@ -746,10 +758,12 @@ module EndedProcess =
 type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The process carries on, as `system`.
     | Continues of outcome : 'Outcome * system : UnixSystem<'Thread, 'Handler>
-    /// The process has ended, and never returns from the call: how it ended,
-    /// and `system`, the system without it, which holds every other process as
-    /// the call left it. The process's descriptors are closed, as
-    /// `UnixThreadLifecycle.exitGroup` closes them.
+    /// The process has ended, and the call never returns to it. `ended` says
+    /// how it ended. `system` no longer holds the process, and holds every
+    /// other process as the call left it. The process's descriptors are
+    /// closed, as `UnixThreadLifecycle.exitGroup` closes them. None of the
+    /// process's threads exists any more, so a `Caller` naming one of them is
+    /// no longer one this library accepts.
     | ProcessEnded of ended : EndedProcess * system : UnixSystem<'Thread, 'Handler>
 
 /// What a call's body that can end the whole process did to it, before `Entry`

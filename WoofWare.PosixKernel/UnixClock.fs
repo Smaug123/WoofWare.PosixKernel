@@ -64,11 +64,12 @@ type private ClockDecoding =
 /// What a `clock_gettime(2)` answered.
 [<RequireQualifiedAccess>]
 type ClockGettimeAnswer =
-    /// The call returned 0, having written `time` to the caller's
-    /// `struct timespec`.
+    /// The process's call returns 0. The client stores `time` in the process's
+    /// `struct timespec`; this library has stored nothing (see "What every
+    /// client does" in the README).
     | Completed of time : UnixTimestamp
-    /// The call returned -1, and the client stores `error` wherever its libc
-    /// keeps errno.
+    /// The process's call returns -1, and the client sets the process's errno
+    /// to `error`.
     | Failed of error : UnixError
 
 [<RequireQualifiedAccess>]
@@ -192,6 +193,10 @@ module UnixClock =
 
     /// `gettimeofday(2)`: the realtime clock in whole microseconds, on every
     /// flavour, as a timestamp.
+    ///
+    /// This function takes no pointer for the result. The client stores the
+    /// timestamp in the process's `struct timeval`, and answers for itself a
+    /// pointer it cannot write.
     let gettimeofday<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -248,7 +253,12 @@ module UnixClock =
             (tryClockGettimeIn clockId)
             system
 
-    /// `clock_gettime(2)`: read the clock `clockId` names on this machine's flavour.
+    /// `clock_gettime(2)`: read the clock which `clockId` names on this
+    /// machine's flavour.
+    ///
+    /// This function takes no pointer for the result. The client stores the
+    /// answer's timestamp in the process's `struct timespec`, and answers for
+    /// itself a pointer it cannot write.
     ///
     /// The numbering is the flavour's own: `CLOCK_MONOTONIC` is 1 on Linux and 6
     /// on Darwin. An id that names no clock on the flavour is `EINVAL`, and an id

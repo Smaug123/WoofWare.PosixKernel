@@ -65,7 +65,9 @@ type MessageFlag =
     | ReceiveMore
     /// Darwin's `MSG_NEEDSA`.
     | NeedSocketAddress
-    /// A bit of the word to which the flavour's header gives no name.
+    /// A bit of the word to which the flavour's header gives no name. `bit` is
+    /// the bit's value as a mask, such as `0x8000` for bit 15, never its index:
+    /// `MessageFlag.encode` ORs it into the word as it is.
     | Unnamed of bit : int
 
 [<RequireQualifiedAccess>]

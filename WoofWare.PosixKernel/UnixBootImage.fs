@@ -545,22 +545,27 @@ module internal TcpSendSpaceMaxRefusal =
         | TcpSendSpaceMaxRefusal.NotReadOn _ -> RefusalKind.Unmodelled
         | TcpSendSpaceMaxRefusal.NotPositive _ -> RefusalKind.OutOfRange "value"
 
-/// The boot-time configuration of a simulated machine, applied to the
-/// `UnixBootImage` that `UnixSystem.initial` makes, and `boot`, which ends it
-/// by launching the machine's first process.
+/// The boot-time configuration of a simulated machine. The setters here
+/// configure the `UnixBootImage` that `UnixSystem.initial` makes, and `boot`
+/// turns the image into a running system by launching the machine's first
+/// process.
 ///
-/// Every setter here takes and returns an image, and no syscall takes one, so
-/// a setting cannot be applied to a system that has already run: it describes
-/// the machine from the moment it booted. What changes while the machine runs
-/// is a syscall's effect, or an operation of the outside world on the running
-/// system, such as `UnixSystem.advanceClock`. How a process starts is not
-/// here but in its `ProcessLaunch`, which `boot` takes, apart from the IDs of
-/// the first process, which are where the machine's counters start.
+/// Every setter takes an image and returns an image, and no syscall takes an
+/// image. So a setting cannot be applied to a system that has already run: it
+/// describes the machine from the moment it booted. While the machine runs, it
+/// changes only through syscalls and the client's own operations on the
+/// running system, such as `UnixSystem.advanceClock`. How a process starts is
+/// set in its `ProcessLaunch`, which `boot` takes. The exception is the IDs of
+/// the first process, which are where the machine's counters start, and which
+/// are set here.
 ///
-/// A setter that refuses a value returns `Result`, as a syscall does: its
-/// `Error` is a refusal type of its own whose cases state the facts, and whose
-/// `describe` says them. Only the caller knows what it called the value,
-/// so naming that is the caller's.
+/// A setter that will not take a value throws: `ArgumentException` or
+/// `ArgumentOutOfRangeException` for a value no machine of the flavour could
+/// have, and `UnmodelledException` for one this library has not measured. The
+/// exception's message has no stable structure, and does not know what the
+/// client called the value, so a client that reports it adds that name itself.
+/// Only `boot` has a form that answers a `Result` instead of throwing:
+/// `tryBoot`.
 [<RequireQualifiedAccess>]
 module UnixBootImage =
 
@@ -1113,10 +1118,17 @@ module UnixBootImage =
         |> Ok
 
     /// <summary>
-    /// Set the logical-processor count the simulated process reports.
+    /// Set how many logical processors the machine has, numbered from 0.
     ///
-    /// Refuses a count below 1 at the boundary, rather than letting it reach a
-    /// program that will divide by it.
+    /// The processors are the machine's, and every process on it shares them.
+    /// The count is what a process reads as the number of processors, and it
+    /// bounds every <c>CpuId</c> the client names: the leader's processor in
+    /// <c>ProcessLaunch.create</c>, a new thread's in <c>UnixThreadLifecycle.spawn</c>,
+    /// and the processor in <c>UnixScheduling.dispatch</c>. The client chooses
+    /// which thread runs on which processor (see <c>UnixScheduling</c>).
+    ///
+    /// Throws for a count below 1, rather than letting it reach a program that
+    /// will divide by it.
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The count is below 1. Contradictory: a machine running the process has at least the processor it runs on, and programs divide by the count.</exception>
     let withProcessorCount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1517,13 +1529,14 @@ module UnixBootImage =
 
     /// Set the `somaxconn` sysctl.
     ///
-    /// `None` takes the measured default of this machine's flavour. The clamp
-    /// this feeds (`connectSocket`'s capacity rule) was measured with the
-    /// sysctl set to 3 on Linux and at the default 128 on Darwin, so a
-    /// configured value is on measured ground.
+    /// `None` takes the measured default of this machine's flavour. The value
+    /// is the ceiling to which `listen(2)` clamps its backlog, which decides how
+    /// many connections a listener's accept queue holds. That clamp was
+    /// measured with the sysctl set to 3 on Linux and at the default 128 on
+    /// Darwin, so a configured value is on measured ground.
     ///
-    /// Refuses a value below 1: no machine was measured with a non-positive
-    /// somaxconn.
+    /// Refuses a value below 1, since no machine was measured with a
+    /// non-positive somaxconn.
     let withSoMaxConn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
         (image : UnixBootImage<'Thread, 'Handler>)

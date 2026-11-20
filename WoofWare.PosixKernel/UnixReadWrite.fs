@@ -5,23 +5,23 @@ open System.Collections.Immutable
 /// What `read(2)` moved, for a request this kernel could answer.
 [<RequireQualifiedAccess ; NoComparison>]
 type ReadAnswer =
-    /// The bytes to place in the caller's buffer; the entry point returns how
-    /// many there are.
+    /// The client stores `bytes` at the start of the process's buffer, and the
+    /// process's call returns how many there are.
     ///
-    /// Empty means the call moved nothing and **the buffer was not touched at
-    /// all**, which is measured rather than incidental: `read(f, NULL, 5)` at
-    /// end-of-file is 0 on both platforms, not EFAULT. A caller that
-    /// dereferenced its buffer before checking for empty would turn that answer
-    /// into a fault.
+    /// Empty means that the call moved nothing and **did not touch the buffer
+    /// at all**. That is measured rather than incidental: `read(f, NULL, 5)` at
+    /// end-of-file is 0 on both platforms, not EFAULT. A client that
+    /// dereferenced the buffer before checking for empty would turn that
+    /// answer into a fault.
     | Completed of bytes : ImmutableArray<byte>
-    /// Bytes from the kernel's entropy pool, which `/dev/urandom` reads: the
-    /// caller fetches them from the draw, all at once or a range at a time,
-    /// into its buffer, and the entry point returns `EntropyDraw.count draw`,
-    /// which is never 0. The system that comes back with this answer has
-    /// already moved its pool past them.
+    /// Bytes from the kernel's entropy pool, which `/dev/urandom` reads. The
+    /// client fetches them from the draw, all at once or a range at a time,
+    /// and stores them at the start of the process's buffer; the process's
+    /// call returns `EntropyDraw.count draw`, which is never 0. The system
+    /// that comes back with this answer has already moved its pool past them.
     | Drawn of draw : EntropyDraw
-    /// The entry point returns -1 and the caller stores `error` wherever its
-    /// libc keeps errno. The file offset does not move.
+    /// The process's call returns -1, and the client sets the process's errno
+    /// to `error`. The file offset does not move.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer a `read`.
@@ -150,12 +150,14 @@ module internal PReadRefusal =
 type ReadOutcome =
     /// The entry point returned.
     | Answered of ReadAnswer
-    /// The call did not return: it is a blocking read of a pipe that holds
-    /// nothing while a write end is open, of a connected socket with nothing
-    /// to answer, of a UDP socket holding no datagram and no error, or of an
-    /// inotify instance holding no record. The calling thread is parked, and
-    /// sleeps until `UnixWait.wake` wakes it; then `UnixReadWrite.finishRead`
-    /// finishes the call.
+    /// The call did not return. It is a blocking read of one of these:
+    /// a pipe that holds nothing while a write end is open; a connected socket
+    /// with nothing to answer; a UDP socket that holds no datagram and no
+    /// error; or an inotify instance that holds no record. The calling thread
+    /// is asleep in the call. Nothing wakes it by itself: the client calls
+    /// `UnixWait.wake`, and once that has woken the thread, the client finishes
+    /// the call with `UnixReadWrite.finishRead` or `UnixWait.finish` (see
+    /// "What every client does" in the README).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no longer
     /// parked, and owes a return to user mode (`UnixSignal.onReturnToUser`),
@@ -165,27 +167,30 @@ type ReadOutcome =
     /// Only `finishRead` answers this.
     | Interrupted
 
-/// What a `recvfrom(2)` did, for a request this kernel could answer.
+/// What a `recvfrom(2)` did, for a request this kernel could answer. This
+/// library has written nothing to the process's memory: the client stores what
+/// the answer says (see "What every client does" in the README).
 [<RequireQualifiedAccess ; NoComparison>]
 type RecvFromAnswer =
-    /// The entry point returns `returned`, having put `bytes` in the caller's
-    /// buffer and written what `source` says to the source's buffer and its
-    /// length cell. `returned` is the count of `bytes` but under Linux's
-    /// `MSG_TRUNC`, which returns the datagram's whole length however little
-    /// of it the buffer took.
+    /// The process's call returns `returned`. The client stores `bytes` at the
+    /// start of the process's buffer, and stores what `source` says in the
+    /// source's buffer and its length cell. `returned` is the count of `bytes`,
+    /// except under Linux's `MSG_TRUNC`, where it is the datagram's whole
+    /// length however little of it the buffer took.
     ///
-    /// As for `ReadAnswer.Completed`, no bytes means the buffer was not
-    /// touched.
+    /// As for `ReadAnswer.Completed`, no bytes means the call did not touch the
+    /// buffer.
     | Received of bytes : ImmutableArray<byte> * returned : int64 * source : PeerAddressCopy
-    /// The entry point returns -1, the caller stores `error` wherever its
-    /// libc keeps errno, and the call wrote nothing.
+    /// The process's call returns -1, the client sets the process's errno to
+    /// `error`, and the client stores nothing.
     | Failed of error : UnixError
-    /// The entry point returns -1 with `error`, though the call had received
-    /// a datagram (and taken it, unless it peeked) and put `bytes` in the
-    /// caller's buffer, and had written `lengthOverwritten`, if any, to the
-    /// source's length cell. Only Linux answers this: it reads and writes the
-    /// source's length cell and buffer once the datagram is copied, and the
-    /// call fails if it cannot.
+    /// The process's call returns -1, and the client sets the process's errno
+    /// to `error`. The call had nevertheless received a datagram (and taken
+    /// it, unless it peeked), so the client stores `bytes` at the start of the
+    /// process's buffer, and stores `lengthOverwritten`, if there is one, in
+    /// the source's length cell. Only Linux answers this: it reads and writes
+    /// the source's length cell and buffer after it has copied the datagram,
+    /// and the call fails if it cannot.
     | FailedAfterReceiving of error : UnixError * bytes : ImmutableArray<byte> * lengthOverwritten : uint32 option
 
 /// What became of a `recvfrom(2)` this kernel could answer, where "answer"
@@ -194,10 +199,12 @@ type RecvFromAnswer =
 type RecvFromOutcome =
     /// The entry point returned.
     | Answered of RecvFromAnswer
-    /// The call did not return: it is a blocking `recvfrom` of a socket
-    /// holding no datagram and no error. The calling thread is parked, and
-    /// sleeps until `UnixWait.wake` wakes it; then
-    /// `UnixReadWrite.finishRecvFrom` finishes the call.
+    /// The call did not return: it is a blocking `recvfrom` of a socket that
+    /// holds no datagram and no error. The calling thread is asleep in the
+    /// call. Nothing wakes it by itself: the client calls `UnixWait.wake`, and
+    /// once that has woken the thread, the client finishes the call with
+    /// `UnixReadWrite.finishRecvFrom` or `UnixWait.finish` (see "What every
+    /// client does" in the README).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no
     /// longer parked, and owes a return to user mode
@@ -220,8 +227,8 @@ type WriteAnswer =
     /// space, and a pipe the client drains has room for the whole of a
     /// blocking write.
     | Completed of written : int64
-    /// The entry point returns -1 and the caller stores `error` wherever its
-    /// libc keeps errno.
+    /// The process's call returns -1, and the client sets the process's errno
+    /// to `error`.
     | Failed of error : UnixError
 
 /// Where the bytes a `write` or `send` copies go, as the call decided before
@@ -332,7 +339,9 @@ type internal WriteResumption =
     /// The bytes before `offset` are in the pipe or the connection already.
     | Transfer of offset : int * count : int * into : WriteResumed
 
-/// What a write that answers `EPIPE` and raises `SIGPIPE` was writing to.
+/// What a write that answers `EPIPE` and raises `SIGPIPE` was writing to, as
+/// the message of an exception from this library's write functions names it.
+/// No public function in this version answers one.
 [<RequireQualifiedAccess>]
 type BrokenWriteTarget =
     /// The write end of a pipe with no reader.
@@ -678,10 +687,12 @@ type WriteOutcome<'Thread> =
     /// returns.
     | ReturnsRaising of answer : WriteAnswer * signal : PendingSignal<'Thread>
     /// The call did not return: it is a blocking write into a pipe, or to a
-    /// connected socket, with no room for the rest of it. The calling thread is
-    /// parked in the system that comes with this, and sleeps until
-    /// `UnixWait.wake` wakes it; then `UnixReadWrite.finishWrite` finishes
-    /// the call.
+    /// connected socket, which has no room for the rest of it. The calling
+    /// thread is asleep in the call in the system that comes with this.
+    /// Nothing wakes it by itself: the client calls `UnixWait.wake`, and once
+    /// that has woken the thread, the client finishes the call with
+    /// `UnixReadWrite.finishWrite` or `UnixWait.finish` (see "What every
+    /// client does" in the README).
     | WouldBlock of condition : WakeCondition
     /// The call was asleep with nothing written, and a signal interrupted it.
     /// The thread is no longer parked, and owes a return to user mode
@@ -998,11 +1009,11 @@ type internal PausedRecvFromCall =
     | Finish
 
 /// A `recvfrom(2)`, or a woken one, stopped where the kernel reads the
-/// caller's length cell: `UnixReadWrite.recvfrom` and
-/// `UnixReadWrite.finishRecvFrom` answer it, `PausedRecvFrom.received` says
-/// what the call has put in the caller's buffer by then, and
-/// `UnixReadWrite.recvfromWithLength` takes the `socklen_t` the cell holds
-/// once those bytes are there, and finishes the call.
+/// process's length cell. `UnixReadWrite.recvfrom` and
+/// `UnixReadWrite.finishRecvFrom` answer it. `PausedRecvFrom.received` gives
+/// the bytes that the call has put in the process's buffer by then, which the
+/// client stores first. The client then reads the cell and hands its
+/// `socklen_t` to `UnixReadWrite.recvfromWithLength`, which finishes the call.
 [<NoEquality ; NoComparison>]
 type PausedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -1018,12 +1029,13 @@ type PausedRecvFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : e
 
 [<RequireQualifiedAccess>]
 module PausedRecvFrom =
-    /// The bytes the call has put at the start of the caller's buffer before
-    /// it reads the length cell: on Linux, the datagram's, which it copies
-    /// first; on Darwin, which reads the cell before it receives, none. A
-    /// client whose cell lies in that buffer writes these, and then reads
-    /// the cell. The answer `UnixReadWrite.recvfromWithLength` gives holds
-    /// them again.
+    /// The bytes that the call puts at the start of the process's buffer before
+    /// it reads the length cell. On Linux, these are the datagram's bytes,
+    /// which the call copies first; on Darwin, which reads the cell before it
+    /// receives, there are none. The client stores them before it reads the
+    /// cell, so that a cell lying inside the buffer holds what a real kernel
+    /// would find there. The answer of `UnixReadWrite.recvfromWithLength`
+    /// carries them again.
     let received<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (paused : PausedRecvFrom<'Thread, 'Handler>)
         : ImmutableArray<byte>
@@ -2876,58 +2888,77 @@ module UnixReadWrite =
             (tryReadIn (Caller.thread caller) fd buffer count)
             system
 
-    /// `read(2)`: move up to `count` bytes from `fd`'s current offset into the
-    /// caller's buffer, and advance the offset by what actually moved.
+    /// `read(2)`: read up to `count` bytes from `fd`'s current offset, and
+    /// advance the offset by as many as were read. The answer carries the
+    /// bytes, and the client stores them in the process's buffer (see "What
+    /// every client does" in the README).
     ///
-    /// `count` is the `size_t` the caller asked for. A count longer than one
-    /// call moves is refused or shortened as the platform's
+    /// `count` is the `size_t` that the process passed. A count larger than one
+    /// call moves answers EINVAL, or is shortened, as the platform's
     /// `TransferCountLimit` says.
     ///
-    /// The buffer is consulted at three points and *not* consulted at three
-    /// others, and both sets are measured; see the comments inline.
+    /// `buffer` decides the answer only at these points:
+    ///
+    /// - **The address screen.** Under a flavour that screens a buffer before
+    ///   the operation (`UserBufferCheck.BeforeOperation`, Linux), a range
+    ///   outside user space answers EFAULT. The screen comes after the
+    ///   descriptor's checks (EBADF, and an epoll instance's or kqueue's
+    ///   answer), and before anything the object answers, even for a count of
+    ///   0.
+    /// - **The copy.** A read that has bytes to move into an `Unmapped` buffer
+    ///   answers EFAULT, or is refused, as the cases below say.
+    ///
+    /// Past the screen, this function does not look at `buffer` except at the
+    /// copy: a read that moves no bytes (a count of 0, end of file, EAGAIN,
+    /// EISDIR) answers the same whatever `buffer` is, and so does a read that
+    /// sleeps.
     ///
     /// A read of at least one byte from a regular file moves the file's
     /// access time as its filesystem's mount says: on Darwin's APFS, to now
     /// when it is before the modification time, even for a read that answers
-    /// 0 at end-of-file or EFAULT; on Linux's tmpfs, mounted `noatime`, never.
+    /// 0 at end-of-file or EFAULT; on Linux's tmpfs, which is mounted
+    /// `noatime`, never.
     ///
-    /// A UDP socket, connected or not, answers from the datagrams it holds:
-    /// the oldest datagram's bytes, as many as fit, the rest of it discarded.
-    /// A zero-length read takes the datagram on Darwin, and on Linux answers 0
-    /// and takes nothing. Holding nothing, it answers `EAGAIN` through a
-    /// non-blocking description, and a blocking read sleeps
-    /// (`ReadOutcome.WouldBlock`) until a datagram or the ICMP error arrives,
-    /// and `finishRead` finishes it; but on a socket a Darwin close has
-    /// drained, it answers `EBADF` at once. A Linux read into an unmapped
-    /// buffer takes the datagram and answers `EFAULT`, and a Darwin one is
+    /// A UDP socket, connected or not, answers from the datagrams it holds: it
+    /// answers as many of the oldest datagram's bytes as fit, and discards the
+    /// rest of that datagram. A zero-length read takes the datagram on Darwin,
+    /// and on Linux answers 0 and takes nothing. When the socket holds
+    /// nothing, a read through a non-blocking description answers `EAGAIN`,
+    /// and a blocking read sleeps (`ReadOutcome.WouldBlock`) until a datagram
+    /// or the ICMP error arrives. On a socket that a Darwin close has drained,
+    /// it answers `EBADF` at once instead. A Linux read into an unmapped
+    /// buffer takes the datagram and answers `EFAULT`; a Darwin one is
     /// refused.
     ///
-    /// Any other socket with no peer (fresh from `socket(2)`, bound, or
-    /// listening) answers without the buffer, with the errno its flavour gives
-    /// its domain and kind, except that a blocking read of a Unix-domain
-    /// datagram socket, which sleeps until a datagram arrives, is refused. A
-    /// connected stream socket answers from its connection: the bytes waiting, end of file, a reset's error,
-    /// or `EAGAIN`; a blocking read with nothing to answer sleeps
-    /// (`ReadOutcome.WouldBlock`), and `finishRead` finishes it. One that would
-    /// copy bytes into an unmapped buffer is refused. A socket with a refused
-    /// connection's error is refused, except for Linux's zero-length read,
-    /// which is 0 in every phase.
+    /// Any other socket without a peer (fresh from `socket(2)`, bound, or
+    /// listening) answers without looking at the buffer, with the errno that
+    /// its flavour gives its domain and kind. The exception is a blocking read
+    /// of a Unix-domain datagram socket, which would sleep until a datagram
+    /// arrives, and is refused. A connected stream socket answers from its
+    /// connection: the bytes waiting, end of file, a reset's error, or
+    /// `EAGAIN`; a blocking read with nothing to answer sleeps
+    /// (`ReadOutcome.WouldBlock`). A read that would copy bytes from a
+    /// connected socket into an unmapped buffer is refused. A read of a socket
+    /// that holds the error of a connection its peer rejected is refused,
+    /// except for Linux's zero-length read, which answers 0 in every phase.
     ///
-    /// A read by `caller` of a pipe that holds nothing while a write end is open,
-    /// through a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
-    /// without looking at the buffer, and `finishRead` finishes it. Setting
-    /// `O_NONBLOCK` on the description while it sleeps does not wake it.
+    /// A read of a pipe that holds nothing while a write end is open, through
+    /// a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
+    /// without looking at the buffer. Setting `O_NONBLOCK` on the description
+    /// while it sleeps does not wake it.
     ///
     /// A read of an inotify instance takes as many whole queued records as fit
     /// in `count`, oldest first, and answers `EINVAL` if the oldest does not
-    /// fit, a count of 0 included. A buffer naming no storage is `EFAULT`, and
-    /// the oldest record is lost with it. An instance holding no record
-    /// answers `EAGAIN` through a description with `O_NONBLOCK`, whatever the
-    /// count, and otherwise the read sleeps (`ReadOutcome.WouldBlock`) without
-    /// looking at the buffer, and `finishRead` finishes it.
+    /// fit, a count of 0 included. A buffer naming no storage answers `EFAULT`,
+    /// and the oldest record is lost. An instance that holds no record answers
+    /// `EAGAIN` through a description with `O_NONBLOCK`, whatever the count;
+    /// otherwise the read sleeps (`ReadOutcome.WouldBlock`) without looking at
+    /// the buffer.
     ///
-    /// Fails loudly if `caller` is not a thread of one of the system's processes, or is
-    /// already asleep in a syscall.
+    /// The client finishes a read that sleeps with `finishRead`.
+    ///
+    /// Fails loudly if `caller` is not a thread of one of the system's
+    /// processes, or is already asleep in a call.
     let read<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -3608,12 +3639,14 @@ module UnixReadWrite =
             (tryRecvIn (Caller.thread caller) fd buffer count flags)
             system
 
-    /// `recv(2)`: move up to `count` bytes queued at the connected socket
-    /// `fd` names into the caller's buffer, by the flag word `flags`, raw in
-    /// the flavour's numbering (`MessageFlag.number`).
+    /// `recv(2)`: read up to `count` bytes queued at the socket which `fd`
+    /// names, under the flag word `flags`, raw in the flavour's numbering
+    /// (`MessageFlag.number`). The answer carries the bytes, and the client
+    /// stores them in the process's buffer (see "What every client does" in
+    /// the README).
     ///
-    /// It is `read(2)` but for what the measurements part (`tcp-transfer.c`
-    /// section S, `tcp-recv-send.c`):
+    /// It answers as `read(2)` does, except where the measurements show a
+    /// difference (`tcp-transfer.c` section S, `tcp-recv-send.c`):
     ///
     /// - **The order.** On Linux the buffer is screened before the descriptor
     ///   is looked up, so an out-of-range buffer is `EFAULT` ahead of `EBADF`
@@ -3635,7 +3668,8 @@ module UnixReadWrite =
     /// Every other flag is refused, `MSG_TRUNC` among them, as is a count
     /// above `INT_MAX` and a socket that is neither a UDP socket nor an end of
     /// a connection.
-    /// A call that sleeps is finished by `finishRead`, as a `read` is.
+    /// The client finishes a call that sleeps with `finishRead`, as it does a
+    /// `read`.
     ///
     /// Fails loudly if `caller` is not a thread of one of the system's processes, or is
     /// already asleep in a syscall.
@@ -3852,23 +3886,23 @@ module UnixReadWrite =
             (tryPreadIn fd buffer count offset)
             system
 
-    /// `pread(2)`: move up to `count` bytes from `offset` in the file `fd` names
-    /// into the caller's buffer, without consulting or moving the description's
-    /// own file offset.
+    /// `pread(2)`: read up to `count` bytes from `offset` in the file which
+    /// `fd` names. It neither reads nor moves the description's own file
+    /// offset. The answer carries the bytes, and the client stores them in the
+    /// process's buffer (see "What every client does" in the README).
     ///
-    /// `count` is the `size_t` the caller asked for, treated as `read`'s is.
+    /// `count` is the `size_t` that the process passed, treated as `read`
+    /// treats it.
     ///
-    /// A negative `offset`, by contrast, *is* a request a kernel sees, and is
-    /// EINVAL. Where in the order it is answered differs between the flavours,
-    /// which is what makes this more than `read` with an extra argument.
+    /// A negative `offset` answers EINVAL. The flavours answer it at different
+    /// points among the call's other checks.
     ///
-    /// It moves no file offset. It moves a regular file's access time as
-    /// `read` does, so the system that comes back is the one that arrived
-    /// unless the read moved that time or drew from the entropy pool
-    /// (`ReadAnswer.Drawn`).
+    /// It moves a regular file's access time as `read` does. So the system
+    /// that comes back is the one that was passed in, unless the read moved
+    /// that time or drew from the entropy pool (`ReadAnswer.Drawn`).
     ///
-    /// `caller` is the thread making the call, which must be one of the
-    /// system's process's and not asleep in another.
+    /// `caller` is the thread making the call. It must be a thread of one of
+    /// the system's processes, and must not be asleep in another call.
     let pread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -5719,11 +5753,12 @@ module UnixReadWrite =
     /// (`WriteOutcome.WouldBlock`) without reading the buffer; one with room
     /// for part of it copies that part, puts it in, and sleeps for the rest,
     /// which `finishWrite` copies as room appears, as a real kernel copies it.
-    /// Otherwise a write is short only when it is non-blocking, into a pipe or
-    /// to a connected socket with room for part of it: this kernel's
-    /// filesystem cannot run out of space. A write into a pipe the client
-    /// drains is read by the client as it is written, and `writeWithBytes`
-    /// answers what it read.
+    /// Otherwise a write is short only when its count is more than one call
+    /// moves (`TransferCountLimit`), or when it is non-blocking, into a pipe or
+    /// to a connected socket that has room for only part of it: this kernel's
+    /// filesystem cannot run out of space. A write into a pipe that the client
+    /// drains (`LaunchDescriptor.Drained`) never waits, and `writeWithBytes`
+    /// answers the bytes it delivered as a `Delivery`.
     ///
     /// A connected UDP socket sends the bytes as one datagram to its peer,
     /// which the socket bound there holds if it has room, and which is lost
@@ -7776,11 +7811,12 @@ module UnixReadWrite =
     /// <remarks>
     /// A NULL `source` or `sourceLength` is `UserBuffer.Unmapped 0UL`.
     ///
-    /// The call stops for what the length cell holds only where that decides
-    /// the answer, once a datagram is received for a source that is not NULL,
-    /// and `recvfromWithLength` takes it and makes the call again with it. A
-    /// Linux call has put the datagram's bytes in the buffer by then
-    /// (`PausedRecvFrom.received`), which a cell lying in the buffer holds.
+    /// The call stops for the value in the length cell only where that value
+    /// decides the answer, once a datagram is received for a source that is
+    /// not NULL; `recvfromWithLength` takes the value and makes the call again
+    /// with it. By then a Linux call has received the datagram, and the client
+    /// stores its bytes (`PausedRecvFrom.received`) before it reads the cell,
+    /// since a cell lying in the buffer holds them.
     /// Darwin reads a cell that is not NULL before anything else, so one
     /// that faults is `EFAULT` ahead of even a closed descriptor's `EBADF`;
     /// Linux reads it only once it uses it.
@@ -7864,9 +7900,14 @@ module UnixReadWrite =
         Entry.resume (Shape.result Shape.withSystem) (tryRecvFromWithLengthIn length paused)
 
     /// <summary>
-    /// The rest of the `recvfrom` `paused` stopped: `length` is what the
-    /// caller's length cell holds. See `recvfrom`.
+    /// The rest of the `recvfrom` that `paused` stopped: `length` is the
+    /// `socklen_t` in the process's length cell. See `recvfrom`.
     /// </summary>
+    /// <remarks>
+    /// The client first stores `PausedRecvFrom.received` at the start of the
+    /// process's buffer, and only then reads the cell, so that a cell lying
+    /// inside the buffer holds what the call has put there.
+    /// </remarks>
     let recvfromWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (length : uint32)
         (paused : PausedRecvFrom<'Thread, 'Handler>)
@@ -7937,28 +7978,29 @@ module UnixReadWrite =
     /// file offset.
     /// </summary>
     /// <remarks>
-    /// Every answer the call gives without reading the buffer comes first, as
-    /// `CallProgress.Answered`, with the system unchanged: everything a write
-    /// does before the copy is a question. Otherwise the call stops at the
-    /// copy, and `pwriteWithBytes` takes the bytes `PausedPWrite.copyRange`
-    /// names.
+    /// Every answer that the call gives without reading the buffer comes first,
+    /// as `CallProgress.Answered`, and all but one of them leave the system
+    /// unchanged. Otherwise the call stops at the copy, and `pwriteWithBytes`
+    /// takes the bytes that `PausedPWrite.copyRange` names.
     ///
     /// The one answer that changes the system is `EFAULT` from a regular file
-    /// through an unmapped buffer the address check let through: the file's
-    /// write has already run, so the file's set-ID bits, its length and its
-    /// timestamps can have moved, as `write`'s do.
+    /// through an unmapped buffer which the address check let through. The
+    /// file's write has already run by then, so the file's set-ID bits, its
+    /// length and its timestamps can have moved, as they do for `write`.
     ///
-    /// The length limit is not settled before the copy: `pwriteWithBytes`
-    /// reports it as it commits, so a caller can be asked for bytes for a
-    /// write that is then refused as unrepresentable. That costs the caller
-    /// work rather than correctness, the refusal carrying no state, and it is
-    /// what `write` does too.
+    /// The limit on a file's length (`VirtualFileSystem.maxFileLength`) is not
+    /// checked before the copy. `pwriteWithBytes` checks it, so the client can
+    /// be asked for bytes for a write that is then refused because the file
+    /// would be too long. The refused write has changed nothing, so the only
+    /// cost is the client's work; `write` behaves the same way.
     ///
-    /// Never short and never `EINTR`: this kernel has nothing that could push
-    /// back on a write, and its filesystem cannot run out of space.
+    /// Short only when `count` is more than one call moves, as the platform's
+    /// `TransferCountLimit` says, and never `EINTR`: this kernel has nothing
+    /// that could push back on a write, and its filesystem cannot run out of
+    /// space.
     ///
-    /// `caller` is the thread making the call, which must be one of the
-    /// system's process's and not asleep in another.
+    /// `caller` is the thread making the call. It must be a thread of one of
+    /// the system's processes, and must not be asleep in another call.
     /// </remarks>
     let pwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

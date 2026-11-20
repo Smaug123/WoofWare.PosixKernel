@@ -34,6 +34,10 @@ module AtDirectory =
             AtDirectory.Descriptor dirfd
 
 /// What a `*at` syscall does with an empty path, once its flag word is read.
+///
+/// `SimulatedUnixPlatform.readlinkEmptyPath` hands this out, and the simulated
+/// kernel already applies it. A client reads it only to learn what the kernel
+/// will do (see "Flavours and divergence from host platforms" in the README).
 [<RequireQualifiedAccess>]
 type EmptyPathMeaning =
     /// The call is about the object `dirfd` names, which can be a regular file
@@ -93,10 +97,15 @@ type NonDirectoryDescriptorRule =
 
 /// How a flavour's `*at` syscalls find the directory a path starts from.
 ///
-/// Shared by every such call: measured, nineteen of them, crossed with
-/// thirteen kinds of `dirfd`, agree on both fields within each flavour. In
-/// every call the path is copied in first, and a rooted path never looks at
-/// `dirfd` at all.
+/// Every such call shares these rules: measured, nineteen of them, crossed
+/// with thirteen kinds of `dirfd`, agree on both fields within each flavour.
+/// In every call the kernel copies the path in first, and never looks at
+/// `dirfd` for a rooted path.
+///
+/// `SimulatedUnixPlatform.startingPointRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 type StartingPointRules =
     {
         /// When the empty path's ENOENT comes.

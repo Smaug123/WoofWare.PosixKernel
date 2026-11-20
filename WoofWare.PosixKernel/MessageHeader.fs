@@ -1,9 +1,9 @@
 namespace WoofWare.PosixKernel
 
-/// A `struct msghdr`, as the caller's memory held it when `sendmsg(2)` or
-/// `recvmsg(2)` read it: each pointer as the client classifies the storage it
-/// names, and each count as the raw bits of the field, in the flavour's own
-/// width.
+/// A `struct msghdr`, as the client read it from the process's memory when
+/// `sendmsg(2)` or `recvmsg(2)` read it: each pointer as the client classifies
+/// the storage it names, and each count as the raw bits of the field, in the
+/// flavour's own width.
 ///
 /// The client decodes the structure by its platform's layout, which this
 /// kernel does not check: a field read from the wrong offset is a field this
@@ -26,8 +26,8 @@ type MessageHeader =
         MessageControlLength : uint64
     }
 
-/// A `struct iovec` of the array a `MessageHeader` names, as the caller's
-/// memory held it.
+/// A `struct iovec` of the array that a `MessageHeader` names, as the client
+/// read it from the process's memory.
 type IoVector =
     {
         /// `iov_base`, as the client classifies the storage it names.

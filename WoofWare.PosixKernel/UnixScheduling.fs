@@ -211,15 +211,16 @@ module UnixScheduling =
             system
 
     /// <summary>
-    /// `getcpu(2)`, made by `thread`: the processor it is running on, and that
-    /// processor's NUMA node. glibc's `sched_getcpu(3)` reads the same value.
+    /// `getcpu(2)`, made by the thread that `caller` names: the processor on which
+    /// that thread is running, and that processor's NUMA node. glibc's
+    /// `sched_getcpu(3)` reads the same value.
     ///
-    /// Refuses under Darwin, which has no `getcpu`.
+    /// Throws `PlatformNotSupportedException` under Darwin, which has no `getcpu`.
     ///
-    /// Fails loudly if `thread` names no thread, is parked in a syscall, or is not
-    /// running (`runningOn`): a thread making a syscall is running, so each
-    /// means the client's record of what it runs disagrees with this
-    /// library's, which is a bug in the client.
+    /// Throws `InvalidOperationException` if `caller` names no thread, or a thread
+    /// that is parked in a syscall or not running (`runningOn`). A thread making a
+    /// syscall is running, so each of these means that the client's record of which
+    /// thread runs where disagrees with this library's, which is a bug in the client.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">The thread is not running: the client has not dispatched it, or has dispatched another thread to its processor since.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>

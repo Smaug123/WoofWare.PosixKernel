@@ -1,7 +1,7 @@
 namespace WoofWare.PosixKernel
 
-/// The `gid_t`s of the list a `setgroups(2)` names, as far as the caller could
-/// read them.
+/// The `gid_t`s of the list which a `setgroups(2)` names, as far as the client
+/// could read them from the process's memory.
 ///
 /// The words are raw: `(gid_t)-1`, which no process can hold, is one of the
 /// things the kernel checks them for.
@@ -9,24 +9,27 @@ namespace WoofWare.PosixKernel
 type GroupListWords =
     /// Every word of the list: exactly as many as the call's size says.
     | Readable of words : uint32 list
-    /// The words before the first one the caller could not read, in order,
-    /// and fewer than the call's size says. The kernel faults where it reaches
-    /// the next.
+    /// The words before the first one which the client could not read, in
+    /// order, and fewer than the call's size says. The kernel answers EFAULT
+    /// when it reaches the next.
     ///
-    /// `FaultsAfter []` is also the argument for a list the caller did not
-    /// read because its size is negative or above the platform's
+    /// `FaultsAfter []` is also the argument for a list which the client did
+    /// not read because its size is negative or above the platform's
     /// `SimulatedUnixPlatform.supplementaryGroupLimit`: no kernel copies such a
     /// list, so what it holds never matters.
     | FaultsAfter of readable : uint32 list
 
-/// What `getresuid(2)` or `getresgid(2)` does with the caller's three buffers.
+/// What the process's `getresuid(2)` or `getresgid(2)` stores in its three
+/// buffers, and what it returns. This library has stored nothing.
 [<RequireQualifiedAccess>]
 type GetIdsAnswer<'Id> =
-    /// The call writes the real, effective and saved IDs to the three buffers,
-    /// in that order, and returns 0.
+    /// The client stores the real, effective and saved IDs into the three
+    /// buffers, in that order, each as a 32-bit `uid_t` or `gid_t`, and the
+    /// process's call returns 0.
     | Copied of real : 'Id * effective : 'Id * saved : 'Id
-    /// The call writes `written` to the buffers before the first one it could
-    /// not write, in order (the real ID first), and fails with `EFAULT`.
+    /// The client stores `written` into the buffers before the first one which
+    /// it could not write, in order (the real ID first), and the process's call
+    /// returns -1 with errno set to `EFAULT`.
     | Faulted of written : 'Id list
 
 /// Why this kernel will not answer one of the C library's credential calls
@@ -158,18 +161,20 @@ module internal GetIdsRefusal =
         | GetIdsRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
         | GetIdsRefusal.Buffer refusal -> BufferRefusal.kind refusal
 
-/// What `getgroups(2)` does with the caller's buffer and what it returns.
+/// What the process's `getgroups(2)` stores in its buffer, and what it
+/// returns. This library has stored nothing.
 [<RequireQualifiedAccess>]
 type GetGroupsAnswer =
-    /// The call was asked only how many groups there are (a size of 0). It
-    /// returns `count` and writes nothing, whatever the buffer is.
+    /// The process asked only how many groups there are (a size of 0). Its call
+    /// returns `count`, and the client writes nothing, whatever the buffer is.
     | Counted of count : int
-    /// Place these groups in the caller's buffer, in this order, and return how
-    /// many there are. They fit: the size has already been compared with this
-    /// list. An empty list writes nothing and so never faults.
+    /// The client stores these groups into the process's buffer, in this
+    /// order, each as a 32-bit `gid_t`, and the process's call returns how many
+    /// there are. They fit: the kernel has compared the size with this list.
+    /// An empty list writes nothing and so never faults.
     | Copied of groups : GroupId list
-    /// The call returns -1 and the caller stores `error` wherever its libc
-    /// keeps errno. Nothing was written.
+    /// The process's call returns -1 with errno set to `error`. The client
+    /// writes nothing.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer a `getgroups(2)`.
@@ -272,8 +277,8 @@ module UnixCredentials =
     /// `getresuid(2)`: the process's real, effective and saved user IDs, into
     /// three buffers.
     ///
-    /// Changes nothing, so it returns no system. Refused on Darwin, which has
-    /// no such call.
+    /// Changes nothing, so it returns no system. Throws
+    /// `PlatformNotSupportedException` on Darwin, which has no such call.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
     let getresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -320,8 +325,8 @@ module UnixCredentials =
     /// `getresgid(2)`: the process's real, effective and saved group IDs, into
     /// three buffers.
     ///
-    /// Changes nothing, so it returns no system. Refused on Darwin, which has
-    /// no such call.
+    /// Changes nothing, so it returns no system. Throws
+    /// `PlatformNotSupportedException` on Darwin, which has no such call.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
     let getresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -602,12 +607,13 @@ module UnixCredentials =
     /// only set each to one of the three it already holds, and is otherwise
     /// answered `EPERM` with nothing changed.
     ///
-    /// Refused on Darwin, which has no such call; under Linux while another
-    /// thread blocks signal 33, is asleep in a call, or owes a return to user
-    /// mode, since the C library reaches every other thread with that signal;
-    /// and for a process that writes core dumps when its effective user ID
-    /// would change: whether it still writes one turns on `fs.suid_dumpable`,
-    /// which this kernel does not model.
+    /// Throws `PlatformNotSupportedException` on Darwin, which has no such
+    /// call. Refused under Linux while another thread of the process blocks
+    /// signal 33, is asleep in a call, or owes a return to user mode, because
+    /// the C library sends that signal to every other thread. Also refused for
+    /// a process that writes core dumps when the call would change its
+    /// effective user ID, because whether it still writes one depends on
+    /// `fs.suid_dumpable`, which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -691,12 +697,13 @@ module UnixCredentials =
     /// groups do not count), and is otherwise answered `EPERM` with nothing
     /// changed. Privilege is the effective *user* ID's, as everywhere else.
     ///
-    /// Refused on Darwin, which has no such call; under Linux while another
-    /// thread blocks signal 33, is asleep in a call, or owes a return to user
-    /// mode, since the C library reaches every other thread with that signal;
-    /// and for a process that writes core dumps when its effective group ID
-    /// would change: whether it still writes one turns on `fs.suid_dumpable`,
-    /// which this kernel does not model.
+    /// Throws `PlatformNotSupportedException` on Darwin, which has no such
+    /// call. Refused under Linux while another thread of the process blocks
+    /// signal 33, is asleep in a call, or owes a return to user mode, because
+    /// the C library sends that signal to every other thread. Also refused for
+    /// a process that writes core dumps when the call would change its
+    /// effective group ID, because whether it still writes one depends on
+    /// `fs.suid_dumpable`, which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

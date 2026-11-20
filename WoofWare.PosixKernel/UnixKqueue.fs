@@ -1,7 +1,13 @@
 namespace WoofWare.PosixKernel
 
-/// One Darwin `struct kevent`: an entry of the changelist `kevent(2)` reads, or
-/// of the eventlist it fills, each field in Darwin's own numbering.
+/// One Darwin `struct kevent`, each field in Darwin's own numbering.
+///
+/// It is either an entry of the process's changelist, which the client read
+/// from the process's memory and passes to `UnixKqueue.kevent`, or an entry
+/// which a `KeventOutcome` answers for the eventlist. This library never
+/// touches the process's memory: the client stores each answered entry into
+/// the process's eventlist, as one `struct kevent` (see "What every client
+/// does" in the README).
 type Kevent =
     {
         /// `ident`: what the filter watches. For `KeventFilter.Read` and
@@ -16,7 +22,7 @@ type Kevent =
         FilterFlags : uint32
         /// `data`: a value particular to the filter.
         Data : int64
-        /// `udata`: the caller's own value, which every event the filter
+        /// `udata`: a value of the process's own, which every event the filter
         /// reports carries back verbatim.
         UserData : uint64
     }
@@ -93,40 +99,50 @@ module internal KqueueRefusal =
 type KeventOutcome =
     /// `kevent` failed with this errno.
     ///
-    /// Any change the call applied before it failed stays applied, with the
-    /// system this rides with. A finishing call fails with `EBADF` when a close
-    /// has drained the kqueue (see `UnixDescriptor.close`).
+    /// Any change the call applied before it failed stays applied, in the
+    /// system that comes back with this answer. A finishing call fails with
+    /// `EBADF` when a close has drained the kqueue (see `UnixDescriptor.close`).
     | Failed of error : UnixError
     /// `kevent` returned these entries of its changelist, in changelist order:
-    /// each change made with `EV_RECEIPT`, or that failed, while the eventlist
-    /// had room. Each is the change as given, with `KeventFlags.Error` added to
-    /// its flags and `data` its outcome: 0, or the raw Darwin errno it failed
-    /// with.
+    /// each change made with `EV_RECEIPT`, and each change that failed, while
+    /// the eventlist had room. Each is the change as given, with
+    /// `KeventFlags.Error` added to its flags, and with `data` holding its
+    /// outcome: 0, or the raw Darwin errno with which it failed.
+    ///
+    /// The client stores the entries into the process's eventlist, in order;
+    /// this library writes nothing there.
     ///
     /// A call that returns any such entry reports no events and does not wait,
     /// whatever is queued and whatever its timeout.
     | Echoed of changes : Kevent list
-    /// `kevent` failed with this errno, having first written these entries of
-    /// its changelist into the eventlist, as `Echoed` describes them. The call
-    /// returned -1, so only the eventlist's memory shows them.
+    /// `kevent` failed with this errno after it had echoed these entries of its
+    /// changelist, as `Echoed` describes them. The process's call returns -1,
+    /// so the entries reach the process only through its eventlist: the client
+    /// still stores them there, in order, as it would for `Echoed`.
     ///
-    /// Any change the call applied before it failed stays applied, with the
-    /// system this rides with.
+    /// Any change the call applied before it failed stays applied, in the
+    /// system that comes back with this answer.
     | FailedAfterEchoing of error : UnixError * changes : Kevent list
-    /// `kevent` returned these events, in the order it reports them.
+    /// `kevent` returned these events, in the order it reports them. The
+    /// client stores them into the process's eventlist, in order; this library
+    /// writes nothing there.
     ///
     /// Empty for a wait that timed out, for a timeout of zero with nothing to
     /// report, and for an `nevents` of zero or less.
     | Answered of events : Kevent list
-    /// `kevent` did not return. The calling thread is parked, and sleeps until
-    /// `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wake` wakes it; then `UnixKqueue.finishKevent` finishes the
-    /// call.
+    /// `kevent` did not return, and the calling thread is now asleep in it.
+    /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
+    /// and once that has woken the thread, finishes the call with
+    /// `UnixKqueue.finishKevent` (see "What every client does" in the README).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no
-    /// longer parked, and owes a return to user mode
-    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
-    /// that return says whether the call fails with `EINTR` or restarts.
+    /// longer asleep in the call, and owes a return to user mode.
+    ///
+    /// Before the thread makes any other call, the client calls
+    /// `UnixSignal.onReturnToUser` for it; until then, any other call by the
+    /// thread throws `InvalidOperationException`. That return says whether the
+    /// call fails with `EINTR` or restarts. To restart it, the client makes the
+    /// same call again, with the arguments the process first passed.
     ///
     /// Only `UnixKqueue.finishKevent` answers this.
     | Interrupted
@@ -290,8 +306,8 @@ module UnixKqueue =
     ///
     /// Every answer is `DescriptorAnswer.Returned`: with no descriptor left
     /// below the bound (`SimulatedUnixPlatform.descriptorBound`) the call is
-    /// refused. Under the Linux flavour every call is refused: Linux has no
-    /// kqueue.
+    /// refused. Under the Linux flavour every call throws
+    /// `PlatformNotSupportedException`: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -715,11 +731,11 @@ module UnixKqueue =
     /// changelist of `nchanges` entries and room for `nevents` events in
     /// `eventlist`.
     ///
-    /// `changes` is what the copy-in finds at the changelist, from its start:
-    /// every one of the `nchanges` entries when all are readable, and fewer
-    /// when one is not, the next entry being the first that cannot be read.
-    /// It is never longer than `nchanges`, and is empty when `nchanges` is zero
-    /// or less, since then no entry is read.
+    /// `changes` is what the client read from the process's changelist, from
+    /// its start: every one of the `nchanges` entries when all are readable, or
+    /// the entries before the first one that cannot be read. It is never longer
+    /// than `nchanges`, and is empty when `nchanges` is zero or less, since then
+    /// no entry is read.
     ///
     /// The argument checks come first, in Darwin's order: `EFAULT` for an
     /// unreadable timeout and `EINVAL` for a timeout whose `tv_sec` is below 0
@@ -730,13 +746,14 @@ module UnixKqueue =
     /// Then the changes are applied in order. `EV_ADD` registers a filter on
     /// the socket the change's descriptor names, or, of a pair already
     /// registered, replaces its `udata`; `EV_DELETE` removes one. A change with
-    /// `EV_RECEIPT`, or one that fails, is echoed into the eventlist while it
-    /// has room (`KeventOutcome.Echoed`); a failure with no room left ends the
-    /// call with its errno, a change the copy-in could not read with `EFAULT`,
-    /// and an echo into an `Unmapped` eventlist with `EFAULT` too, and either
-    /// way the changes before it stay applied and the entries echoed before it
-    /// stay written (`KeventOutcome.FailedAfterEchoing`). A call that echoes
-    /// anything returns at once with no events.
+    /// `EV_RECEIPT`, and a change that fails, is echoed into the eventlist while
+    /// it has room (`KeventOutcome.Echoed`). The call ends with an errno for a
+    /// failure when the eventlist has no room left, with `EFAULT` for a change
+    /// the client could not read, and with `EFAULT` for an echo into an
+    /// `Unmapped` eventlist. Either way, the changes before it stay applied,
+    /// and the client still stores the entries echoed before it
+    /// (`KeventOutcome.FailedAfterEchoing`). A call that echoes anything
+    /// returns at once with no events.
     ///
     /// Otherwise an `nevents` of zero or less returns no events at once; a
     /// kqueue a close has drained (see `UnixDescriptor.close`) fails with
@@ -745,20 +762,28 @@ module UnixKqueue =
     /// one no longer ready leaves the queue and reports nothing, and one that
     /// reports leaves it if it was added with `EV_CLEAR` and otherwise goes
     /// back to the tail; entries the walk did not reach stay queued in order.
-    /// With nothing to report, a timeout of zero returns
-    /// no events at once; a positive one parks the caller's thread until an
-    /// event is reportable or that much time has passed on the machine's
-    /// monotonic clock, and a null one parks it until an event is reportable.
-    /// A parked wait is finished with `finishKevent`.
+    /// With nothing to report, a timeout of zero returns no events at once. A
+    /// positive timeout puts the caller to sleep in the call until an event is
+    /// reportable or until that much time has passed on the machine's
+    /// monotonic clock. A null timeout puts it to sleep until an event is
+    /// reportable. The client finishes a sleeping wait with `finishKevent`.
     ///
-    /// Every waiter on one kqueue is woken by an event to report and by the
-    /// close that drains it, and a deadline or a signal is each waiter's own.
+    /// Nothing wakes a sleeping caller by itself, and the clock moves only when
+    /// the client advances it (`UnixSystem.advanceClock`). See "What every
+    /// client does" in the README. `UnixWait.wake` wakes every thread asleep on
+    /// one kqueue for an event to report, and for the close that drains the
+    /// kqueue; a deadline or a signal wakes only the thread to which it
+    /// belongs.
     ///
-    /// Refused are a change this library does not apply,
-    /// a copy of events to an eventlist that is not `Mapped`, and an echo into
-    /// an `Opaque` or `Addressless` one.
-    /// The caller's thread must not already be parked. Under the Linux flavour
-    /// every call is refused: Linux has no kqueue.
+    /// The answered entries come back in the `KeventOutcome`, and the client
+    /// stores them into the process's eventlist: this library writes nothing
+    /// there. `eventlist` only describes where that eventlist is. This library
+    /// refuses a change that it does not apply, a call that reports events
+    /// into an eventlist that is not `Mapped`, and an echo into an `Opaque` or
+    /// `Addressless` eventlist.
+    ///
+    /// The caller must not already be asleep in a call. Under the Linux flavour
+    /// every call throws `PlatformNotSupportedException`: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">`changes` holds more changes than `nchanges`, or any for an `nchanges` of zero or less: the copy-in reads at most `nchanges`.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
@@ -969,8 +994,9 @@ module UnixKqueue =
     /// An answer clears the park, and with it the call's hold on the kqueue,
     /// which goes then if no descriptor names it any more.
     ///
-    /// Reporting events copies them out to the eventlist the call was made
-    /// with; see `kevent` for the eventlists that refuses.
+    /// The events come back in `KeventOutcome.Answered`, and the client stores
+    /// them into the eventlist the call was made with; see `kevent` for the
+    /// eventlists for which this library refuses the call.
     ///
     /// `caller` must be parked in a `kevent`, and woken (`UnixWait.wake`).
     /// </summary>
