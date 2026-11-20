@@ -204,7 +204,10 @@ type RecvFromOutcome =
     /// call. Nothing wakes it by itself: the client calls `UnixWait.wake`, and
     /// once that has woken the thread, the client finishes the call with
     /// `UnixReadWrite.finishRecvFrom` or `UnixWait.finish` (see "What every
-    /// client does" in the README).
+    /// client does" in the README). A Linux call whose length cell lies inside
+    /// its receive buffer needs `finishRecvFrom`, so that the client stores
+    /// `PausedRecvFrom.received` before it reads the cell (see
+    /// `Syscall.RecvFrom`).
     | WouldBlock of WakeCondition
     /// The call was asleep, and a signal interrupted it. The thread is no
     /// longer parked, and owes a return to user mode

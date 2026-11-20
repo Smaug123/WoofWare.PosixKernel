@@ -1462,9 +1462,9 @@ No kernel of the other flavour has those calls, so there is no answer to measure
 Some are what a client needs in order to move the process's bytes and speak the platform's numbers:
 
 * `SimulatedUnixPlatform.rawErrnoNumbering`, `SimulatedUnixPlatform.signalNumbering`, the socket-option numbers, and the `sockaddr` encoders and decoders;
-* `SimulatedUnixPlatform.pathLimits`, whose `PathLimits.pathMaxBytes` says how far the client reads a path argument (see `PathArgumentBytes.Bytes`): a client that scanned on past it for a NUL could fault on memory the kernel never reads;
-* `SimulatedUnixPlatform.getSockNameFaultLength`, which says in which order to store a `getsockname` answer whose address buffer and length cell overlap.
+* `SimulatedUnixPlatform.pathLimits`, whose `PathLimits.pathMaxBytes` says how far the client reads a path argument (see `PathArgumentBytes.Bytes`): a client that scanned on past it for a NUL could fault on memory the kernel never reads.
 
+Some are facts the client reports to the process itself, such as `SimulatedUnixPlatform.architecture` and `SimulatedUnixPlatform.unixRelease` for `uname(2)`.
 The rest describe a rule the simulated kernel already applies, such as `SimulatedUnixPlatform.renameRules`.
 A client may read one of those to learn what the kernel will do, but has no use for one otherwise: no syscall takes one, and building one by hand changes nothing. (`PathWalk.resolveExistingFromRoot`, which resolves a path outside any syscall, takes a `PathLimits` and a `SymlinkProtection` from the machine.)
 What a different administrator could change is configuration instead: a machine's settings are set on the boot image by `UnixBootImage`'s setters, and a process's own, such as its pending-signal limit, by `ProcessLaunch`'s.

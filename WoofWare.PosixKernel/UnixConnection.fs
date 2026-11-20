@@ -9,7 +9,9 @@ open System.Collections.Immutable
 [<RequireQualifiedAccess ; NoComparison>]
 type PeerAddressCopy =
     /// The client stores `copiedOut` at the start of the process's address
-    /// buffer, and `reportedLength` in the process's length cell.
+    /// buffer, and `reportedLength` in the process's length cell. In which
+    /// order a kernel makes those two stores when they overlap is unmeasured,
+    /// and this library does not say.
     ///
     /// For an `accept`, `copiedOut` is the connecting socket's address, laid
     /// out as the platform's socket address structure for the listener's

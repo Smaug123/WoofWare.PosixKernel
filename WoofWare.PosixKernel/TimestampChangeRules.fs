@@ -29,10 +29,12 @@ type TimesArgument =
 type NullablePathArgument =
     /// The null pointer.
     ///
-    /// Under Linux, with a `dirfd` other than `AT_FDCWD` and a flag word of 0,
-    /// the call sets the times of the object that `dirfd` names; with any flag
-    /// it answers `EINVAL`. With `AT_FDCWD`, and always under Darwin, the call
-    /// answers `EFAULT` at the point where it would copy the path in.
+    /// Once the call reaches its pathname (`UnixPathResolution.utimensat` says
+    /// what it answers first, such as 0 when both times are `UTIME_OMIT`):
+    /// under Linux, with a `dirfd` other than `AT_FDCWD` and a flag word of 0,
+    /// the call sets the times of the object that `dirfd` names, and with any
+    /// flag it answers `EINVAL`. With `AT_FDCWD`, and always under Darwin, the
+    /// call answers `EFAULT` at the point where it would copy the path in.
     | Null
     /// Any other pointer, and what the client found there (see
     /// `PathArgumentBytes`).

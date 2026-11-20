@@ -269,13 +269,11 @@ type GetCwdDestinationFault =
 ///
 /// `UnixSocket.getsockname` already applies this rule to a failed call: when
 /// the kernel stored the length first, its `GetSockNameAnswer.Failed` carries
-/// that length, and the client stores it. A successful call is different:
-/// `GetSockNameAnswer.Reported` carries the address and the length but not
-/// the order in which to store them, and that order matters when the
-/// process's address buffer and length cell overlap. A client that must
-/// handle overlapping outputs reads this rule to choose the order:
-/// `AlreadyReported` means the kernel stores the length first, and
-/// `Untouched` that it stores the length last.
+/// that length, and the client stores it. A client reads this rule only to
+/// learn what the kernel will do (see "Flavours and divergence from host
+/// platforms" in the README). This rule is about a failed copy: in which
+/// order a successful call stores the address and the length, when the two
+/// overlap, is unmeasured.
 ///
 /// The kernels order the two stores differently, so a call that fails leaves
 /// the process's `socklen_t` reading different things. Darwin, and Linux before
@@ -381,11 +379,11 @@ type internal EphemeralSearchCall =
 /// The accessors answer two kinds of value. Some are what a client needs to
 /// move the process's bytes and speak the platform's numbers:
 /// `rawErrnoNumbering`, `signalNumbering`, the socket-option numbers, the
-/// `sockaddr` and C `int` encoders and decoders, `pathLimits` (whose
-/// `PathLimits.pathMaxBytes` says how far to read a path argument), and
-/// `getSockNameFaultLength` (the order in which to store a `getsockname`
-/// answer whose outputs overlap). The rest describe a rule that the simulated
-/// kernel already applies. A client may read one of those to learn what the kernel will do,
+/// `sockaddr` and C `int` encoders and decoders, and `pathLimits` (whose
+/// `PathLimits.pathMaxBytes` says how far to read a path argument). Some are
+/// facts that the client reports to the process itself, such as
+/// `architecture` and `unixRelease` for `uname(2)`. The rest describe a rule
+/// that the simulated kernel already applies. A client may read one of those to learn what the kernel will do,
 /// but has no other use for it. See "Flavours and divergence from host
 /// platforms" in the README.
 [<RequireQualifiedAccess>]
