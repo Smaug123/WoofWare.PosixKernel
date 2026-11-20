@@ -11,7 +11,7 @@ namespace WoofWare.PosixKernel
 /// The rule doesn't apply to name lookups, since the filesystem could never have
 /// created an entry with an unbindable name in the first place.
 /// <para />
-/// Note that a name which satisfies this rule may still be refused a binding for another reason.
+/// Note that a call may still fail to bind a name which satisfies this rule, for another reason.
 /// For example, under Linux's <c>AnyBytes</c> a name longer than <c>NAME_MAX</c> still gets
 /// <c>ENAMETOOLONG</c>.
 /// </remarks>
@@ -43,7 +43,8 @@ module BindableEntryNames =
     /// <c>ENAMETOOLONG</c> for.
     /// <para />
     /// Under Darwin's <c>StrictUtf8</c>, a call that would bind a name which this does not admit answers
-    /// <c>EILSEQ</c>. That is the last check such a call makes, so any other error the call has comes first.
+    /// <c>EILSEQ</c>. In the creating <c>open</c>, <c>mkdir</c> and <c>rename</c>, as measured, that is the
+    /// last check the call makes, so any other error the call has comes first.
     /// </remarks>
     let admits (rule : BindableEntryNames) (name : DirectoryEntryName) : bool =
         match rule with

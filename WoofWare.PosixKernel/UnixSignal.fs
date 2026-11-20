@@ -728,9 +728,12 @@ module UnixSignal =
     /// when another thread's `kill` or `pthreadKill` sends it one, so calling
     /// this after each of the thread's own calls is not enough: the client
     /// asks `owesReturn` before the thread runs again, and calls this when it
-    /// answers `true`. Calling this when nothing is owed is harmless, and the
-    /// client may call it at any time the thread is not asleep in a syscall,
-    /// as a preempted thread returns to user mode. See "What every client
+    /// answers `true`. The client may also call this when nothing is owed, at
+    /// any time the thread is not asleep in a syscall, as a preempted thread
+    /// returns to user mode. Such a call is still subject to the refusals
+    /// below: under Linux, for example, a leader that owes nothing is refused
+    /// when it blocks a caught process-directed signal that another thread
+    /// does not. See "What every client
     /// does" in the README.
     ///
     /// Every case answers a system, which the client keeps even when the

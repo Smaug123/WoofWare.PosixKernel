@@ -5,8 +5,12 @@ namespace WoofWare.PosixKernel
 ///
 /// This library decides when a primitive holds. The client reads primitives in
 /// a `WakeCondition`, and in the sets that `UnixWait.wake` and
-/// `UnixWait.satisfied` answer, which say what woke a thread; it never needs to
-/// evaluate one itself (see "Sleeping and waking" in the README).
+/// `UnixWait.satisfied` answer, and never needs to evaluate one itself (see
+/// "Sleeping and waking" in the README). Only `UnixWait.wake`, and the
+/// `fired` set of `ParkState.Woken`, say what woke a thread. `UnixWait.satisfied`
+/// says which primitives hold now: it can answer a non-empty set for a thread
+/// that `wake` did not choose, such as the second of two threads asleep on
+/// one ready epoll instance, and that thread's call cannot be finished.
 ///
 /// A primitive names live kernel objects rather than a snapshot of them, and
 /// follows what a real kernel waits on. The park from which a primitive comes

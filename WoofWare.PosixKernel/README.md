@@ -47,7 +47,7 @@ After that come the parts of a running process that are the client's rather than
 
 ### Words the documentation uses
 
-The docstrings use these words in one sense each.
+The docstrings use these words in one sense each. Where a docstring names an exception or an errno explicitly, that name is the authority.
 
 * **client**: the program using this library. It is never the connecting end of a TCP connection, which the documentation calls the connecting socket.
 * **process** and **thread**: the simulated ones, whose calls the client hands to this library.
@@ -63,7 +63,7 @@ The docstrings use these words in one sense each.
 
 Four duties fall to every client, and almost every docstring assumes them.
 
-1. **The client moves every byte.** This library never reads or writes the process's memory. An argument the process passes by pointer reaches this library as the bytes the client read there, or as the client's description of the pointer (a `UserBuffer`, or a case such as `PathArgumentBytes.Unreadable`). An answer that carries bytes or numbers, such as `ReadAnswer.Completed` or a `struct timespec`'s fields, is what the client must store into the process's memory, in the platform's layout, before the process sees the call return. The library has stored nothing. See "Moving bytes".
+1. **The client moves every byte.** This library never reads or writes the process's memory. An argument the process passes by pointer reaches this library as the bytes the client read there, or as the client's description of the pointer (a `UserBuffer`, or a case such as `PathArgumentBytes.Unreadable`). Where an answer's docstring says the client stores something, such as the bytes of `ReadAnswer.Completed` or the time in `ClockGettimeAnswer.Completed`, the client stores it into the process's memory, in the platform's layout, before the process sees the call return; the library has stored nothing. A value the process's call only returns, such as the count in `GetGroupsAnswer.Counted`, is not stored anywhere. See "Moving bytes".
 2. **The client resumes a paused call before doing anything else.** A call that stops to copy from the process's memory (`CallProgress.NeedsCopyIn`) holds the whole system as it stood at that point, and resuming it answers a system built from that one. Anything else done to the system in between is lost. See "Calls that copy in from the caller's memory".
 3. **The client wakes sleeping threads and moves the clock.** A call that would block answers `WouldBlock` and leaves its thread asleep in it. Nothing wakes that thread by itself. After each step, the client calls `UnixWait.wake`, and then finishes each woken thread's call, with `UnixWait.finish` or the finishing function of the call's family. (One case needs the family's function: a Linux `recvfrom` whose length cell lies inside its receive buffer, which `UnixReadWrite.finishRecvFrom` finishes so that the client reads the cell only after storing the datagram.) Time passes only when the client calls `UnixSystem.advanceClock`, so a timeout expires only then; `UnixWait.deadlines` says when the next one falls due. See "Sleeping and waking".
 4. **The client makes the return to user mode.** Before a thread runs again, the client asks `UnixSignal.owesReturn`, and when it answers true, calls `UnixSignal.onReturnToUser`, which delivers pending signals. Calling it after each of the thread's calls is not enough, because another thread's `kill` or `pthreadKill` can make a signal deliverable between them. Running a signal handler is the client's job. See "The return to user mode".
@@ -1460,7 +1460,7 @@ No kernel of the other flavour has those calls, so there is no answer to measure
 
 `SimulatedUnixPlatform`'s accessors hand out two kinds of value.
 A few are what a client needs to speak the platform's numbers: `SimulatedUnixPlatform.rawErrnoNumbering`, `SimulatedUnixPlatform.signalNumbering`, the socket-option numbers, and the `sockaddr` encoders and decoders.
-The rest describe a rule the simulated kernel already applies, such as `SimulatedUnixPlatform.renameRules` or `SimulatedUnixPlatform.pathLimits`.
+The rest describe a rule the simulated kernel already applies, such as `SimulatedUnixPlatform.renameRules` or `SimulatedUnixPlatform.pathLimits`, except where a rule's docstring says a client needs it to store an answer correctly (`SimulatedUnixPlatform.getSockNameFaultLength`, for overlapping outputs).
 A client may read one of those to learn what the kernel will do, but has no use for one otherwise: no syscall takes one, and building one by hand changes nothing. (`PathWalk.resolveExistingFromRoot`, which resolves a path outside any syscall, takes a `PathLimits` and a `SymlinkProtection` from the machine.)
 What a different administrator could change is configuration instead, set on the boot image by one of `UnixBootImage`'s setters.
 

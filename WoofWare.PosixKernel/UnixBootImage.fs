@@ -641,7 +641,7 @@ module UnixBootImage =
     /// unless it was set, and its leader the thread ID the machine's counter
     /// starts at. Chooses defaults for omitted launch settings and checks
     /// requested descriptors, credentials, umask and pending-signal limit
-    /// against the machine's platform. Refuses a leader on a processor the
+    /// against the machine's platform. Rejects a leader on a processor the
     /// machine does not have, or a directory the filesystem does not let it
     /// start in; and, on Linux, an image whose ephemeral range starts below
     /// its unprivileged port start. `tryBoot` answers the refusal instead of

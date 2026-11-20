@@ -921,9 +921,10 @@ type ParkState =
     /// condition that held when the thread was woken. Never empty.
     ///
     /// Some queues have their waiters woken one at a time, such as an epoll
-    /// instance's or a listener's. While this thread is woken and unfinished,
-    /// no other waiter on such a queue that its call waits on is woken, because
-    /// this thread is expected to take whatever woke it. So the client should
+    /// instance's or a listener's. While this thread is woken by such a queue's
+    /// readiness and unfinished, no other waiter on that queue is woken for its
+    /// readiness, because this thread is expected to take whatever woke it.
+    /// Another waiter can still wake for its own deadline or for a signal. So the client should
     /// finish a woken thread's call (which may put it to sleep again) rather
     /// than leave it woken indefinitely.
     | Woken of fired : Set<WakePrimitive>

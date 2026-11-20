@@ -2732,8 +2732,9 @@ module UnixPathResolution =
     /// <para />
     /// The answers, in the order the kernel decides them:
     /// a <c>capacity</c> of 0 is <c>EINVAL</c>;
-    /// on Darwin, whose <c>getcwd</c> stores from the process's own context and so kills the process
-    /// for a buffer it cannot write, an <c>Unmapped</c> destination with a capacity of 2 or more is refused,
+    /// on Darwin, whose <c>getcwd</c> may store into the buffer from the process's own context before
+    /// it checks the size, an <c>Unmapped</c> destination with a capacity of 2 or more may answer an errno
+    /// or kill the process, depending on the C library's internal route, so it is refused,
     /// whatever else the call would answer (see <c>SimulatedUnixPlatform.getCwdDestinationFault</c>);
     /// if no path reaches the current directory any more, the call answers <c>ENOENT</c>, or <c>ERANGE</c>
     /// on Darwin for a capacity below 2;

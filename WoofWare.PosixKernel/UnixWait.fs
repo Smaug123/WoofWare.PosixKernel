@@ -555,8 +555,9 @@ module UnixWait =
     /// The client should not leave a woken thread unfinished indefinitely. On
     /// a queue whose waiters a kernel wakes one at a time (described below), a
     /// thread that something to take from the queue woke holds the queue: no
-    /// other waiter on it wakes until that thread has finished its call
-    /// (`ParkState.Woken`). Those other waiters may be in other processes. A
+    /// other waiter on it wakes for that queue's readiness until that thread
+    /// has finished its call (`ParkState.Woken`). Another waiter can still
+    /// wake for its own deadline or for a signal. Those other waiters may be in other processes. A
     /// thread that only a signal or its deadline woke holds no queue.
     ///
     /// A waiter whose `flock` has become grantable, whose polled descriptor is

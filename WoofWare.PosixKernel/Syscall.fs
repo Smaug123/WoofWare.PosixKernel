@@ -447,9 +447,13 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `buffer`. So a Linux call whose length cell lies inside `buffer` cannot
     /// be made correctly through this case, either by `UnixSystem.step` or,
     /// once the call has slept, by `UnixWait.finish`. The client makes it
-    /// through `UnixReadWrite.recvfrom` and finishes it with
-    /// `UnixReadWrite.finishRecvFrom` instead, and stores
-    /// `PausedRecvFrom.received` before it reads the cell.
+    /// through `UnixReadWrite.recvfrom` instead. Whenever that call, or the
+    /// `UnixReadWrite.finishRecvFrom` that finishes it after a sleep and a
+    /// wake, answers `CallProgress.NeedsCopyIn`, the client stores
+    /// `PausedRecvFrom.received`, then reads the cell, and passes its value
+    /// to `UnixReadWrite.recvfromWithLength`. A call that finds a datagram
+    /// already queued stops at the cell without sleeping, and is not finished
+    /// with `finishRecvFrom`.
     | RecvFrom of
         fd : int *
         buffer : UserBuffer *

@@ -267,10 +267,15 @@ type GetCwdDestinationFault =
 /// What a kernel has already stored in the process's length cell when its
 /// `getsockname(2)` faults while copying the address out.
 ///
-/// `UnixSocket.getsockname` already applies this rule: when the kernel stored
-/// the length first, its `GetSockNameAnswer.Failed` carries that length, and
-/// the client stores it. A client reads this only to learn what the kernel
-/// will do (see "Flavours and divergence from host platforms" in the README).
+/// `UnixSocket.getsockname` already applies this rule to a failed call: when
+/// the kernel stored the length first, its `GetSockNameAnswer.Failed` carries
+/// that length, and the client stores it. A successful call is different:
+/// `GetSockNameAnswer.Reported` carries the address and the length but not
+/// the order in which to store them, and that order matters when the
+/// process's address buffer and length cell overlap. A client that must
+/// handle overlapping outputs reads this rule to choose the order:
+/// `AlreadyReported` means the kernel stores the length first, and
+/// `Untouched` that it stores the length last.
 ///
 /// The kernels order the two stores differently, so a call that fails leaves
 /// the process's `socklen_t` reading different things. Darwin, and Linux before
