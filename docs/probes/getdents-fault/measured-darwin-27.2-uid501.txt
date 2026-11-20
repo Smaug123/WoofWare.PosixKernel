@@ -1,7 +1,7 @@
 # Darwin 27.2.0 arm64, uid 501
 # control offsets (d_off / d_seekoff): .=0 ..=0 a=0 c=0 d=0 e=0 b=0
 # smallest count accepted: 64 (r=64)
-# fixture: prot_none=0x102bcc000 edge=0x102bd4000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
+# fixture: prot_none=0x104d0c000 edge=0x104d14000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
 closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
@@ -66,3 +66,11 @@ devfs-end      dest=ok       : r=0 errno=0 pos=5980->5980
 devfs-end      dest=null     : r=-1 errno=EFAULT pos=5980->5980
 devfs-end      dest=prot_none: r=-1 errno=EFAULT pos=5980->5980
 devfs-end      dest=high     : r=-1 errno=EFAULT pos=5980->5980
+devfs-atime    dest=ok       : r=3096 errno=0 atime=moved
+devfs-atime-end dest=ok       : r=0 errno=0 atime=moved
+devfs-atime    dest=null     : r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=null     : r=-1 errno=EFAULT atime=moved
+devfs-atime    dest=prot_none: r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=prot_none: r=-1 errno=EFAULT atime=moved
+devfs-atime    dest=high     : r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=high     : r=-1 errno=EFAULT atime=moved

@@ -33,9 +33,9 @@
 //   devfs rows on /dev:
 //     cc -Wall -o /tmp/getdents-fault getdents-fault.c && /tmp/getdents-fault "$(mktemp -d)"
 //
-// No test replays these yet: the library's readDirectoryEntry takes no
-// buffer, and Darwin's partial rows are not something a per-record call can
-// answer.
+// `TestDirectoryDestination` replays the rows the library models. Darwin's
+// rows that fault after storing a record (`partial-*`, `devfs-partial`) are
+// refused rather than modelled.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -143,7 +143,20 @@ static void row(const char *label, const char *dn, int fd, void *buf, size_t cou
     printf("\n");
 }
 
-static int fresh(void) { return open("dir", O_RDONLY | O_DIRECTORY); }
+// Fixture setup that fails stops the probe, naming what failed, rather than
+// letting a row measure something other than what it names.
+static void setup(long result, const char *what) {
+    if (result < 0) {
+        fprintf(stderr, "setup failed: %s: %s\n", what, strerror(errno));
+        exit(1);
+    }
+}
+
+static int fresh(void) {
+    int fd = open("dir", O_RDONLY | O_DIRECTORY);
+    setup(fd, "open dir");
+    return fd;
+}
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -167,17 +180,21 @@ int main(int argc, char **argv) {
     long page = sysconf(_SC_PAGESIZE);
     protNone = mmap(NULL, (size_t)page, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
     unsigned char *two = mmap(NULL, 2 * (size_t)page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    mprotect(two + page, (size_t)page, PROT_NONE);
+    if (protNone == MAP_FAILED || two == MAP_FAILED) setup(-1, "mmap");
+    setup(mprotect(two + page, (size_t)page, PROT_NONE), "mprotect");
     edge = two + page;
 
-    mkdir("dir", 0755);
+    setup(mkdir("dir", 0755), "mkdir dir");
     const char *files[] = {"a", "b", "c", "d", "e"};
     for (int i = 0; i < 5; i++) {
         char p[16];
         snprintf(p, sizeof p, "dir/%s", files[i]);
-        close(open(p, O_CREAT | O_RDWR, 0644));
+        int made = open(p, O_CREAT | O_EXCL | O_RDWR, 0644);
+        setup(made, p);
+        close(made);
     }
-    int file = open("f", O_CREAT | O_RDWR, 0644);
+    int file = open("f", O_CREAT | O_EXCL | O_RDWR, 0644);
+    setup(file, "open f");
 
     // The control: the whole directory through one writable buffer.
     int fd = fresh();
@@ -206,7 +223,12 @@ int main(int argc, char **argv) {
            (void *)edge, page, all, total, listing, r1, r2);
     close(fd);
 
-    for (int d = 0; d < 4; d++) row("closed-fd", dname[d], 999, dest(d), 4096, 0);
+    // A descriptor this process held and closed, so that none it inherited
+    // can stand in for it.
+    int closed = dup(file);
+    setup(closed, "dup");
+    setup(close(closed), "close");
+    for (int d = 0; d < 4; d++) row("closed-fd", dname[d], closed, dest(d), 4096, 0);
     for (int d = 0; d < 4; d++) row("regular-file", dname[d], file, dest(d), 4096, 0);
     for (int d = 0; d < 4; d++) {
         fd = fresh();
@@ -314,6 +336,32 @@ int main(int argc, char **argv) {
         rest(fd, out, sizeof out, &n);
         for (int d = 0; d < 4; d++) row("devfs-end", dname[d], fd, dest(d), 4096, 0);
         close(fd);
+    }
+    // Whether a read of /dev moves its access time, which devfs keeps to the
+    // microsecond and moves on every listing call: at the start, and at the
+    // end after a writable read has reached it. Each row waits 10 ms first,
+    // so that a move is visible.
+    for (int d = 0; d < 4; d++) {
+        for (int atEnd = 0; atEnd < 2; atEnd++) {
+            fd = open("/dev", O_RDONLY | O_DIRECTORY);
+            if (atEnd) {
+                char out[65536];
+                int n;
+                rest(fd, out, sizeof out, &n);
+            }
+            struct stat before, after;
+            stat("/dev", &before);
+            usleep(10000);
+            errno = 0;
+            long r = gd(fd, dest(d), 4096);
+            int e = r < 0 ? errno : 0;
+            stat("/dev", &after);
+            int moved = before.st_atimespec.tv_sec != after.st_atimespec.tv_sec
+                || before.st_atimespec.tv_nsec != after.st_atimespec.tv_nsec;
+            printf("%-14s dest=%-9s: r=%ld errno=%s atime=%s\n", atEnd ? "devfs-atime-end" : "devfs-atime",
+                   dname[d], r, en(e), moved ? "moved" : "kept");
+            close(fd);
+        }
     }
 #endif
     return 0;
