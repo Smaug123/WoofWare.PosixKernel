@@ -194,10 +194,9 @@ module TestPollUnreadableEntries =
                 fail ()
 
     /// `EFAULT`, with the system unchanged, for a row the kernel answered
-    /// `EFAULT`, having written no `revents`. A row under timeout -1 that had
-    /// slept would have been ended by the probe's timer, with `EINTR`, so the
-    /// errno alone says it did not sleep; `slept`, which a delay in scheduling
-    /// the probe can set, is not consulted.
+    /// `EFAULT`, having written no `revents`, and under timeout -1 at once.
+    /// `slept`, which a delay in scheduling the probe can also set, is not
+    /// consulted for a row under timeout 0, which could not sleep.
     let private faulted
         (system : UnixSystem<int, string>)
         (row : Row)
@@ -205,6 +204,7 @@ module TestPollUnreadableEntries =
         : bool
         =
         row.Errno = "Bad address"
+        && (row.Timeout = 0 || not row.Slept)
         && (row.Revents0 = "-" || row.Revents0 = "0x5a5a")
         && answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
 
@@ -234,7 +234,14 @@ module TestPollUnreadableEntries =
                         answer = asEmpty
                         && match answer with
                            | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0 && row.Timeout = 0
-                           | Ok (PollOutcome.WouldBlock _, _) -> row.Slept && row.Timeout <> 0
+                           // The finite wait ends at its deadline, with 0; the
+                           // infinite one is ended by the probe's timer.
+                           | Ok (PollOutcome.WouldBlock _, _) ->
+                               row.Slept
+                               && match row.Timeout with
+                                  | 0 -> false
+                                  | -1 -> row.Rv = -1 && row.Errno = "Interrupted system call"
+                                  | _ -> row.Rv = 0 && row.Errno = "-"
                            | _ -> false
 
                     judge run system (PollEntriesArgument.Unreadable 0u) row expected
