@@ -31,12 +31,13 @@ type BindableEntryNames =
 [<RequireQualifiedAccess>]
 module BindableEntryNames =
     /// <summary>
-    /// Whether a filesystem following <c>rule</c> will bind <c>name</c>.
+    /// Whether a filesystem whose character encoding follows <c>rule</c> will bind <c>name</c>.
     /// </summary>
     /// <remarks>
     /// Our Linux filesystem will bind any bytes as a name (though that name might fail validity checks after
-    /// binding - e.g. "/" isn't a valid part of a name).
-    /// Darwin's filesystem can refuse, and in that case, the kernel will present EILSEQ to the caller.
+    /// binding - e.g. the kernel may refuse a name which is too long even after <c>admits</c> accepted it).
+    /// <para />
+    /// Darwin's filesystem is sensitive to encoding; if <c>admits</c> fails, the kernel will present EILSEQ to the caller.
     /// </remarks>
     let admits (rule : BindableEntryNames) (name : DirectoryEntryName) : bool =
         match rule with

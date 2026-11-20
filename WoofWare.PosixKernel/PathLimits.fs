@@ -138,7 +138,7 @@ module PathLimits =
     /// using the pre-made <c>SimulatedUnixPlatform.pathLimits</c> instances instead
     /// of constructing a <c>PathLimits</c> by hand.
     /// </remarks>
-    /// <exception cref="T:System.ArgumentOutOfRangeException">You supplied limits which are incompatible with all of our modelled <c>PathLimits</c> bundles - e.g. you specified <c>pathMaxBytes</c> which is smaller than the minimum POSIX specifies.</exception>
+    /// <exception cref="T:System.ArgumentOutOfRangeException">You supplied limits which are incompatible with some sanity checks which all of our modelled <c>PathLimits</c> bundles would satisfy - e.g. you specified <c>pathMaxBytes</c> which is smaller than the minimum POSIX specifies.</exception>
     let create
         (maxSymlinkTraversals : int)
         (pathMaxBytes : int)
@@ -254,8 +254,9 @@ module PathLimits =
     /// </summary>
     /// <remarks>
     /// The <c>Unchecked.defaultof</c> of <c>PathLimits</c> is invalid (it would
-    /// specify that a path which contains a single symlink can't be resolved
-    /// and gets <c>ELOOP</c> instead). This function checks for that condition.
+    /// specify that a path which contains a single symlink can't be resolved, which is not
+    /// a behaviour of any modelled POSIX kernel).
+    /// <c>assertValid</c> throws ArgumentException in that case.
     /// </remarks>
     let assertValid (context : string) (limits : PathLimits) : PathLimits =
         // The integer checks come first, and the `NameMax` one is written to

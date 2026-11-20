@@ -54,7 +54,7 @@ type internal EntryLookup =
     /// <remarks>
     /// PosixKernel refuses to decide canonical equivalence, because it doesn't
     /// bundle Unicode tables and refuses to rely on the host's Unicode tables (for determinism reasons).
-    /// So it's up to the client to decide what to do with this result.
+    /// PosixKernel converts <c>Undecided</c> into an <c>UnmodelledException</c> before the client sees it.
     /// </remarks>
     | Undecided of bound : DirectoryEntryName
 
