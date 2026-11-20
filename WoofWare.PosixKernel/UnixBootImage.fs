@@ -648,7 +648,7 @@ module UnixBootImage =
     /// throwing it, and says which of the launch's settings it was.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory. The image's ephemeral port range starts below its unprivileged port start.</exception>
-    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound or supplies more bytes than one write(2) moves, or Darwin credentials have differing real, effective or saved IDs.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">An explicit pending-signal limit was requested on Darwin.</exception>
     let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
