@@ -18,7 +18,7 @@ namespace WoofWare.PosixKernel
 /// </remarks>
 /// <remarks>
 /// The two kernels also hand a failed syscall's errno back to the process differently, at the syscall instruction itself.
-/// On arm64, Linux returns the errno negated in <c>x0</c>.
+/// On arm64, Linux returns the errno negated in <c>x0</c>, and leaves the carry flag as it was before the call.
 /// Darwin returns the errno itself, positive, in <c>x0</c>, and sets the carry flag; a call that succeeds returns with the carry flag clear.
 /// Either way, the number is in that platform's own numbering.
 /// </remarks>

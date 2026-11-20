@@ -452,6 +452,20 @@ static void *control_thread(void *arg) {
     return NULL;
 }
 
+// A clone(CLONE_VM) child's wait for its release, by raw syscalls alone,
+// which gives up after 10 s, as the row's alarm does for the row: a child
+// whose parent never releases it ends as invalid rather than spinning on.
+static void clone_vm_await_release(struct shared_page *p) {
+    struct timespec start, now;
+    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &start);
+    while (!__atomic_load_n(&p->release, __ATOMIC_SEQ_CST)) {
+        syscall(SYS_sched_yield);
+        syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &now);
+        if (now.tv_sec - start.tv_sec >= 10)
+            syscall(SYS_exit, ROW_INVALID);
+    }
+}
+
 // The clone(CLONE_VM) child: a process of its own in its parent's address
 // space. It makes no C library call that could touch the parent's state. Its
 // clear_child_tid address comes from set_tid_address.
@@ -459,8 +473,7 @@ static int clone_vm_child(void *arg) {
     struct shared_page *p = arg;
     if (syscall(SYS_set_tid_address, &p->cell.word) != syscall(SYS_gettid))
         syscall(SYS_exit, ROW_INVALID);
-    while (!__atomic_load_n(&p->release, __ATOMIC_SEQ_CST))
-        syscall(SYS_sched_yield);
+    clone_vm_await_release(p);
     syscall(SYS_exit, 0);
     return 0;
 }
@@ -469,8 +482,7 @@ static int clone_vm_child(void *arg) {
 // CLONE_CHILD_CLEARTID alone.
 static int clone_vm_cleartid_child(void *arg) {
     struct shared_page *p = arg;
-    while (!__atomic_load_n(&p->release, __ATOMIC_SEQ_CST))
-        syscall(SYS_sched_yield);
+    clone_vm_await_release(p);
     syscall(SYS_exit, 0);
     return 0;
 }
@@ -492,6 +504,9 @@ static int row_last_thread(const char *how) {
     } else {
         child = fork();
         if (child == 0) {
+            // A forked child keeps no alarm of its parent's: it gets its own,
+            // so that one whose parent never releases it ends.
+            alarm(10);
             if (strcmp(how, "control") == 0) {
                 // The child's first thread outlives its second, and ends the
                 // child once the second has gone.
