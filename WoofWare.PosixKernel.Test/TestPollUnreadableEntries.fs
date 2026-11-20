@@ -313,6 +313,36 @@ module TestPollUnreadableEntries =
                 if row.Errno <> "Bad address" || row.Slept || row.Revents0 <> "0x5a5a" then
                     failwith $"%s{run.Name}: %A{row}"
 
+    /// Section S: on Linux, a partly readable array does not poll the entries
+    /// it could read, seen through a blocking UDP receiver's reader queue,
+    /// which a poll of it refills: the charge of the datagrams taken after a
+    /// faulting poll comes back as late as with no poll at all.
+    [<Test>]
+    let ``a partly readable array was measured to poll none of its readable entries under Linux`` () : unit =
+        let pattern =
+            Regex
+                @"^S k=(\d+) cut=(no-poll|none|entry) lead=udp nfds=(\d+) timeout=0 rv=(-?\d+) errno=(.+) charge-after=(\d+) revents0=(\S+)$"
+
+        for run in runs |> List.filter (fun run -> run.Name.StartsWith "linux") do
+            let measured =
+                run.Lines
+                |> List.choose (fun line ->
+                    let m = pattern.Match line
+
+                    if m.Success then
+                        Some (m.Groups.[2].Value, m.Groups.[4].Value, m.Groups.[5].Value, m.Groups.[6].Value)
+                    else
+                        None
+                )
+
+            List.length measured |> shouldEqual 9
+
+            for cut, rv, errno, charge in measured do
+                match cut with
+                | "no-poll" -> (rv, errno, charge) |> shouldEqual ("0", "-", "46080")
+                | "none" -> (rv, errno, charge) |> shouldEqual ("1", "-", "23040")
+                | _ -> (rv, errno, charge) |> shouldEqual ("-1", "Bad address", "46080")
+
     [<Test>]
     let ``an unreadable array answers what the screen answers, or EFAULT, or as an empty one`` () : unit =
         let platforms =
