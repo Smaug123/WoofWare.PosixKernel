@@ -6131,7 +6131,7 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``the destination's pathname is copied in before the source's final lookup, on Linux only`` () : unit =
-        // `PathArgument.Failed` is what `getname()` reports, and the two errnos
+        // `PathArgument.copyIn`'s error is what `getname()` reports, and the two errnos
         // it can carry surface at the same point — so both are asserted, and a
         // `rename` that screened only one would be caught.
         for failure in [ UnixError.ENAMETOOLONG ; UnixError.EFAULT ] do

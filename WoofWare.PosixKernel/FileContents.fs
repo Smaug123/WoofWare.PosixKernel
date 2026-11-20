@@ -76,7 +76,8 @@ type FileContents =
     /// A very permissive hash, incorporating only the length of the content.
     /// </summary>
     /// <remarks>
-    /// This is for performance reasons: we don't want dictionary entries hashing the entire file contents, for example.
+    /// The imprecision of this hash is for performance reasons: we don't want dictionary
+    /// entries hashing the entire file contents, for example.
     /// </remarks>
     override this.GetHashCode () : int = hash this.Length
 

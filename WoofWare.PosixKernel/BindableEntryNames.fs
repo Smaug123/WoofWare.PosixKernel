@@ -1,8 +1,7 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Which names a platform's filesystem is willing to bind (that is, to create or rename
-/// onto).
+/// Which names a platform's filesystem is willing to bind (that is, to create or rename onto).
 /// </summary>
 /// <remarks>
 /// This configuration doesn't apply to name lookups, since the filesystem could never have
@@ -32,11 +31,13 @@ type BindableEntryNames =
 [<RequireQualifiedAccess>]
 module BindableEntryNames =
     /// <summary>
-    /// Whether a filesystem following <c>rule</c> will bind <c>name</c>.
+    /// Whether a filesystem whose character encoding follows <c>rule</c> will bind <c>name</c>.
     /// </summary>
     /// <remarks>
-    /// If the filesystem refuses to bind the name, you must be on Darwin;
-    /// in that case, the caller gets EILSEQ.
+    /// Our Linux filesystem will bind any bytes as a name (though that name might fail validity checks after
+    /// binding - e.g. the kernel may refuse a name which is too long even after <c>admits</c> accepted it).
+    /// <para />
+    /// Darwin's filesystem is sensitive to encoding; if <c>admits</c> fails, the kernel will present EILSEQ to the caller.
     /// </remarks>
     let admits (rule : BindableEntryNames) (name : DirectoryEntryName) : bool =
         match rule with

@@ -181,8 +181,8 @@ What the columns say, and what each is load-bearing for:
   destination in early and finding it short enough, it is not copying it in at
   all yet. Each platform probed at its own scale.
 * **EFAULT and ENAMETOOLONG surface together**, so one "the argument was copied
-  in" step models both. That is `getname()`, and it is why `PathArgument.Failed`
-  carries either.
+  in" step models both. That is `getname()`, and it is why `PathArgument.copyIn`'s
+  one error carries either.
 * **Everything about the source's final component loses to the destination's
   parent, on Linux.** A free name, "/", ".", "..", a trailing separator and a
   300-byte name all answer the destination's ENOTDIR. The 300-byte row is the

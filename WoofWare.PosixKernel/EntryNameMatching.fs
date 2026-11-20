@@ -8,22 +8,36 @@ open System.Collections.Immutable
 /// </summary>
 [<RequireQualifiedAccess>]
 type internal EntryNameMatching =
-    /// A name reaches only the entry bound under exactly its bytes, as on
-    /// Linux's tmpfs and ext4.
+    /// <summary>
+    /// A name matches exactly when its bytes are the same.
+    /// </summary>
+    /// <example>
+    /// Linux's tmpfs and ext4 behave like this.
+    /// </example>
     | Bytes
-    /// A name reaches the entry bound under any canonically equivalent Unicode
-    /// spelling of it, as on APFS, in its case-sensitive variant as in its
-    /// case-insensitive one: "é" spelled as U+00E9 and as "e" followed by
-    /// U+0301 reach one entry, and so do "K" and U+212A KELVIN SIGN. The
-    /// directory keeps the spelling the entry was bound under, which is what
-    /// `readdir` reports, and never holds two spellings of one name.
-    /// Compatibility equivalents, such as U+FB01 and "fi", are different names
-    /// under case-sensitivity, and a name that is not valid UTF-8 reaches only
-    /// the entry bound under exactly its bytes.
-    ///
-    /// This library holds no Unicode tables, so it cannot always decide whether
-    /// two names are canonically equivalent: a lookup it cannot decide is
-    /// `EntryLookup.Undecided`.
+    /// <summary>
+    /// A name matches any entry which has a canonically equivalent Unicode spelling.
+    /// </summary>
+    /// <example>
+    /// Darwin's APFS behaves like this (both in case-sensitive and case-insensitive modes, in fact).
+    /// "é" spelled as U+00E9 and as "e" followed by U+0301 both reach the same entry.
+    /// So do "K" and U+212A KELVIN SIGN.
+    /// </example>
+    /// <example>
+    /// Compatibility equivalents, such as U+FB01 and "fi", are different names under case-sensitivity.
+    /// </example>
+    /// <example>
+    /// A name that is not valid UTF-8 only matches an entry which has exactly the same bytes.
+    /// </example>
+    /// <remarks>
+    /// WoofWare.PosixKernel stores the original spelling that was used to bind the entry,
+    /// and uses that spelling to answer <c>readdir</c>. It never stores two spellings of the same name.
+    /// <para />
+    /// This library doesn't contain any Unicode tables, and refuses to rely on the host's Unicode tables
+    /// because that would break our determinism guarantees, so WoofWare.PosixKernel cannot always decide whether
+    /// two names are canonically equivalent.
+    /// If it can't decide a lookup, it generally returns <c>EntryLookup.Undecided</c>.
+    /// </remarks>
     | CanonicalEquivalence
 
 /// What looking a name up in a directory finds.
@@ -33,10 +47,15 @@ type internal EntryLookup =
     | Bound of inode : InodeNumber
     /// The name reaches no entry of the directory.
     | Free
-    /// The directory binds no entry under exactly the name's bytes, but binds
-    /// `bound`, which might be a canonically equivalent spelling of the name.
-    /// Whether the name reaches `bound`'s entry or is free is beyond this
-    /// library, which cannot decide canonical equivalence.
+    /// <summary>
+    /// We didn't bind an exact match for the supplied bytes, but <c>bound</c> might be canonically
+    /// Unicode-equivalent.
+    /// </summary>
+    /// <remarks>
+    /// PosixKernel refuses to decide canonical equivalence, because it doesn't
+    /// bundle Unicode tables and refuses to rely on the host's Unicode tables (for determinism reasons).
+    /// PosixKernel converts <c>Undecided</c> into an <c>UnmodelledException</c> before the client sees it.
+    /// </remarks>
     | Undecided of bound : DirectoryEntryName
 
 /// What this library can say about the canonical decomposition of a name,

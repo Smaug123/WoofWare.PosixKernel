@@ -29,7 +29,7 @@ module TestPathArgument =
         UnixPathText.utf8.GetBytes s |> ImmutableArray.CreateRange
 
     /// `PathArgument.copyIn` of bytes the caller read.
-    let private parse (limits : PathLimits) (bytes : ImmutableArray<byte>) : PathArgument =
+    let private parse (limits : PathLimits) (bytes : ImmutableArray<byte>) : Result<UnixPath, UnixError> =
         PathArgument.copyIn limits (PathArg.ofBytes bytes)
 
     /// A path of exactly `n` bytes that would resolve if it were short enough:
@@ -55,12 +55,12 @@ module TestPathArgument =
         // the number in the header.
         let ok (limits : PathLimits) (n : int) : unit =
             match parse limits (bytesOf (ofLength n)) with
-            | PathArgument.Parsed _ -> ()
+            | Ok _ -> ()
             | other -> failwith $"a %d{n}-byte path was not parsed: %O{other}"
 
         let tooLong (limits : PathLimits) (n : int) : unit =
             parse limits (bytesOf (ofLength n))
-            |> shouldEqual (PathArgument.Failed UnixError.ENAMETOOLONG)
+            |> shouldEqual (Error UnixError.ENAMETOOLONG)
 
         ok darwin 1023
         tooLong darwin 1024
@@ -80,13 +80,12 @@ module TestPathArgument =
         let multiByte = String.replicate 512 "é"
         (bytesOf multiByte).Length |> shouldEqual 1024
 
-        parse darwin (bytesOf multiByte)
-        |> shouldEqual (PathArgument.Failed UnixError.ENAMETOOLONG)
+        parse darwin (bytesOf multiByte) |> shouldEqual (Error UnixError.ENAMETOOLONG)
 
     /// The bytes `PathArgument.copyIn` put in a parsed path.
-    let private parsedBytes (outcome : PathArgument) : byte list =
+    let private parsedBytes (outcome : Result<UnixPath, UnixError>) : byte list =
         match outcome with
-        | PathArgument.Parsed path -> UnixPath.toByteString path |> UnixByteString.toBytes |> Seq.toList
+        | Ok path -> UnixPath.toByteString path |> UnixByteString.toBytes |> Seq.toList
         | other -> failwith $"expected a parse, got %O{other}"
 
     [<Test>]
@@ -96,7 +95,7 @@ module TestPathArgument =
         let invalid =
             ImmutableArray.CreateRange (Seq.append (bytesOf (ofLength 2000)) [ 0xFFuy ])
 
-        parse darwin invalid |> shouldEqual (PathArgument.Failed UnixError.ENAMETOOLONG)
+        parse darwin invalid |> shouldEqual (Error UnixError.ENAMETOOLONG)
 
         parse linux invalid |> parsedBytes |> shouldEqual (Seq.toList invalid)
 
@@ -113,12 +112,12 @@ module TestPathArgument =
     let ``an unreadable argument is EFAULT, whatever the limit`` () : unit =
         for limits in [ linux ; darwin ] do
             PathArgument.copyIn limits PathArgumentBytes.Unreadable
-            |> shouldEqual (PathArgument.Failed UnixError.EFAULT)
+            |> shouldEqual (Error UnixError.EFAULT)
 
     [<Test>]
     let ``a path within the limit parses to what it says`` () : unit =
         match parse linux (bytesOf "/etc/hostname") with
-        | PathArgument.Parsed path -> PathText.ofPath path |> shouldEqual "/etc/hostname"
+        | Ok path -> PathText.ofPath path |> shouldEqual "/etc/hostname"
         | other -> failwith $"expected a parse, got %O{other}"
 
     [<Test>]
@@ -129,7 +128,8 @@ module TestPathArgument =
         // ever names.
         let exn =
             Assert.Throws<ArgumentException> (fun () ->
-                parse Unchecked.defaultof<PathLimits> (bytesOf "/etc") |> ignore<PathArgument>
+                parse Unchecked.defaultof<PathLimits> (bytesOf "/etc")
+                |> ignore<Result<UnixPath, UnixError>>
             )
 
         exn.Message |> shouldContainText "PathArgument.copyIn"
@@ -143,7 +143,7 @@ module TestPathArgument =
         let exn =
             Assert.Throws<ArgumentException> (fun () ->
                 PathArgument.copyIn linux (PathArgumentBytes.Bytes Unchecked.defaultof<UnixByteString>)
-                |> ignore<PathArgument>
+                |> ignore<Result<UnixPath, UnixError>>
             )
 
         exn.Message |> shouldContainText "Unchecked.defaultof"
@@ -154,5 +154,5 @@ module TestPathArgument =
         // about the bytes, so this stage must let it through: refusing here
         // would turn a caller's ordinary mistake into a crash.
         match parse linux ImmutableArray<byte>.Empty with
-        | PathArgument.Parsed path -> UnixPath.isEmpty path |> shouldEqual true
+        | Ok path -> UnixPath.isEmpty path |> shouldEqual true
         | other -> failwith $"expected an empty path, got %O{other}"

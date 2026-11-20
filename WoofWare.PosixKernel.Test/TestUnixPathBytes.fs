@@ -557,12 +557,12 @@ module TestUnixPathBytes =
                 match
                     PathArgument.copyIn (SimulatedUnixPlatform.pathLimits platform) (PathArgumentBytes.Bytes argument)
                 with
-                | PathArgument.Parsed path ->
+                | Ok path ->
                     if Seq.toArray (UnixByteString.toBytes (UnixPath.toByteString path)) = bytes then
                         "Parsed"
                     else
                         "Parsed, but not verbatim"
-                | PathArgument.Failed error -> $"Failed %A{error}"
+                | Error error -> $"Failed %A{error}"
 
             if actual <> expected then
                 failwith $"%s{flavour}, %d{bytes.Length} bytes: recorded %s{expected}, now %s{actual}"
