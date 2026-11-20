@@ -729,8 +729,9 @@ module UnixSignal =
     /// this after each of the thread's own calls is not enough: the client
     /// asks `owesReturn` before the thread runs again, and calls this when it
     /// answers `true`. The client may also call this when nothing is owed, at
-    /// any time the thread is not asleep in a syscall, as a preempted thread
-    /// returns to user mode. Such a call is still subject to the refusals
+    /// any time the thread is not parked in a syscall, as a preempted thread
+    /// returns to user mode. A thread that `UnixWait.wake` has woken is still
+    /// parked until its call is finished. Such a call is still subject to the refusals
     /// below: under Linux, for example, a leader that owes nothing is refused
     /// when it blocks a caught process-directed signal that another thread
     /// does not. See "What every client

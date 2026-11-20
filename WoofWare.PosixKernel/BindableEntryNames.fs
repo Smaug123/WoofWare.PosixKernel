@@ -4,9 +4,10 @@ namespace WoofWare.PosixKernel
 /// Which names a platform's filesystem is willing to bind (that is, to create or rename onto).
 /// </summary>
 /// <remarks>
-/// This is a fact of the flavour, not configuration: the kernel already applies the rule which
-/// <c>SimulatedUnixPlatform.bindableEntryNames</c> holds, and a client reads it only to learn what
-/// the kernel will do.
+/// This is really a property of the mounted filesystem, but this library models one writable
+/// filesystem per flavour, so it follows the flavour, and no setting changes it. The kernel already
+/// applies the rule which <c>SimulatedUnixPlatform.bindableEntryNames</c> holds, and a client reads
+/// it only to learn what the kernel will do.
 /// <para />
 /// The rule doesn't apply to name lookups, since the filesystem could never have
 /// created an entry with an unbindable name in the first place.

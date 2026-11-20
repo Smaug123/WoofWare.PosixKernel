@@ -14,8 +14,10 @@ namespace WoofWare.PosixKernel
 /// `st_size` and `st_nlink`, every file's `st_blksize` and `st_blocks`,
 /// whether a read moves an access time, and where `lseek(2)` with `SEEK_END`
 /// lands on a directory (see "Giving the machine files" in the README). Path
-/// resolution keeps its flavour's limits either way: `pathLimits` carries
-/// `NameLengthLimit` as a fact of the flavour. So a kernel configured `Nfs`
+/// resolution keeps its flavour's limits either way: `NAME_MAX` is really a
+/// property of the filesystem, but `pathLimits` takes `NameLengthLimit` from
+/// the flavour, because this library models one writable filesystem per
+/// flavour. So a kernel configured `Nfs`
 /// reports NFS while still resolving names as its flavour does.
 ///
 /// Choosing `Nfs` also makes many calls refused, because on NFS the server,

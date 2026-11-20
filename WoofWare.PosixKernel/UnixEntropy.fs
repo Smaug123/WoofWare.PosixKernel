@@ -33,7 +33,7 @@ type GetRandomAnswer =
     /// A count of zero means that the call moved nothing and did not touch the
     /// buffer at all.
     | Completed of draw : EntropyDraw
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`. Nothing was drawn from the pool.
     | Failed of error : UnixError
 
@@ -72,7 +72,7 @@ type GetEntropyAnswer =
     /// A count of zero means that the process asked for nothing, and the call
     /// did not touch the buffer at all.
     | Completed of draw : EntropyDraw
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`. Nothing was drawn from the pool.
     | Failed of error : UnixError
 

@@ -9,7 +9,8 @@ namespace WoofWare.PosixKernel
 /// learns that from `UnixWait.wake`, then finishes the call (see "What every
 /// client does" in the README). A condition is plain data so that a client can
 /// read it, for example to see which deadline a sleeping call has;
-/// `UnixWait.deadlines` gathers those deadlines from every park.
+/// `UnixWait.deadlines` gathers those deadlines from every sleeping park; a
+/// woken park whose call is not yet finished contributes none.
 [<RequireQualifiedAccess>]
 type WakeCondition =
     /// Wait for this one primitive.

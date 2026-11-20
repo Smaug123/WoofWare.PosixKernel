@@ -233,10 +233,9 @@ type SocketOptions =
         /// back.
         NoDelay : bool
         /// `SO_LINGER`, which changes what a close of a connected socket does.
-        /// With lingering on and a time of zero, the close is abortive: a
-        /// reset, unless both FINs have arrived. A close that a positive time
-        /// would make wait, for bytes still in the send buffer, is refused.
-        /// `UnixSocket.setsockopt` states the rules in full.
+        /// With lingering on and a time of zero, the close is usually
+        /// abortive: a reset. `UnixSocket.setsockopt` states the rules in
+        /// full, including the closes that this library refuses.
         Linger : SocketLinger
     }
 

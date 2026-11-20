@@ -68,8 +68,8 @@ type CreationProtection =
     | InWorldWritableStickyDirectories
     /// <summary>
     /// In addition to <c>InWorldWritableStickyDirectories</c>'s restrictions, an <c>O_CREAT</c> open
-    /// of an existing object in a sticky group-writable but not world-writable directory is refused
-    /// with EACCES, unless the caller or the directory's owner owns the object.
+    /// of an existing object in a sticky group-writable but not world-writable directory answers
+    /// EACCES, unless the caller or the directory's owner owns the object.
     /// </summary>
     /// <remarks>
     /// Darwin doesn't have this.

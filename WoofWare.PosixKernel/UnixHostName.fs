@@ -19,7 +19,7 @@ type GetHostNameAnswer =
     /// request for the name's length alone.
     | Returned of placed : ImmutableArray<byte>
     /// The client stores `placed` at the start of the process's buffer; the
-    /// process's call returns -1, and the client sets the process's errno to
+    /// process's call returns -1, and the client sets the calling thread's errno to
     /// `error`.
     ///
     /// `placed` is empty except on Linux's ENAMETOOLONG, which glibc reports

@@ -68,7 +68,7 @@ type ClockGettimeAnswer =
     /// `struct timespec`; this library has stored nothing (see "What every
     /// client does" in the README).
     | Completed of time : UnixTimestamp
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`.
     | Failed of error : UnixError
 

@@ -8,7 +8,7 @@ type Pipe2Answer =
     /// destination; this library has stored nothing (see "What every client
     /// does" in the README).
     | Created of readFd : int * writeFd : int
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`. No pipe exists, and no descriptor was taken.
     | Failed of error : UnixError
 

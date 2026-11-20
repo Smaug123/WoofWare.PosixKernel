@@ -20,7 +20,7 @@ type ReadAnswer =
     /// call returns `EntropyDraw.count draw`, which is never 0. The system
     /// that comes back with this answer has already moved its pool past them.
     | Drawn of draw : EntropyDraw
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`. The file offset does not move.
     | Failed of error : UnixError
 
@@ -181,10 +181,10 @@ type RecvFromAnswer =
     /// As for `ReadAnswer.Completed`, no bytes means the call did not touch the
     /// buffer.
     | Received of bytes : ImmutableArray<byte> * returned : int64 * source : PeerAddressCopy
-    /// The process's call returns -1, the client sets the process's errno to
+    /// The process's call returns -1, the client sets the calling thread's errno to
     /// `error`, and the client stores nothing.
     | Failed of error : UnixError
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`. The call had nevertheless received a datagram (and taken
     /// it, unless it peeked), so the client stores `bytes` at the start of the
     /// process's buffer, and stores `lengthOverwritten`, if there is one, in
@@ -230,7 +230,7 @@ type WriteAnswer =
     /// space, and a pipe the client drains has room for the whole of a
     /// blocking write.
     | Completed of written : int64
-    /// The process's call returns -1, and the client sets the process's errno
+    /// The process's call returns -1, and the client sets the calling thread's errno
     /// to `error`.
     | Failed of error : UnixError
 

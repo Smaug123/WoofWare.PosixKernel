@@ -52,10 +52,9 @@ type AcceptOutcome =
     /// The process's call returns -1 and sets errno to `error`, after the
     /// kernel had taken the oldest connection off the accept queue. The
     /// connection is gone. The kernel closed its server end as `close` closes
-    /// an accepted socket, so the connecting socket sees an orderly shutdown,
-    /// and that event reaches every epoll and kqueue registration on the
-    /// connecting socket. No descriptor is
-    /// allocated. The system that comes back with this answer records all of
+    /// an accepted socket, and what the connecting socket and its epoll and
+    /// kqueue registrations see follows from that close's usual rules. No
+    /// descriptor is allocated. The system that comes back with this answer records all of
     /// that.
     ///
     /// Linux answers this, with `EINVAL`, for a negative declared length,
@@ -2683,7 +2682,10 @@ module UnixConnection =
     /// the client read from the process's length cell before making this
     /// call. This library has no way to hear that the length cell itself is
     /// NULL or unreadable when `destination` is not NULL, so a client facing
-    /// such a cell has no answer to give from this function.
+    /// such a cell has no answer to give from this function. A blocking call
+    /// that sleeps keeps this value: under Linux, which reads the cell only
+    /// after the wait, a change that another thread makes to the cell while
+    /// the call sleeps is not seen (see `ParkedAccept.DeclaredLength`).
     ///
     /// The answer carries the peer address that the client stores into the
     /// process's memory (`PeerAddressCopy`); this library stores nothing. As

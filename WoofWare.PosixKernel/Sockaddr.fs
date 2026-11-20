@@ -4,10 +4,10 @@ namespace WoofWare.PosixKernel
 /// a client that reads or writes the bytes of a socket address in the
 /// process's memory.
 ///
-/// It is a record of two numbers rather than an `int * int`, so that no client
-/// can pair an offset with the wrong width: the two vary together, never
-/// independently. Every use is either "read these bytes" or "does the declared
-/// length reach them".
+/// Use the predefined fields, such as `InternetSockaddr.port` and
+/// `InternetV6Sockaddr.scopeId`, rather than building one: the record does not
+/// check that an offset and a width describe a real field. Every use is either
+/// "read these bytes" or "does the declared length reach them".
 ///
 /// **It carries no byte order**, deliberately. The order of each field is
 /// fixed by the kernel's ABI (`sin_port` and `sin_addr` are in network order,
