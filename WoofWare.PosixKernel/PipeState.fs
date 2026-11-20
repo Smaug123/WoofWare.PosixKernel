@@ -96,8 +96,11 @@ type LaunchDescriptor =
     /// and end of file comes only once the process has read every byte. With
     /// no bytes, a read answers end of file at once.
     ///
-    /// Booting or launching with more bytes than one `write(2)` moves on the
-    /// platform throws.
+    /// A launch supplying more bytes than one `write(2)` moves on the platform
+    /// (`SimulatedUnixPlatform.transferCountLimit`) is refused:
+    /// `UnixBootImage.tryBoot` and `UnixSystem.tryLaunch` answer the refusal,
+    /// and `UnixBootImage.boot` and `UnixSystem.launch` throw
+    /// `UnmodelledException`.
     | Supplied of bytes : ImmutableArray<byte>
     /// The write end of a pipe, opened `O_WRONLY`. The outside end reads every
     /// byte the moment it is written, so a blocking write is never short and
@@ -281,7 +284,8 @@ module PipeState =
     /// which of its ends the process is given.
     ///
     /// A pipe the client supplies holds what the client's write put in before
-    /// it slept: the whole of it if it fits.
+    /// it slept: the whole of it if it fits. The caller has already refused a
+    /// launch supplying more bytes than one `write(2)` moves.
     let internal launch
         (platform : SimulatedUnixPlatform)
         (pid : ProcessId)
@@ -317,7 +321,7 @@ module PipeState =
 
             if bytes.Length > maxTransfer then
                 failwith
-                    $"PipeState.launch: launch descriptor %d{fd} supplies %d{bytes.Length} bytes, more than the %d{maxTransfer} one write(2) moves on this platform. A supplied pipe is the client's one write of its bytes, so this many would take more than one."
+                    $"PipeState.launch: launch descriptor %d{fd} supplies %d{bytes.Length} bytes, more than the %d{maxTransfer} that one write(2) moves on this platform, which ProcessLaunch.launchOnto refuses before making any pipe (this is a bug in this library)."
 
             // The client's write starts as any write into an empty pipe does.
             let written, buffer = PipeBuffer.write bytes empty

@@ -4846,7 +4846,7 @@ module UnixSystem =
     /// settings was at fault.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The launch requests too many supplementary groups, umask bits the platform never stores, an unavailable processor, or an unusable current directory.</exception>
-    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound, or Darwin credentials have differing real, effective or saved IDs. The machine has no process ID or thread ID left to hand out.</exception>
+    /// <exception cref="T:WoofWare.PosixKernel.UnmodelledException">A descriptor reaches the model's bound or supplies more bytes than one write(2) moves, or Darwin credentials have differing real, effective or saved IDs. The machine has no process ID or thread ID left to hand out.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">An explicit pending-signal limit was requested on Darwin.</exception>
     let launch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)

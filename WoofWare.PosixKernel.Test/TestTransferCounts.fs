@@ -1129,7 +1129,7 @@ module TestTransferCounts =
         let arb = Arb.fromGen (Gen.zip (Gen.elements machines) capacities)
         Check.One (config, Prop.forAll arb property)
 
-/// The two transfer-count tests that need a buffer longer than one Linux call
+/// The transfer-count tests that need a buffer longer than one Linux call
 /// moves (0x7FFFF000 bytes). Together they peak at about 6.5 GB resident, which
 /// a CI runner cannot hold beside another test host, so the fixture is
 /// `[<Explicit>]`: a bare `dotnet test` skips it, and CI selects it by category
@@ -1227,4 +1227,66 @@ module TestTransferCountsLarge =
         | Ok (WriteAnswer.Completed written, _) -> written |> shouldEqual (int64 bytes.Length)
         | other -> failwith $"expected a completed write, got %A{other}"
 
+        GC.Collect ()
+
+    /// A launch whose descriptor 0 supplies `length` zero bytes.
+    let private supplying (length : int) : ProcessLaunch<int> =
+        let bytes =
+            ImmutableCollectionsMarshal.AsImmutableArray (Array.zeroCreate<byte> length)
+
+        ProcessLaunch.create (Map.ofList [ 0, LaunchDescriptor.Supplied bytes ]) 0 (CpuId 0)
+
+    let private refusesBeyondOneWrite (limit : int) : unit =
+        let launch = supplying (limit + 1)
+
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.linuxArm64 ] do
+            let image : UnixBootImage<int, string> = UnixSystem.initial platform
+
+            let refusal =
+                match UnixBootImage.tryBoot launch image with
+                | Error refusal -> BootRefusal.launch refusal
+                | Ok _ -> failwith $"%O{platform}: expected the boot to be refused, but it booted"
+
+            refusal
+            |> shouldEqual (ValueSome (LaunchRefusal.SuppliedBeyondOneWrite (0, limit + 1, limit)))
+
+            refusal
+            |> ValueOption.map LaunchRefusal.setting
+            |> shouldEqual (ValueSome LaunchSetting.Streams)
+
+            Assert.Throws<UnmodelledException> (fun () -> UnixBootImage.boot launch image |> ignore)
+            |> ignore
+
+            let first =
+                UnixBootImage.boot (ProcessLaunch.create UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
+
+            match UnixSystem.tryLaunch launch first with
+            | Error refused -> ProcessCreationRefusal.launch refused |> shouldEqual refusal
+            | Ok _ -> failwith $"%O{platform}: expected the launch to be refused, but it launched"
+
+            Assert.Throws<UnmodelledException> (fun () -> UnixSystem.launch launch first |> ignore)
+            |> ignore
+
+        // Darwin's one call moves INT_MAX bytes, more than any array holds.
+        UnixBootImage.boot launch (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64)
+        |> UnixSystem.checkInvariants
+        |> shouldEqual []
+
+    let private launchesOneWrite (limit : int) : unit =
+        UnixBootImage.boot (supplying limit) (UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64)
+        |> UnixSystem.checkInvariants
+        |> shouldEqual []
+
+    /// A launch descriptor supplying more bytes than one Linux `write(2)`
+    /// moves is refused by both launch entry points, as a setting of the
+    /// launch's streams; exactly one call's worth launches.
+    ///
+    /// Two gigabytes of bytes, twice in turn.
+    [<Test>]
+    [<NonParallelizable>]
+    let ``a launch supplying more than one write's worth is refused`` () : unit =
+        let limit = int TestTransferCounts.LinuxMaxTransfer
+        refusesBeyondOneWrite limit
+        GC.Collect ()
+        launchesOneWrite limit
         GC.Collect ()
