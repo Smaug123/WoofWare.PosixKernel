@@ -509,8 +509,10 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | Connect of fd : int * address : CopiedArgument<ImmutableArray<byte>> * declaredLength : uint32
     /// `listen(2)`, as `UnixSocket.listen` makes it.
     | Listen of fd : int * backlog : int
-    /// `accept(2)`, as `UnixConnection.accept` makes it.
-    | Accept of fd : int * destination : UserBuffer * declaredLength : uint32 option * flags : int
+    /// `accept(2)`, as `UnixConnection.accept` makes it, then
+    /// `UnixConnection.acceptWithLength` of the `socklen_t` the length cell
+    /// holds, where the call reads it.
+    | Accept of fd : int * destination : UserBuffer * length : CopiedArgument<uint32> * flags : int
     /// `shutdown(2)`, as `UnixConnection.shutdown` makes it.
     | Shutdown of fd : int * how : int
     /// `getsockname(2)`, as `UnixSocket.getsockname` makes it, then
@@ -916,7 +918,8 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | Connect of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixSocket.listen` answers.
     | Listen of answer : ListenAnswer * system : UnixSystem<'Thread, 'Handler>
-    /// What `UnixConnection.accept` answers.
+    /// What `UnixConnection.accept` answers, or
+    /// `UnixConnection.acceptWithLength` after it.
     | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixConnection.shutdown` answers.
     | Shutdown of answer : ShutdownAnswer * system : UnixSystem<'Thread, 'Handler>

@@ -242,7 +242,7 @@ module TestSocketAddressLength =
 
                 for destination in destinations do
                     match
-                        UnixConnection.tryAccept (Callers.thread 0 system) listenerFd destination (Some word) 0 system
+                        AcceptCalls.tryAccept (Callers.thread 0 system) listenerFd destination (Some word) 0 system
                     with
                     | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after) when
                         isLinux platform && int word < 0
@@ -290,7 +290,7 @@ module TestSocketAddressLength =
             let fdsBefore = FileDescriptorRegistry.fds (Lone.fileDescriptors queued)
 
             match
-                UnixConnection.tryAccept (Callers.thread 0 queued) listenerFd (UserBuffer.Unmapped 0UL) None 0 queued
+                AcceptCalls.tryAccept (Callers.thread 0 queued) listenerFd (UserBuffer.Unmapped 0UL) None 0 queued
             with
             | Ok (AcceptOutcome.Accepted (acceptedFd, PeerAddressCopy.NotRequested), after) ->
                 Map.containsKey acceptedFd fdsBefore |> shouldEqual false
@@ -309,13 +309,7 @@ module TestSocketAddressLength =
 
             let parked =
                 match
-                    UnixConnection.tryAccept
-                        (Callers.thread 1 system)
-                        listenerFd
-                        (UserBuffer.Unmapped 0UL)
-                        None
-                        0
-                        system
+                    AcceptCalls.tryAccept (Callers.thread 1 system) listenerFd (UserBuffer.Unmapped 0UL) None 0 system
                 with
                 | Ok (AcceptOutcome.WouldBlock _, parked) -> parked
                 | other -> failwith $"%O{platform} accept through NULL, none queued: got %A{other}"
@@ -323,55 +317,11 @@ module TestSocketAddressLength =
             let _, woken = connectClient parked
             let woken = Woken.thread 1 woken
 
-            match UnixConnection.tryFinishAccept (Callers.thread 1 woken) woken with
+            match AcceptCalls.tryFinishAccept 16u (Callers.thread 1 woken) woken with
             | Ok (AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested), after) ->
                 queueOf listenerFd after |> shouldEqual []
                 UnixSystem.checkInvariants after |> shouldEqual []
             | other -> failwith $"%O{platform} accept through NULL, woken: got %A{other}"
-
-    /// A NULL destination takes no length, since no kernel reads the cell for
-    /// it, and every other destination takes one. Either mistake is the
-    /// caller's whatever the descriptor, so it is refused before the
-    /// descriptor is looked at, and the public entry point throws
-    /// `ArgumentException`.
-    [<Test>]
-    let ``a declared length is supplied exactly when the destination is not null`` () : unit =
-        for platform in platforms do
-            let listenerFd, system = withListener platform
-            let _, system = connectClient system
-
-            for fd in [ listenerFd ; 99 ] do
-                everyLength (fun word ->
-                    match
-                        UnixConnection.tryAccept
-                            (Callers.thread 0 system)
-                            fd
-                            (UserBuffer.Unmapped 0UL)
-                            (Some word)
-                            0
-                            system
-                    with
-                    | Error (AcceptRefusal.LengthContradictsDestination true) -> ()
-                    | other -> failwith $"%O{platform} fd %d{fd}, NULL with 0x%08x{word}: got %A{other}"
-                )
-
-                for destination in
-                    [
-                        UserBuffer.Mapped
-                        UserBuffer.Opaque
-                        UserBuffer.Addressless
-                        UserBuffer.Unmapped 1UL
-                        UserBuffer.Unmapped 4096UL
-                    ] do
-                    match UnixConnection.tryAccept (Callers.thread 0 system) fd destination None 0 system with
-                    | Error (AcceptRefusal.LengthContradictsDestination false) -> ()
-                    | other -> failwith $"%O{platform} fd %d{fd}, %A{destination} with no length: got %A{other}"
-
-            Assert.Throws<System.ArgumentException> (fun () ->
-                UnixConnection.accept (Callers.thread 0 system) listenerFd UserBuffer.Mapped None 0 system
-                |> ignore
-            )
-            |> ignore
 
     /// Whether the kernel reads the length cell, and whether it writes
     /// anything, turns on whether the destination is NULL, which a destination
@@ -386,7 +336,7 @@ module TestSocketAddressLength =
 
             everyLength (fun word ->
                 match
-                    UnixConnection.tryAccept
+                    AcceptCalls.tryAccept
                         (Callers.thread 0 system)
                         listenerFd
                         UserBuffer.Addressless
@@ -479,14 +429,14 @@ module TestSocketAddressLength =
 
             let dropped =
                 match
-                    UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some word) 0 system
+                    AcceptCalls.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some word) 0 system
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after) -> after
                 | other -> failwith $"word 0x%08x{word}: expected a dropped connection, got %A{other}"
 
             let acceptedThenClosed =
                 match
-                    UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) 0 system
+                    AcceptCalls.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) 0 system
                 with
                 | Ok (AcceptOutcome.Accepted (acceptedFd, _), after) ->
                     match UnixDescriptor.tryClose (Callers.leader after) acceptedFd after with
@@ -530,7 +480,7 @@ module TestSocketAddressLength =
 
                 let system =
                     match
-                        UnixConnection.tryAccept
+                        AcceptCalls.tryAccept
                             (Callers.thread 1 system)
                             listenerFd
                             UserBuffer.Mapped
@@ -544,7 +494,7 @@ module TestSocketAddressLength =
                 let _, system = connectClient system
 
                 match
-                    UnixConnection.tryFinishAccept (Callers.thread 1 system) (Woken.thread 1 system),
+                    AcceptCalls.tryFinishAccept word (Callers.thread 1 system) (Woken.thread 1 system),
                     isLinux platform && int word < 0
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
@@ -577,7 +527,7 @@ module TestSocketAddressLength =
                 |> shouldEqual (Ok (GetSockNameAnswer.Failed (UnixError.EBADF, None)))
 
                 match
-                    UnixConnection.tryAccept (Callers.thread 0 system) closedFd UserBuffer.Mapped (Some word) 0 system
+                    AcceptCalls.tryAccept (Callers.thread 0 system) closedFd UserBuffer.Mapped (Some word) 0 system
                 with
                 | Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> ()
                 | other -> failwith $"%O{platform} accept at 0x%08x{word}: %A{other}"

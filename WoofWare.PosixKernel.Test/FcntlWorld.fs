@@ -317,9 +317,7 @@ module internal FcntlWorld =
 
         let system = connect client port system
 
-        match
-            UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) flags system
-        with
+        match AcceptCalls.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped (Some 16u) flags system with
         | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept: %A{other}"
 

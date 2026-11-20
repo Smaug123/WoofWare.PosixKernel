@@ -281,6 +281,10 @@ module TestCallProgress =
             fun () ->
                 UnixSocket.getpeernameWithLength 16u Unchecked.defaultof<PausedGetPeerName<int, string>>
                 |> ignore<GetSockNameAnswer>
+            "UnixConnection.acceptWithLength",
+            fun () ->
+                UnixConnection.acceptWithLength 16u Unchecked.defaultof<PausedAccept<int, string>>
+                |> ignore<AcceptOutcome * UnixSystem<int, string>>
             "UnixSocket.getsockoptWithLength",
             fun () ->
                 UnixSocket.getsockoptWithLength 4u Unchecked.defaultof<PausedGetSockOpt<int, string>>

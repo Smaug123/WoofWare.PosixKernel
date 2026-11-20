@@ -268,7 +268,7 @@ module TestFirstWake =
             let listener, system = KeventWorld.listenerAt port system
 
             let park (thread : int) (system : UnixSystem<int, string>) =
-                UnixConnection.tryAccept (Callers.thread thread system) listener UserBuffer.Mapped (Some 16u) 0 system
+                AcceptCalls.tryAccept (Callers.thread thread system) listener UserBuffer.Mapped (Some 16u) 0 system
                 |> sleeps
                     "accept"
                     (fun outcome ->
@@ -284,7 +284,7 @@ module TestFirstWake =
                 Drain = none
                 Finish =
                     fun thread system ->
-                        match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
+                        match AcceptCalls.tryFinishAccept 16u (Callers.thread thread system) system with
                         | Ok (AcceptOutcome.Accepted _, system) -> Answered ("accepted", system)
                         | Ok (AcceptOutcome.Interrupted, system) -> interrupted thread system
                         | Ok (AcceptOutcome.WouldBlock _, system) -> Asleep system

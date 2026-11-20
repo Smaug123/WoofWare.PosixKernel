@@ -45,6 +45,7 @@
     <Compile Include="CopyIn.fs" />
     <Compile Include="OptionValue.fs" />
     <Compile Include="SockNameCalls.fs" />
+    <Compile Include="AcceptCalls.fs" />
     <Compile Include="TestDarwinReleaseAgainstHost.fs" />
     <Compile Include="TestGcHeapHardLimit.fs" />
     <Compile Include="HostFileSystemType.fs" />
@@ -302,6 +303,7 @@
     <Compile Include="TestCopyOutMeasured.fs" />
     <Compile Include="TestSockNameFaultLength.fs" />
     <Compile Include="TestSockNameLengthCellMeasured.fs" />
+    <Compile Include="TestAcceptLengthCellMeasured.fs" />
     <Compile Include="TestPoll.fs" />
     <Compile Include="TestPollTimeout.fs" />
     <Compile Include="TestSocketWait.fs" />
@@ -631,6 +633,12 @@
          `TestSockNameLengthCellMeasured` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\sockname-length-cell\darwin-27.2.0-arm64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-length-cell.darwin-27.2.0-arm64.txt" />
     <EmbeddedResource Include="..\docs\probes\sockname-length-cell\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-length-cell.linux-6.18.5-aarch64.txt" />
+    <!-- When accept(2) reads the length cell, what it answers for one that
+         cannot be read, and what becomes of the connection, measured by
+         docs/probes/accept-length-cell on both flavours.
+         `TestAcceptLengthCellMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\accept-length-cell\darwin-27.2.0-arm64.txt" LogicalName="WoofWare.PosixKernel.Test.accept-length-cell.darwin-27.2.0-arm64.txt" />
+    <EmbeddedResource Include="..\docs\probes\accept-length-cell\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.accept-length-cell.linux-6.18.5-aarch64.txt" />
     <!-- What a write or pwrite to a regular file leaves behind when the copy
          from the caller's buffer faults, measured by
          docs/probes/faulting-file-write. `TestFaultingFileWrite` replays every

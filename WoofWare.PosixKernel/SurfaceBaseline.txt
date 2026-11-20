@@ -62,6 +62,25 @@ WoofWare.PosixKernel.AbsoluteUnixPathModule.separator [static field]: char = /
 WoofWare.PosixKernel.AbsoluteUnixPathModule.toByteString [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.AbsoluteUnixPathModule.toEscaped [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> string
 WoofWare.PosixKernel.AbsoluteUnixPathModule.tryToString [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> string option
+WoofWare.PosixKernel.AcceptLengthCell inherit obj, implements WoofWare.PosixKernel.AcceptLengthCell System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.AcceptLengthCell System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.AcceptLengthCell+Read inherit WoofWare.PosixKernel.AcceptLengthCell
+WoofWare.PosixKernel.AcceptLengthCell+Read.get_length [method]: unit -> System.UInt32
+WoofWare.PosixKernel.AcceptLengthCell+Read.length [property]: [read-only] System.UInt32
+WoofWare.PosixKernel.AcceptLengthCell+Tags inherit obj
+WoofWare.PosixKernel.AcceptLengthCell+Tags.Read [static field]: int = 1
+WoofWare.PosixKernel.AcceptLengthCell+Tags.Unread [static field]: int = 0
+WoofWare.PosixKernel.AcceptLengthCell+Unread inherit WoofWare.PosixKernel.AcceptLengthCell
+WoofWare.PosixKernel.AcceptLengthCell+Unread.cell [property]: [read-only] WoofWare.PosixKernel.UserBuffer
+WoofWare.PosixKernel.AcceptLengthCell+Unread.get_cell [method]: unit -> WoofWare.PosixKernel.UserBuffer
+WoofWare.PosixKernel.AcceptLengthCell.Equals [method]: (WoofWare.PosixKernel.AcceptLengthCell, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.AcceptLengthCell.get_IsRead [method]: unit -> bool
+WoofWare.PosixKernel.AcceptLengthCell.get_IsUnread [method]: unit -> bool
+WoofWare.PosixKernel.AcceptLengthCell.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.AcceptLengthCell.IsRead [property]: [read-only] bool
+WoofWare.PosixKernel.AcceptLengthCell.IsUnread [property]: [read-only] bool
+WoofWare.PosixKernel.AcceptLengthCell.NewRead [static method]: System.UInt32 -> WoofWare.PosixKernel.AcceptLengthCell
+WoofWare.PosixKernel.AcceptLengthCell.NewUnread [static method]: WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.AcceptLengthCell
+WoofWare.PosixKernel.AcceptLengthCell.Tag [property]: [read-only] int
 WoofWare.PosixKernel.AcceptOutcome inherit obj, implements WoofWare.PosixKernel.AcceptOutcome System.IEquatable, System.Collections.IStructuralEquatable - union type with 5 cases
 WoofWare.PosixKernel.AcceptOutcome+Accepted inherit WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome+Accepted.address [property]: [read-only] WoofWare.PosixKernel.PeerAddressCopy
@@ -3087,11 +3106,11 @@ WoofWare.PosixKernel.OwnerChangeRule.IsClearsSetIdFromNonDirectories [property]:
 WoofWare.PosixKernel.OwnerChangeRule.IsClearsSetIdWhenAnIdIsNamed [property]: [read-only] bool
 WoofWare.PosixKernel.OwnerChangeRule.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ParkedAccept inherit obj, implements WoofWare.PosixKernel.ParkedAccept System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ParkedAccept System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.ParkedAccept..ctor [constructor]: (WoofWare.PosixKernel.SocketId WoofWare.PosixKernel.SleepTarget, WoofWare.PosixKernel.UserBuffer, System.UInt32 option, bool, bool)
-WoofWare.PosixKernel.ParkedAccept.DeclaredLength [property]: [read-only] System.UInt32 option
+WoofWare.PosixKernel.ParkedAccept..ctor [constructor]: (WoofWare.PosixKernel.SocketId WoofWare.PosixKernel.SleepTarget, WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.AcceptLengthCell, bool, bool)
+WoofWare.PosixKernel.ParkedAccept.Cell [property]: [read-only] WoofWare.PosixKernel.AcceptLengthCell
 WoofWare.PosixKernel.ParkedAccept.Destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.ParkedAccept.Equals [method]: (WoofWare.PosixKernel.ParkedAccept, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.ParkedAccept.get_DeclaredLength [method]: unit -> System.UInt32 option
+WoofWare.PosixKernel.ParkedAccept.get_Cell [method]: unit -> WoofWare.PosixKernel.AcceptLengthCell
 WoofWare.PosixKernel.ParkedAccept.get_Destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.ParkedAccept.get_Listener [method]: unit -> WoofWare.PosixKernel.SocketId WoofWare.PosixKernel.SleepTarget
 WoofWare.PosixKernel.ParkedAccept.get_NewSocketCloseOnExec [method]: unit -> bool
@@ -3487,6 +3506,7 @@ WoofWare.PosixKernel.PathLimitsModule.maxSymlinkTraversals [static method]: Woof
 WoofWare.PosixKernel.PathLimitsModule.pathMaxBytes [static method]: WoofWare.PosixKernel.PathLimits -> int
 WoofWare.PosixKernel.PathWalk inherit obj
 WoofWare.PosixKernel.PathWalk.resolveExistingFromRoot [static method]: WoofWare.PosixKernel.PathLimits -> WoofWare.PosixKernel.Credentials -> WoofWare.PosixKernel.SymlinkProtection -> WoofWare.PosixKernel.SymlinkPolicy -> WoofWare.PosixKernel.UnixPath -> WoofWare.PosixKernel.VirtualFileSystem -> Microsoft.FSharp.Core.FSharpResult<WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.UnixError>
+WoofWare.PosixKernel.PausedAccept`2 inherit obj
 WoofWare.PosixKernel.PausedAccess`2 inherit obj
 WoofWare.PosixKernel.PausedBind inherit obj
 WoofWare.PosixKernel.PausedBind.copyRange [static method]: WoofWare.PosixKernel.PausedBind<'Thread, 'Handler> -> WoofWare.PosixKernel.CopyRange
@@ -6382,14 +6402,14 @@ WoofWare.PosixKernel.SymlinkTargetModule.toUnixPath [static method]: WoofWare.Po
 WoofWare.PosixKernel.SymlinkTargetModule.tryToString [static method]: WoofWare.PosixKernel.SymlinkTarget -> string option
 WoofWare.PosixKernel.Syscall`2 inherit obj, implements WoofWare.PosixKernel.Syscall<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable - union type with 118 cases
 WoofWare.PosixKernel.Syscall`2+Accept inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2+Accept.declaredLength [property]: [read-only] System.UInt32 option
 WoofWare.PosixKernel.Syscall`2+Accept.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+Accept.fd [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+Accept.flags [property]: [read-only] int
-WoofWare.PosixKernel.Syscall`2+Accept.get_declaredLength [method]: unit -> System.UInt32 option
 WoofWare.PosixKernel.Syscall`2+Accept.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+Accept.get_fd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Accept.get_flags [method]: unit -> int
+WoofWare.PosixKernel.Syscall`2+Accept.get_length [method]: unit -> System.UInt32 WoofWare.PosixKernel.CopiedArgument
+WoofWare.PosixKernel.Syscall`2+Accept.length [property]: [read-only] System.UInt32 WoofWare.PosixKernel.CopiedArgument
 WoofWare.PosixKernel.Syscall`2+Access inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+Access.get_mode [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Access.get_path [method]: unit -> WoofWare.PosixKernel.PathArgumentBytes
@@ -7428,7 +7448,7 @@ WoofWare.PosixKernel.Syscall`2.IsUnlinkAt [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsUTimensAt [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.IsWrite [property]: [read-only] bool
 WoofWare.PosixKernel.Syscall`2.Kqueue [static property]: [read-only] WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewAccept [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32 option, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewAccept [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32 WoofWare.PosixKernel.CopiedArgument, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewAccess [static method]: (WoofWare.PosixKernel.PathArgumentBytes, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewBind [static method]: (int, System.Byte System.Collections.Immutable.ImmutableArray WoofWare.PosixKernel.CopiedArgument, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewBytesAvailable [static method]: (int, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -7845,10 +7865,11 @@ WoofWare.PosixKernel.UnixClock inherit obj
 WoofWare.PosixKernel.UnixClock.clockGettime [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.ClockGettimeAnswer
 WoofWare.PosixKernel.UnixClock.gettimeofday [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixTimestamp
 WoofWare.PosixKernel.UnixConnection inherit obj
-WoofWare.PosixKernel.UnixConnection.accept [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 option -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.AcceptOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixConnection.accept [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UserBuffer -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedAccept<'Thread, 'Handler>, (WoofWare.PosixKernel.AcceptOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
+WoofWare.PosixKernel.UnixConnection.acceptWithLength [static method]: System.UInt32 -> WoofWare.PosixKernel.PausedAccept<'Thread, 'Handler> -> (WoofWare.PosixKernel.AcceptOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixConnection.connect [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedConnect<'Thread, 'Handler>, (WoofWare.PosixKernel.SyscallOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixConnection.connectWithAddress [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.PausedConnect<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixConnection.finishAccept [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.AcceptOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixConnection.finishAccept [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedAccept<'Thread, 'Handler>, (WoofWare.PosixKernel.AcceptOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixConnection.shutdown [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ShutdownAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixCredentials inherit obj
 WoofWare.PosixKernel.UnixCredentials.getegid [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.GroupId

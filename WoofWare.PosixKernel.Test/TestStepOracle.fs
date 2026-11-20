@@ -432,8 +432,9 @@ module TestStepOracle =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength, flags) ->
-            UnixConnection.tryAccept caller fd destination declaredLength flags system
+        | Syscall.Accept (fd, destination, length, flags) ->
+            UnixConnection.tryAccept caller fd destination (bufferOf length) flags system
+            |> CallProgress.resumeWith (fun paused -> UnixConnection.tryAcceptWithLength (cell length) paused)
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->
@@ -745,7 +746,7 @@ module TestStepOracle =
         let system = system |> stream 10 |> connect 10
 
         let system =
-            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped (Some 16u) 0 system with
+            match AcceptCalls.tryAccept (Callers.leader system) 9 UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted (11, _), system) -> system
             | other -> failwith $"setting up, accept: %A{other}"
 
@@ -1813,10 +1814,10 @@ module TestStepOracle =
             |> Gen.map Syscall.Listen
             "Accept",
             Gen.map4
-                (fun fd destination declaredLength flags -> Syscall.Accept (fd, destination, declaredLength, flags))
+                (fun fd destination length flags -> Syscall.Accept (fd, destination, length, flags))
                 socketFd
                 userBufferGen
-                (Gen.optionOf socklenGen)
+                (copiedGen socklenGen)
                 acceptFlagsGen
             |> Gen.filter (fun call ->
                 match call with

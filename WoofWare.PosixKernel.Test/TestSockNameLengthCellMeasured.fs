@@ -203,7 +203,7 @@ module TestSockNameLengthCellMeasured =
         | other -> failwith $"listen answered %A{other}"
 
     let private accept (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.leader system) listener UserBuffer.Mapped (Some 16u) 0 system with
+        match AcceptCalls.tryAccept (Callers.leader system) listener UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"accept answered %A{other}"
 

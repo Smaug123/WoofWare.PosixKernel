@@ -114,7 +114,10 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     | Poll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A Darwin `poll(2)`, as `UnixPoll.finishPoll` answers it.
     | KqueuePoll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
-    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it.
+    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it, or, where
+    /// that stops for the length cell (Linux), as
+    /// `UnixConnection.acceptWithLength` then answers it, given what the cell
+    /// of the `Syscall.Accept` that `UnixWait.finish` was given holds.
     | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A `read(2)` of a pipe, as `UnixReadWrite.finishRead` answers it.
     | PipeRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
@@ -198,7 +201,7 @@ type internal FinishRefusal =
     /// The thread is parked in `parked`, which no call of the `Syscall` case
     /// given parks a thread in.
     | NotTheParkedCall of parked : ParkedSyscall
-    /// The thread is parked in `parked`, a write or a `recvfrom` that stopped
+    /// The thread is parked in `parked`, a write, a `recvfrom` or an `accept` that stopped
     /// to copy from a buffer or a length cell it was made with as readable,
     /// which the `Syscall` now gives as `buffer`.
     | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
@@ -804,6 +807,37 @@ module UnixWait =
             | CopiedArgument.Addressless ->
                 Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
 
+    /// The woken `accept` `thread` is parked in, finished by
+    /// `UnixConnection`'s finishing body, and, where that stops for its length
+    /// cell (Linux, which reads it once a connection has come), resumed with
+    /// what the cell `call` gives holds.
+    let private tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, FinishRefusal>
+        =
+        match UnixConnection.tryFinishAcceptIn thread system with
+        | Error refusal -> Error (FinishRefusal.Accept refusal)
+        | Ok (CallProgress.Answered answer) -> Ok answer
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let cell =
+                match call with
+                | Syscall.Accept (_, _, length, _) -> length
+                | _ ->
+                    failwith
+                        $"UnixWait.finish: the thread is parked in %A{parked}, an accept, but was admitted with a Syscall that is not an accept (this is a bug in this library)."
+
+            match cell with
+            | CopiedArgument.Readable length ->
+                UnixConnection.tryAcceptWithLengthIn length paused
+                |> Result.mapError FinishRefusal.Accept
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
+
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
     /// parked in, which `call` describes, finished by the finishing body of
     /// its family.
@@ -844,9 +878,8 @@ module UnixWait =
             |> Result.map ViewFinishedCall.KqueuePoll
             |> Result.mapError FinishRefusal.Poll
         | ParkedSyscall.Accept _ ->
-            UnixConnection.tryFinishAcceptIn thread system
+            tryFinishAcceptIn parked call thread system
             |> Result.map ViewFinishedCall.Accept
-            |> Result.mapError FinishRefusal.Accept
         | ParkedSyscall.PipeRead _ ->
             UnixReadWrite.tryFinishReadIn thread system
             |> Result.map ViewFinishedCall.PipeRead
@@ -912,9 +945,11 @@ module UnixWait =
     /// buffer is when the call is finished: `finish` hands the bytes of
     /// `call`'s buffer to the write's resumption (`UnixReadWrite.writeWithBytes`),
     /// so it never stops partway. A woken Linux `recvfrom` reads its length
-    /// cell once its datagram has arrived: `finish` hands what `call`'s cell
-    /// holds to its resumption (`UnixReadWrite.recvfromWithLength`). Every
-    /// other call is finished without reading `call`'s arguments.
+    /// cell once its datagram has arrived, and a woken Linux `accept` once its
+    /// connection has: `finish` hands what `call`'s cell holds to the
+    /// resumption (`UnixReadWrite.recvfromWithLength`,
+    /// `UnixConnection.acceptWithLength`). Every other call is finished
+    /// without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
@@ -937,7 +972,7 @@ module UnixWait =
     /// that end before the bytes it copies, as `step` does, and
     /// `UnmodelledException` if `call` gives the buffer as anything but
     /// readable, which it was when the call was made; and likewise for a
-    /// `recvfrom`'s length cell. Otherwise it throws what the family's finishing
+    /// `recvfrom`'s or an `accept`'s length cell. Otherwise it throws what the family's finishing
     /// function throws.
     let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

@@ -63,8 +63,10 @@ type AcceptOutcome =
     /// descriptor is allocated. The system that comes back with this answer records all of
     /// that.
     ///
-    /// Linux answers this, with `EINVAL`, for a negative declared length,
-    /// which it reads only once it holds the connection.
+    /// Linux answers this when the address buffer is not NULL, for it reads
+    /// the length cell only once it holds the connection: with `EFAULT` for a
+    /// cell that is NULL or faults, and with `EINVAL` for one holding a
+    /// negative length.
     | DroppedConnection of error : UnixError
     /// The call did not return: the listener is blocking and its accept queue
     /// is empty. The calling thread is parked, and sleeps until
@@ -144,10 +146,6 @@ type internal AcceptRefusal =
     /// The call carries flags, which only Linux's `accept4` takes, and this
     /// kernel is of another flavour.
     | FlagsNotProvided of flavour : SimulatedUnixFlavour
-    /// The call supplied a declared length for a NULL destination
-    /// (`nullDestination`), which no kernel reads; or none for any other
-    /// destination, whose length cell a kernel reads.
-    | LengthContradictsDestination of nullDestination : bool
 
 [<RequireQualifiedAccess>]
 module internal AcceptRefusal =
@@ -171,10 +169,6 @@ module internal AcceptRefusal =
             $"socket %O{listener} is a listener on which a close of the descriptor an accept was asleep through has ended every accept, and this accept would sleep on it. Measured on Darwin (close-ends-call.c section A7), such a sleep answers ECONNABORTED as soon as anything wakes it, a connection or a signal, and one connection wakes one such sleeper, the connection staying queued, so a second sleeper sleeps on through it. This kernel wakes a sleeping accept for as long as a connection is queued, so it would wake every such sleeper for one connection."
         | AcceptRefusal.FlagsNotProvided flavour ->
             $"the call carries flags, and this kernel is %O{flavour}-flavoured; only Linux has accept4, so no program could have made the call."
-        | AcceptRefusal.LengthContradictsDestination true ->
-            "the destination is NULL, which neither flavour reads the length cell for, yet the call supplies the length the cell holds. Pass no length."
-        | AcceptRefusal.LengthContradictsDestination false ->
-            "the destination is not NULL, so the kernel reads the caller's length cell, yet the call supplies no length. Pass the 32-bit word the cell holds."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : AcceptRefusal) : RefusalKind =
@@ -188,7 +182,6 @@ module internal AcceptRefusal =
         | AcceptRefusal.DarwinDrainedListener _ -> RefusalKind.Unmodelled
         | AcceptRefusal.SignalBesideConsumedWake _ -> RefusalKind.Unmodelled
         | AcceptRefusal.FlagsNotProvided _ -> RefusalKind.NotOnPlatform
-        | AcceptRefusal.LengthContradictsDestination _ -> RefusalKind.Contradictory "declaredLength"
 
 /// What an `accept4` flag word asks of the socket the call makes.
 type internal AcceptFlags =
@@ -218,26 +211,40 @@ module internal AcceptFlags =
                     AsksCloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
                 }
 
-/// Where an `accept` copies the peer address out to, as its two pointers say.
+/// Where an `accept` copies the peer address out to, as its two pointers say,
+/// and as far as the call has read the length cell.
 [<RequireQualifiedAccess>]
-type internal AcceptDestination =
+type internal AcceptCopy =
     /// The address pointer is NULL. Neither flavour copies an address or reads
     /// or writes the length cell then.
-    | Null
-    /// Any other address pointer, never NULL, and the 32-bit word the caller's
-    /// length cell holds.
-    | Buffer of destination : UserBuffer * declaredLength : uint32
+    | NotRequested
+    /// Any other address pointer, never NULL, and the length cell, which the
+    /// call has not read.
+    | Unread of destination : UserBuffer * cell : UserBuffer
+    /// Any other address pointer, never NULL, and the 32-bit word the length
+    /// cell holds.
+    | Holds of destination : UserBuffer * length : uint32
 
 [<RequireQualifiedAccess>]
-module internal AcceptDestination =
-    /// The destination a call names by `destination` and `declaredLength`,
-    /// which is `None` exactly when `destination` is NULL.
-    let parse (destination : UserBuffer) (declaredLength : uint32 option) : Result<AcceptDestination, AcceptRefusal> =
-        match destination, declaredLength with
-        | UserBuffer.Unmapped 0UL, None -> Ok AcceptDestination.Null
-        | UserBuffer.Unmapped 0UL, Some _ -> Error (AcceptRefusal.LengthContradictsDestination true)
-        | _, Some declaredLength -> Ok (AcceptDestination.Buffer (destination, declaredLength))
-        | _, None -> Error (AcceptRefusal.LengthContradictsDestination false)
+module internal AcceptCopy =
+    /// The copy a call names by `destination` and `cell`, of whose cell it has
+    /// read `read`. Fails loudly if `read` is a value the call never read.
+    let ofCall (destination : UserBuffer) (cell : UserBuffer) (read : uint32 option) : AcceptCopy =
+        match destination, cell, read with
+        | UserBuffer.Unmapped 0UL, _, None -> AcceptCopy.NotRequested
+        | _, _, None -> AcceptCopy.Unread (destination, cell)
+        | UserBuffer.Unmapped 0UL, _, Some _
+        | _, (UserBuffer.Unmapped _ | UserBuffer.Opaque | UserBuffer.Addressless), Some _ ->
+            failwith
+                $"UnixConnection.acceptWithLength: the call was given the value of a length cell at %A{cell}, with the address buffer %A{destination}, which it never reads (this is a bug in this library)."
+        | _, UserBuffer.Mapped, Some length -> AcceptCopy.Holds (destination, length)
+
+    /// The cell a call that sleeps holds, the process's cell being `cell`.
+    let parked (cell : UserBuffer) (copy : AcceptCopy) : AcceptLengthCell =
+        match copy with
+        | AcceptCopy.NotRequested
+        | AcceptCopy.Unread _ -> AcceptLengthCell.Unread cell
+        | AcceptCopy.Holds (_, length) -> AcceptLengthCell.Read length
 
 /// What `shutdown(2)` answered.
 [<RequireQualifiedAccess>]
@@ -516,6 +523,42 @@ module PausedConnect =
         : CopyRange
         =
         paused.Range
+
+/// Which `accept(2)` a `PausedAccept` is, so that its resumption knows what to
+/// make again.
+[<RequireQualifiedAccess>]
+type internal PausedAcceptCall =
+    /// The call as first made, with its arguments, which is made again from
+    /// the start with the cell's value.
+    | Call of fd : int * destination : UserBuffer * cell : UserBuffer * flags : int
+    /// A call that slept and was woken, whose finishing call is made again
+    /// with the cell's value: its park holds what it needs.
+    | Finish
+
+/// An `accept(2)`, or a woken one, that has stopped at the point where the
+/// kernel reads the process's length cell. `UnixConnection.accept` and
+/// `UnixConnection.finishAccept` answer one.
+///
+/// To finish the call, the client reads the cell, a `socklen_t` of four bytes
+/// in the simulated machine's byte order, from the process's memory, and
+/// passes its value to `UnixConnection.acceptWithLength`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `acceptWithLength` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
+[<NoEquality ; NoComparison>]
+type PausedAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            /// The thread that made the call, which the rest of it is made by.
+            Thread : 'Thread
+            Call : PausedAcceptCall
+            /// The system the call, or its finishing call, was made in:
+            /// everything either does before it reads the cell is a question,
+            /// which it asks again with the cell's value.
+            System : ProcessView<'Thread, 'Handler>
+        }
 
 [<RequireQualifiedAccess>]
 module UnixConnection =
@@ -2408,6 +2451,14 @@ module UnixConnection =
             // raises it.
             system |> SocketWake.signalTransfer connectionId wakes
 
+    /// What `handOver` came to: an answer, or a stop for the length cell
+    /// before the connection is taken.
+    [<RequireQualifiedAccess ; NoEquality ; NoComparison>]
+    type private HandOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+        | Answered of outcome : AcceptOutcome * system : ProcessView<'Thread, 'Handler>
+        /// The kernel reads the length cell, which the call has not read.
+        | StopsForTheCell
+
     /// Hand the oldest connection on `socketId`'s queue over to the caller: the
     /// half of `accept(2)` that follows the choice of a connection, shared by a
     /// call that finds one at once and a parked call that finds one on waking.
@@ -2421,9 +2472,9 @@ module UnixConnection =
         (socketId : SocketId)
         (nonBlocking : bool)
         (flags : AcceptFlags)
-        (destination : AcceptDestination)
+        (copy : AcceptCopy)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+        : Result<HandOver<'Thread, 'Handler>, AcceptRefusal>
         =
         // A connection is there to take, which needs a descriptor below the
         // limit: at a limit of the bound, EMFILE (measured, `fcntl-dup.c`,
@@ -2442,10 +2493,7 @@ module UnixConnection =
 
         // Take the connection, and write of its client's address what
         // `address` says.
-        let take
-            (address : Ipv4Endpoint -> PeerAddressCopy)
-            : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
-            =
+        let take (address : Ipv4Endpoint -> PeerAddressCopy) : Result<HandOver<'Thread, 'Handler>, AcceptRefusal> =
             let acceptedFd, connection, system = acceptConnection socketId system
 
             // `O_NONBLOCK` inheritance is the flavour's answer rather than this
@@ -2479,21 +2527,41 @@ module UnixConnection =
 
             let system = UnixSystemState.withFileDescriptors registry system
 
-            Ok (AcceptOutcome.Accepted (acceptedFd, address connection.ClientAddress), system)
+            Ok (HandOver.Answered (AcceptOutcome.Accepted (acceptedFd, address connection.ClientAddress), system))
 
-        match destination with
-        | AcceptDestination.Null ->
+        match copy with
+        | AcceptCopy.NotRequested ->
             // Measured on both flavours (`socket-address-length.c`, the
             // `O4 accept NULL` rows): the call takes the connection at every
             // declared length, the negative ones included on Linux, and leaves
             // the length cell as it was. Neither kernel reads the cell.
             take (fun _ -> PeerAddressCopy.NotRequested)
-        | AcceptDestination.Buffer (UserBuffer.Addressless, _) ->
+        | AcceptCopy.Unread (UserBuffer.Addressless, _)
+        | AcceptCopy.Holds (UserBuffer.Addressless, _) ->
             // Whether the kernel reads the length cell, and whether it writes
             // anything at all, turns on whether the address is NULL, which a
             // client with no number for it cannot say.
             Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen)
-        | AcceptDestination.Buffer (buffer, declaredLength) ->
+        | AcceptCopy.Unread (_, cell) ->
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Darwin ->
+                failwith
+                    "UnixConnection.accept: a Darwin accept reached its connection without having read its length cell, which Darwin reads before anything else (this is a bug in this library)."
+            | SimulatedUnixFlavour.Linux ->
+
+            // Measured (`docs/probes/accept-length-cell`, A and B): Linux reads
+            // the cell only now that it holds the connection, a woken call
+            // included, and a cell that is NULL or faults answers EFAULT with
+            // the connection lost, as a negative length does below, the
+            // client seeing an orderly close.
+            match LengthCellRead.ofCell cell with
+            | Error refusal -> Error (AcceptRefusal.Buffer refusal)
+            | Ok LengthCellRead.Faults ->
+                Ok (
+                    HandOver.Answered (AcceptOutcome.DroppedConnection UnixError.EFAULT, dropConnection socketId system)
+                )
+            | Ok LengthCellRead.Reads -> Ok HandOver.StopsForTheCell
+        | AcceptCopy.Holds (buffer, declaredLength) ->
 
         // Measured (`socket-address-length.c`): Linux reads the length cell as
         // an `int` only once it holds the connection, and answers EINVAL for a
@@ -2503,7 +2571,7 @@ module UnixConnection =
             SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
             && int declaredLength < 0
         then
-            Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, dropConnection socketId system)
+            Ok (HandOver.Answered (AcceptOutcome.DroppedConnection UnixError.EINVAL, dropConnection socketId system))
         else
 
         // The destination is screened after the queue and before the dequeue,
@@ -2533,19 +2601,37 @@ module UnixConnection =
             )
         )
 
-    /// `tryAccept` once `Entry` has admitted its caller.
+    /// `tryAccept` once `Entry` has admitted its caller, given the value of
+    /// the length cell if the call has read it.
     let private tryAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32 option)
+        (cell : UserBuffer)
         (flags : int)
+        (read : uint32 option)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
         =
-        match AcceptDestination.parse destination declaredLength with
-        | Error refusal -> Error refusal
-        | Ok parsedDestination ->
+        let made = system
+
+        let answered (outcome : AcceptOutcome) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (CallProgress.Answered (outcome, system))
+
+        // The call stops to read the length cell, and is made again from the
+        // start with what the cell holds.
+        let stopsForTheCell () =
+            let paused : PausedAccept<'Thread, 'Handler> =
+                {
+                    Thread = thread
+                    Call = PausedAcceptCall.Call (fd, destination, cell, flags)
+                    System = made
+                }
+
+            Ok (CallProgress.NeedsCopyIn paused)
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -2554,19 +2640,42 @@ module UnixConnection =
         | SimulatedUnixFlavour.Darwin
         | SimulatedUnixFlavour.Linux ->
 
+        let copy = AcceptCopy.ofCall destination cell read
+
+        // Measured (`docs/probes/accept-length-cell`, A and B): Darwin reads
+        // the length cell of a call whose address buffer is not NULL before
+        // anything else, so one that is NULL or faults is EFAULT ahead of even
+        // a closed descriptor's EBADF, and ahead of a sleep, leaving a queued
+        // connection queued. Linux reads it only once it holds a connection
+        // (`handOver`).
+        let readFirst =
+            match flavour, copy with
+            | SimulatedUnixFlavour.Darwin, AcceptCopy.Unread (UserBuffer.Addressless, _) ->
+                Some (Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen))
+            | SimulatedUnixFlavour.Darwin, AcceptCopy.Unread (_, cell) ->
+                match LengthCellRead.ofCell cell with
+                | Error refusal -> Some (Error (AcceptRefusal.Buffer refusal))
+                | Ok LengthCellRead.Faults -> Some (answered (AcceptOutcome.Failed UnixError.EFAULT) system)
+                | Ok LengthCellRead.Reads -> Some (stopsForTheCell ())
+            | _ -> None
+
+        match readFirst with
+        | Some answer -> answer
+        | None ->
+
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
         // descriptor answers EBADF and a non-socket ENOTSOCK whatever the
         // destination and whatever the listener would have said.
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
-        | None -> Ok (AcceptOutcome.Failed UnixError.EBADF, system)
+        | None -> answered (AcceptOutcome.Failed UnixError.EBADF) system
         | Some (descriptionId, description) ->
 
         // Measured (`docs/probes/accept4-flags`, sections A and B): an unknown
         // flag is EINVAL right after EBADF, ahead of every other answer, the
         // descriptor limit's included, and leaves the queue alone.
         match AcceptFlags.ofLinux flags with
-        | None -> Ok (AcceptOutcome.Failed UnixError.EINVAL, system)
+        | None -> answered (AcceptOutcome.Failed UnixError.EINVAL) system
         | Some acceptFlags ->
 
         // Measured (`fcntl-dup.c`, LIMIT rows): Linux takes the new descriptor
@@ -2595,7 +2704,7 @@ module UnixConnection =
         | OpenFileTarget.Inotify _
         | OpenFileTarget.Pipe _
         | OpenFileTarget.Kqueue _
-        | OpenFileTarget.Epoll _ -> Ok (AcceptOutcome.Failed UnixError.ENOTSOCK, system)
+        | OpenFileTarget.Epoll _ -> answered (AcceptOutcome.Failed UnixError.ENOTSOCK) system
         | OpenFileTarget.Socket socketId ->
 
         let socket = UnixMachineState.socket socketId system.Machine
@@ -2610,7 +2719,7 @@ module UnixConnection =
             // The kind check beats the listening check: measured on both, a
             // datagram socket -- which is also "not listening" -- answers
             // EOPNOTSUPP, blocking or not.
-            Ok (AcceptOutcome.Failed UnixError.EOPNOTSUPP, system)
+            answered (AcceptOutcome.Failed UnixError.EOPNOTSUPP) system
         | SocketKind.SeqPacket -> Error (AcceptRefusal.UnmeasuredKind (socketId, socket.Kind))
         | SocketKind.Stream ->
 
@@ -2629,7 +2738,7 @@ module UnixConnection =
             // or not; the other non-listening phases share the answer because it
             // is the same kernel test (Linux's TCP_LISTEN check, Darwin's
             // SO_ACCEPTCONN check).
-            Ok (AcceptOutcome.Failed UnixError.EINVAL, system)
+            answered (AcceptOutcome.Failed UnixError.EINVAL) system
         | SocketPhase.Listening listenState ->
 
         match listenState.Queue with
@@ -2640,7 +2749,7 @@ module UnixConnection =
             // (close-ends-call.c section A7a), a drained listener's is EAGAIN
             // too.
             if description.NonBlocking then
-                Ok (AcceptOutcome.Failed UnixError.EAGAIN, system)
+                answered (AcceptOutcome.Failed UnixError.EAGAIN) system
             elif socket.Drained then
                 Error (AcceptRefusal.DarwinDrainedListener socketId)
             else
@@ -2652,30 +2761,39 @@ module UnixConnection =
                         {
                             Listener = SleepTarget.Waiting (descriptionId, fd)
                             Destination = destination
-                            DeclaredLength = declaredLength
+                            Cell = AcceptCopy.parked cell copy
                             NewSocketNonBlocking = acceptFlags.AsksNonBlocking
                             NewSocketCloseOnExec = acceptFlags.AsksCloseOnExec
                         }
 
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
-        | _ :: _ -> handOver socketId description.NonBlocking acceptFlags parsedDestination system
+                answered
+                    (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked))
+                    (Parking.parkWaiting thread parked system)
+        | _ :: _ ->
+            match handOver socketId description.NonBlocking acceptFlags copy system with
+            | Error refusal -> Error refusal
+            | Ok (HandOver.Answered (outcome, system)) -> answered outcome system
+            | Ok HandOver.StopsForTheCell -> stopsForTheCell ()
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32 option)
+        (length : UserBuffer)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * UnixSystem<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
         =
         Entry.call
             "UnixConnection.accept"
             CallerRequirement.Running
             caller
-            (Shape.result Shape.withSystem)
-            (tryAcceptIn (Caller.thread caller) fd destination declaredLength flags)
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryAcceptIn (Caller.thread caller) fd destination length flags None)
             system
 
     /// `accept(2)`, made by `caller`: take the oldest completed connection off
@@ -2683,43 +2801,45 @@ module UnixConnection =
     /// end of that connection. When the listener is blocking and its queue is
     /// empty, the thread instead sleeps until a connection arrives.
     ///
-    /// `destination` is the client's description of the process's address
-    /// buffer (see `UserBuffer`). `declaredLength` is the 32-bit value that
-    /// the client read from the process's length cell before making this
-    /// call. This library has no way to hear that the length cell itself is
-    /// NULL or unreadable when `destination` is not NULL, so a client facing
-    /// such a cell has no answer to give from this function. A blocking call
-    /// that sleeps keeps this value: under Linux, which reads the cell only
-    /// after the wait, a change that another thread makes to the cell while
-    /// the call sleeps is not seen (see `ParkedAccept.DeclaredLength`).
-    ///
+    /// `destination` and `length` are the client's descriptions of the
+    /// process's address buffer and of its length cell (see `UserBuffer`), not
+    /// their contents. A NULL `destination` or `length` is
+    /// `UserBuffer.Unmapped 0UL`.
     /// The answer carries the peer address that the client stores into the
     /// process's memory (`PeerAddressCopy`); this library stores nothing. As
-    /// for `getsockname`, the declared length limits how many bytes are
-    /// stored, but **not the length reported**: a call declaring 8 stores
-    /// eight bytes and reports 16.
+    /// for `getsockname`, the length that the cell holds limits how many bytes
+    /// are stored, but **not the length reported**: a call declaring 8 stores
+    /// eight bytes and reports 16. The kernel reads the cell and then writes
+    /// it, so `UserBuffer.Mapped` says that the cell can be both read and
+    /// written; a cell that can be read but not written has no answer here.
     ///
-    /// Linux reads `declaredLength` as an `int`, and only once it holds a
-    /// connection. So a negative length fails with `EINVAL` after the
-    /// connection has been taken off the queue, and the connection is lost
-    /// (`AcceptOutcome.DroppedConnection`). Darwin reads it as a `socklen_t`,
-    /// so no length is an error there.
+    /// Neither flavour reads or writes the cell when `destination` is NULL,
+    /// so such a call takes the connection and stores nothing
+    /// (`PeerAddressCopy.NotRequested`), whatever `length` is. Otherwise the
+    /// call stops where the kernel reads the cell (`CallProgress.NeedsCopyIn`),
+    /// and the client reads the `socklen_t` there and passes it to
+    /// `acceptWithLength`, which finishes the call. Every answer that comes
+    /// before that read comes first, as `CallProgress.Answered`. The two
+    /// flavours read the cell at different points:
     ///
-    /// A NULL `destination` is `UserBuffer.Unmapped 0UL`, and the client then
-    /// passes `None` for `declaredLength`. For any other destination the
-    /// client passes `Some`. A call that breaks either rule throws
-    /// `ArgumentException`. Neither flavour reads or writes the length cell
-    /// when the destination is NULL, so such a call takes the connection and
-    /// stores nothing (`PeerAddressCopy.NotRequested`), whatever the cell
-    /// holds. A cell that is itself NULL, as in `accept(fd, NULL, NULL)`, is
-    /// never dereferenced.
+    /// - **Darwin** reads it before anything else, so a cell that is NULL or
+    ///   faults answers `EFAULT` ahead of even `EBADF`, before the call
+    ///   sleeps, and leaves a queued connection queued. A call that sleeps
+    ///   keeps what the cell held, and a change another thread makes to it
+    ///   meanwhile is not seen.
+    /// - **Linux** reads it only once it holds a connection, after every other
+    ///   answer, and after a sleep (in `finishAccept`). A cell that is NULL or
+    ///   faults then answers `EFAULT`, and a negative length, read as an
+    ///   `int`, `EINVAL`, each with the connection lost
+    ///   (`AcceptOutcome.DroppedConnection`). Darwin reads the length as a
+    ///   `socklen_t`, so no length is an error there.
     ///
     /// When the call stores nothing through a destination other than NULL, the
     /// kernel never looks at that destination: at a declared length of zero,
     /// every such buffer succeeds, including one that names no storage. The
     /// exception is a `UserBuffer.Addressless` destination, which is refused
-    /// once there is a connection to take, because whether the kernel writes
-    /// the length cell depends on whether the destination is NULL.
+    /// where the kernel would ask whether it is NULL: under Darwin before
+    /// anything else, and under Linux once there is a connection to take.
     ///
     /// Every `AcceptOutcome.Failed` leaves the listener exactly as it was, its
     /// queue included.
@@ -2732,7 +2852,7 @@ module UnixConnection =
     /// an option that `setsockopt` refuses to set. When several threads sleep
     /// on one listener, a connection wakes the one that went to sleep first
     /// (see `UnixWait.wake`). The kernel does not look at the destination
-    /// before the thread sleeps.
+    /// before the thread sleeps, and only Darwin reads the cell then.
     ///
     /// Under Darwin, closing the descriptor through which a sleeping accept was
     /// made ends every accept asleep on the listener, whichever descriptor it
@@ -2760,12 +2880,12 @@ module UnixConnection =
         (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
-        (declaredLength : uint32 option)
+        (length : UserBuffer)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : AcceptOutcome * UnixSystem<'Thread, 'Handler>
+        : CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * UnixSystem<'Thread, 'Handler>>
         =
-        tryAccept caller fd destination declaredLength flags system
+        tryAccept caller fd destination length flags system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
     /// Whether a thread of any process on the machine but `thread` of this one
@@ -2798,11 +2918,22 @@ module UnixConnection =
                 anyAsleep ValueNone (ProcessTable.find "UnixConnection.accept" key system.Others).Threads
             ))
 
+    /// `tryFinishAcceptWith`, before the call's hold on the listener is let
+    /// go of.
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (read : uint32 option)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
         =
+        let made = system
+
+        let answered (outcome : AcceptOutcome) (system : ProcessView<'Thread, 'Handler>) =
+            Ok (CallProgress.Answered (outcome, system))
+
         let parked =
             UnixThreadTable.expectParked
                 "UnixConnection.finishAccept"
@@ -2820,7 +2951,7 @@ module UnixConnection =
             // ECONNABORTED, whatever is queued and whatever signal is pending,
             // since a woken accept on a drained listener answers it whatever
             // woke it (section A7).
-            Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, (UnixParkState.unpark thread system))
+            answered (AcceptOutcome.Failed UnixError.ECONNABORTED) (UnixParkState.unpark thread system)
         | SleepTarget.Waiting (listenerId, _) ->
 
         let description =
@@ -2867,9 +2998,29 @@ module UnixConnection =
                         AsksCloseOnExec = parked.NewSocketCloseOnExec
                     }
 
-                match AcceptDestination.parse parked.Destination parked.DeclaredLength with
+                let copy =
+                    match parked.Cell, read with
+                    | AcceptLengthCell.Read _, Some _ ->
+                        failwith
+                            $"UnixConnection.acceptWithLength: thread %O{thread}'s accept read its length cell before it slept, and was given it again (this is a bug in this library)."
+                    | AcceptLengthCell.Read length, None -> AcceptCopy.Holds (parked.Destination, length)
+                    | AcceptLengthCell.Unread cell, read -> AcceptCopy.ofCall parked.Destination cell read
+
+                match handOver socketId description.NonBlocking flags copy finished with
                 | Error refusal -> Error refusal
-                | Ok destination -> handOver socketId description.NonBlocking flags destination finished
+                | Ok (HandOver.Answered (outcome, system)) -> answered outcome system
+                | Ok HandOver.StopsForTheCell ->
+                    // The finishing call is made again from the start with what
+                    // the cell holds, from the system it was made in, in which
+                    // the thread is still parked.
+                    let paused : PausedAccept<'Thread, 'Handler> =
+                        {
+                            Thread = thread
+                            Call = PausedAcceptCall.Finish
+                            System = made
+                        }
+
+                    Ok (CallProgress.NeedsCopyIn paused)
             | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
                 // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the
                 // two-sleeper accept rows): an accepter woken by a connection
@@ -2884,7 +3035,7 @@ module UnixConnection =
                 if wokenByConnection && anotherAsleepOn listenerId thread system then
                     Error (AcceptRefusal.SignalBesideConsumedWake listenerId)
                 else
-                    Ok (AcceptOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+                    answered AcceptOutcome.Interrupted (OwedReturns.interrupt thread interruption finished)
         | SocketPhase.Listening {
                                     Queue = []
                                 } ->
@@ -2895,23 +3046,27 @@ module UnixConnection =
             match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
             | Ok (Some interruption) ->
-                Ok (AcceptOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+                answered AcceptOutcome.Interrupted (OwedReturns.interrupt thread interruption finished)
             | Ok None ->
                 let parkedAgain = ParkedSyscall.Accept parked
 
-                Ok (
-                    AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                    Parking.parkWaiting thread parkedAgain system
-                )
+                answered
+                    (AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain))
+                    (Parking.parkWaiting thread parkedAgain system)
         | phase ->
             failwith
                 $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
-    /// `tryFinishAccept` once `Entry` has admitted its caller.
-    let internal tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishAccept` once `Entry` has admitted its caller, given the value
+    /// of the length cell if the finishing call has read it.
+    let private tryFinishAcceptWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (read : uint32 option)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
@@ -2921,22 +3076,42 @@ module UnixConnection =
         // The call's reference to the listener goes as it returns, and with it
         // the listener, if no descriptor names it any more
         // (`open-file-references.c` section A1).
-        match finishAcceptHolding thread system with
-        | Error refusal -> Error refusal
-        | Ok (outcome, after) ->
-            Ok (outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after)
+        finishAcceptHolding thread read system
+        |> Result.map (fun progress ->
+            match progress with
+            | CallProgress.NeedsCopyIn _ -> progress
+            | CallProgress.Answered (outcome, after) ->
+                CallProgress.Answered (
+                    outcome,
+                    ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after
+                )
+        )
+
+    /// `tryFinishAccept` once `Entry` has admitted its caller.
+    let internal tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
+        =
+        tryFinishAcceptWith thread None system
 
     /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        : Result<
+              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * UnixSystem<'Thread, 'Handler>>,
+              AcceptRefusal
+           >
         =
         Entry.call
             "UnixConnection.finishAccept"
             CallerRequirement.Woken
             caller
-            (Shape.result Shape.withSystem)
+            (Shape.result (Shape.progress Shape.withSystem))
             (tryFinishAcceptIn (Caller.thread caller))
             system
 
@@ -2946,7 +3121,10 @@ module UnixConnection =
     /// When a connection is queued, the call takes the oldest one. The answer
     /// carries the peer address that the client stores through the
     /// destination with which the call was made (`PeerAddressCopy`); see
-    /// `accept` for the destinations it refuses. When the queue is empty again
+    /// `accept` for the destinations it refuses. A Linux call reads its length
+    /// cell only now, so it may stop for it (`CallProgress.NeedsCopyIn`), as
+    /// `accept` does, and `acceptWithLength` takes what the cell holds now. A
+    /// Darwin call read the cell before it slept, and never stops here. When the queue is empty again
     /// (another thread took the connection), the thread goes back to sleep,
     /// behind every other sleeping thread, as a real kernel puts it at the
     /// back of the listener's queue of accepting threads. The thread also goes
@@ -2988,10 +3166,61 @@ module UnixConnection =
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : AcceptOutcome * UnixSystem<'Thread, 'Handler>
+        : CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * UnixSystem<'Thread, 'Handler>>
         =
         tryFinishAccept caller system
         |> Refusal.orRaise "UnixConnection.finishAccept" AcceptRefusal.kind AcceptRefusal.describe
+
+    /// `tryAcceptWithLength` before `Entry.resume` hands back the system it
+    /// answers in.
+    let internal tryAcceptWithLengthIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (declaredLength : uint32)
+        (paused : PausedAccept<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
+        =
+        CallProgress.requirePaused
+            "UnixConnection.acceptWithLength"
+            "UnixConnection.accept or UnixConnection.finishAccept"
+            paused
+
+        let resumed =
+            match paused.Call with
+            | PausedAcceptCall.Call (fd, destination, cell, flags) ->
+                tryAcceptIn paused.Thread fd destination cell flags (Some declaredLength) paused.System
+            | PausedAcceptCall.Finish -> tryFinishAcceptWith paused.Thread (Some declaredLength) paused.System
+
+        resumed
+        |> Result.map (fun progress ->
+            match progress with
+            | CallProgress.Answered answer -> answer
+            | CallProgress.NeedsCopyIn _ ->
+                failwith
+                    "UnixConnection.acceptWithLength: the call stopped for its length cell again, given what the cell holds (this is a bug in this library)."
+        )
+
+    /// `acceptWithLength`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal tryAcceptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (declaredLength : uint32)
+        (paused : PausedAccept<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (tryAcceptWithLengthIn declaredLength paused)
+
+    /// Finish the `accept`, or the woken one, that `paused` holds.
+    /// `declaredLength` is the `socklen_t` that the client read from the
+    /// process's length cell. See `accept` and `finishAccept`.
+    ///
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see
+    /// `PausedAccept`).
+    let acceptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (declaredLength : uint32)
+        (paused : PausedAccept<'Thread, 'Handler>)
+        : AcceptOutcome * UnixSystem<'Thread, 'Handler>
+        =
+        tryAcceptWithLength declaredLength paused
+        |> Refusal.orRaise "UnixConnection.acceptWithLength" AcceptRefusal.kind AcceptRefusal.describe
 
     /// `tryShutdown` once `Entry` has admitted its caller.
     let private tryShutdownIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

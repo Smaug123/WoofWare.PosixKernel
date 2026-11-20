@@ -467,7 +467,7 @@ module TestUnixWaitFinish =
         | Sleep.Accept ->
             let listener, system = KeventWorld.listenerAtAs (Callers.leader system) port system
 
-            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
+            AcceptCalls.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
             |> sleeps
                 "accept"
                 (fun outcome ->

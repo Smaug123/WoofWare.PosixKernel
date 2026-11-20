@@ -99,7 +99,7 @@ module TestBlockingAccept =
 
     /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system with
+        match AcceptCalls.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
@@ -108,7 +108,7 @@ module TestBlockingAccept =
     let private finishWithConnection (thread : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let system = Woken.thread thread system
 
-        match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
+        match AcceptCalls.tryFinishAccept 16u (Callers.thread thread system) system with
         | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
         | other -> failwith $"expected thread %d{thread}'s accept to finish with a connection, got %A{other}"
 
@@ -147,9 +147,11 @@ module TestBlockingAccept =
     // ------------------------------------------------------------------
 
     /// The park records the listener's description, whichever descriptor the
-    /// call came through, and the destination and length it was entered with;
-    /// nothing else about the system changes but the park counter. The
-    /// destination is not screened before the call sleeps, so every kind parks.
+    /// call came through, the destination it was entered with, and the length
+    /// cell, which Darwin has read by then and Linux has not; nothing else about
+    /// the system changes but the park counter. The destination is not screened
+    /// before the call sleeps, so every kind parks, but for an addressless one
+    /// under Darwin, which asks whether it is NULL first.
     [<Test>]
     let ``a blocking listener with nothing queued parks the caller, and changes nothing else`` () : unit =
         let gen =
@@ -177,7 +179,23 @@ module TestBlockingAccept =
 
             let listener = idOf fd system
 
-            match UnixConnection.tryAccept (Callers.thread thread system) fd destination declaredLength 0 system with
+            // Darwin reads the cell before it sleeps, and keeps what it held;
+            // Linux reads it only once a connection has come.
+            let cell =
+                match SimulatedUnixPlatform.flavour platform, declaredLength with
+                | SimulatedUnixFlavour.Darwin, Some length -> AcceptLengthCell.Read length
+                | SimulatedUnixFlavour.Darwin, None
+                | SimulatedUnixFlavour.Linux, None -> AcceptLengthCell.Unread (UserBuffer.Unmapped 0UL)
+                | SimulatedUnixFlavour.Linux, Some _ -> AcceptLengthCell.Unread UserBuffer.Mapped
+
+            match AcceptCalls.tryAccept (Callers.thread thread system) fd destination declaredLength 0 system with
+            // Darwin asks whether the destination is NULL before it sleeps,
+            // which an addressless one cannot say.
+            | Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen) when
+                SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                && destination = UserBuffer.Addressless
+                ->
+                ()
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
@@ -193,7 +211,7 @@ module TestBlockingAccept =
                                     {
                                         Listener = SleepTarget.Waiting (listener, fd)
                                         Destination = destination
-                                        DeclaredLength = declaredLength
+                                        Cell = cell
                                         NewSocketNonBlocking = false
                                         NewSocketCloseOnExec = false
                                     }
@@ -254,13 +272,13 @@ module TestBlockingAccept =
         let parked = parkIn 1 fd system
 
         Assert.Throws<System.InvalidOperationException> (fun () ->
-            UnixConnection.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped (Some 16u) 0 parked
+            AcceptCalls.tryAccept (Callers.thread 1 parked) fd UserBuffer.Mapped (Some 16u) 0 parked
             |> ignore<_>
         )
         |> ignore<System.InvalidOperationException>
 
         Assert.Throws<System.InvalidOperationException> (fun () ->
-            UnixConnection.tryFinishAccept (Callers.thread 2 parked) parked |> ignore<_>
+            AcceptCalls.tryFinishAccept 16u (Callers.thread 2 parked) parked |> ignore<_>
         )
         |> ignore<System.InvalidOperationException>
 
@@ -320,10 +338,26 @@ module TestBlockingAccept =
             let fd, system = world platform
             let listener = idOf fd system
 
-            let system =
-                match UnixConnection.tryAccept (Callers.thread 1 system) fd destination declaredLength 0 system with
-                | Ok (AcceptOutcome.WouldBlock _, system) -> system
-                | other -> failwith $"expected the accept to park, got %A{other}"
+            match AcceptCalls.tryAccept (Callers.thread 1 system) fd destination declaredLength 0 system with
+            // Darwin asks whether the destination is NULL before it sleeps,
+            // which an addressless one cannot say.
+            | Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen) when
+                SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                && destination = UserBuffer.Addressless
+                ->
+                ()
+            | Error refusal -> failwith $"expected the accept to park, got %A{refusal}"
+            | Ok (other, _) when
+                (match other with
+                 | AcceptOutcome.WouldBlock _ -> false
+                 | _ -> true)
+                ->
+                failwith $"expected the accept to park, got %A{other}"
+            | Ok (_, system) ->
+
+            // What the cell holds when a Linux call reads it, after the wait:
+            // what it held when the call was made, since nothing writes it.
+            let contents = Option.defaultValue 0u declaredLength
 
             let parkedRecord = Lone.parkedIn 1 system
 
@@ -338,7 +372,7 @@ module TestBlockingAccept =
                             system
                         else
                             match
-                                UnixConnection.tryAccept
+                                AcceptCalls.tryAccept
                                     (Callers.thread 2 system)
                                     fd
                                     UserBuffer.Mapped
@@ -361,12 +395,13 @@ module TestBlockingAccept =
                 // Nothing has woken the accept: no connection was queued at any
                 // wake.
                 Assert.Throws<System.InvalidOperationException> (fun () ->
-                    UnixConnection.tryFinishAccept (Callers.thread 1 system) system |> ignore<_>
+                    AcceptCalls.tryFinishAccept contents (Callers.thread 1 system) system
+                    |> ignore<_>
                 )
                 |> ignore<System.InvalidOperationException>
             | _ ->
 
-            let finished = UnixConnection.tryFinishAccept (Callers.thread 1 system) system
+            let finished = AcceptCalls.tryFinishAccept contents (Callers.thread 1 system) system
 
             if List.isEmpty (queueOf fd system) then
                 match finished with
@@ -393,7 +428,7 @@ module TestBlockingAccept =
             else
                 let oracle =
                     let unparked = Lone.UnixParkState.unpark 1 system
-                    UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength 0 unparked
+                    AcceptCalls.tryAccept (Callers.thread 1 unparked) fd destination declaredLength 0 unparked
 
                 finished |> shouldEqual oracle
 
@@ -482,12 +517,12 @@ module TestBlockingAccept =
         let system = setNonBlocking fd true system
 
         let system =
-            match UnixConnection.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped (Some 16u) 0 system with
+            match AcceptCalls.tryAccept (Callers.thread 3 system) fd UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted _, system) -> system
             | other -> failwith $"expected thread 3 to take the connection, got %A{other}"
 
         let system =
-            match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
+            match AcceptCalls.tryFinishAccept 16u (Callers.thread 1 system) system with
             | Ok (AcceptOutcome.WouldBlock _, system) -> system
             | other -> failwith $"expected thread 1 to park again, got %A{other}"
 
@@ -603,7 +638,7 @@ module TestBlockingAccept =
                             {
                                 Listener = SleepTarget.Waiting listeners.[park.Listener]
                                 Destination = UserBuffer.Mapped
-                                DeclaredLength = (Some 16u)
+                                Cell = AcceptLengthCell.Read 16u
                                 NewSocketNonBlocking = false
                                 NewSocketCloseOnExec = false
                             })
@@ -852,12 +887,12 @@ module TestBlockingAccept =
     let private finishAborted (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let system = Woken.thread thread system
 
-        match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
+        match AcceptCalls.tryFinishAccept 16u (Callers.thread thread system) system with
         | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, system) -> system
         | other -> failwith $"expected thread %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
-        UnixConnection.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped (Some 16u) 0 system
+        AcceptCalls.tryAccept (Callers.thread 6 system) fd UserBuffer.Mapped (Some 16u) 0 system
 
     /// Measured (`close-ends-call.c`, sections A1-A4, and `blocking-accept.c`
     /// section C): on Darwin, closing the descriptor an accept was made
@@ -1453,7 +1488,7 @@ module TestBlockingAccept =
                 match op with
                 | AcceptOp.Accept (thread, fd) ->
                     let answer =
-                        UnixConnection.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system
+                        AcceptCalls.tryAccept (Callers.thread thread system) fd UserBuffer.Mapped (Some 16u) 0 system
 
                     match Map.tryFind fd reference.Fds, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> cover $"%s{flavourName} accept: EBADF"
@@ -1672,7 +1707,7 @@ module TestBlockingAccept =
                     let signalled = Set.contains thread reference.Signalled
                     // `UnixWait.finish` answers as `finishAccept` does.
                     FinishOracle.agree (Callers.thread thread system) system |> ignore<string>
-                    let answer = UnixConnection.tryFinishAccept (Callers.thread thread system) system
+                    let answer = AcceptCalls.tryFinishAccept 16u (Callers.thread thread system) system
 
                     let settle (r : AcceptReference) (after : UnixSystem<int, string>) =
                         let r = answered thread r
@@ -1910,7 +1945,7 @@ module TestBlockingAccept =
                     {
                         Listener = SleepTarget.Waiting (listener, fd)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = (Some 16u)
+                        Cell = AcceptLengthCell.Read 16u
                         NewSocketNonBlocking = false
                         NewSocketCloseOnExec = false
                     })
@@ -1934,7 +1969,7 @@ module TestBlockingAccept =
                 {
                     Listener = SleepTarget.Waiting (absent, 1_000)
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = (Some 16u)
+                    Cell = AcceptLengthCell.Read 16u
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 })

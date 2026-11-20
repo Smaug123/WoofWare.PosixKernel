@@ -215,7 +215,7 @@ module KeventWorld =
 
     /// Accept one connection through `fd`, which must hold one, by `caller`.
     let acceptAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept caller fd UserBuffer.Mapped (Some 16u) 0 system with
+        match AcceptCalls.tryAccept caller fd UserBuffer.Mapped (Some 16u) 0 system with
         | Ok (AcceptOutcome.Accepted (accepted, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{fd}: %A{other}"
 
