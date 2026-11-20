@@ -581,7 +581,7 @@ A UDP socket holds the datagrams that reach it, connected or not, and `read` and
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `DescriptorAnswer * UnixSystem` |
 | Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : TimespecArgument)` | `KeventOutcome * UnixSystem` |
 
-A `poll` takes the process's array of `struct pollfd` as a `PollEntriesArgument`: the entries the client read there, or `Unreadable` with the call's `nfds` where the client could not read them all. Both flavours screen the count first; then an unreadable array fails with `EFAULT` at once, reporting nothing and never sleeping, unless it has no entries, when it is answered as an empty one.
+A `poll` takes the process's array of `struct pollfd` as a `PollEntriesArgument`: the entries the client read there, or `Unreadable` with the call's `nfds` where some of them lie in memory that the process cannot read. Both flavours screen the count first; then an unreadable array fails with `EFAULT` at once, reporting nothing and never sleeping, unless it has no entries, when it is answered as an empty one.
 
 An epoll registration is level-triggered, or edge-triggered with `EPOLLET`, and with `EPOLLONESHOT` it reports once until an `EPOLL_CTL_MOD` re-arms it, all as Linux's are. A registration with `EPOLLEXCLUSIVE` or `EPOLLWAKEUP` is refused, as is one of another epoll instance, of a pipe the process made, or of an `AF_UNIX` `SOCK_SEQPACKET` socket.
 

@@ -70,17 +70,19 @@ type internal PollRefusal =
 /// The array of `struct pollfd` which a `poll(2)` names, as the client found
 /// it when it read the array from the process's memory.
 ///
-/// An array which the client cannot read to its end is `Unreadable`, however
-/// many of its entries the client could read: the kernel fails such a call
-/// without reporting any of them.
+/// An array which the process's memory does not hold readable to its end is
+/// `Unreadable`, however many of its entries are readable: the kernel fails
+/// such a call without reporting any of them. Memory that the process can
+/// read, but whose contents the client cannot produce, is neither case, and a
+/// client has no answer from this library for such a call.
 [<RequireQualifiedAccess>]
 type PollEntriesArgument =
     /// The client read every entry of the array: `nfds` is the length of
     /// `entries`.
     | Readable of entries : PollEntry list
-    /// Some byte of the array's `count` entries could not be read: the
-    /// pointer is NULL, or the memory it names stops being readable before
-    /// the end of the `count` entries. `count` is the call's `nfds`, which the
+    /// Some byte of the array's `count` entries is memory that the process
+    /// cannot read: the pointer is NULL, or the memory it names stops being
+    /// readable before the end of the `count` entries. `count` is the call's `nfds`, which the
     /// kernel takes as an unsigned 32-bit count on both flavours: under Linux,
     /// where the C library's `nfds_t` is wider, the kernel reads only its low
     /// 32 bits.
@@ -1572,7 +1574,8 @@ module UnixPoll =
     ///
     /// `entries` is the process's array of `struct pollfd`, as the client read
     /// it from the process's memory: its entries, or `Unreadable` with the
-    /// call's `nfds` when the client could not read all of them. The kernel
+    /// call's `nfds` when some of them lie in memory that the process cannot
+    /// read (see `PollEntriesArgument`). The kernel
     /// screens the number of entries before it reads the array, so a count
     /// that this function answers with `EINVAL`, or refuses, gets that answer
     /// whether or not the array is readable. Otherwise an unreadable array

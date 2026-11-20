@@ -233,7 +233,7 @@ module TestPollUnreadableEntries =
                     let expected (answer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>) : bool =
                         answer = asEmpty
                         && match answer with
-                           | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0
+                           | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0 && row.Timeout = 0
                            | Ok (PollOutcome.WouldBlock _, _) -> row.Slept && row.Timeout <> 0
                            | _ -> false
 
