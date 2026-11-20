@@ -210,14 +210,21 @@ module TestAttributeChangeAt =
     /// The permission bits `stat` (or `lstat`, under `NoFollowFinal`) reports
     /// for `path`, or `None` where it fails.
     let private modeOf (policy : SymlinkPolicy) (path : string) (system : UnixSystem<int, string>) : int option =
-        match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) UserBuffer.Mapped system
+        with
         | Ok (FileStatusAnswer.Reported status) -> Some (status.Mode &&& 0o7777)
         | Ok (FileStatusAnswer.Failed _) -> None
         | Error refusal -> failwith $"%s{context}: stat(%s{path}) was refused: %s{StatRefusal.describe refusal}"
 
     let private ownerOf (path : string) (system : UnixSystem<int, string>) : string =
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofText path)
+                UserBuffer.Mapped
+                system
         with
         | Ok (FileStatusAnswer.Reported status) ->
             $"%d{UserId.toUInt32 status.UserId}:%d{GroupId.toUInt32 status.GroupId}"
@@ -610,7 +617,9 @@ module TestAttributeChangeAt =
         (system : UnixSystem<int, string>)
         : FileStatus option
         =
-        match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) UserBuffer.Mapped system
+        with
         | Ok (FileStatusAnswer.Reported status) -> Some status
         | Ok (FileStatusAnswer.Failed _) -> None
         | Error refusal -> failwith $"%s{context}: stat(%s{path}) was refused: %s{StatRefusal.describe refusal}"
@@ -862,10 +871,15 @@ module TestAttributeChangeAt =
         let current =
             let status =
                 if kind = "cwd" then
-                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText ".") system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.Follow
+                        (PathArg.ofText ".")
+                        UserBuffer.Mapped
+                        system
                     |> Result.mapError StatRefusal.describe
                 else
-                    UnixPathResolution.tryFstat (Callers.leader system) dirfd system
+                    UnixPathResolution.tryFstat (Callers.leader system) dirfd UserBuffer.Mapped system
                     |> Result.mapError FStatRefusal.describe
 
             // A descriptor this library will not report the status of (a
@@ -1016,6 +1030,7 @@ module TestAttributeChangeAt =
                                         (Callers.leader after)
                                         dirfd
                                         (PathArg.ofText path)
+                                        UserBuffer.Mapped
                                         0
                                         after
                                 with
@@ -1097,7 +1112,9 @@ module TestAttributeChangeAt =
         |> descriptorErrno
 
     let private statAnswer (policy : SymlinkPolicy) (path : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText path) UserBuffer.Mapped system
+        with
         | Ok (FileStatusAnswer.Reported _) -> "ok"
         | Ok (FileStatusAnswer.Failed error) -> $"%A{error}"
         | Error refusal -> failwith $"%s{context}: stat(%s{path}) was refused: %s{StatRefusal.describe refusal}"

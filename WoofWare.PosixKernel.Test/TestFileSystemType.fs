@@ -270,9 +270,9 @@ module TestFileSystemType =
         let rootFd, system = openPath "/" system
 
         [
-            UnixPathResolution.fstatfs (Callers.leader system) fileFd system
-            UnixPathResolution.fstatfs (Callers.leader system) dirFd system
-            UnixPathResolution.fstatfs (Callers.leader system) rootFd system
+            UnixPathResolution.fstatfs (Callers.leader system) fileFd UserBuffer.Mapped system
+            UnixPathResolution.fstatfs (Callers.leader system) dirFd UserBuffer.Mapped system
+            UnixPathResolution.fstatfs (Callers.leader system) rootFd UserBuffer.Mapped system
             Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/f")) system
             Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/d")) system
             Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/")) system
@@ -564,7 +564,7 @@ module TestFileSystemType =
                 let system = systemWith platform mount
 
                 for fd in [ 0 ; 1 ; 2 ] do
-                    UnixPathResolution.fstatfs (Callers.leader system) fd system
+                    UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system
                     |> shouldEqual (measuredNotOnAMount flavour PseudoFileSystem.Pipe)
 
                 FileSystemStatistics.ofObject platform mount (OpenFileObject.Socket (SocketId 3L))
@@ -580,7 +580,7 @@ module TestFileSystemType =
                 systemWith platform (EmulatedMount.defaultFor (SimulatedUnixPlatform.flavour platform))
 
             for fd in [ -1 ; 3 ; 4242 ; Int32.MaxValue ; Int32.MinValue ] do
-                UnixPathResolution.fstatfs (Callers.leader system) fd system
+                UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system
                 |> shouldEqual (FileSystemStatisticsAnswer.Failed UnixError.EBADF)
 
     [<Test>]
@@ -594,11 +594,11 @@ module TestFileSystemType =
         let fd, system = openPath "/f" system
 
         let device =
-            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (FileStatusAnswer.Reported status) -> status.DeviceId
             | other -> failwith $"fstat: %A{other}"
 
-        match UnixPathResolution.fstatfs (Callers.leader system) fd system with
+        match UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system with
         | FileSystemStatisticsAnswer.Reported (FileSystemStatistics.Darwin darwin) ->
             darwin.FileSystemIdResult
             |> shouldEqual (
@@ -682,6 +682,7 @@ module TestFileSystemType =
                             (Callers.leader system)
                             SymlinkPolicy.Follow
                             (PathArg.ofPath parsed)
+                            UserBuffer.Mapped
                             system
                     with
                     | Ok (FileStatusAnswer.Failed error) -> Some error
@@ -724,7 +725,7 @@ module TestFileSystemType =
 
             for fd in [ 0 ; 4242 ] do
                 Assert.Throws (fun () ->
-                    UnixPathResolution.fstatfs (Callers.leader incoherent) fd incoherent
+                    UnixPathResolution.fstatfs (Callers.leader incoherent) fd UserBuffer.Mapped incoherent
                     |> ignore<FileSystemStatisticsAnswer>
                 )
                 |> ignore<exn>
@@ -858,7 +859,7 @@ module TestFileSystemType =
                 systemWith (HostPlatform.platformOf flavour) (EmulatedMount.defaultFor flavour)
 
             HostFileSystemType.statisticsFor flavour 4242
-            |> shouldEqual (UnixPathResolution.fstatfs (Callers.leader system) 4242 system)
+            |> shouldEqual (UnixPathResolution.fstatfs (Callers.leader system) 4242 UserBuffer.Mapped system)
         )
 
     /// A read-only descriptor onto this host's directory of the filesystem the

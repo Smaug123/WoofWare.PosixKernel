@@ -440,6 +440,7 @@ module TestStartingDirectory =
                                 (Callers.leader system)
                                 dirfd
                                 (pathArgument path envelope.Platform)
+                                UserBuffer.Mapped
                                 flags
                                 system
                             |> renderedStatus
@@ -573,7 +574,7 @@ module TestStartingDirectory =
         replayFlags
             "fstatat"
             (fun dirfd path flags system ->
-                UnixPathResolution.tryFstatat (Callers.leader system) dirfd path flags system
+                UnixPathResolution.tryFstatat (Callers.leader system) dirfd path UserBuffer.Mapped flags system
                 |> renderedStatus
             )
             expectedRefused
@@ -633,7 +634,7 @@ module TestStartingDirectory =
                     let flags = linuxAtEmptyPath ||| (if label.EndsWith "NOFOLLOW" then 0x100 else 0)
 
                     let actual =
-                        UnixPathResolution.tryFstatat (Callers.leader system) dirfd path flags system
+                        UnixPathResolution.tryFstatat (Callers.leader system) dirfd path UserBuffer.Mapped flags system
 
                     // What `fstat`, or `stat(".")` for AT_FDCWD, reports.
                     let reference =
@@ -642,10 +643,11 @@ module TestStartingDirectory =
                                 (Callers.leader system)
                                 SymlinkPolicy.Follow
                                 (PathArg.ofText ".")
+                                UserBuffer.Mapped
                                 system
                             |> Result.mapError FStatAtRefusal.Stat
                         else
-                            UnixPathResolution.tryFstat (Callers.leader system) dirfd system
+                            UnixPathResolution.tryFstat (Callers.leader system) dirfd UserBuffer.Mapped system
                             |> Result.mapError FStatAtRefusal.Descriptor
 
                     let ok =
@@ -691,13 +693,20 @@ module TestStartingDirectory =
                         | other -> other
 
                     let without =
-                        UnixPathResolution.tryFstatat (Callers.leader system) dirfd (PathArg.ofText path) 0 system
+                        UnixPathResolution.tryFstatat
+                            (Callers.leader system)
+                            dirfd
+                            (PathArg.ofText path)
+                            UserBuffer.Mapped
+                            0
+                            system
 
                     let flagged =
                         UnixPathResolution.tryFstatat
                             (Callers.leader system)
                             dirfd
                             (PathArg.ofText path)
+                            UserBuffer.Mapped
                             linuxAtEmptyPath
                             system
 
@@ -3010,10 +3019,16 @@ module TestStartingDirectory =
             let inCwd = walkSystem platform credentials cwd
 
             let viaStat =
-                UnixPathResolution.tryStat (Callers.leader inCwd) policy argument inCwd
+                UnixPathResolution.tryStat (Callers.leader inCwd) policy argument UserBuffer.Mapped inCwd
                 |> Result.mapError FStatAtRefusal.Stat
 
-            UnixPathResolution.tryFstatat (Callers.leader inCwd) (atFdCwd flavour) argument flags inCwd
+            UnixPathResolution.tryFstatat
+                (Callers.leader inCwd)
+                (atFdCwd flavour)
+                argument
+                UserBuffer.Mapped
+                flags
+                inCwd
             |> shouldEqual viaStat
 
             // Opened as root, as the descriptor property above does.
@@ -3048,9 +3063,9 @@ module TestStartingDirectory =
                     }
                 )
 
-            UnixPathResolution.tryFstatat (Callers.leader atRoot) fd argument flags atRoot
+            UnixPathResolution.tryFstatat (Callers.leader atRoot) fd argument UserBuffer.Mapped flags atRoot
             |> shouldEqual (
-                UnixPathResolution.tryStat (Callers.leader heldInCwd) policy argument heldInCwd
+                UnixPathResolution.tryStat (Callers.leader heldInCwd) policy argument UserBuffer.Mapped heldInCwd
                 |> Result.mapError FStatAtRefusal.Stat
             )
 

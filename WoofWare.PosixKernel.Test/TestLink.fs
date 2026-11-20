@@ -136,7 +136,14 @@ module TestLink =
         answer.StartsWith "refused: the call would bind"
 
     let private kindAt (p : string) (system : UnixSystem<int, string>) : string * int64 * int64 =
-        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (text p)
+                UserBuffer.Mapped
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) ->
             let kind =
                 match status.Mode &&& 0o170000 with

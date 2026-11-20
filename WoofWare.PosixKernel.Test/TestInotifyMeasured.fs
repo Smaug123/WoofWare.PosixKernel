@@ -356,7 +356,7 @@ module TestInotifyMeasured =
         // what the row measures of identity is the flock object, the same for
         // both instances and the epoll instance (the flock rows below).
         for fd in [ a ; b ; ep ] do
-            UnixPathResolution.tryFstat (Callers.leader system) fd system
+            UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
             |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let objectOf (fd : int) =

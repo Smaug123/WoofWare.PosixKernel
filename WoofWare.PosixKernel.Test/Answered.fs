@@ -71,9 +71,9 @@ module internal Answered =
         (system : UnixSystem<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
-        match UnixPathResolution.tryStatfs caller path system with
+        match UnixPathResolution.tryStatfs caller path UserBuffer.Mapped system with
         | Ok answer -> answer
-        | Error refusal -> failwith $"statfs was refused: %s{PathRefusal.describe refusal}"
+        | Error refusal -> failwith $"statfs was refused: %s{StatFsRefusal.describe refusal}"
 
     /// A path walk's outcome as the errno a syscall answers, failing the test
     /// on a refusal: for a walk through a filesystem the test built, which

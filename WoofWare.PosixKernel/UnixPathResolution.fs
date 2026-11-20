@@ -116,6 +116,8 @@ type internal StatRefusal =
     | NfsDirectorySize of inode : InodeNumber
     /// This kernel will not resolve the path.
     | Path of PathRefusal
+    /// The process's `struct stat` has no answer at the copy.
+    | Buffer of BufferRefusal
 
 [<RequireQualifiedAccess>]
 module internal StatRefusal =
@@ -126,12 +128,14 @@ module internal StatRefusal =
         | StatRefusal.NfsDirectorySize inode ->
             $"inode %O{inode} is a directory on an NFS mount. Its st_size and st_nlink are what the NFS server's GETATTR reports, which nothing in this machine determines, so this kernel will not state them."
         | StatRefusal.Path refusal -> PathRefusal.describe refusal
+        | StatRefusal.Buffer refusal -> BufferRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : StatRefusal) : RefusalKind =
         match refusal with
         | StatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
         | StatRefusal.Path inner -> PathRefusal.kind inner
+        | StatRefusal.Buffer inner -> BufferRefusal.kind inner
 
 /// <summary>
 /// Why this kernel refused to report a <c>struct stat</c> for a descriptor.
@@ -167,6 +171,8 @@ type internal FStatRefusal =
     /// this machine determines them.
     /// </remarks>
     | NfsDirectorySize of inode : InodeNumber
+    /// The process's `struct stat` has no answer at the copy.
+    | Buffer of BufferRefusal
 
 [<RequireQualifiedAccess>]
 module internal FStatRefusal =
@@ -180,6 +186,7 @@ module internal FStatRefusal =
         | FStatRefusal.Socket socket ->
             $"the descriptor is socket %O{socket}, for which this kernel holds no inode — a `SocketId` is a contention key rather than an inode number. Measured, only Linux gives a socket an inode at all (`st_dev` 8 and a distinct `st_ino` per socket, on `sockfs`), a Darwin AF_INET socket reporting 0 for both; and the rest would be invented either way — `st_mode` is S_IFSOCK|0777 on Linux against S_IFSOCK|0666 on Darwin, `st_nlink` 1 against 0, and Darwin's `st_blksize` varies with the socket itself (131072 for TCP, 9216 for UDP, 8192 for a Unix-domain socket)."
         | FStatRefusal.NfsDirectorySize inode -> StatRefusal.describe (StatRefusal.NfsDirectorySize inode)
+        | FStatRefusal.Buffer refusal -> BufferRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FStatRefusal) : RefusalKind =
@@ -188,6 +195,7 @@ module internal FStatRefusal =
         | FStatRefusal.EventQueue -> RefusalKind.Unmodelled
         | FStatRefusal.Socket _ -> RefusalKind.Unmodelled
         | FStatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
+        | FStatRefusal.Buffer inner -> BufferRefusal.kind inner
 
 /// Why this kernel will not answer an `fstatat(2)`.
 [<RequireQualifiedAccess>]
@@ -198,11 +206,14 @@ type internal FStatAtRefusal =
     /// Linux's `AT_EMPTY_PATH`, with a pathname the caller could not read.
     /// Linux reads a NULL pathname under `AT_EMPTY_PATH` as the empty one, and
     /// reports what `dirfd` names; `PathArgumentBytes.Unreadable` does not say
-    /// whether the pathname was NULL or some other address it could not read.
+    /// whether the pathname was NULL or some other address it could not read,
+    /// and the two answer differently.
     | UnreadableEmptyPath
-    /// The path resolved, or would have, and `stat(2)` refuses what it names.
+    /// The path resolved, or would have, and `stat(2)` refuses what it names,
+    /// or the process's `struct stat`.
     | Stat of StatRefusal
-    /// The empty path named `dirfd` itself, and `fstat(2)` refuses it.
+    /// The empty path named `dirfd` itself, and `fstat(2)` refuses it, or the
+    /// process's `struct stat`.
     | Descriptor of FStatRefusal
 
 [<RequireQualifiedAccess>]
@@ -224,6 +235,29 @@ module internal FStatAtRefusal =
         | FStatAtRefusal.UnreadableEmptyPath -> RefusalKind.Unmodelled
         | FStatAtRefusal.Stat inner -> StatRefusal.kind inner
         | FStatAtRefusal.Descriptor inner -> FStatRefusal.kind inner
+
+/// Why this kernel will not answer a `statfs(2)`.
+[<RequireQualifiedAccess>]
+type internal StatFsRefusal =
+    /// This kernel will not resolve the path.
+    | Path of PathRefusal
+    /// The process's `struct statfs` has no answer at the copy.
+    | Buffer of BufferRefusal
+
+[<RequireQualifiedAccess>]
+module internal StatFsRefusal =
+    /// What this kernel knows about why it cannot answer. A client adds which
+    /// entry point asked, and with which path.
+    let describe (refusal : StatFsRefusal) : string =
+        match refusal with
+        | StatFsRefusal.Path refusal -> PathRefusal.describe refusal
+        | StatFsRefusal.Buffer refusal -> BufferRefusal.describe refusal
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : StatFsRefusal) : RefusalKind =
+        match refusal with
+        | StatFsRefusal.Path inner -> PathRefusal.kind inner
+        | StatFsRefusal.Buffer inner -> BufferRefusal.kind inner
 
 /// Why this kernel will not change the mode or owner of an inode on Darwin's
 /// devfs.
@@ -490,9 +524,9 @@ module internal UTimensAtRefusal =
 /// What <c>stat(2)</c>, <c>lstat(2)</c>, <c>fstat(2)</c> or <c>fstatat(2)</c> reported.
 /// </summary>
 /// <remarks>
-/// This library's functions for those calls take no output buffer, so they never answer <c>EFAULT</c>
-/// for the process's <c>struct stat</c>. What the process's call answers when the client cannot write
-/// that struct is for the client to decide.
+/// This library's functions for those calls take the process's <c>struct stat</c> as a <c>UserBuffer</c>.
+/// A call that would report a status through a <c>struct stat</c> naming no storage answers <c>EFAULT</c>
+/// instead; every other errno comes first.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type FileStatusAnswer =
@@ -968,43 +1002,103 @@ module UnixPathResolution =
                 }
         )
 
+    /// `answer` if the kernel's copy of the struct it reports out through
+    /// `destination` succeeds, and `faulted` if `destination` names no
+    /// storage. Each of `stat`, `lstat`, `fstat`, `fstatat`, `statfs` and
+    /// `fstatfs` makes this copy last, after every other check.
+    let private storedThrough<'answer>
+        (destination : UserBuffer)
+        (answer : 'answer)
+        (faulted : 'answer)
+        : Result<'answer, BufferRefusal>
+        =
+        // Measured on both flavours (`docs/probes/stat-output-buffer`,
+        // `stat-fault.c`): every errno the probe drew from those calls beat a
+        // NULL struct, a `PROT_NONE` one and one at the top of the address
+        // space alike, and each of those three answered EFAULT wherever a
+        // writable struct succeeded.
+        match destination with
+        | UserBuffer.Mapped -> Ok answer
+        | UserBuffer.Unmapped _ -> Ok faulted
+        | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
+        | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
+
+    /// `answer`, once the kernel copies the status it reports out through
+    /// `destination`. A failed answer copies nothing.
+    let private storeStatus
+        (destination : UserBuffer)
+        (answer : FileStatusAnswer)
+        : Result<FileStatusAnswer, BufferRefusal>
+        =
+        match answer with
+        | FileStatusAnswer.Failed _ -> Ok answer
+        | FileStatusAnswer.Reported _ -> storedThrough destination answer (FileStatusAnswer.Failed UnixError.EFAULT)
+
+    /// `answer`, once the kernel copies the statistics it reports out through
+    /// `destination`. A failed answer copies nothing.
+    let private storeStatistics
+        (destination : UserBuffer)
+        (answer : FileSystemStatisticsAnswer)
+        : Result<FileSystemStatisticsAnswer, BufferRefusal>
+        =
+        match answer with
+        | FileSystemStatisticsAnswer.Failed _ -> Ok answer
+        | FileSystemStatisticsAnswer.Reported _ ->
+            storedThrough destination answer (FileSystemStatisticsAnswer.Failed UnixError.EFAULT)
+
+    /// The status of `inode`, which the caller reached by `reachedBy ()`, as
+    /// `stat` copies it out through `destination`.
+    let private statInodeThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (reachedBy : unit -> string)
+        (inode : InodeNumber)
+        (destination : UserBuffer)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<FileStatusAnswer, StatRefusal>
+        =
+        match statOf inode system with
+        | Some (Ok status) ->
+            FileStatusAnswer.Reported status
+            |> storeStatus destination
+            |> Result.mapError StatRefusal.Buffer
+        | Some (Error refusal) -> Error refusal
+        | None ->
+            failwith
+                $"UnixPathResolution.stat: %s{reachedBy ()} reached inode %O{inode}, which the filesystem does not contain. Run UnixSystem.checkInvariants (this is a bug in this library)."
+
     /// `fstatat` without `AT_EMPTY_PATH`, of a path this kernel has already
-    /// copied in, starting from `directory` if it is relative.
+    /// copied in, starting from `directory` if it is relative, with the
+    /// process's `struct stat` at `destination`.
     let internal statParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (policy : SymlinkPolicy)
         (path : UnixPath)
+        (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, StatRefusal>
         =
         match resolvePath directory policy path system with
         | Error (PathFailure.Errno error) -> Ok (FileStatusAnswer.Failed error)
         | Error (PathFailure.Refused refusal) -> Error (StatRefusal.Path refusal)
-        | Ok inode ->
-
-        match statOf inode system with
-        | Some (Ok status) -> Ok (FileStatusAnswer.Reported status)
-        | Some (Error refusal) -> Error refusal
-        | None ->
-            failwith
-                $"UnixPathResolution.stat: resolving %O{path} returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+        | Ok inode -> statInodeThrough (fun () -> $"resolving %O{path}") inode destination system
 
     /// `tryStat` once `Entry` has admitted its caller.
     let private tryStatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (policy : SymlinkPolicy)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, StatRefusal>
         =
         match copyIn path system with
         | Error error -> Ok (FileStatusAnswer.Failed error)
-        | Ok path -> statParsed AtDirectory.CurrentDirectory policy path system
+        | Ok path -> statParsed AtDirectory.CurrentDirectory policy path destination system
 
     /// `stat`, with a refusal answered as the `Error` rather than raised.
     let internal tryStat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (policy : SymlinkPolicy)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<FileStatusAnswer, StatRefusal>
         =
@@ -1013,7 +1107,7 @@ module UnixPathResolution =
             CallerRequirement.Running
             caller
             Shape.answer
-            (tryStatIn policy path)
+            (tryStatIn policy path destination)
             system
 
     /// `stat(2)` and `lstat(2)`: report the status of the inode which `path`
@@ -1026,25 +1120,33 @@ module UnixPathResolution =
     /// ENAMETOOLONG if the process's memory held no NUL within
     /// `PathLimits.pathMaxBytes` bytes.
     ///
+    /// `destination` is the process's `struct stat`, which the kernel copies
+    /// the status out to last, after every other check: a call that would
+    /// report a status answers EFAULT instead when `destination` is
+    /// `UserBuffer.Unmapped`. Otherwise the client stores the reported status
+    /// there (see `FileStatusAnswer`).
+    ///
     /// This changes nothing and returns no system, because a `stat` records no
-    /// access. It takes no output buffer: the client stores the answer into
-    /// the process's `struct stat` (see `FileStatusAnswer`).
+    /// access.
     ///
     /// Refused for a directory on an NFS mount, whose size and link count
-    /// this kernel cannot state, and for a path this kernel will not resolve
-    /// (see "Names in the filesystem" in the README).
+    /// this kernel cannot state, for a path this kernel will not resolve
+    /// (see "Names in the filesystem" in the README), and for a status
+    /// reported through a `UserBuffer.Opaque` or `UserBuffer.Addressless`
+    /// destination.
     let stat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (policy : SymlinkPolicy)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileStatusAnswer
         =
-        tryStat caller policy path system
+        tryStat caller policy path destination system
         |> Refusal.orRaise "UnixPathResolution.stat" StatRefusal.kind StatRefusal.describe
 
-    /// `tryFstat` once `Entry` has admitted its caller.
-    let private tryFstatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// What `fstat` of `fd` reports, before the kernel copies it out.
+    let private fstatOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatRefusal>
@@ -1163,24 +1265,59 @@ module UnixPathResolution =
         | Some (Error (StatRefusal.Path refusal)) ->
             failwith
                 $"UnixPathResolution.fstat: reporting the status of inode %O{inode} refused a path, though fstat resolves none: %s{PathRefusal.describe refusal} (this is a bug in this library)."
+        | Some (Error (StatRefusal.Buffer refusal)) ->
+            failwith
+                $"UnixPathResolution.fstat: reporting the status of inode %O{inode} refused a destination, though nothing has been copied out yet: %s{BufferRefusal.describe refusal} (this is a bug in this library)."
         | None ->
             failwith
                 $"UnixPathResolution.fstat: fd %d{fd} names inode %O{inode}, which the filesystem does not contain. A descriptor outliving its inode means an unlink or rmdir removed a still-open file or directory; the open file description must keep it alive (this is a bug in this library)."
+
+    /// `tryFstat` once `Entry` has admitted its caller.
+    let private tryFstatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fd : int)
+        (destination : UserBuffer)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<FileStatusAnswer, FStatRefusal>
+        =
+        match fstatOf fd system, destination with
+        | Ok answer, _ -> storeStatus destination answer |> Result.mapError FStatRefusal.Buffer
+        // A real kernel reports a status for each of these, which this kernel
+        // cannot state; but the status is copied out last, so through no
+        // storage the call answers EFAULT whatever it held. Measured on both
+        // flavours for an inherited pipe, a socket and an event queue
+        // (`docs/probes/stat-output-buffer`). Not for a directory on NFS, whose
+        // status the server's GETATTR may fail to supply.
+        | Error (FStatRefusal.LaunchedPipe _), UserBuffer.Unmapped _
+        | Error FStatRefusal.EventQueue, UserBuffer.Unmapped _
+        | Error (FStatRefusal.Socket _), UserBuffer.Unmapped _ -> Ok (FileStatusAnswer.Failed UnixError.EFAULT)
+        | Error refusal, _ -> Error refusal
 
     /// `fstat`, with a refusal answered as the `Error` rather than raised.
     let internal tryFstat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatRefusal>
         =
-        Entry.call "UnixPathResolution.fstat" CallerRequirement.Running caller Shape.answer (tryFstatIn fd) system
+        Entry.call
+            "UnixPathResolution.fstat"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryFstatIn fd destination)
+            system
 
     /// `fstat(2)`: report the status of the inode which `fd` names.
     ///
+    /// `destination` is the process's `struct stat`, which the kernel copies
+    /// the status out to last: EBADF comes first, and a call that would
+    /// report a status answers EFAULT instead when `destination` is
+    /// `UserBuffer.Unmapped`. Otherwise the client stores the reported status
+    /// there (see `FileStatusAnswer`).
+    ///
     /// This changes nothing and returns no system, because a real `fstat`
-    /// records no access. It takes no output buffer: the client stores the
-    /// answer into the process's `struct stat` (see `FileStatusAnswer`).
+    /// records no access.
     ///
     /// An end of a pipe which the process made reports `S_IFIFO`, with each
     /// flavour's own permission bits, size, timestamps and identity: see
@@ -1189,21 +1326,27 @@ module UnixPathResolution =
     /// Refused for a descriptor for which this kernel holds no inode (an event
     /// queue or a socket), and for an end of a pipe with which the process was
     /// launched, because that pipe's owner and timestamps come from whatever
-    /// launched the process, which this kernel does not model. Also refused
-    /// for a directory on an NFS mount, as `stat` is.
+    /// launched the process, which this kernel does not model. Each of those
+    /// answers EFAULT through a `UserBuffer.Unmapped` destination, since the
+    /// status it cannot state would never reach the process. Also refused for
+    /// a directory on an NFS mount, and for a status reported through a
+    /// `UserBuffer.Opaque` or `UserBuffer.Addressless` destination, as `stat`
+    /// is.
     let fstat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileStatusAnswer
         =
-        tryFstat caller fd system
+        tryFstat caller fd destination system
         |> Refusal.orRaise "UnixPathResolution.fstat" FStatRefusal.kind FStatRefusal.describe
 
     /// `tryFstatat` once `Entry` has admitted its caller.
     let private tryFstatatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatAtRefusal>
@@ -1217,8 +1360,30 @@ module UnixPathResolution =
 
         let directory = AtDirectory.decode flavour dirfd
 
+        // What the empty path reports under `AT_EMPTY_PATH`: what `dirfd`
+        // names, or the current directory for `AT_FDCWD`.
+        let startingPoint () : Result<FileStatusAnswer, FStatAtRefusal> =
+            match directory with
+            | AtDirectory.Descriptor fd -> tryFstatIn fd destination system |> Result.mapError FStatAtRefusal.Descriptor
+            | AtDirectory.CurrentDirectory ->
+                statInodeThrough
+                    (fun () -> "the current directory")
+                    system.Process.CurrentDirectoryInode
+                    destination
+                    system
+                |> Result.mapError FStatAtRefusal.Stat
+
         match arguments.EmptyPath, path with
-        | EmptyPathMeaning.NamesStartingPoint, PathArgumentBytes.Unreadable -> Error FStatAtRefusal.UnreadableEmptyPath
+        | EmptyPathMeaning.NamesStartingPoint, PathArgumentBytes.Unreadable ->
+            // A NULL pathname reads as the empty one, and any other unreadable
+            // one faults as it is copied in, ahead of `dirfd` (measured,
+            // `docs/probes/stat-output-buffer`: EFAULT through a closed
+            // descriptor too). Where the empty path would also answer EFAULT,
+            // so does the call, whichever the pathname was.
+            match startingPoint () with
+            | Ok (FileStatusAnswer.Failed UnixError.EFAULT) -> Ok (FileStatusAnswer.Failed UnixError.EFAULT)
+            | Ok _
+            | Error _ -> Error FStatAtRefusal.UnreadableEmptyPath
         | EmptyPathMeaning.NamesStartingPoint, PathArgumentBytes.Bytes _
         | EmptyPathMeaning.Walked, _ ->
 
@@ -1232,18 +1397,10 @@ module UnixPathResolution =
         // descriptor, AT_SYMLINK_NOFOLLOW or not; and a path that is not
         // empty answers as it does without the flag.
         match AtPathTarget.classify arguments.EmptyPath directory path with
-        | AtPathTarget.Descriptor fd -> tryFstatIn fd system |> Result.mapError FStatAtRefusal.Descriptor
-        | AtPathTarget.CurrentDirectory ->
-            let cwd = system.Process.CurrentDirectoryInode
-
-            match statOf cwd system with
-            | Some (Ok status) -> Ok (FileStatusAnswer.Reported status)
-            | Some (Error refusal) -> Error (FStatAtRefusal.Stat refusal)
-            | None ->
-                failwith
-                    $"UnixPathResolution.fstatat: the current directory is inode %O{cwd}, which the filesystem does not contain. Run UnixSystem.checkInvariants (this is a bug in this library)."
+        | AtPathTarget.Descriptor _
+        | AtPathTarget.CurrentDirectory -> startingPoint ()
         | AtPathTarget.Walked ->
-            statParsed directory arguments.FinalSymlink path system
+            statParsed directory arguments.FinalSymlink path destination system
             |> Result.mapError FStatAtRefusal.Stat
 
     /// `fstatat`, with a refusal answered as the `Error` rather than raised.
@@ -1251,6 +1408,7 @@ module UnixPathResolution =
         (caller : Caller<'Thread>)
         (dirfd : int)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatAtRefusal>
@@ -1260,7 +1418,7 @@ module UnixPathResolution =
             CallerRequirement.Running
             caller
             Shape.answer
-            (tryFstatatIn dirfd path flags)
+            (tryFstatatIn dirfd path destination flags)
             system
 
     /// `fstatat(2)`: report the status of the inode `path` names, starting
@@ -1282,23 +1440,28 @@ module UnixPathResolution =
     /// `AT_FDCWD`. A path that is not empty is resolved as if the flag were
     /// absent.
     ///
-    /// Like `stat` and `fstat`, this changes nothing, returns no system and
-    /// takes no output buffer (see `FileStatusAnswer`).
+    /// `destination` is the process's `struct stat`, which the kernel copies
+    /// the status out to last, as `stat` does: a call that would report a
+    /// status answers EFAULT instead when `destination` is
+    /// `UserBuffer.Unmapped`. Like `stat` and `fstat`, this changes nothing
+    /// and returns no system (see `FileStatusAnswer`).
     ///
     /// Refused for the flags which this library does not model, for
     /// `PathArgumentBytes.Unreadable` under Linux's `AT_EMPTY_PATH` (Linux
     /// reads a NULL pathname there as the empty one, and `Unreadable` does not
-    /// say whether the pointer was NULL), and for whatever `stat` or `fstat`
-    /// refuses about the object the call reaches.
+    /// say whether the pointer was NULL) unless the empty path would answer
+    /// EFAULT too, and for whatever `stat` or `fstat` refuses about the object
+    /// the call reaches or about the destination.
     let fstatat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (dirfd : int)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileStatusAnswer
         =
-        tryFstatat caller dirfd path flags system
+        tryFstatat caller dirfd path destination flags system
         |> Refusal.orRaise "UnixPathResolution.fstatat" FStatAtRefusal.kind FStatAtRefusal.describe
 
     /// What `chmod` and `fchmod` do once they have reached `inode`, which is a
@@ -2474,56 +2637,74 @@ module UnixPathResolution =
             FileSystemStatistics.ofDeviceMount system.Machine.UnixPlatform system.Machine.DeviceMount
             |> FileSystemStatisticsAnswer.Reported
 
-    /// `statfs`, of a path this kernel has already copied in.
+    /// `statfs`, of a path this kernel has already copied in, with the
+    /// process's `struct statfs` at `destination`.
     let internal statfsParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
+        (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<FileSystemStatisticsAnswer, PathRefusal>
+        : Result<FileSystemStatisticsAnswer, StatFsRefusal>
         =
         FileSystemStatistics.assertCoherent "UnixPathResolution.statfs" system.Machine.UnixPlatform system.Machine.Mount
 
         match resolvePath AtDirectory.CurrentDirectory SymlinkPolicy.Follow path system with
         | Error (PathFailure.Errno error) -> Ok (FileSystemStatisticsAnswer.Failed error)
-        | Error (PathFailure.Refused refusal) -> Error refusal
-        | Ok inode -> Ok (statisticsOfInode inode system)
+        | Error (PathFailure.Refused refusal) -> Error (StatFsRefusal.Path refusal)
+        | Ok inode ->
+            statisticsOfInode inode system
+            |> storeStatistics destination
+            |> Result.mapError StatFsRefusal.Buffer
 
     /// `tryStatfs` once `Entry` has admitted its caller.
     let private tryStatfsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<FileSystemStatisticsAnswer, PathRefusal>
+        : Result<FileSystemStatisticsAnswer, StatFsRefusal>
         =
         FileSystemStatistics.assertCoherent "UnixPathResolution.statfs" system.Machine.UnixPlatform system.Machine.Mount
 
         match copyIn path system with
         | Error error -> Ok (FileSystemStatisticsAnswer.Failed error)
-        | Ok path -> statfsParsed path system
+        | Ok path -> statfsParsed path destination system
 
     /// `statfs`, with a refusal answered as the `Error` rather than raised.
     let internal tryStatfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<FileSystemStatisticsAnswer, PathRefusal>
+        : Result<FileSystemStatisticsAnswer, StatFsRefusal>
         =
-        Entry.call "UnixPathResolution.statfs" CallerRequirement.Running caller Shape.answer (tryStatfsIn path) system
+        Entry.call
+            "UnixPathResolution.statfs"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryStatfsIn path destination)
+            system
 
     /// `statfs(2)`: report the filesystem which holds the inode that `path`
     /// names.
     ///
     /// A symbolic link in the final position is followed, as `statfs` always
-    /// does, so a dangling link is ENOENT. Every failure comes from resolving
-    /// the path, as for `stat(2)`.
+    /// does, so a dangling link is ENOENT. Every failure but the destination's
+    /// EFAULT comes from resolving the path, as for `stat(2)`.
     ///
-    /// This changes nothing and returns no system. It takes no output buffer:
-    /// the client stores the answer into the process's `struct statfs`.
-    /// Reading some of the answer's field groups throws `UnmodelledException`
-    /// (see `FileSystemStatistics`), so the client finds out only when it
-    /// reads them.
+    /// This changes nothing and returns no system. `destination` is the
+    /// process's `struct statfs`, which the kernel copies the answer out to
+    /// last, after every other check: a call that would report statistics
+    /// answers EFAULT instead when `destination` is `UserBuffer.Unmapped`.
+    /// Otherwise the client stores the answer there. Reading some of the
+    /// answer's field groups throws `UnmodelledException` (see
+    /// `FileSystemStatistics`), so the client finds out only when it reads
+    /// them.
     ///
     /// Refused for a path this kernel will not resolve (see "Names in the
-    /// filesystem" in the README). Throws for a machine whose platform and
-    /// mount do not describe one machine, whatever the path.
+    /// filesystem" in the README), and for statistics reported through a
+    /// `UserBuffer.Opaque` or `UserBuffer.Addressless` destination. Throws for
+    /// a machine whose platform and mount do not describe one machine,
+    /// whatever the path.
     ///
     /// The kernel copies `path` in before anything else. It answers EFAULT if
     /// the client could not read it (`PathArgumentBytes.Unreadable`), and
@@ -2532,27 +2713,48 @@ module UnixPathResolution =
     let statfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
-        tryStatfs caller path system
-        |> Refusal.orRaise "UnixPathResolution.statfs" PathRefusal.kind PathRefusal.describe
+        tryStatfs caller path destination system
+        |> Refusal.orRaise "UnixPathResolution.statfs" StatFsRefusal.kind StatFsRefusal.describe
 
-    /// `fstatfs` once `Entry` has admitted its caller.
-    let private fstatfsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFstatfs` once `Entry` has admitted its caller.
+    let private tryFstatfsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
+        (destination : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
-        : FileSystemStatisticsAnswer
+        : Result<FileSystemStatisticsAnswer, BufferRefusal>
         =
         FileSystemStatistics.assertCoherent
             "UnixPathResolution.fstatfs"
             system.Machine.UnixPlatform
             system.Machine.Mount
 
-        match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
-        | None -> FileSystemStatisticsAnswer.Failed UnixError.EBADF
-        | Some (OpenFileObject.File inode) -> statisticsOfInode inode system
-        | Some target -> FileSystemStatistics.ofObject system.Machine.UnixPlatform system.Machine.Mount target
+        let answer =
+            match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+            | None -> FileSystemStatisticsAnswer.Failed UnixError.EBADF
+            | Some (OpenFileObject.File inode) -> statisticsOfInode inode system
+            | Some target -> FileSystemStatistics.ofObject system.Machine.UnixPlatform system.Machine.Mount target
+
+        storeStatistics destination answer
+
+    /// `fstatfs`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFstatfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (destination : UserBuffer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<FileSystemStatisticsAnswer, BufferRefusal>
+        =
+        Entry.call
+            "UnixPathResolution.fstatfs"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryFstatfsIn fd destination)
+            system
 
     /// `fstatfs(2)`: report the filesystem which holds the object that `fd`
     /// names.
@@ -2562,21 +2764,28 @@ module UnixPathResolution =
     /// every other object is on one of the kernel's internal filesystems, and
     /// on Darwin such an object is EINVAL.
     ///
-    /// This changes nothing and returns no system. It takes no output buffer:
-    /// the client stores the answer into the process's `struct statfs`.
-    /// Reading some of the answer's field groups throws `UnmodelledException`
-    /// (see `FileSystemStatistics`), so the client finds out only when it
-    /// reads them.
+    /// This changes nothing and returns no system. `destination` is the
+    /// process's `struct statfs`, which the kernel copies the answer out to
+    /// last, as `statfs` does: EBADF and Darwin's EINVAL come first, and a
+    /// call that would report statistics answers EFAULT instead when
+    /// `destination` is `UserBuffer.Unmapped`. Otherwise the client stores the
+    /// answer there. Reading some of the answer's field groups throws
+    /// `UnmodelledException` (see `FileSystemStatistics`), so the client finds
+    /// out only when it reads them.
     ///
-    /// Throws for a machine whose platform and mount do not describe one
-    /// machine, whatever the descriptor.
+    /// Refused for statistics reported through a `UserBuffer.Opaque` or
+    /// `UserBuffer.Addressless` destination. Throws for a machine whose
+    /// platform and mount do not describe one machine, whatever the
+    /// descriptor.
     let fstatfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
+        (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
-        Entry.call "UnixPathResolution.fstatfs" CallerRequirement.Running caller Shape.answer (fstatfsIn fd) system
+        tryFstatfs caller fd destination system
+        |> Refusal.orRaise "UnixPathResolution.fstatfs" BufferRefusal.kind BufferRefusal.describe
 
     /// `currentDirectoryPath` once `Entry` has admitted the process.
     let private currentDirectoryPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

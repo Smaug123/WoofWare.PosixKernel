@@ -430,9 +430,9 @@ A `DescriptorAnswer` is the descriptor a call that makes one returns (`Descripto
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (caller : Caller) (policy : SymlinkPolicy) (path : PathArgumentBytes)` | `FileStatusAnswer` |
-| `fstat(2)` | `UnixPathResolution.fstat (caller : Caller) (fd : int)` | `FileStatusAnswer` |
-| `fstatat(2)` | `UnixPathResolution.fstatat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `FileStatusAnswer` |
+| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (caller : Caller) (policy : SymlinkPolicy) (path : PathArgumentBytes) (destination : UserBuffer)` | `FileStatusAnswer` |
+| `fstat(2)` | `UnixPathResolution.fstat (caller : Caller) (fd : int) (destination : UserBuffer)` | `FileStatusAnswer` |
+| `fstatat(2)` | `UnixPathResolution.fstatat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (flags : int)` | `FileStatusAnswer` |
 | `chmod(2)` | `UnixPathResolution.chmod (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
 | `fchmod(2)` | `UnixPathResolution.fchmod (caller : Caller) (fd : int) (mode : int)` | `SyscallAnswer * UnixSystem` |
 | `fchmodat(2)` | `UnixPathResolution.fchmodat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
@@ -441,8 +441,8 @@ A `DescriptorAnswer` is the descriptor a call that makes one returns (`Descripto
 | `fchown(2)` | `UnixPathResolution.fchown (caller : Caller) (fd : int) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
 | `fchownat(2)` | `UnixPathResolution.fchownat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option) (flags : int)` | `SyscallAnswer * UnixSystem` |
 | `utimensat(2)`, and Linux's `futimens(3)` | `UnixPathResolution.utimensat (caller : Caller) (dirfd : int) (path : NullablePathArgument) (times : TimesArgument) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `statfs(2)` | `UnixPathResolution.statfs (caller : Caller) (path : PathArgumentBytes)` | `FileSystemStatisticsAnswer` |
-| `fstatfs(2)` | `UnixPathResolution.fstatfs (caller : Caller) (fd : int)` | `FileSystemStatisticsAnswer` |
+| `statfs(2)` | `UnixPathResolution.statfs (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer)` | `FileSystemStatisticsAnswer` |
+| `fstatfs(2)` | `UnixPathResolution.fstatfs (caller : Caller) (fd : int) (destination : UserBuffer)` | `FileSystemStatisticsAnswer` |
 | `getcwd(3)` | `UnixPathResolution.getcwd (caller : Caller) (destination : UserBuffer) (capacity : uint64)` | `GetCwdAnswer` |
 | `chdir(2)` | `UnixPathResolution.chdir (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
 | `access(2)` | `UnixPathResolution.access (caller : Caller) (mode : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
@@ -450,6 +450,8 @@ A `DescriptorAnswer` is the descriptor a call that makes one returns (`Descripto
 | `access(2)` or `faccessat(2)`, given the path | `UnixPathResolution.accessWithPath (path : PathArgumentBytes) (paused : PausedAccess)` | `SyscallAnswer` |
 
 `UnixPathResolution.currentDirectoryPath (pid : ProcessId)` is the process's current directory's path, for a client that wants it without a buffer.
+
+The `destination` of `stat`, `fstat`, `fstatat`, `statfs` and `fstatfs` is the process's `struct stat` or `struct statfs`, which the kernel copies out after every other check: a call that would succeed through a destination naming no storage answers `EFAULT` instead, and any other errno comes first.
 
 A symbolic link's own mode is `UnixPathResolution.fchmodat` with `AT_SYMLINK_NOFOLLOW`: Linux answers `EOPNOTSUPP`, and Darwin changes it.
 There is no `lchmod` function, since neither kernel has that syscall.

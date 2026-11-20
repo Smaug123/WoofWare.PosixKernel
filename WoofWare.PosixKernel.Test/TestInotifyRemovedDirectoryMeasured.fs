@@ -197,7 +197,7 @@ module TestInotifyRemovedDirectoryMeasured =
         // The probe reads the mode back with `fstat(byAt)`, the current
         // directory being the root by then.
         let mode =
-            match UnixPathResolution.tryFstat (Callers.leader system) byAt system with
+            match UnixPathResolution.tryFstat (Callers.leader system) byAt UserBuffer.Mapped system with
             | Ok (FileStatusAnswer.Reported status) -> status.Mode &&& 0o7777
             | other -> failwith $"fstat(%d{byAt}): %A{other}"
 

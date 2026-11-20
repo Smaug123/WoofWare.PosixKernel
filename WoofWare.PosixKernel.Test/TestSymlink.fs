@@ -197,7 +197,14 @@ module TestSymlink =
 
     /// What `lstat` makes of `p` in `system`: absent, or the kind it names.
     let private kindAt (p : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (text p)
+                UserBuffer.Mapped
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) ->
             match status.Mode &&& 0o170000 with
             | 0o120000 -> "symlink"
@@ -267,7 +274,12 @@ module TestSymlink =
             | SyscallAnswer.Failed error -> $"%A{error}%s{kinds}"
             | SyscallAnswer.Completed _ ->
                 match
-                    UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.NoFollowFinal (text created) after
+                    UnixPathResolution.tryStat
+                        (Callers.leader after)
+                        SymlinkPolicy.NoFollowFinal
+                        (text created)
+                        UserBuffer.Mapped
+                        after
                 with
                 | Ok (FileStatusAnswer.Reported status) -> $"ok%s{kinds}(size=%d{status.Size})"
                 | other -> failwith $"%s{context}: the new link at %s{created} does not stat: %A{other}"
@@ -427,7 +439,14 @@ module TestSymlink =
     // ------------------------------------------------------------ SYMMODE and SYMGROUP
 
     let private modeOf (p : string) (system : UnixSystem<int, string>) : int =
-        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (text p)
+                UserBuffer.Mapped
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode &&& 0o7777
         | other -> failwith $"%s{context}: lstat(%s{p}) did not report: %A{other}"
 
@@ -487,6 +506,7 @@ module TestSymlink =
                             (Callers.leader system)
                             SymlinkPolicy.NoFollowFinal
                             (text "e/n")
+                            UserBuffer.Mapped
                             system
                     with
                     | Ok (FileStatusAnswer.Reported status) -> GroupId.toUInt32 status.GroupId
@@ -517,7 +537,14 @@ module TestSymlink =
             | Ok (ReadLinkAnswer.Reported written) -> written |> List.ofSeq |> shouldEqual target
             | other -> failwith $"%s{context}: readlink did not report: %A{other}"
 
-            match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text "n") system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (text "n")
+                    UserBuffer.Mapped
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual (int64 target.Length)
             | other -> failwith $"%s{context}: lstat(n) did not report: %A{other}"
 

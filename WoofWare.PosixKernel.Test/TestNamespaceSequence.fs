@@ -715,9 +715,9 @@ module TestNamespaceSequence =
                 else
                     SymlinkPolicy.NoFollowFinal
 
-            Some (Syscall.Stat (policy, arg path))
-        | Op.FStat fd -> descriptor fd |> Option.map Syscall.FStat
-        | Op.FStatAt (dir, path, flags) -> Some (Syscall.FStatAt (dirfd dir, arg path, flags))
+            Some (Syscall.Stat (policy, arg path, UserBuffer.Mapped))
+        | Op.FStat fd -> descriptor fd |> Option.map (fun fd -> Syscall.FStat (fd, UserBuffer.Mapped))
+        | Op.FStatAt (dir, path, flags) -> Some (Syscall.FStatAt (dirfd dir, arg path, UserBuffer.Mapped, flags))
         | Op.ReadDir fd -> descriptor fd |> Option.map Syscall.ReadDirectoryEntry
         | Op.Getcwd -> Some (Syscall.GetCwd (UserBuffer.Mapped, 4096UL))
         | Op.Chmod (path, mode) -> Some (Syscall.ChMod (arg path, mode))

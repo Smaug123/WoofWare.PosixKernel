@@ -6553,17 +6553,23 @@ WoofWare.PosixKernel.Syscall`2+FLock.get_fd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FLock.get_operation [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FLock.operation [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+FStat inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+FStat.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStat.fd [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+FStat.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStat.get_fd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FStatAt inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+FStatAt.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStatAt.dirfd [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+FStatAt.flags [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+FStatAt.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStatAt.get_dirfd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FStatAt.get_flags [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FStatAt.get_path [method]: unit -> WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+FStatAt.path [property]: [read-only] WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+FStatFs inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+FStatFs.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStatFs.fd [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+FStatFs.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+FStatFs.get_fd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+FTruncate inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+FTruncate.fd [property]: [read-only] int
@@ -7004,11 +7010,15 @@ WoofWare.PosixKernel.Syscall`2+Spawn.cpu [property]: [read-only] WoofWare.PosixK
 WoofWare.PosixKernel.Syscall`2+Spawn.get_child [method]: unit -> 'Thread
 WoofWare.PosixKernel.Syscall`2+Spawn.get_cpu [method]: unit -> WoofWare.PosixKernel.CpuId
 WoofWare.PosixKernel.Syscall`2+Stat inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+Stat.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
+WoofWare.PosixKernel.Syscall`2+Stat.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+Stat.get_path [method]: unit -> WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+Stat.get_policy [method]: unit -> WoofWare.PosixKernel.SymlinkPolicy
 WoofWare.PosixKernel.Syscall`2+Stat.path [property]: [read-only] WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+Stat.policy [property]: [read-only] WoofWare.PosixKernel.SymlinkPolicy
 WoofWare.PosixKernel.Syscall`2+StatFs inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+StatFs.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
+WoofWare.PosixKernel.Syscall`2+StatFs.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+StatFs.get_path [method]: unit -> WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+StatFs.path [property]: [read-only] WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.Syscall`2+Symlink inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -7455,9 +7465,9 @@ WoofWare.PosixKernel.Syscall`2.NewFChOwnAt [static method]: (int, WoofWare.Posix
 WoofWare.PosixKernel.Syscall`2.NewFcntl [static method]: (int, int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewFileClone [static method]: (int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewFLock [static method]: (int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewFStat [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewFStatAt [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewFStatFs [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewFStat [static method]: (int, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewFStatAt [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserBuffer, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewFStatFs [static method]: (int, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewFTruncate [static method]: (int, System.Int64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewFutex [static method]: (System.UInt64, int, int, System.UInt32 WoofWare.PosixKernel.CopiedArgument, WoofWare.PosixKernel.TimespecArgument, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetCwd [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -7526,8 +7536,8 @@ WoofWare.PosixKernel.Syscall`2.NewSigWait [static method]: WoofWare.PosixKernel.
 WoofWare.PosixKernel.Syscall`2.NewSigWaitInfo [static method]: WoofWare.PosixKernel.SigWaitInfoArguments -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewSocket [static method]: (int, int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewSpawn [static method]: ('Thread, WoofWare.PosixKernel.CpuId) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewStat [static method]: (WoofWare.PosixKernel.SymlinkPolicy, WoofWare.PosixKernel.PathArgumentBytes) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewStatFs [static method]: WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewStat [static method]: (WoofWare.PosixKernel.SymlinkPolicy, WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewStatFs [static method]: (WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewSymlink [static method]: (WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.PathArgumentBytes) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewSymlinkAt [static method]: (WoofWare.PosixKernel.PathArgumentBytes, int, WoofWare.PosixKernel.PathArgumentBytes) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewTerminalAttributes [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -8757,13 +8767,13 @@ WoofWare.PosixKernel.UnixPathResolution.fchmod [static method]: 'Thread WoofWare
 WoofWare.PosixKernel.UnixPathResolution.fchmodat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixPathResolution.fchown [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserId option -> WoofWare.PosixKernel.GroupId option -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixPathResolution.fchownat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserId option -> WoofWare.PosixKernel.GroupId option -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixPathResolution.fstat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
-WoofWare.PosixKernel.UnixPathResolution.fstatat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
-WoofWare.PosixKernel.UnixPathResolution.fstatfs [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileSystemStatisticsAnswer
+WoofWare.PosixKernel.UnixPathResolution.fstat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
+WoofWare.PosixKernel.UnixPathResolution.fstatat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserBuffer -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
+WoofWare.PosixKernel.UnixPathResolution.fstatfs [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileSystemStatisticsAnswer
 WoofWare.PosixKernel.UnixPathResolution.getcwd [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UserBuffer -> System.UInt64 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.GetCwdAnswer
 WoofWare.PosixKernel.UnixPathResolution.lchown [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserId option -> WoofWare.PosixKernel.GroupId option -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixPathResolution.stat [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.SymlinkPolicy -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
-WoofWare.PosixKernel.UnixPathResolution.statfs [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileSystemStatisticsAnswer
+WoofWare.PosixKernel.UnixPathResolution.stat [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.SymlinkPolicy -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileStatusAnswer
+WoofWare.PosixKernel.UnixPathResolution.statfs [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.FileSystemStatisticsAnswer
 WoofWare.PosixKernel.UnixPathResolution.utimensat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.NullablePathArgument -> WoofWare.PosixKernel.TimesArgument -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixPathText inherit obj
 WoofWare.PosixKernel.UnixPathText.describe [static method]: WoofWare.PosixKernel.UnixPathTextDefect -> string

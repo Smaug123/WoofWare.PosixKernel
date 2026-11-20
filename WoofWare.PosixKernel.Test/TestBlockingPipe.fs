@@ -2279,7 +2279,7 @@ module TestBlockingPipe =
             UnixSystem.advanceClock 1_000_000_000L system
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"
@@ -2321,7 +2321,7 @@ module TestBlockingPipe =
             UnixSystem.advanceClock 1_000_000_000L system
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"

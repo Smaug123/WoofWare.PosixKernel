@@ -183,6 +183,7 @@ module TestDeviceDescriptors =
                     (Callers.leader system)
                     SymlinkPolicy.Follow
                     (PathArg.ofText (pathOf device))
+                    UserBuffer.Mapped
                     system
 
             let fd, opened = openWith flags (pathOf device) system
@@ -202,10 +203,11 @@ module TestDeviceDescriptors =
                 (Callers.leader opened)
                 SymlinkPolicy.Follow
                 (PathArg.ofText (pathOf device))
+                UserBuffer.Mapped
                 opened
             |> shouldEqual before
 
-            UnixPathResolution.tryFstat (Callers.leader opened) fd opened
+            UnixPathResolution.tryFstat (Callers.leader opened) fd UserBuffer.Mapped opened
             |> Result.mapError (sprintf "%A")
             |> shouldEqual (before |> Result.mapError (sprintf "%A"))
 
@@ -273,7 +275,12 @@ module TestDeviceDescriptors =
     let ``a description that names a node as something it is not breaks the invariants`` () : unit =
         let inodeOf (path : string) =
             match
-                UnixPathResolution.tryStat (Callers.leader booted) SymlinkPolicy.Follow (PathArg.ofText path) booted
+                UnixPathResolution.tryStat
+                    (Callers.leader booted)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText path)
+                    UserBuffer.Mapped
+                    booted
             with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
             | other -> failwith $"stat %s{path}: %A{other}"
@@ -341,6 +348,7 @@ module TestDeviceDescriptors =
                     (Callers.leader booted)
                     SymlinkPolicy.Follow
                     (PathArg.ofText "/dev/urandom")
+                    UserBuffer.Mapped
                     booted
             with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
@@ -394,7 +402,7 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixPathResolution.fstatfs (Callers.leader system) fd system
+            UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system
             |> shouldEqual (Answered.statfs (Callers.leader system) (PathArg.ofText (pathOf device)) system)
 
     // ------------------------------------------------------------------ read

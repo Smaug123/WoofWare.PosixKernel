@@ -120,16 +120,16 @@ module TestStepOracle =
             UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
-        | Syscall.Stat (policy, path) ->
-            UnixPathResolution.tryStat caller policy path system
+        | Syscall.Stat (policy, path, destination) ->
+            UnixPathResolution.tryStat caller policy path destination system
             |> Result.map SteppedCall.Stat
             |> Result.mapError SyscallRefusal.Stat
-        | Syscall.FStat fd ->
-            UnixPathResolution.tryFstat caller fd system
+        | Syscall.FStat (fd, destination) ->
+            UnixPathResolution.tryFstat caller fd destination system
             |> Result.map SteppedCall.FStat
             |> Result.mapError SyscallRefusal.FStat
-        | Syscall.FStatAt (dirfd, path, flags) ->
-            UnixPathResolution.tryFstatat caller dirfd path flags system
+        | Syscall.FStatAt (dirfd, path, destination, flags) ->
+            UnixPathResolution.tryFstatat caller dirfd path destination flags system
             |> Result.map SteppedCall.FStatAt
             |> Result.mapError SyscallRefusal.FStatAt
         | Syscall.ChMod (path, mode) ->
@@ -164,11 +164,14 @@ module TestStepOracle =
             UnixPathResolution.tryUtimensat caller dirfd path times flags system
             |> Result.map SteppedCall.UTimensAt
             |> Result.mapError SyscallRefusal.UTimensAt
-        | Syscall.StatFs path ->
-            UnixPathResolution.tryStatfs caller path system
+        | Syscall.StatFs (path, destination) ->
+            UnixPathResolution.tryStatfs caller path destination system
             |> Result.map SteppedCall.StatFs
             |> Result.mapError SyscallRefusal.StatFs
-        | Syscall.FStatFs fd -> Ok (SteppedCall.FStatFs (UnixPathResolution.fstatfs caller fd system))
+        | Syscall.FStatFs (fd, destination) ->
+            UnixPathResolution.tryFstatfs caller fd destination system
+            |> Result.map SteppedCall.FStatFs
+            |> Result.mapError SyscallRefusal.FStatFs
         | Syscall.GetCwd (destination, capacity) ->
             UnixPathResolution.tryGetcwd caller destination capacity system
             |> Result.map SteppedCall.GetCwd
@@ -1523,16 +1526,18 @@ module TestStepOracle =
                 (Gen.elements [ -1 ; 0 ; 1 ; 2 ; 16 ; 65537 ])
                 userBufferGen
             "Stat",
-            Gen.map2
-                (fun policy path -> Syscall.Stat (policy, path))
+            Gen.map3
+                (fun policy path destination -> Syscall.Stat (policy, path, destination))
                 (Gen.elements [ SymlinkPolicy.Follow ; SymlinkPolicy.NoFollowFinal ])
                 pathGen
-            "FStat", fd |> Gen.map Syscall.FStat
+                userBufferGen
+            "FStat", Gen.map2 (fun fd destination -> Syscall.FStat (fd, destination)) fd userBufferGen
             "FStatAt",
             gen {
                 let! dirfd, flags = distinct2 fd atFlagsGen
                 let! path = pathGen
-                return Syscall.FStatAt (dirfd, path, flags)
+                let! destination = userBufferGen
+                return Syscall.FStatAt (dirfd, path, destination, flags)
             }
             "ChMod", Gen.map2 (fun path mode -> Syscall.ChMod (path, mode)) pathGen modeGen
             "FChMod", Gen.map2 (fun fd mode -> Syscall.FChMod (fd, mode)) fd modeGen
@@ -1582,8 +1587,8 @@ module TestStepOracle =
                 let! flags = atFlagsGen
                 return Syscall.UTimensAt (dirfd, path, times, flags)
             }
-            "StatFs", pathGen |> Gen.map Syscall.StatFs
-            "FStatFs", fd |> Gen.map Syscall.FStatFs
+            "StatFs", Gen.map2 (fun path destination -> Syscall.StatFs (path, destination)) pathGen userBufferGen
+            "FStatFs", Gen.map2 (fun fd destination -> Syscall.FStatFs (fd, destination)) fd userBufferGen
             "GetCwd",
             Gen.map2
                 (fun destination capacity -> Syscall.GetCwd (destination, capacity))

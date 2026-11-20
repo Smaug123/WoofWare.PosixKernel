@@ -366,14 +366,19 @@ module TestDirectorySize =
 
     let private modelSize (system : UnixSystem<int, string>) : int64 =
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (rooted "d"))
+                UserBuffer.Mapped
+                system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | Ok (FileStatusAnswer.Failed error) -> failwith $"stat d failed with %O{error}"
         | Error refusal -> failwith $"stat d was refused: %s{StatRefusal.describe refusal}"
 
     let private modelFStatSize (fd : int) (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | other -> failwith $"fstat %d{fd}: %A{other}"
 
@@ -552,17 +557,21 @@ module TestDirectorySize =
                 | Error error -> failwith $"resolving %s{relative}: %O{error}"
 
             // The root is a directory on the same mount, so it is refused too.
-            for path in [ "/d" ; "/" ; "/o" ] do
-                for policy in [ SymlinkPolicy.Follow ; SymlinkPolicy.NoFollowFinal ] do
-                    UnixPathResolution.tryStat
-                        (Callers.leader system)
-                        policy
-                        (PathArg.ofPath (UnixPath.parseOrFail context path))
-                        system
-                    |> shouldEqual (Error (StatRefusal.NfsDirectorySize (inodeOf path)))
+            // Through no storage too: the server's GETATTR may fail, so not
+            // even the copy-out's EFAULT is certain.
+            for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ] do
+                for path in [ "/d" ; "/" ; "/o" ] do
+                    for policy in [ SymlinkPolicy.Follow ; SymlinkPolicy.NoFollowFinal ] do
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            policy
+                            (PathArg.ofPath (UnixPath.parseOrFail context path))
+                            destination
+                            system
+                        |> shouldEqual (Error (StatRefusal.NfsDirectorySize (inodeOf path)))
 
-            UnixPathResolution.tryFstat (Callers.leader system) fd system
-            |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
+                UnixPathResolution.tryFstat (Callers.leader system) fd destination system
+                |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
 
             match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 2 system with
             | Error (LSeekRefusal.DirectoryEnd _) -> ()
@@ -593,6 +602,7 @@ module TestDirectorySize =
                     (Callers.leader system)
                     SymlinkPolicy.Follow
                     (PathArg.ofPath (rooted "d/f"))
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual 0L
@@ -642,7 +652,12 @@ module TestDirectorySize =
 
     let private modelLinkCount (system : UnixSystem<int, string>) : int64 =
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (rooted "d"))
+                UserBuffer.Mapped
+                system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.LinkCount
         | other -> failwith $"stat d: %A{other}"

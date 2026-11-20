@@ -1056,7 +1056,7 @@ module TestCopyFileSyscalls =
                 match futimens fd atime mtime system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     for pipeEnd in [ readFd ; writeFd ] do
-                        match UnixPathResolution.tryFstat (Callers.leader after) pipeEnd after with
+                        match UnixPathResolution.tryFstat (Callers.leader after) pipeEnd UserBuffer.Mapped after with
                         | Ok (FileStatusAnswer.Reported status) ->
                             (status.AccessTime, status.ModificationTime) |> shouldEqual (atime, mtime)
                         | other -> failwith $"fd %d{fd}: fstat(%d{pipeEnd}): %A{other}"

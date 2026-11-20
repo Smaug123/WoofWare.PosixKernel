@@ -139,7 +139,12 @@ module TestSymlinkMode =
 
     let private lstatMode (system : UnixSystem<int, string>) : int =
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofText "/l")
+                UserBuffer.Mapped
+                system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode
         | other -> failwith $"%s{context}: lstat(/l) did not report: %A{other}"

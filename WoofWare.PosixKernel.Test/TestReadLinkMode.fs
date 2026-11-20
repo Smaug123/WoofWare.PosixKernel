@@ -385,7 +385,9 @@ module TestReadLinkMode =
         else
 
         let status (policy : SymlinkPolicy) : string =
-            match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText "l") system with
+            match
+                UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText "l") UserBuffer.Mapped system
+            with
             | Ok (FileStatusAnswer.Reported _) -> "ok"
             | Ok (FileStatusAnswer.Failed error) -> $"%A{error}"
             | Error refusal -> $"refused: %A{refusal}"

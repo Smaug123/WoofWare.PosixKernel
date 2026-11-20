@@ -95,7 +95,14 @@ module TestSeedSymlinkTarget =
                 | other -> $"%A{other}"
 
             let size =
-                match UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.NoFollowFinal path after with
+                match
+                    UnixPathResolution.tryStat
+                        (Callers.leader after)
+                        SymlinkPolicy.NoFollowFinal
+                        path
+                        UserBuffer.Mapped
+                        after
+                with
                 | Ok (FileStatusAnswer.Reported status) -> $"%d{status.Size}"
                 | other -> $"%A{other}"
 
@@ -230,6 +237,7 @@ module TestSeedSymlinkTarget =
                         (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (PathArg.ofText "/l")
+                        UserBuffer.Mapped
                         system
                 with
                 | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual (int64 length)

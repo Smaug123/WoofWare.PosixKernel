@@ -323,11 +323,11 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | GetGroups of size : int * destination : UserBuffer
     /// `stat(2)` or `lstat(2)`, as `UnixPathResolution.stat` makes it:
     /// `policy` says which.
-    | Stat of policy : SymlinkPolicy * path : PathArgumentBytes
+    | Stat of policy : SymlinkPolicy * path : PathArgumentBytes * destination : UserBuffer
     /// `fstat(2)`, as `UnixPathResolution.fstat` makes it.
-    | FStat of fd : int
+    | FStat of fd : int * destination : UserBuffer
     /// `fstatat(2)`, as `UnixPathResolution.fstatat` makes it.
-    | FStatAt of dirfd : int * path : PathArgumentBytes * flags : int
+    | FStatAt of dirfd : int * path : PathArgumentBytes * destination : UserBuffer * flags : int
     /// `chmod(2)`, as `UnixPathResolution.chmod` makes it.
     | ChMod of path : PathArgumentBytes * mode : int
     /// `fchmod(2)`, as `UnixPathResolution.fchmod` makes it. `mode` is raw.
@@ -356,9 +356,9 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// null `path` and no flags.
     | UTimensAt of dirfd : int * path : NullablePathArgument * times : TimesArgument * flags : int
     /// `statfs(2)`, as `UnixPathResolution.statfs` makes it.
-    | StatFs of path : PathArgumentBytes
+    | StatFs of path : PathArgumentBytes * destination : UserBuffer
     /// `fstatfs(2)`, as `UnixPathResolution.fstatfs` makes it.
-    | FStatFs of fd : int
+    | FStatFs of fd : int * destination : UserBuffer
     /// `getcwd(3)`, as `UnixPathResolution.getcwd` makes it.
     | GetCwd of destination : UserBuffer * capacity : uint64
     /// `chdir(2)`, as `UnixPathResolution.chdir` makes it.

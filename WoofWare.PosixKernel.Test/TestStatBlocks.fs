@@ -112,10 +112,15 @@ module TestStatBlocks =
         | other -> failwith $"%s{what}: expected a status, got %A{other}"
 
     let private fstatOf (fd : int) (system : UnixSystem<int, string>) : Result<FileStatusAnswer, FStatRefusal> =
-        UnixPathResolution.tryFstat (Callers.leader system) fd system
+        UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
 
     let private lstatOf (path : string) (system : UnixSystem<int, string>) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofText path)
+            UserBuffer.Mapped
+            system
 
     // ----------------------------------------------------------- reference
 

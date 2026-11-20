@@ -484,7 +484,7 @@ module TestProtectedFiles =
 
     let private statText (policy : SymlinkPolicy) (p : string) (system : UnixSystem<int, string>) : string =
         match
-            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofPath (path p)) system
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofPath (path p)) UserBuffer.Mapped system
             |> ok
         with
         | FileStatusAnswer.Reported _ -> "ok"
@@ -777,6 +777,7 @@ module TestProtectedFiles =
                             (Callers.leader system)
                             SymlinkPolicy.Follow
                             (PathArg.ofPath (path start))
+                            UserBuffer.Mapped
                             system
                     with
                     | Error (StatRefusal.Path (PathRefusal.ProtectedSymlinkCacheDependent (_, _, refusedAt, limit))) ->
@@ -894,7 +895,12 @@ module TestProtectedFiles =
             [
                 "stat",
                 (fun p ->
-                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (bytes p) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.Follow
+                        (bytes p)
+                        UserBuffer.Mapped
+                        system
                     |> ofStatus
                 )
                 // A trailing separator follows the final link even for lstat.
@@ -904,12 +910,21 @@ module TestProtectedFiles =
                         (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (bytes (p + "/"))
+                        UserBuffer.Mapped
                         system
                     |> ofStatus
                 )
                 "fstatat",
                 (fun p ->
-                    match UnixPathResolution.tryFstatat (Callers.leader system) atFdCwd (bytes p) 0 system with
+                    match
+                        UnixPathResolution.tryFstatat
+                            (Callers.leader system)
+                            atFdCwd
+                            (bytes p)
+                            UserBuffer.Mapped
+                            0
+                            system
+                    with
                     | Ok (FileStatusAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileStatusAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error (FStatAtRefusal.Stat (StatRefusal.Path refusal)) -> WalkOutcome.Refused refusal
@@ -917,10 +932,11 @@ module TestProtectedFiles =
                 )
                 "statfs",
                 (fun p ->
-                    match UnixPathResolution.tryStatfs (Callers.leader system) (bytes p) system with
+                    match UnixPathResolution.tryStatfs (Callers.leader system) (bytes p) UserBuffer.Mapped system with
                     | Ok (FileSystemStatisticsAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileSystemStatisticsAnswer.Failed error) -> WalkOutcome.Answered (Some error)
-                    | Error refusal -> WalkOutcome.Refused refusal
+                    | Error (StatFsRefusal.Path refusal) -> WalkOutcome.Refused refusal
+                    | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
                 )
                 "open", (fun p -> OpenOutcomes.openPath (bytes p) 0 0 system |> ofOpen)
                 "openat", (fun p -> OpenOutcomes.openat atFdCwd (bytes p) 0 0 system |> ofOpen)

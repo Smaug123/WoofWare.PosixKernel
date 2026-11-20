@@ -94,7 +94,14 @@ module TestInotifyCloseMeasured =
         | other -> failwith $"write(%d{fd}): %A{other}"
 
     let private sizeOf (path : string) (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText path) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (PathArg.ofText path)
+                UserBuffer.Mapped
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | other -> failwith $"stat(%s{path}): %A{other}"
 
