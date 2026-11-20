@@ -1253,6 +1253,7 @@ module TestKqueue =
 
         reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
         |> Array.toList
+        |> List.map (fun line -> line.TrimEnd '\r')
 
     [<Test>]
     let ``an empty kqueue screens no range of the eventlist, whatever nevents is`` () : unit =

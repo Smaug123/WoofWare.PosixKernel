@@ -144,9 +144,9 @@ int main(void) {
     // An eventlist whose third entry would lie on a PROT_NONE page, with two
     // events ready and with three: whether the PROT_NONE page matters before
     // an event is copied onto it. The two writable entries are filled with
-    // 0xAA before each call, and `stored` says how many of them the call
-    // overwrote, so that a fault which comes only at the third store shows
-    // the first two stored.
+    // 0xAA before each call, and after it each is printed field by field, so
+    // that a fault which comes only at the third store shows the first two
+    // stored whole, as the two-ready call stores them.
     {
         long page = sysconf(_SC_PAGESIZE);
         unsigned char *map = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -170,17 +170,12 @@ int main(void) {
             errno = 0;
             int rv = kevent(kq, NULL, 0, list, 3, &zero);
             int err = rv < 0 ? errno : 0;
-            int stored = 0;
-            for (int i = 0; i < 2; i++) {
-                const unsigned char *bytes = (const unsigned char *)&list[i];
-                for (size_t b = 0; b < sizeof(struct kevent); b++)
-                    if (bytes[b] != 0xAA) {
-                        stored++;
-                        break;
-                    }
-            }
-            printf("%d ready, room for two before PROT_NONE, nevents=3: rv=%d errno=%d stored=%d\n", ready, rv, err,
-                   stored);
+            printf("%d ready, room for two before PROT_NONE, nevents=3: rv=%d errno=%d", ready, rv, err);
+            for (int i = 0; i < 2; i++)
+                printf(" | entry%d ident=0x%lx filter=%d flags=0x%x fflags=0x%x data=0x%lx udata=%p", i,
+                       (unsigned long)list[i].ident, list[i].filter, list[i].flags, list[i].fflags,
+                       (unsigned long)list[i].data, list[i].udata);
+            printf("\n");
             close(kq);
         }
     }

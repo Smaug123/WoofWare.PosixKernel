@@ -960,6 +960,7 @@ module TestFutex =
 
         reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
         |> Array.toList
+        |> List.map (fun line -> line.TrimEnd '\r')
 
     [<Test>]
     let ``a thread's exit wakes no private waiter, and the shared waits it wakes are refused`` () : unit =
@@ -986,62 +987,68 @@ module TestFutex =
 
         rows |> List.length |> shouldEqual 4
 
-        for line, op, errno in rows do
-            match op with
-            | "FUTEX_WAIT"
-            | "FUTEX_WAIT_BITSET" ->
-                (line, errno) |> shouldEqual (line, "0")
-                let op = if op = "FUTEX_WAIT" then 0 else 9
-                direct linux op address UserBuffer.Mapped |> shouldFail<UnmodelledException>
-            | "FUTEX_WAIT_PRIVATE"
-            | "FUTEX_WAIT_BITSET_PRIVATE" ->
-                (line, errno) |> shouldEqual (line, "ETIMEDOUT")
+        // The probe ran on an aarch64 kernel, which the arm64 preset models;
+        // the x86-64 preset is held to the same rows as an extra case.
+        for platform in [ SimulatedUnixPlatform.linuxArm64 ; SimulatedUnixPlatform.linuxX64 ] do
+            for line, op, errno in rows do
+                match op with
+                | "FUTEX_WAIT"
+                | "FUTEX_WAIT_BITSET" ->
+                    (line, errno) |> shouldEqual (line, "0")
+                    let op = if op = "FUTEX_WAIT" then 0 else 9
+                    direct platform op address UserBuffer.Mapped |> shouldFail<UnmodelledException>
+                | "FUTEX_WAIT_PRIVATE"
+                | "FUTEX_WAIT_BITSET_PRIVATE" ->
+                    (line, errno) |> shouldEqual (line, "ETIMEDOUT")
 
-                let pid, system = boot 2
+                    let pid, system =
+                        match Machines.withThreads platform 1 2 with
+                        | [ pid ], system -> pid, system
+                        | pids, _ -> failwith $"expected one process, got %A{pids}"
 
-                // The probe's waits time out after 1 s: a relative timeout for
-                // FUTEX_WAIT_PRIVATE, an instant on the monotonic clock for the
-                // bitset wait.
-                let op, timeout =
-                    if op = "FUTEX_WAIT_PRIVATE" then
-                        UnixFutex.FutexWaitPrivate, seconds 1L 0L
-                    else
-                        let deadline = UnixSystem.nanosecondsSinceBoot system + 1_000_000_000L
+                    // The probe's waits time out after 1 s: a relative timeout for
+                    // FUTEX_WAIT_PRIVATE, an instant on the monotonic clock for the
+                    // bitset wait.
+                    let op, timeout =
+                        if op = "FUTEX_WAIT_PRIVATE" then
+                            UnixFutex.FutexWaitPrivate, seconds 1L 0L
+                        else
+                            let deadline = UnixSystem.nanosecondsSinceBoot system + 1_000_000_000L
 
-                        UnixFutex.FutexWaitBitsetPrivate,
-                        seconds (deadline / 1_000_000_000L) (deadline % 1_000_000_000L)
+                            UnixFutex.FutexWaitBitsetPrivate,
+                            seconds (deadline / 1_000_000_000L) (deadline % 1_000_000_000L)
 
-                let system =
-                    match
-                        futexWith
-                            pid
-                            0
-                            address
-                            op
-                            0
-                            (CopiedArgument.Readable 0u)
-                            timeout
-                            UnixFutex.FutexBitsetMatchAny
-                            system
-                    with
-                    | SyscallOutcome.WouldBlock _, system -> system
-                    | other, _ -> failwith $"%s{line}: the wait answered %A{other} rather than parking"
+                    let system =
+                        match
+                            futexWith
+                                pid
+                                0
+                                address
+                                op
+                                0
+                                (CopiedArgument.Readable 0u)
+                                timeout
+                                UnixFutex.FutexBitsetMatchAny
+                                system
+                        with
+                        | SyscallOutcome.WouldBlock _, system -> system
+                        | other, _ -> failwith $"%s{line}: the wait answered %A{other} rather than parking"
 
-                let system =
-                    match UnixThreadLifecycle.exitThread (Caller.make pid 1) 0 system with
-                    | ProcessFate.Continues ((), system) -> system
-                    | ProcessFate.ProcessEnded _ -> failwith $"%s{line}: the exit ended the process"
+                    let system =
+                        match UnixThreadLifecycle.exitThread (Caller.make pid 1) 0 system with
+                        | ProcessFate.Continues ((), system) -> system
+                        | ProcessFate.ProcessEnded _ -> failwith $"%s{line}: the exit ended the process"
 
-                let woken, system = sweep pid system
-                (line, woken) |> shouldEqual (line, [])
+                    let woken, system = sweep pid system
+                    (line, woken) |> shouldEqual (line, [])
 
-                // Still asleep in its wait, which its deadline then ends.
-                let woken, system = sweep pid (UnixSystem.advanceClock 1_000_000_000L system)
-                (line, woken) |> shouldEqual (line, [ 0 ])
+                    // Still asleep in its wait, which its deadline then ends.
+                    let woken, system = sweep pid (UnixSystem.advanceClock 1_000_000_000L system)
+                    (line, woken) |> shouldEqual (line, [ 0 ])
 
-                (line, fst (finish pid 0 system))
-                |> shouldEqual (line, failed UnixError.ETIMEDOUT)
-            | other -> failwith $"the probe names no wait %s{other}"
+                    (line, fst (finish pid 0 system))
+                    |> shouldEqual (line, failed UnixError.ETIMEDOUT)
+                | other -> failwith $"the probe names no wait %s{other}"
 
     [<Test>]
     let ``a command Linux does not have, or a realtime clock it does not take, is ENOSYS`` () : unit =
