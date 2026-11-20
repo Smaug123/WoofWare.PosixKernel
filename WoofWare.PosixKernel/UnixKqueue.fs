@@ -804,8 +804,8 @@ module UnixKqueue =
         // `sizeof(struct kevent)`, and that `nevents` has no bound and screens
         // no range of the eventlist, are measured by docs/probes/kevent-size
         // (Darwin 27.2.0 arm64): the kernel stores events at a 32-byte stride,
-        // INT_MAX is answered as any count is, and an eventlist that reaches an
-        // unmapped page, or lies outside user space, faults only once an event
+        // INT_MAX is answered as any count is, and an eventlist that reaches a
+        // PROT_NONE page, or lies outside user space, faults only once an event
         // is stored onto it.
         tryKevent caller kq nchanges changes nevents eventlist timeout system
         |> Refusal.orRaise "UnixKqueue.kevent" KeventRefusal.kind KeventRefusal.describe

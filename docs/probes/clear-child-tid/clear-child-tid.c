@@ -18,7 +18,8 @@
 // and times out, though the word has become 0. The other user of the address
 // space may be another process: a child made by clone(CLONE_VM) without
 // CLONE_THREAD, the only thread of its process, clears the word and wakes the
-// waiter in its parent. When nothing else shares the address space (a forked
+// waiter in its parent, whether the word was given by set_tid_address or by
+// CLONE_CHILD_CLEARTID. When nothing else shares the address space (a forked
 // child's only thread ending by SYS_exit or SYS_exit_group), the word keeps
 // its value and nothing is woken. A thread which never set the address leaves
 // the word alone. A word the process cannot write (read-only, PROT_NONE, or
@@ -45,7 +46,9 @@
 // exiting thread waits to be released until every waiter is asleep in its
 // wait (its /proc state is S), and each waiter row reports whether the exit
 // was seen complete (the thread gone, or the child process reaped) before the
-// waiter's deadline. Every row runs in a fresh forked child.
+// waiter's deadline. A row is invalid if set_tid_address did not return the
+// caller's thread ID, as a call that registered the address does. Every row
+// runs in a fresh forked child.
 //
 // Rows:
 //   store            the word and its neighbours after the thread has gone,
@@ -81,6 +84,9 @@
 //                    shares the parent's address space but is a process of
 //                    its own, sets a word of the parent's and exits by
 //                    SYS_exit; a thread of the parent waits on the word.
+//   last-thread=clone-vm-cleartid the same, with the word given by
+//                    CLONE_CHILD_CLEARTID and the child calling no
+//                    set_tid_address.
 //
 // Fields: `asleep` is whether every waiter was asleep in its wait when the
 // exit was released; `exit-seen-before-deadline` whether the exit was seen
@@ -249,9 +255,25 @@ static void await_gone(struct exiter *e) {
     await_tid_gone(e->tid);
 }
 
+// pthread_create, ending the row as invalid if it fails.
+static void spawn(pthread_t *t, void *(*main)(void *), void *arg) {
+    int rc = pthread_create(t, NULL, main, arg);
+    if (rc != 0) {
+        printf("pthread_create-failed %s\n", strerror(rc));
+        fflush(stdout);
+        _exit(ROW_INVALID);
+    }
+}
+
 static void start_exiter(struct exiter *e) {
     pthread_t t;
-    pthread_create(&t, NULL, exiter_main, e);
+    spawn(&t, exiter_main, e);
+}
+
+// Whether `e`'s thread, if it was to set an address, had set_tid_address
+// return its own thread ID, as a call that registered the address does.
+static int registered(const struct exiter *e) {
+    return e->word == NULL || e->set_returned == e->tid;
 }
 
 // Start `n` waiters, wait until each is asleep, change the protection of
@@ -264,7 +286,7 @@ static void start_exiter(struct exiter *e) {
 static int run_waiters(struct waiter *ws, int n, struct exiter *e, void *protect, int prot) {
     pthread_t ts[4];
     for (int i = 0; i < n; i++)
-        pthread_create(&ts[i], NULL, waiter_main, &ws[i]);
+        spawn(&ts[i], waiter_main, &ws[i]);
     int asleep = 1;
     for (int i = 0; i < n; i++)
         asleep &= wait_asleep(&ws[i]);
@@ -280,7 +302,9 @@ static int run_waiters(struct waiter *ws, int n, struct exiter *e, void *protect
     printf("asleep=%d exit-seen-before-deadline=%s ", asleep, seen ? "yes" : "no");
     if (!protected_ok)
         printf("mprotect-failed ");
-    return asleep && seen && protected_ok;
+    if (!registered(e))
+        printf("set_tid_address-failed ");
+    return asleep && seen && protected_ok && registered(e);
 }
 
 // ------------------------------------------------------------------- rows
@@ -295,7 +319,7 @@ static int row_store(int set_address) {
     if (set_address)
         printf(" set_tid_address-returned-gettid=%s", e.set_returned == e.tid ? "yes" : "no");
     printf("\n");
-    return 0;
+    return registered(&e) ? 0 : ROW_INVALID;
 }
 
 static int row_wait(const char *name, int op) {
@@ -363,6 +387,10 @@ static int row_unwritable(const char *kind) {
     await_gone(&e);
     // Reaching here at all, with the thread gone, is the measurement that the
     // exit was otherwise ordinary: a signal would have ended this row's child.
+    if (!registered(&e)) {
+        printf("unwritable=%s: set_tid_address-failed\n", kind);
+        return ROW_INVALID;
+    }
     printf("unwritable=%s: thread-gone=yes process-runs=yes", kind);
     if (map != NULL) {
         if (mprotect(map, page, PROT_READ) != 0) {
@@ -416,7 +444,8 @@ static void await_release(struct shared_page *p) {
 
 static void *control_thread(void *arg) {
     struct shared_page *p = arg;
-    syscall(SYS_set_tid_address, &p->cell.word);
+    if (syscall(SYS_set_tid_address, &p->cell.word) != syscall(SYS_gettid))
+        syscall(SYS_exit_group, ROW_INVALID);
     __atomic_store_n(&p->control_tid, syscall(SYS_gettid), __ATOMIC_SEQ_CST);
     await_release(p);
     syscall(SYS_exit, 0);
@@ -424,10 +453,22 @@ static void *control_thread(void *arg) {
 }
 
 // The clone(CLONE_VM) child: a process of its own in its parent's address
-// space. It makes no C library call that could touch the parent's state.
+// space. It makes no C library call that could touch the parent's state. Its
+// clear_child_tid address comes from set_tid_address.
 static int clone_vm_child(void *arg) {
     struct shared_page *p = arg;
-    syscall(SYS_set_tid_address, &p->cell.word);
+    if (syscall(SYS_set_tid_address, &p->cell.word) != syscall(SYS_gettid))
+        syscall(SYS_exit, ROW_INVALID);
+    while (!__atomic_load_n(&p->release, __ATOMIC_SEQ_CST))
+        syscall(SYS_sched_yield);
+    syscall(SYS_exit, 0);
+    return 0;
+}
+
+// The same, with its clear_child_tid address given by clone's
+// CLONE_CHILD_CLEARTID alone.
+static int clone_vm_cleartid_child(void *arg) {
+    struct shared_page *p = arg;
     while (!__atomic_load_n(&p->release, __ATOMIC_SEQ_CST))
         syscall(SYS_sched_yield);
     syscall(SYS_exit, 0);
@@ -440,10 +481,14 @@ static int row_last_thread(const char *how) {
     p->release = 0;
     p->control_tid = 0;
     pid_t child;
-    if (strcmp(how, "clone-vm") == 0) {
+    if (strncmp(how, "clone-vm", 8) == 0) {
         size_t stack_size = 1 << 16;
         char *stack = mmap(NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        child = clone(clone_vm_child, stack + stack_size, CLONE_VM | SIGCHLD, p);
+        if (strcmp(how, "clone-vm") == 0)
+            child = clone(clone_vm_child, stack + stack_size, CLONE_VM | SIGCHLD, p);
+        else
+            child = clone(clone_vm_cleartid_child, stack + stack_size, CLONE_VM | CLONE_CHILD_CLEARTID | SIGCHLD, p,
+                          NULL, NULL, &p->cell.word);
     } else {
         child = fork();
         if (child == 0) {
@@ -451,13 +496,14 @@ static int row_last_thread(const char *how) {
                 // The child's first thread outlives its second, and ends the
                 // child once the second has gone.
                 pthread_t t;
-                pthread_create(&t, NULL, control_thread, p);
+                spawn(&t, control_thread, p);
                 while (__atomic_load_n(&p->control_tid, __ATOMIC_SEQ_CST) == 0)
                     usleep(1000);
                 await_tid_gone(p->control_tid);
                 _exit(0);
             }
-            syscall(SYS_set_tid_address, &p->cell.word);
+            if (syscall(SYS_set_tid_address, &p->cell.word) != syscall(SYS_gettid))
+                _exit(ROW_INVALID);
             await_release(p);
             if (strcmp(how, "exit") == 0)
                 syscall(SYS_exit, 0);
@@ -472,7 +518,7 @@ static int row_last_thread(const char *how) {
     }
     struct waiter w = {&p->cell.word, FUTEX_WAIT, 0, 0, 0, 0, 0};
     pthread_t t;
-    pthread_create(&t, NULL, waiter_main, &w);
+    spawn(&t, waiter_main, &w);
     int asleep = wait_asleep(&w);
     __atomic_store_n(&p->release, 1, __ATOMIC_SEQ_CST);
     // A child is reaped only once its exit is complete.
@@ -503,6 +549,11 @@ static int failures = 0;
 static void in_child(int (*row)(void)) {
     fflush(stdout);
     pid_t pid = fork();
+    if (pid < 0) {
+        printf("row not run: fork failed\n");
+        failures++;
+        return;
+    }
     if (pid == 0) {
         alarm(10);
         clock_gettime(CLOCK_MONOTONIC, &row_start);
@@ -511,8 +562,10 @@ static void in_child(int (*row)(void)) {
         _exit(rc);
     }
     int status;
-    waitpid(pid, &status, 0);
-    if (WIFSIGNALED(status)) {
+    if (waitpid(pid, &status, 0) != pid) {
+        printf("row not reaped\n");
+        failures++;
+    } else if (WIFSIGNALED(status)) {
         printf("row ended by signal %d\n", WTERMSIG(status));
         failures++;
     } else if (WEXITSTATUS(status) != 0) {
@@ -538,6 +591,7 @@ static int r_last_exit(void) { return row_last_thread("exit"); }
 static int r_last_exit_group(void) { return row_last_thread("exit_group"); }
 static int r_last_control(void) { return row_last_thread("control"); }
 static int r_last_clone_vm(void) { return row_last_thread("clone-vm"); }
+static int r_last_clone_vm_cleartid(void) { return row_last_thread("clone-vm-cleartid"); }
 
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -559,5 +613,6 @@ int main(void) {
     in_child(r_last_exit_group);
     in_child(r_last_control);
     in_child(r_last_clone_vm);
+    in_child(r_last_clone_vm_cleartid);
     return failures == 0 ? 0 : 1;
 }
