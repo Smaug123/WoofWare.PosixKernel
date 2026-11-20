@@ -298,6 +298,7 @@ module TestSockNameFaultLength =
         /// A control: the call made twice with a separate buffer and cell.
         | Control of
             call : string *
+            declared : uint32 *
             firstReturned : string *
             secondReturned : string *
             stored : int *
@@ -305,7 +306,13 @@ module TestSockNameFaultLength =
             secondReported : string *
             expected : string
         /// An overlapping row, and which order its bytes match.
-        | Overlap of call : string * declared : uint32 * line : string * returned : string * verdict : string
+        | Overlap of
+            call : string *
+            declared : uint32 *
+            offset : int *
+            line : string *
+            returned : string *
+            verdict : string
 
     /// One overlap recording: the kernel it ran on, and its lines.
     type private OverlapRecording =
@@ -317,11 +324,11 @@ module TestSockNameFaultLength =
 
     let private overlapControl : Regex =
         Regex
-            @"^(\S+)\s+D=[0-9]+\s+control\s+r=([-0-9]+),([-0-9]+)\s+errno=[0-9]+,[0-9]+\s+n=([0-9]+)\s+L=([-0-9]+),([-0-9]+)\s+expected=(\S+)\s"
+            @"^(\S+)\s+D=([0-9]+)\s+control\s+r=([-0-9]+),([-0-9]+)\s+errno=[0-9]+,[0-9]+\s+n=([0-9]+)\s+L=([-0-9]+),([-0-9]+)\s+expected=(\S+)\s"
 
     let private overlapRow : Regex =
         Regex
-            @"^(\S+)\s+D=([0-9]+)\s+k=-?[0-9]+\s+r=([-0-9]+)\s+errno=[0-9]+\s+(addr-first|length-first|either|NEITHER)\b"
+            @"^(\S+)\s+D=([0-9]+)\s+k=(-?[0-9]+)\s+r=([-0-9]+)\s+errno=[0-9]+\s+(addr-first|length-first|either|NEITHER)\b"
 
     let private overlapRecording (resource : string) : OverlapRecording =
         let name = $"WoofWare.PosixKernel.Test.overlapping-output-order.%s{resource}"
@@ -352,20 +359,22 @@ module TestSockNameFaultLength =
                         if control.Success then
                             OverlapLine.Control (
                                 group control 1,
-                                group control 2,
+                                UInt32.Parse (group control 2),
                                 group control 3,
-                                Int32.Parse (group control 4),
-                                group control 5,
+                                group control 4,
+                                Int32.Parse (group control 5),
                                 group control 6,
-                                group control 7
+                                group control 7,
+                                group control 8
                             )
                         elif row.Success then
                             OverlapLine.Overlap (
                                 group row 1,
                                 UInt32.Parse (group row 2),
+                                Int32.Parse (group row 3),
                                 line,
-                                group row 3,
-                                group row 4
+                                group row 4,
+                                group row 5
                             )
                         else
                             failwith $"%s{resource}: unparsed row %s{line}"
@@ -384,7 +393,7 @@ module TestSockNameFaultLength =
         |> List.choose (fun line ->
             match line with
             | OverlapLine.Control _ -> None
-            | OverlapLine.Overlap (call, declared, text, returned, verdict) ->
+            | OverlapLine.Overlap (call, declared, _, text, returned, verdict) ->
                 (recording.Resource, text, returned)
                 |> shouldEqual (recording.Resource, text, "0")
 
@@ -408,9 +417,65 @@ module TestSockNameFaultLength =
             for line in recording.Lines do
                 match line with
                 | OverlapLine.Overlap _ -> ()
-                | OverlapLine.Control (call, r1, r2, stored, l1, l2, expected) ->
+                | OverlapLine.Control (call, _, r1, r2, stored, l1, l2, expected) ->
                     (recording.Resource, call, r1, r2, stored > 0, l1 = l2, expected)
                     |> shouldEqual (recording.Resource, call, "0", "0", true, true, "yes")
+
+    /// Each call the probe sweeps, in its order, with the declared lengths it
+    /// sweeps it at.
+    let private schedule (platform : SimulatedUnixPlatform) : (string * uint32 list) list =
+        let address = [ 6u ; 10u ; 16u ; 128u ]
+        let address6 = [ 10u ; 20u ; 26u ; 28u ; 128u ]
+        let int' = [ 2u ; 4u ; 64u ]
+        let linger = [ 4u ; 6u ; 8u ; 64u ]
+
+        let lingerSeconds =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> []
+            | SimulatedUnixFlavour.Darwin -> [ "SO_LINGER_SEC", linger ]
+
+        [
+            "getsockname", address
+            "getpeername", address
+            "accept", address
+            "recvfrom", address
+            "getsockname6", address6
+            "getpeername6", address6
+            "SO_REUSEADDR", int'
+            "SO_ERROR", int'
+            "SO_LINGER", linger
+        ]
+        @ lingerSeconds
+        @ [ "TCP_NODELAY", int' ; "IPV6_V6ONLY", int' ]
+
+    /// The probe puts the cell at every offset from -3 to 30 from the buffer.
+    let private offsets : int list = [ -3 .. 30 ]
+
+    /// Every recording holds the probe's whole schedule, in order: for each
+    /// call and declared length a control, then a row at every offset. So no
+    /// recording can lose a sweep, or the end of one, and still pass.
+    [<Test>]
+    let ``every overlap recording holds the probe's whole schedule`` () : unit =
+        for recording in overlapRecordings.Force () do
+            let expected =
+                [
+                    for call, lengths in schedule recording.Platform do
+                        for declared in lengths do
+                            yield call, declared, None
+
+                            for offset in offsets do
+                                yield call, declared, Some offset
+                ]
+
+            let actual =
+                recording.Lines
+                |> List.map (fun line ->
+                    match line with
+                    | OverlapLine.Control (call, declared, _, _, _, _, _, _) -> call, declared, None
+                    | OverlapLine.Overlap (call, declared, offset, _, _, _) -> call, declared, Some offset
+                )
+
+            (recording.Resource, actual) |> shouldEqual (recording.Resource, expected)
 
     /// The calls whose successful store order `GetSockNameAnswer.Reported` and
     /// `PeerAddressCopy.Written` say follows `getSockNameFaultLength`.
