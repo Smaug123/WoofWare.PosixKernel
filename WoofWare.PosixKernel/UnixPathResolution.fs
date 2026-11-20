@@ -594,9 +594,7 @@ module UnixPathResolution =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<UnixPath, UnixError>
         =
-        match PathArgument.copyIn (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform) argument with
-        | PathArgument.Failed error -> Error error
-        | PathArgument.Parsed path -> Ok path
+        PathArgument.copyIn (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform) argument
 
     /// The directory a walk of `path`, given to a `*at` syscall with
     /// `directory`, starts from, or the errno the call answers instead.

@@ -814,9 +814,8 @@ module UnixBootImage =
                                     limits
                                     (PathArgumentBytes.Bytes (SymlinkTarget.toByteString target))
                             with
-                            | PathArgument.Parsed _ -> None
-                            | PathArgument.Failed _ ->
-                                Some (FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour))
+                            | Ok _ -> None
+                            | Error _ -> Some (FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour))
                 )
 
             match ofEachName, nameMatching with

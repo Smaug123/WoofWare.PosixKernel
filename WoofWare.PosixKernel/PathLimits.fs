@@ -1,34 +1,24 @@
 namespace WoofWare.PosixKernel
 
-/// The longest a single path component may be, *and the unit that length is
-/// measured in* — which is not the same on every Unix, so the two travel
-/// together as one value rather than as a number beside a unit that could
-/// disagree with it.
-///
-/// Both platforms say "255". Measured, they mean different things by it:
-///
-/// | name | UTF-8 bytes | UTF-16 units | APFS | ext4 |
-/// |---|---|---|---|---|
-/// | `a`×255 / `a`×256 | 255 / 256 | 255 / 256 | ok / too long | ok / too long |
-/// | `中`×85 / `中`×86 | 255 / 258 | 85 / 86 | ok / ok | **ok / too long** |
-/// | `中`×255 | 765 | 255 | **ok** | **too long** |
-/// | emoji×127 + `a` | 509 | 255 | **ok** | too long |
-/// | emoji×127 + `aa` | 510 | 256 | **too long** | too long |
-///
-/// The last two rows are what separate "UTF-16 code units" from "characters":
-/// an emoji is one character but two units, and APFS's boundary tracks the
-/// units. APFS also counts the name *as given* — `é`×255 in NFC is permitted,
-/// where counting its NFD expansion would give 510 units and refuse it.
-///
-/// This is really a property of the *filesystem* rather than the kernel
-/// (`_PC_NAME_MAX` varies per mount on Linux too); this library models one
-/// filesystem per flavour, which is the same simplification it makes elsewhere.
-/// A struct, deliberately: `PathLimits` is one too, so a reference DU here would
-/// make a forged `Unchecked.defaultof<PathLimits>` carry a *null* limit, and
-/// `assertValid` would then have to match on it to reject it — which is exactly
-/// the operation that would throw. As a struct the forged default is
-/// `Bytes 0`, which reads as an ordinary case carrying a zero, and the zero
-/// is what `assertValid` rejects.
+/// <summary>
+/// The longest a single path component is allowed to be, before the kernel
+/// starts refusing syscalls that try to use that path.
+/// </summary>
+/// <remarks>
+/// Our modelled platforms differ on how they measure this, so this is a DU.
+/// <para />
+/// This is actually a property of the filesystem, not the kernel, but for now
+/// WoofWare.PosixKernel models one filesystem per flavour.
+/// </remarks>
+(*
+| name | UTF-8 bytes | UTF-16 units | APFS | ext4 |
+|---|---|---|---|---|
+| `a`×255 / `a`×256 | 255 / 256 | 255 / 256 | ok / too long | ok / too long |
+| `中`×85 / `中`×86 | 255 / 258 | 85 / 86 | ok / ok | **ok / too long** |
+| `中`×255 | 765 | 255 | **ok** | **too long** |
+| emoji×127 + `a` | 509 | 255 | **ok** | too long |
+| emoji×127 + `aa` | 510 | 256 | **too long** | too long |
+*)
 [<RequireQualifiedAccess>]
 [<Struct>]
 type NameLengthLimit =
@@ -36,11 +26,10 @@ type NameLengthLimit =
     /// The length limit is this number of bytes.
     /// </summary>
     /// <remarks>
-    /// Every byte counts once, whether or not the name is valid UTF-8.
+    /// Ignores string encoding concerns: this doesn't care whether the name is valid UTF-8, for example.
     /// </remarks>
     /// <example>
-    /// Linux filesystems generally, and ext4 specifically, use this limit:
-    /// a raw byte count, which is what the kernel stores and compares.
+    /// Linux filesystems generally, and ext4 specifically, use this limit.
     /// </example>
     | Bytes of bytes : int
     /// <summary>
@@ -149,7 +138,7 @@ module PathLimits =
     /// using the pre-made <c>SimulatedUnixPlatform.pathLimits</c> instances instead
     /// of constructing a <c>PathLimits</c> by hand.
     /// </remarks>
-    /// <exception cref="T:System.ArgumentOutOfRangeException">A limit is one no Unix this library models has: fewer than one or more than 255 symlink traversals, a <c>PATH_MAX</c> below 256, or a <c>NAME_MAX</c> that forbids every filename.</exception>
+    /// <exception cref="T:System.ArgumentOutOfRangeException">You supplied limits which are incompatible with all of our modelled <c>PathLimits</c> bundles - e.g. you specified <c>pathMaxBytes</c> which is smaller than the minimum POSIX specifies.</exception>
     let create
         (maxSymlinkTraversals : int)
         (pathMaxBytes : int)
@@ -260,17 +249,14 @@ module PathLimits =
         // 1022-byte one does not.
         targetBytes + PathCursor.remainingBytes remaining + 1 <= limits.PathMaxBytes
 
-    /// Re-check the invariant of a value that may not have come from `create`.
-    ///
-    /// Unlike `UnixTimestamp`, whose `Unchecked.defaultof` is the epoch and so
-    /// perfectly legal, this type's default is a zero traversal limit — which
-    /// `create` rejects, but which would otherwise make the *first* symlink on
-    /// any path report ELOOP. That is the failure worth catching: not a crash,
-    /// but a plausible-looking answer from a kernel that cannot exist, produced
-    /// silently for every path in the filesystem.
-    ///
-    /// Throws `ArgumentException`, with `context` in the message, for such a
-    /// value.
+    /// <summary>
+    /// Re-check the invariant of a value that may not have come from <c>create</c>.
+    /// </summary>
+    /// <remarks>
+    /// The <c>Unchecked.defaultof</c> of <c>PathLimits</c> is invalid (it would
+    /// specify that a path which contains a single symlink can't be resolved
+    /// and gets <c>ELOOP</c> instead). This function checks for that condition.
+    /// </remarks>
     let assertValid (context : string) (limits : PathLimits) : PathLimits =
         // The integer checks come first, and the `NameMax` one is written to
         // avoid needing the unit: on a forged default every field is zero at
@@ -299,42 +285,66 @@ module PathLimits =
 
         limits
 
-/// What the bytes of a syscall's path argument name, once this kernel has
-/// copied them in.
-[<RequireQualifiedAccess>]
-type internal PathArgument =
-    | Parsed of path : UnixPath
-    /// The entry point returns its failure sentinel, and the caller stores
-    /// `error` wherever its libc keeps errno.
-    ///
-    /// This is what `getname()` reports: `EFAULT`, when the bytes could not be
-    /// read at all, or `ENAMETOOLONG`, when they hold no NUL within `PATH_MAX`
-    /// bytes. Those are the only ways a pathname's *bytes* can be wrong,
-    /// everything else being a question about what they resolve to.
-    ///
-    /// Which one it is never changes where the failure surfaces. Measured on
-    /// both kernels: with a source that does not exist, an unreadable
-    /// destination pointer and an over-long destination path are reported at the
-    /// same point in `rename(2)` — above the source's resolution on Linux, below
-    /// it on Darwin — so a caller orders "the argument was copied in" as one
-    /// step. See `RenameWalkOrder`.
-    | Failed of error : UnixError
-
-/// The bytes of a pathname argument as the caller found them, before anything
-/// has decided what they say.
-///
-/// Every syscall here that takes a pathname takes one of these, and copies it
-/// in itself at the point its kernel does: some screen another argument first,
-/// and a syscall taking two pathnames may never reach the second.
+/// <summary>
+/// The bytes of a pathname argument to a syscall, as the simulated kernel will read them from the simulated calling process.
+/// </summary>
+/// <remarks>
+/// When performing a syscall in real life, the kernel reads bytes out of the process's memory:
+/// the process passed a pointer, and the kernel reads the memory which that pointer points to.
+/// By contrast, WoofWare.PosixKernel is architected such that some client drives the
+/// simulated kernel <i>and</i> the simulated processes, and the simulated kernel doesn't have a
+/// "userspace memory" pool to reach into.
+/// Instead, the <i>client</i> of PosixKernel supplies "what the kernel would have seen when
+/// it read from the simulated process's memory".
+/// Therefore we need the client to be able to model the situation "the kernel was unable to
+/// read the memory which the simulated process specified".
+/// <para />
+/// We do have to model failures to read the memory which contains a path-argument string.
+/// Indeed, on some platforms, some syscalls (like <c>rename(2)</c>
+/// on Linux) do validity checks on the arguments in a specific order, which may
+/// mean they never get round to checking the validity of a later argument if an
+/// earlier argument had an error.
+/// (See <c>RenameWalkOrder</c> for the config which controls which of those behaviours
+/// a flavour exhibits for the particular case of <c>rename(2)</c>.)
+/// </remarks>
 [<RequireQualifiedAccess>]
 type PathArgumentBytes =
-    /// The caller could not read the pathname at all, which is EFAULT wherever
-    /// the kernel gets round to copying it in.
+    /// <summary>
+    /// The memory was somehow invalid. This is how the WoofWare.PosixKernel client tells the
+    /// simulated kernel that the kernel will be incapable of reading the memory which the simulated
+    /// process specified, when the kernel comes to perform the read.
+    /// </summary>
+    /// <remarks>
+    /// The kernel will produce <c>EFAULT</c> when it gets round to copying this memory
+    /// in from userspace.
+    /// </remarks>
+    /// <example>
+    /// WoofWare.PosixKernel currently expects the client to produce <c>Unreadable</c> when the simulated
+    /// process supplies a null pointer <i>or</i> when the pointer is invalid relative to the simulated
+    /// process. See <c>NullablePathArgument</c> for a type which separates those out.
+    /// </example>
     | Unreadable
-    /// The pathname's bytes, without the NUL that ends them: read up to the
-    /// NUL, or up to `PathLimits.pathMaxBytes` bytes if there is none that
-    /// soon. A kernel stops looking there, and answers ENAMETOOLONG for a
-    /// pathname with no NUL within that many bytes.
+    /// <summary>
+    /// The pathname's bytes, without the terminating NUL.
+    /// </summary>
+    /// <remarks>
+    /// This is how the WoofWare.PosixKernel client tells the simulated kernel that the kernel will
+    /// be able to read these bytes out of the simulated process's memory, when it eventually comes
+    /// to copy those bytes into its own memory.
+    /// The result represented here is: "the client has looked inside the simulated process's memory and
+    /// has read the bytes up to a terminating NUL, or if there was none within <c>PathLimits.pathMaxBytes</c> bytes,
+    /// return only that many bytes".
+    /// (When the simulated kernel comes to copy those bytes from userspace into its own memory, it will return
+    /// <c>ENAMETOOLONG</c> in that latter case.)
+    /// </remarks>
+    /// <example>
+    /// Suppose <c>PathLimits.pathMaxBytes</c> is 4096.
+    /// Then a client expressing "the userspace memory at this pointer will have 4095 non-NUL bytes plus a NUL at byte
+    /// 4096, when the kernel comes to read it" should send <c>PathArgumentBytes.Bytes {the 4095 bytes}</c>
+    /// A client expressing "the userspace memory at this pointer will have 4096 non-NUL bytes plus a NUL at byte 4097"
+    /// should send <c>PathArgumentBytes.Bytes {the 4096 bytes}</c>, and then the kernel will return <c>ENAMETOOLONG</c>
+    /// when it eventually consumes that.
+    /// </example>
     | Bytes of bytes : UnixByteString
 
 [<RequireQualifiedAccess>]
@@ -343,19 +353,31 @@ module internal PathArgument =
     /// What path the kernel would look up, given a syscall's path argument:
     /// what `getname()` answers when it copies the argument in. `limits` is the
     /// kernel's, from `SimulatedUnixPlatform.pathLimits`.
-    let copyIn (limits : PathLimits) (argument : PathArgumentBytes) : PathArgument =
+    ///
+    /// The error is `EFAULT`, when the bytes could not be read at all, or
+    /// `ENAMETOOLONG`, when they hold no NUL within `PATH_MAX` bytes. Those are
+    /// the only ways a pathname's *bytes* can be wrong, everything else being a
+    /// question about what they resolve to.
+    ///
+    /// Which one it is never changes where the failure surfaces. Measured on
+    /// both kernels: with a source that does not exist, an unreadable
+    /// destination pointer and an over-long destination path are reported at the
+    /// same point in `rename(2)` — above the source's resolution on Linux, below
+    /// it on Darwin — so a caller orders "the argument was copied in" as one
+    /// step. See `RenameWalkOrder`.
+    let copyIn (limits : PathLimits) (argument : PathArgumentBytes) : Result<UnixPath, UnixError> =
         // A forged `PathLimits` has a `PathMaxBytes` of zero, which is not very
         // helpful but is modelled; reject it.
         let limits = PathLimits.assertValid "PathArgument.copyIn" limits
 
         match argument with
-        | PathArgumentBytes.Unreadable -> PathArgument.Failed UnixError.EFAULT
+        | PathArgumentBytes.Unreadable -> Error UnixError.EFAULT
         | PathArgumentBytes.Bytes path ->
 
         // The limit counts the NUL byte, but the caller has not passed that; hence `- 1`.
         // PATH_MAX is enforced by getname()/copyinstr when the kernel copies the
         // string in, before anything looks at what it says.
         if UnixByteString.length path > PathLimits.pathMaxBytes limits - 1 then
-            PathArgument.Failed UnixError.ENAMETOOLONG
+            Error UnixError.ENAMETOOLONG
         else
-            PathArgument.Parsed (UnixPath.ofByteString path)
+            Ok (UnixPath.ofByteString path)
