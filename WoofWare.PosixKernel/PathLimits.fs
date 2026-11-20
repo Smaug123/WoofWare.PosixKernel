@@ -1,10 +1,14 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// The longest a single path component is allowed to be. A syscall whose path holds a longer
-/// component answers <c>ENAMETOOLONG</c>.
+/// The longest a single path component is allowed to be. When a path walk reaches a longer
+/// component, the syscall usually answers <c>ENAMETOOLONG</c>.
 /// </summary>
 /// <remarks>
+/// The kernel checks a component's length only when the walk reaches it, so an earlier error can
+/// come first: <c>stat</c> of <c>/missing/</c> followed by 256 bytes answers <c>ENOENT</c> when
+/// <c>missing</c> does not exist. On Darwin's devfs an over-long name is refused instead.
+/// <para />
 /// Our modelled platforms differ on how they measure this, so this is a DU.
 /// <para />
 /// The kernel already applies its platform's limit, which <c>SimulatedUnixPlatform.pathLimits</c> holds.

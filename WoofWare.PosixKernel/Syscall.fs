@@ -12,9 +12,13 @@ type CopiedArgument<'T> =
     ///
     /// For a buffer of bytes, `contents` starts at the pointer the process
     /// passed, never partway into the buffer, and holds at least as many bytes
-    /// as the call copies: the whole `count` of a `write` or `send`, or the
-    /// whole declared length of a `sockaddr`, is always enough. This library
-    /// ignores any bytes past those it copies. A later copy of the same call,
+    /// as the call copies. The whole `count` of a `write` or `send`, or the
+    /// whole declared length of a `sockaddr` or a socket option, is always
+    /// enough, but a call may copy far less than that, and reading that much
+    /// may touch memory that the process's call never reads; a client that
+    /// cannot read that far uses the call's own function, whose paused call
+    /// names exactly the bytes it copies (`copyRange`). This library ignores
+    /// any bytes past those it copies. A later copy of the same call,
     /// such as the rest of a write that slept, takes its bytes from further
     /// into `contents` (see `CopyRange.FirstByte`). Contents that end before
     /// the bytes the call copies make `UnixSystem.step` and `UnixWait.finish`
@@ -441,8 +445,10 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// The client reads `sourceLength` before it makes the case, but a Linux
     /// call reads the cell only after it has put the datagram's bytes in
     /// `buffer`. So a Linux call whose length cell lies inside `buffer` cannot
-    /// be made correctly through this case: the client makes it through
-    /// `UnixReadWrite.recvfrom` instead, and stores
+    /// be made correctly through this case, either by `UnixSystem.step` or,
+    /// once the call has slept, by `UnixWait.finish`. The client makes it
+    /// through `UnixReadWrite.recvfrom` and finishes it with
+    /// `UnixReadWrite.finishRecvFrom` instead, and stores
     /// `PausedRecvFrom.received` before it reads the cell.
     | RecvFrom of
         fd : int *

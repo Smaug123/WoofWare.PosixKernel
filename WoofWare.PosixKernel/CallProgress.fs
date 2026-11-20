@@ -28,10 +28,14 @@ open System.Collections.Immutable
 /// every client does" in the README). Resuming the same paused value twice
 /// gives two independent answers from the same system.
 ///
-/// The resumption takes bytes and nothing else. It has no way to say that the
-/// copy faulted, or that only some of the bytes could be read: a buffer that
-/// faults is described before the call, as `UserBuffer.Unmapped`, and this
-/// library cannot express a buffer that is readable only in part.
+/// A resumption that copies a range of bytes (one whose paused type has a
+/// `copyRange`) takes exactly those bytes and nothing else. It has no way to
+/// say that the copy faulted, or that only some of the bytes could be read: a
+/// buffer that faults is described before the call, as
+/// `UserBuffer.Unmapped`, and this library cannot express a buffer that is
+/// readable only in part. A resumption that takes a pathname is different: it
+/// takes a `PathArgumentBytes`, so the client reports an unreadable pathname
+/// (`PathArgumentBytes.Unreadable`) when it is asked for it.
 [<RequireQualifiedAccess>]
 type CallProgress<'Paused, 'Answer> =
     /// The call is over, without reading (any more of) the process's memory.

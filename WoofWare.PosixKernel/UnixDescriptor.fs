@@ -1715,11 +1715,12 @@ module UnixDescriptor =
     /// control record as well as its bytes. An inotify instance reports the
     /// bytes that a read of every queued record would return.
     ///
-    /// A descriptor that is not open is `EBADF`, whatever the destination. An
-    /// unmapped destination is `EFAULT`, whatever the descriptor holds. A
+    /// A descriptor that is not open is `EBADF`, whatever the destination. A
     /// device answers its driver's errno, whatever the destination: under
     /// Linux, `ENOTTY` for `/dev/null` and `EINVAL` for `/dev/urandom`. Every
-    /// other descriptor is refused.
+    /// descriptor not listed above is refused, whatever the destination. For
+    /// a descriptor that would report a count, an unmapped destination is
+    /// `EFAULT`.
     ///
     /// The system comes back with the answer. It changes only for a Linux UDP
     /// socket: as on Linux, the call moves the datagrams that have arrived into

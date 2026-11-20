@@ -1888,7 +1888,9 @@ module UnixPoll =
     /// Nothing wakes a sleeping caller by itself, and the clock moves only when
     /// the client advances it (`UnixSystem.advanceClock`). See "What every
     /// client does" in the README. Of several threads asleep on one epoll
-    /// instance, `UnixWait.wake` wakes one for each event.
+    /// instance, a `UnixWait.wake` that finds the instance ready wakes one of
+    /// them, however many registrations are ready, and that thread may take
+    /// several events in one `finishEpollWait` if `maxEvents` permits.
     ///
     /// The events come back in `EpollWaitOutcome.Answered`, and the client
     /// stores them into the process's buffer: this library writes nothing

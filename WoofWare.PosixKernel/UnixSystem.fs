@@ -2239,9 +2239,15 @@ module UnixSystem =
     /// `step` never stops partway. For a buffer, the client passes a
     /// `CopiedArgument.Readable` holding the buffer's bytes, starting at its
     /// first byte. The call copies the bytes that the paused call's
-    /// `copyRange` names, counted from that first byte. `step` never
-    /// shows the client that range, so the client passes the whole length that
-    /// the process passed for the buffer. Bytes past the range are not read.
+    /// `copyRange` names, counted from that first byte, so the contents must
+    /// reach at least to the end of that range; bytes past it are not read.
+    /// `step` never shows the client that range. The length that the process
+    /// passed for the buffer always covers it, but a call may copy far less
+    /// than that length (a `setsockopt` of an `int` option copies 4 bytes,
+    /// whatever length the process declared), and reading the whole length may
+    /// touch memory that the process's call never reads. A client that cannot
+    /// read that far uses the call's own function, whose paused call says
+    /// exactly which bytes it copies.
     ///
     /// Whatever the call, `caller` must be a thread of one of the system's
     /// processes, which is not asleep in a syscall and does not owe a return

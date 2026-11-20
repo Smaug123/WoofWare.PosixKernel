@@ -723,12 +723,15 @@ module UnixSignal =
     /// interrupted (an `Interrupted` answer), from the moment a signal is
     /// deliverable to it, whichever thread's call made it so, and while a
     /// return it began is not over. Until it returns, every
-    /// call the thread makes throws `InvalidOperationException`. Calling this
-    /// when nothing is owed is harmless, so a client may instead call it after
-    /// every system call the thread makes, `sigreturn` included. It may also
-    /// call it at any other time the thread is not asleep in a syscall, as a
-    /// preempted thread returns to user mode. See "What every client does" in
-    /// the README.
+    /// call the thread makes throws `InvalidOperationException`. A signal can
+    /// become deliverable to a thread while the thread makes no call at all,
+    /// when another thread's `kill` or `pthreadKill` sends it one, so calling
+    /// this after each of the thread's own calls is not enough: the client
+    /// asks `owesReturn` before the thread runs again, and calls this when it
+    /// answers `true`. Calling this when nothing is owed is harmless, and the
+    /// client may call it at any time the thread is not asleep in a syscall,
+    /// as a preempted thread returns to user mode. See "What every client
+    /// does" in the README.
     ///
     /// Every case answers a system, which the client keeps even when the
     /// answer asks it to do nothing: the return can still have changed the
@@ -862,8 +865,10 @@ module UnixSignal =
     ///
     /// A client asks this before the thread runs more of its own code, and
     /// calls `onReturnToUser` when it answers `true`. Calling `onReturnToUser`
-    /// after every call instead is also correct (see "What every client does"
-    /// in the README).
+    /// after each of the thread's calls does not replace this check: another
+    /// thread's `kill` or `pthreadKill` can make a signal deliverable to this
+    /// thread between its calls (see "What every client does" in the
+    /// README).
     ///
     /// Answers `false` for a thread asleep in a syscall, which owes nothing
     /// until its call has answered, and for a name by which the process has no

@@ -615,9 +615,12 @@ type SocketDescription =
 ///
 /// This is the contention key, not a general identity. Every Linux epoll and
 /// inotify instance is `AnonymousInode`, because they all share one inode, so
-/// equal objects do not mean the same instance. To tell two kernel objects
-/// apart, compare `OpenFileDescriptionId`s, or the `SocketId` or `PipeId` in
-/// an `OpenFileTarget`.
+/// equal objects do not mean the same instance. To tell two epoll or inotify
+/// instances apart, compare their `OpenFileDescriptionId`s; a socket or a pipe
+/// is identified by the `SocketId` or `PipeId` in its `OpenFileTarget`. For a
+/// file, `File`'s inode is the identity: two separate `open`s of one file,
+/// even through different hard links, give different descriptions but the
+/// same inode.
 [<RequireQualifiedAccess>]
 type OpenFileObject =
     /// A regular file, directory, or anything else `open(2)` returned a
