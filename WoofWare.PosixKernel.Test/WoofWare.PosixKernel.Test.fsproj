@@ -618,6 +618,15 @@
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.17.13-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.17.13-x86_64.txt" />
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.18.5-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.18.5-x86_64.txt" />
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.18.5-aarch64.txt" />
+    <!-- Which output a successful getsockname, getpeername, accept or recvfrom
+         stores first when the buffer and the length cell overlap, measured by
+         docs/probes/overlapping-output-order. `TestSockNameFaultLength` holds
+         each recording's decisive rows to the fault-path rule. -->
+    <EmbeddedResource Include="..\docs\probes\overlapping-output-order\darwin-27.2.0-arm64.txt" LogicalName="WoofWare.PosixKernel.Test.overlapping-output-order.darwin-27.2.0-arm64.txt" />
+    <EmbeddedResource Include="..\docs\probes\overlapping-output-order\linux-6.12.111-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.overlapping-output-order.linux-6.12.111-x86_64.txt" />
+    <EmbeddedResource Include="..\docs\probes\overlapping-output-order\linux-6.17.13-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.overlapping-output-order.linux-6.17.13-x86_64.txt" />
+    <EmbeddedResource Include="..\docs\probes\overlapping-output-order\linux-6.18.5-x86_64.txt" LogicalName="WoofWare.PosixKernel.Test.overlapping-output-order.linux-6.18.5-x86_64.txt" />
+    <EmbeddedResource Include="..\docs\probes\overlapping-output-order\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.overlapping-output-order.linux-6.18.5-aarch64.txt" />
     <!-- What a write or pwrite to a regular file leaves behind when the copy
          from the caller's buffer faults, measured by
          docs/probes/faulting-file-write. `TestFaultingFileWrite` replays every
