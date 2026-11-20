@@ -198,6 +198,12 @@ type LaunchRefusal =
     /// The descriptor reaches the bound this kernel models for the process's
     /// `RLIMIT_NOFILE` (`SimulatedUnixPlatform.descriptorBound`).
     | DescriptorAtOrAboveBound of fd : int * bound : int
+    /// Descriptor `fd` is `LaunchDescriptor.Supplied` with `length` bytes, more
+    /// than the `maxTransfer` that one `write(2)` moves on the platform
+    /// (`SimulatedUnixPlatform.transferCountLimit`). Unmodelled: a real
+    /// launcher would write that many in several calls, and a supplied pipe
+    /// models only one.
+    | SuppliedBeyondOneWrite of fd : int * length : int * maxTransfer : int
 
 [<RequireQualifiedAccess>]
 module LaunchRefusal =
@@ -225,6 +231,8 @@ module LaunchRefusal =
         | LaunchRefusal.Credentials refusal -> CredentialsRefusal.describe refusal
         | LaunchRefusal.DescriptorAtOrAboveBound (fd, bound) ->
             $"the launch table names descriptor %d{fd}, at or above the bound %d{bound} this kernel assumes the process's RLIMIT_NOFILE reaches; it hands out no descriptor there."
+        | LaunchRefusal.SuppliedBeyondOneWrite (fd, length, maxTransfer) ->
+            $"launch descriptor %d{fd} supplies %d{length} bytes, more than the %d{maxTransfer} that one write(2) moves on this platform. This library models a supplied pipe as the client's one write of its bytes, and does not model the several writes that this many would take."
 
     /// The setting of the launch that was refused.
     let setting (refusal : LaunchRefusal) : LaunchSetting =
@@ -235,6 +243,7 @@ module LaunchRefusal =
         | LaunchRefusal.Umask _ -> LaunchSetting.Umask
         | LaunchRefusal.Credentials _ -> LaunchSetting.Credentials
         | LaunchRefusal.DescriptorAtOrAboveBound _ -> LaunchSetting.Streams
+        | LaunchRefusal.SuppliedBeyondOneWrite _ -> LaunchSetting.Streams
 
     /// Which exception a public entry point raises this refusal as.
     let internal kind (refusal : LaunchRefusal) : RefusalKind =
@@ -245,6 +254,7 @@ module LaunchRefusal =
         | LaunchRefusal.Umask inner -> UmaskRefusal.kind inner
         | LaunchRefusal.Credentials inner -> CredentialsRefusal.kind inner
         | LaunchRefusal.DescriptorAtOrAboveBound _ -> RefusalKind.Unmodelled
+        | LaunchRefusal.SuppliedBeyondOneWrite _ -> RefusalKind.Unmodelled
 
 /// What a process starts with unless its launch says otherwise: the values of
 /// `UnixSystem`'s defaults of the same names, whose docstrings say why each is
@@ -654,6 +664,26 @@ module ProcessLaunch =
 
         match launch.Streams |> Map.toSeq |> Seq.tryFind (fun (fd, _) -> fd >= bound) with
         | Some (fd, _) -> Error (LaunchRefusal.DescriptorAtOrAboveBound (fd, bound))
+        | None ->
+
+        let maxTransfer =
+            TransferCountLimit.maxTransfer (SimulatedUnixPlatform.transferCountLimit platform)
+
+        let beyondOneWrite =
+            launch.Streams
+            |> Map.toSeq
+            |> Seq.tryPick (fun (fd, descriptor) ->
+                match descriptor with
+                // A default array is a forged value, which `PipeState.launch` fails on.
+                | LaunchDescriptor.Supplied bytes when not bytes.IsDefault && bytes.Length > maxTransfer ->
+                    Some (LaunchRefusal.SuppliedBeyondOneWrite (fd, bytes.Length, maxTransfer))
+                | LaunchDescriptor.Supplied _
+                | LaunchDescriptor.Drained
+                | LaunchDescriptor.Gone -> None
+            )
+
+        match beyondOneWrite with
+        | Some refusal -> Error refusal
         | None ->
 
         let flavour = SimulatedUnixPlatform.flavour platform
