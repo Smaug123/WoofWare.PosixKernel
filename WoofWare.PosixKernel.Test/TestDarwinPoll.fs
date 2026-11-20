@@ -364,7 +364,7 @@ module TestDarwinPoll =
         (system : UnixSystem<int, string>)
         : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>
         =
-        UnixPoll.tryPoll (Callers.thread poller system) (PollEntriesArgument.Readable entries) milliseconds system
+        PollCall.tryPoll (Callers.thread poller system) entries milliseconds system
 
     let private answered (entries : PollEntry list) (system : UnixSystem<int, string>) : int16 list * int =
         match pollNow entries 0 system with

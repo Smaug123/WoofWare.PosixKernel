@@ -43,6 +43,7 @@
     <Compile Include="ConnectOutcomes.fs" />
     <Compile Include="NewSocket.fs" />
     <Compile Include="CopyIn.fs" />
+    <Compile Include="PollCall.fs" />
     <Compile Include="OptionValue.fs" />
     <Compile Include="TestDarwinReleaseAgainstHost.fs" />
     <Compile Include="TestGcHeapHardLimit.fs" />

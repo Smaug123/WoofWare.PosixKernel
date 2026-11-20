@@ -321,15 +321,14 @@ module TestInotifyMeasured =
 
     let private pollIn (fd : int) (events : int16) (system : UnixSystem<int, string>) : string =
         match
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (Callers.thread 0 system)
-                (PollEntriesArgument.Readable
-                    [
-                        {
-                            Fd = fd
-                            Events = events
-                        }
-                    ])
+                [
+                    {
+                        Fd = fd
+                        Events = events
+                    }
+                ]
                 0
                 system
         with
@@ -413,15 +412,14 @@ module TestInotifyMeasured =
 
         let polled =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 0 system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = a
-                                Events = pollAll
-                            }
-                        ])
+                    [
+                        {
+                            Fd = a
+                            Events = pollAll
+                        }
+                    ]
                     0
                     system
             with

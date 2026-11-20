@@ -151,9 +151,7 @@ module TestPollTimeout =
         (system : UnixSystem<int, string>)
         : WakeCondition * UnixSystem<int, string>
         =
-        match
-            UnixPoll.tryPoll (Callers.thread thread system) (PollEntriesArgument.Readable entries) milliseconds system
-        with
+        match PollCall.tryPoll (Callers.thread thread system) entries milliseconds system with
         | Ok (PollOutcome.WouldBlock condition, parked) -> condition, parked
         | other -> failwith $"expected a park, got %A{other}"
 
@@ -318,13 +316,7 @@ module TestPollTimeout =
 
     [<Test>]
     let ``a timeout of zero never parks`` () : unit =
-        match
-            UnixPoll.tryPoll
-                (Callers.thread thread idle)
-                (PollEntriesArgument.Readable [ entry listener pollIn ])
-                0
-                idle
-        with
+        match PollCall.tryPoll (Callers.thread thread idle) [ entry listener pollIn ] 0 idle with
         | Ok (PollOutcome.Answered (reported, count), after) ->
             reported |> shouldEqual [ 0s ]
             count |> shouldEqual 0
@@ -336,13 +328,7 @@ module TestPollTimeout =
         // `poll(NULL, 0, -1)` sleeps until a signal interrupts it.
         for entries in [ [] ; [ entry -1 pollIn ] ; [ entry -5 pollIn ; entry -1 0s ] ] do
             for milliseconds in [ -1 ; System.Int32.MinValue ] do
-                match
-                    UnixPoll.tryPoll
-                        (Callers.thread thread idle)
-                        (PollEntriesArgument.Readable entries)
-                        milliseconds
-                        idle
-                with
+                match PollCall.tryPoll (Callers.thread thread idle) entries milliseconds idle with
                 | Ok (PollOutcome.WouldBlock condition, parked) ->
                     condition
                     |> shouldEqual (WakeCondition.Primitive WakePrimitive.SignalDeliverable)
@@ -359,7 +345,7 @@ module TestPollTimeout =
 
         let late = nearTheEnd (System.Int64.MaxValue - timeout + 1L)
 
-        UnixPoll.tryPoll (Callers.thread thread late) (PollEntriesArgument.Readable [ entry listener pollIn ]) 1 late
+        PollCall.tryPoll (Callers.thread thread late) [ entry listener pollIn ] 1 late
         |> shouldEqual (Error (PollRefusal.DeadlineBeyondClock (System.Int64.MaxValue - timeout + 1L, 1)))
 
         let _, parked =
@@ -582,11 +568,7 @@ module TestPollTimeout =
 
         let exn =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixPoll.tryPoll
-                    (Callers.thread thread parked)
-                    (PollEntriesArgument.Readable [ entry listener pollIn ])
-                    0
-                    parked
+                PollCall.tryPoll (Callers.thread thread parked) [ entry listener pollIn ] 0 parked
                 |> ignore
             )
 

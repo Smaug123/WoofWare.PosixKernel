@@ -504,15 +504,14 @@ module TestBlockingAccept =
 
         let system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 2 system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = fd
-                                Events = 0x0001s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = fd
+                            Events = 0x0001s
+                        }
+                    ]
                     -1
                     system
             with

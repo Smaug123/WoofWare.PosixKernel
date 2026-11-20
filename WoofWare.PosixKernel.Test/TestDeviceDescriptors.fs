@@ -1155,15 +1155,14 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device access booted
 
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread thread system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = fd
-                                Events = events
-                            }
-                        ])
+                    [
+                        {
+                            Fd = fd
+                            Events = events
+                        }
+                    ]
                     0
                     system
             with

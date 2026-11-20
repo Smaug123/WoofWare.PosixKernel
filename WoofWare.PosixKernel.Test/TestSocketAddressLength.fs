@@ -252,15 +252,14 @@ module TestSocketAddressLength =
                         UnixSystem.checkInvariants after |> shouldEqual []
 
                         match
-                            UnixPoll.tryPoll
+                            PollCall.tryPoll
                                 (Callers.thread 0 after)
-                                (PollEntriesArgument.Readable
-                                    [
-                                        {
-                                            Fd = clientFd
-                                            Events = 0x2001s
-                                        }
-                                    ])
+                                [
+                                    {
+                                        Fd = clientFd
+                                        Events = 0x2001s
+                                    }
+                                ]
                                 0
                                 after
                         with

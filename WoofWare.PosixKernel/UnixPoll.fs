@@ -66,31 +66,9 @@ type internal PollRefusal =
     /// The poll was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
-
-/// The array of `struct pollfd` which a `poll(2)` names, as the client found
-/// it when it read the array from the process's memory.
-///
-/// An array which the process's memory does not hold readable to its end is
-/// `Unreadable`, however many of its entries are readable: the kernel fails
-/// such a call without reporting any of them. Memory that the process can
-/// read, but whose contents the client cannot produce, is neither case, and a
-/// client has no answer from this library for such a call.
-[<RequireQualifiedAccess>]
-type PollEntriesArgument =
-    /// The client read every entry of the array: `nfds` is the length of
-    /// `entries`.
-    | Readable of entries : PollEntry list
-    /// Some byte of the array's `count` entries is memory that the process
-    /// cannot read: the pointer is NULL, or the memory it names stops being
-    /// readable before the end of the `count` entries. `count` is the call's `nfds`, which the
-    /// kernel takes as an unsigned 32-bit count on both flavours: under Linux,
-    /// where the C library's `nfds_t` is wider, the kernel reads only its low
-    /// 32 bits.
-    ///
-    /// The kernel screens `count` before it reads the array, so the call can
-    /// fail with `EINVAL` rather than `EFAULT`. A `count` of 0 reads nothing,
-    /// so `Unreadable 0u` answers as `Readable []` does, whatever the pointer.
-    | Unreadable of count : uint32
+    /// The array of entries reached its copy as a buffer whose bytes this
+    /// library cannot answer for.
+    | Buffer of BufferRefusal
 
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -107,7 +85,8 @@ type PollOutcome =
     /// `poll` failed with this errno. This library answers only `EINVAL`, for
     /// more entries than any process's `RLIMIT_NOFILE` lets it name (more than
     /// 10240 under Darwin, and more than 2147483584 under Linux); and `EFAULT`,
-    /// for an array which the kernel could not read (`PollEntriesArgument.Unreadable`).
+    /// for an array of at least one entry at an address naming no storage
+    /// (`UserBuffer.Unmapped`).
     | Failed of error : UnixError
     /// `poll` did not return, and the calling thread is now asleep in it.
     /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
@@ -201,6 +180,7 @@ module internal PollRefusal =
         | PollRefusal.DeadlineBeyondClock (now, timeoutMilliseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
+        | PollRefusal.Buffer refusal -> $"the array of struct pollfd: %s{BufferRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PollRefusal) : RefusalKind =
@@ -214,6 +194,7 @@ module internal PollRefusal =
         | PollRefusal.EventsBesideDeadline -> RefusalKind.Unmodelled
         | PollRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | PollRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
+        | PollRefusal.Buffer inner -> BufferRefusal.kind inner
 
 /// The flags `epoll_create1(2)` accepts, in Linux's numbering.
 [<RequireQualifiedAccess>]
@@ -486,6 +467,55 @@ module internal EpollCtlRefusal =
         | EpollCtlRefusal.WakeUp -> RefusalKind.Unmodelled
         | EpollCtlRefusal.PipeTarget _ -> RefusalKind.Unmodelled
         | EpollCtlRefusal.UnmeasuredSocketKind _ -> RefusalKind.Unmodelled
+
+/// A `poll(2)` that has stopped at the point where the kernel copies the
+/// process's array of `struct pollfd` in. `UnixPoll.poll` answers one.
+///
+/// To finish the call, the client reads the array (the bytes that
+/// `PausedPoll.copyRange` names: `PausedPoll.count` entries of eight bytes
+/// each) from the process's memory, and passes its entries to
+/// `UnixPoll.pollWithEntries`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `pollWithEntries` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
+[<NoEquality ; NoComparison>]
+type PausedPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            Thread : 'Thread
+            Count : int
+            Milliseconds : int
+            /// The system the call was made in: everything a `poll` does
+            /// before the copy is a question.
+            System : ProcessView<'Thread, 'Handler>
+        }
+
+[<RequireQualifiedAccess>]
+module PausedPoll =
+    /// `sizeof(struct pollfd)`: an `int` and two `short`s, on every
+    /// architecture and flavour this library simulates.
+    [<Literal>]
+    let private EntrySize : int = 8
+
+    /// How many entries the kernel copies, from the start of the array: the
+    /// call's `nfds`, and so how many `UnixPoll.pollWithEntries` takes. Never
+    /// zero: a `poll` of no entries reads nothing and answers without
+    /// stopping.
+    let count<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : int
+        =
+        paused.Count
+
+    /// Which bytes of the process's array the kernel copies: every byte of
+    /// its `count` entries, from the start, eight bytes to an entry.
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : CopyRange
+        =
+        CopyRange.fromStart (paused.Count * EntrySize)
 
 [<RequireQualifiedAccess>]
 module UnixPoll =
@@ -1501,86 +1531,102 @@ module UnixPoll =
                 Parking.parkWaiting thread parkedAgain system
             )
 
-    /// The entries the kernel copies in from `argument`, or `EFAULT` where it
-    /// cannot read them.
-    let private copyIn (argument : PollEntriesArgument) : Result<PollEntry list, UnixError> =
-        // Measured (`docs/probes/poll-unreadable-entries`): on both flavours
-        // an array readable for only its first entries fails at once,
-        // reporting nothing and never sleeping (section P), and under Linux
-        // without polling the entries it could read (section S; Darwin's
-        // poll changes nothing this kernel models by polling); and an array
-        // of no entries reads nothing, so it is answered as an empty one
-        // wherever it points (section Z).
-        match argument with
-        | PollEntriesArgument.Readable entries -> Ok entries
-        | PollEntriesArgument.Unreadable 0u -> Ok []
-        | PollEntriesArgument.Unreadable _ -> Error UnixError.EFAULT
-
-    /// `nfds`: how many entries `argument` names.
-    let private entryCount (argument : PollEntriesArgument) : uint32 =
-        match argument with
-        | PollEntriesArgument.Readable entries -> uint32 (List.length entries)
-        | PollEntriesArgument.Unreadable count -> count
-
-    /// `tryPoll` once `Entry` has admitted its caller.
-    let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// A `poll` of `entries`, once the kernel holds them: see `poll`.
+    let private polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (argument : PollEntriesArgument)
+        (entries : PollEntry list)
         (milliseconds : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
-        // Measured on both flavours (`docs/probes/poll-entry-count`, section
-        // A; `docs/probes/poll-unreadable-entries`, section O; and Darwin's
-        // `poll-darwin.c`, section N): the count is screened ahead of the
-        // copy-in, the scan, Darwin's registrations, and the timeout.
-        match
-            PollEntryCount.screen
-                system.Machine.UnixPlatform
-                (UnixProcessState.callerPrivilege system.Process)
-                (entryCount argument)
-        with
-        | Error refusal -> Error refusal
-        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
-        | Ok None ->
-
-        match copyIn argument with
-        | Error error -> Ok (PollOutcome.Failed error, system)
-        | Ok entries ->
-
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
         | SimulatedUnixFlavour.Darwin -> darwinPoll thread entries milliseconds system
 
+    /// `tryPoll` once `Entry` has admitted its caller.
+    let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (fds : UserBuffer)
+        (nfds : uint32)
+        (milliseconds : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * ProcessView<'Thread, 'Handler>>, PollRefusal>
+        =
+        // Measured on both flavours (`docs/probes/poll-entry-count`, section
+        // A; `docs/probes/poll-unreadable-entries`, section O; and Darwin's
+        // `poll-darwin.c`, section N): the count is screened ahead of the
+        // copy, the scan, Darwin's registrations, and the timeout.
+        match
+            PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) nfds
+        with
+        | Error refusal -> Error refusal
+        | Ok (Some error) -> Ok (CallProgress.Answered (PollOutcome.Failed error, system))
+        | Ok None ->
+
+        // Measured (`docs/probes/poll-unreadable-entries`, section Z): no
+        // entries read nothing, wherever `fds` points.
+        if nfds = 0u then
+            polled thread [] milliseconds system |> Result.map CallProgress.Answered
+        else
+
+        // Measured (`docs/probes/poll-unreadable-entries`, sections O and P):
+        // an array the kernel cannot read fails at once, reporting nothing and
+        // never sleeping, and under Linux without polling the entries it could
+        // read (section S).
+        match fds with
+        | UserBuffer.Unmapped _ -> Ok (CallProgress.Answered (PollOutcome.Failed UnixError.EFAULT, system))
+        | UserBuffer.Opaque -> Error (PollRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+        | UserBuffer.Addressless -> Error (PollRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | UserBuffer.Mapped ->
+            // The screen passed, so `nfds` is at most the descriptor bound.
+            ({
+                Thread = thread
+                Count = int nfds
+                Milliseconds = milliseconds
+                System = system
+            }
+            : PausedPoll<'Thread, 'Handler>)
+            |> CallProgress.NeedsCopyIn
+            |> Ok
+
     /// `poll`, with a refusal answered as the `Error` rather than raised.
     let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntriesArgument)
+        (fds : UserBuffer)
+        (nfds : uint32)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        : Result<CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * UnixSystem<'Thread, 'Handler>>, PollRefusal>
         =
         Entry.call
             "UnixPoll.poll"
             CallerRequirement.Running
             caller
-            (Shape.result Shape.withSystem)
-            (tryPollIn (Caller.thread caller) entries milliseconds)
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryPollIn (Caller.thread caller) fds nfds milliseconds)
             system
 
     /// `poll(2)`: what each entry reports, and how many entries report
     /// anything; or, when none does and the timeout allows it, the calling
     /// thread goes to sleep in the call.
     ///
-    /// `entries` is the process's array of `struct pollfd`, as the client read
-    /// it from the process's memory: its entries, or `Unreadable` with the
-    /// call's `nfds` when some of them lie in memory that the process cannot
-    /// read (see `PollEntriesArgument`). The kernel
-    /// screens the number of entries before it reads the array, so a count
-    /// that this function answers with `EINVAL`, or refuses, gets that answer
-    /// whether or not the array is readable. Otherwise an unreadable array
-    /// fails with `EFAULT` at once, whatever the timeout, unless it has no
-    /// entries.
+    /// `fds` is the client's description of the process's array of
+    /// `struct pollfd` (see `UserBuffer`), and `nfds` how many entries the
+    /// process said it holds, as the kernel reads it: an unsigned 32-bit
+    /// count on both flavours, so under Linux, whose C library's `nfds_t` is
+    /// wider, the low 32 bits alone.
+    ///
+    /// Every answer that the call gives before the kernel reads the array
+    /// comes first, as `CallProgress.Answered`: `EINVAL`, or a refusal, for
+    /// the count, whatever `fds` is; then, for a count of 0, the answer of a
+    /// poll of no entries, which reads nothing wherever `fds` points; then
+    /// `EFAULT` for an `Unmapped` array, at once whatever the timeout.
+    /// Otherwise the call stops at the copy (`CallProgress.NeedsCopyIn`): the
+    /// client reads the `nfds` entries and passes them to `pollWithEntries`,
+    /// which finishes the call. An array that the process can read only in
+    /// part was measured to fail as an unmapped one does, without polling any
+    /// entry, so the client passes such an array as `Unmapped`. An `Opaque` or
+    /// `Addressless` array is refused once the call would copy it.
     ///
     /// Each entry's `Events`, and each `revents` answered for it, is raw bits in
     /// the simulated flavour's own `<poll.h>` numbering. The client stores each
@@ -1638,13 +1684,57 @@ module UnixPoll =
     /// call at a time.
     let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntriesArgument)
+        (fds : UserBuffer)
+        (nfds : uint32)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * UnixSystem<'Thread, 'Handler>>
+        =
+        tryPoll caller fds nfds milliseconds system
+        |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
+
+    /// `tryPollWithEntries` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private tryPollWithEntriesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
+        =
+        CallProgress.requirePaused "UnixPoll.pollWithEntries" "UnixPoll.poll" paused
+
+        let supplied = List.length entries
+
+        if supplied <> paused.Count then
+            invalidOp
+                $"UnixPoll.pollWithEntries: the call copies %d{paused.Count} entries, but %d{supplied} were supplied. Supply exactly the entries PausedPoll.count names (this is a bug in the caller)."
+
+        polled paused.Thread entries paused.Milliseconds paused.System
+
+    /// `pollWithEntries`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal tryPollWithEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (tryPollWithEntriesIn entries paused)
+
+    /// Finish the `poll` that `paused` holds. `entries` are the
+    /// `PausedPoll.count` entries of the process's array, in order, as the
+    /// client read them. See `poll`.
+    ///
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see `PausedPoll`).
+    ///
+    /// Fails with `InvalidOperationException` if `entries` does not hold
+    /// exactly `PausedPoll.count` entries.
+    let pollWithEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
         : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryPoll caller entries milliseconds system
-        |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
+        tryPollWithEntries entries paused
+        |> Refusal.orRaise "UnixPoll.pollWithEntries" PollRefusal.kind PollRefusal.describe
 
     /// `tryFinishPoll` once `Entry` has admitted its caller.
     let internal tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

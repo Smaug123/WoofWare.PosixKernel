@@ -1019,7 +1019,7 @@ module TestMultiProcessFuzz =
 
         let poll (entries : PollEntry list) (milliseconds : int) : Made =
             match
-                UnixPoll.tryPoll (Caller.make pid thread) (PollEntriesArgument.Readable entries) milliseconds view
+                PollCall.tryPoll (Caller.make pid thread) entries milliseconds view
                 |> logged log
             with
             | Ok (PollOutcome.WouldBlock _, after) ->
@@ -3350,9 +3350,7 @@ module TestMultiProcessFuzz =
                             Events = 0x0001s ||| 0x0004s
                         }
 
-                    match
-                        UnixPoll.tryPoll (Caller.make pid thread) (PollEntriesArgument.Readable [ entry ]) 0 kernel
-                    with
+                    match PollCall.tryPoll (Caller.make pid thread) [ entry ] 0 kernel with
                     | Ok (outcome, _) -> log $"      poll %d{fd}: %A{outcome}"
                     | Error refusal -> log $"      poll %d{fd}: refused %s{UnionCaseName.ofValue refusal}"
 

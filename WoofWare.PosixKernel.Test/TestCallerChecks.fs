@@ -246,9 +246,7 @@ module TestCallerChecks =
                 3
                 everyFlavour
                 (fun caller system -> UnixConnection.finishAccept caller system |> ignore)
-            running
-                "UnixPoll.poll"
-                (fun caller system -> UnixPoll.poll caller (PollEntriesArgument.Readable []) 0 system |> ignore)
+            running "UnixPoll.poll" (fun caller system -> PollCall.poll caller [] 0 system |> ignore)
             finishing
                 "UnixPoll.finishPoll"
                 poller
@@ -769,7 +767,7 @@ module TestCallerChecks =
 
         // Nothing to watch and no deadline: it sleeps until a signal.
         let view =
-            match UnixPoll.poll (Caller.make own poller) (PollEntriesArgument.Readable []) -1 view with
+            match PollCall.poll (Caller.make own poller) [] -1 view with
             | PollOutcome.WouldBlock _, view -> view
             | other -> failwith $"the poll: expected it to sleep, got %A{other}"
 

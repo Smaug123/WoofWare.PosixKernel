@@ -358,15 +358,14 @@ module TestUnixWaitFinish =
         | Sleep.Poll ->
             let r, w, system = pipe system
 
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (s system)
-                (PollEntriesArgument.Readable
-                    [
-                        {
-                            Fd = r
-                            Events = 0x0001s
-                        }
-                    ])
+                [
+                    {
+                        Fd = r
+                        Events = 0x0001s
+                    }
+                ]
                 milliseconds
                 system
             |> sleeps

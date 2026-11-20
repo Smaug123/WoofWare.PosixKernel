@@ -249,15 +249,14 @@ module TestSyscallInterruption =
         | Sleep.Poll milliseconds ->
             parked
                 "the poll"
-                (UnixPoll.tryPoll
+                (PollCall.tryPoll
                     (Callers.thread thread world.System)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = world.Listener
-                                Events = 0x0001s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = world.Listener
+                            Events = 0x0001s
+                        }
+                    ]
                     milliseconds
                     world.System)
                 (function
@@ -267,15 +266,14 @@ module TestSyscallInterruption =
         | Sleep.PollOfNothing ->
             parked
                 "the poll of nothing"
-                (UnixPoll.tryPoll
+                (PollCall.tryPoll
                     (Callers.thread thread world.System)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = -1
-                                Events = 0x0001s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = -1
+                            Events = 0x0001s
+                        }
+                    ]
                     -1
                     world.System)
                 (function

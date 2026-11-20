@@ -559,15 +559,14 @@ module TestConnectedTransfer =
 
             let writable (system : UnixSystem<int, string>) : bool =
                 match
-                    UnixPoll.tryPoll
+                    PollCall.tryPoll
                         (Callers.thread 0 system)
-                        (PollEntriesArgument.Readable
-                            [
-                                {
-                                    Fd = c
-                                    Events = 0x4s
-                                }
-                            ])
+                        [
+                            {
+                                Fd = c
+                                Events = 0x4s
+                            }
+                        ]
                         0
                         system
                 with
@@ -628,15 +627,14 @@ module TestConnectedTransfer =
             let system =
                 if pollBetween then
                     match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.thread 0 system)
-                            (PollEntriesArgument.Readable
-                                [
-                                    {
-                                        Fd = c
-                                        Events = 0x1s
-                                    }
-                                ])
+                            [
+                                {
+                                    Fd = c
+                                    Events = 0x1s
+                                }
+                            ]
                             0
                             system
                     with
@@ -699,15 +697,14 @@ module TestConnectedTransfer =
 
         let level (system : UnixSystem<int, string>) : int16 =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 0 system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = c
-                                Events = 0x2001s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = c
+                            Events = 0x2001s
+                        }
+                    ]
                     0
                     system
             with
@@ -1975,15 +1972,14 @@ module TestConnectedTransfer =
                     b
                     (fun view ->
                         match
-                            UnixPoll.tryPoll
+                            PollCall.tryPoll
                                 (Caller.make b 2)
-                                (PollEntriesArgument.Readable
-                                    [
-                                        {
-                                            Fd = accepted
-                                            Events = 0x1s
-                                        }
-                                    ])
+                                [
+                                    {
+                                        Fd = accepted
+                                        Events = 0x1s
+                                    }
+                                ]
                                 -1
                                 view
                         with

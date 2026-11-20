@@ -250,15 +250,14 @@ module TestDeviceDescriptorsAgainstHost =
                     $"poll %d{events}",
                     hostPollOnce host events,
                     (match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.thread 0 system)
-                            (PollEntriesArgument.Readable
-                                [
-                                    {
-                                        Fd = fd
-                                        Events = events
-                                    }
-                                ])
+                            [
+                                {
+                                    Fd = fd
+                                    Events = events
+                                }
+                            ]
                             0
                             system
                      with

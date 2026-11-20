@@ -235,7 +235,7 @@ module TestDatagramTransfer =
                 Events = 0x23c7s
             }
 
-        match UnixPoll.tryPoll (Callers.leader system) (PollEntriesArgument.Readable [ entry ]) 0 system with
+        match PollCall.tryPoll (Callers.leader system) [ entry ] 0 system with
         | Ok (PollOutcome.Answered ([ revents ], count), system) ->
             $"poll=%d{count} revents=0x%x{uint16 revents}", system
         | other -> failwith $"poll: %A{other}"

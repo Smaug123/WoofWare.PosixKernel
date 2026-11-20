@@ -463,8 +463,11 @@ module TestStepOracle =
             |> CallProgress.resumeWith (fun paused -> UnixSocket.tryGetsockoptWithLength (cell length) paused)
             |> Result.map SteppedCall.GetSockOpt
             |> Result.mapError SyscallRefusal.GetSockOpt
-        | Syscall.Poll (entries, milliseconds) ->
-            UnixPoll.tryPoll caller entries milliseconds system
+        | Syscall.Poll (fds, nfds, milliseconds) ->
+            UnixPoll.tryPoll caller (bufferOf fds) nfds milliseconds system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixPoll.tryPollWithEntries (List.truncate (PausedPoll.count paused) (cell fds)) paused
+            )
             |> Result.map SteppedCall.Poll
             |> Result.mapError SyscallRefusal.Poll
         | Syscall.EpollCreate1 flags ->
@@ -1863,15 +1866,30 @@ module TestStepOracle =
                             (Gen.frequency [ 6, socketFd ; 1, Gen.constant -1 ])
                             (Gen.elements [ 0x1s ; 0x4s ; 0x5s ; 0x2s ; 0s ; 0x40s ]))
 
-                let! argument =
+                // Contents may hold more entries than the call copies.
+                let! extra = Gen.choose (0, 1)
+
+                let! fds =
                     Gen.frequency
                         [
-                            6, Gen.constant (PollEntriesArgument.Readable entries)
-                            1, Gen.constant (PollEntriesArgument.Unreadable (uint32 count))
+                            6,
+                            Gen.constant (
+                                CopiedArgument.Readable (
+                                    entries
+                                    @ List.replicate
+                                        extra
+                                        {
+                                            Fd = -1
+                                            Events = 0x1s
+                                        }
+                                )
+                            )
+                            1, Gen.constant (CopiedArgument.Unmapped 0UL)
+                            1, Gen.constant CopiedArgument.Opaque
                         ]
 
                 let! milliseconds = Gen.elements [ 0 ; 1 ; 10 ; -1 ; -2 ]
-                return Syscall.Poll (argument, milliseconds)
+                return Syscall.Poll (fds, uint32 count, milliseconds)
             }
             "EpollCreate1", Gen.elements [ 0 ; 0x80000 ; 1 ; -1 ; 0x800 ] |> Gen.map Syscall.EpollCreate1
             "EpollCtl",

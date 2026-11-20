@@ -529,8 +529,9 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     /// `UnixSocket.getsockoptWithLength` of the `socklen_t` the length cell
     /// holds.
     | GetSockOpt of fd : int * level : int * optionName : int * value : UserBuffer * length : CopiedArgument<uint32>
-    /// `poll(2)`, as `UnixPoll.poll` makes it.
-    | Poll of entries : PollEntriesArgument * milliseconds : int
+    /// `poll(2)`, as `UnixPoll.poll` makes it, then `UnixPoll.pollWithEntries`
+    /// of the first `nfds` entries the array holds.
+    | Poll of fds : CopiedArgument<PollEntry list> * nfds : uint32 * milliseconds : int
     /// `select(2)`. Reserved: see `SelectArguments`.
     | Select of arguments : SelectArguments
     /// `pselect(2)`. Reserved: see `PSelectArguments`.

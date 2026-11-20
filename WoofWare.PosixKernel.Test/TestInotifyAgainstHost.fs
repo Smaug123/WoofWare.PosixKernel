@@ -327,15 +327,14 @@ module TestInotifyAgainstHost =
                                 let hostCount = HostCalls.poll (fds, 1un, 0)
 
                                 match
-                                    UnixPoll.tryPoll
+                                    PollCall.tryPoll
                                         (Callers.thread 0 system)
-                                        (PollEntriesArgument.Readable
-                                            [
-                                                {
-                                                    Fd = modelFd
-                                                    Events = events
-                                                }
-                                            ])
+                                        [
+                                            {
+                                                Fd = modelFd
+                                                Events = events
+                                            }
+                                        ]
                                         0
                                         system
                                 with

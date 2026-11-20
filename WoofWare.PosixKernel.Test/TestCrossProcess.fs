@@ -364,7 +364,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixPoll.tryPoll (Caller.make pid thread) (PollEntriesArgument.Readable entries) -1 view with
+                match PollCall.tryPoll (Caller.make pid thread) entries -1 view with
                 | Ok (PollOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"poll: expected to sleep, got %A{other}"
             )

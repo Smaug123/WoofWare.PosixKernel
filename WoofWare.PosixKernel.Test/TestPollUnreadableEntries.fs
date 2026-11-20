@@ -11,8 +11,8 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// `poll(2)` of an array of `struct pollfd` which the kernel cannot read
-/// (`PollEntriesArgument.Unreadable`), held to
+/// `poll(2)` of an array of `struct pollfd` which the kernel cannot read,
+/// and of an array of no entries, held to
 /// `docs/probes/poll-unreadable-entries`, which measured it on Darwin 27.2.0
 /// arm64 (as uid 501) and Linux 6.18.5 aarch64 (as root and as uid 1000).
 [<TestFixture>]
@@ -137,19 +137,33 @@ module TestPollUnreadableEntries =
         | Pipe2Answer.Created (_, writeFd), system -> system, writeFd
         | other -> failwith $"pipe2: %A{other}"
 
-    /// `tryPoll` of `argument`, checked to agree with `UnixSystem.tryStep` of
-    /// the same call.
+    /// The array of a `poll`, and its `nfds`, as `Syscall.Poll` holds them.
+    type private PollArray = CopiedArgument<PollEntry list> * uint32
+
+    /// An array of `count` entries at an address naming no storage, as the
+    /// probe's unmapped address (8) is, and as a client passes an array the
+    /// process can read only in part.
+    let private unmappedArray (count : uint32) : PollArray = CopiedArgument.Unmapped 8UL, count
+
+    /// A readable array holding `entries`.
+    let private readableArray (entries : PollEntry list) : PollArray =
+        CopiedArgument.Readable entries, uint32 (List.length entries)
+
+    /// `poll` of `argument` through the public protocol (`UnixPoll.tryPoll`,
+    /// then `tryPollWithEntries` if it stops at the copy), checked to agree
+    /// with `UnixSystem.tryStep` of the same call.
     let private poll
-        (argument : PollEntriesArgument)
+        (argument : PollArray)
         (milliseconds : int)
         (system : UnixSystem<int, string>)
         : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>
         =
         let caller = Callers.thread thread system
-        let viaPoll = UnixPoll.tryPoll caller argument milliseconds system
+        let fds, nfds = argument
+        let viaPoll = PollCall.tryPollCopied caller fds nfds milliseconds system
 
         let viaStep =
-            match UnixSystem.tryStep caller (Syscall.Poll (argument, milliseconds)) system with
+            match UnixSystem.tryStep caller (Syscall.Poll (fds, nfds, milliseconds)) system with
             | Ok (SteppedCall.Poll (outcome, after)) -> Ok (outcome, after)
             | Ok other -> failwith $"step of a poll answered %A{other}"
             | Error (SyscallRefusal.Poll refusal) -> Error refusal
@@ -166,7 +180,7 @@ module TestPollUnreadableEntries =
     let private judge
         (run : Run)
         (system : UnixSystem<int, string>)
-        (argument : PollEntriesArgument)
+        (argument : PollArray)
         (row : Row)
         (expectReadAnswer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal> -> bool)
         : unit
@@ -223,12 +237,12 @@ module TestPollUnreadableEntries =
                 match row.Section with
                 | "O" ->
                     // A NULL pointer and an unmapped one are both unreadable.
-                    judge run system (PollEntriesArgument.Unreadable row.Count) row (faulted system row)
+                    judge run system (unmappedArray row.Count) row (faulted system row)
                     count "O"
                 | "Z" ->
                     // No entries are read, so an unreadable array of none is
                     // answered as an empty one, sleeping where it would sleep.
-                    let asEmpty = poll (PollEntriesArgument.Readable []) row.Timeout system
+                    let asEmpty = poll (readableArray []) row.Timeout system
 
                     let expected (answer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>) : bool =
                         answer = asEmpty
@@ -244,7 +258,7 @@ module TestPollUnreadableEntries =
                                   | _ -> row.Rv = 0 && row.Errno = "-"
                            | _ -> false
 
-                    judge run system (PollEntriesArgument.Unreadable 0u) row expected
+                    judge run system (unmappedArray 0u) row expected
                     count "Z"
                 | "P" ->
                     let m = sectionP.Match row.Label
@@ -287,10 +301,10 @@ module TestPollUnreadableEntries =
                                 not ready && row.Slept && row.Errno = "Interrupted system call"
                             | _ -> false
 
-                        judge run system (PollEntriesArgument.Readable entries) row expected
+                        judge run system (readableArray entries) row expected
                     | _ ->
                         // Readable for its first entries and not the rest.
-                        judge run system (PollEntriesArgument.Unreadable row.Count) row (faulted system row)
+                        judge run system (unmappedArray row.Count) row (faulted system row)
 
                     count "P"
                 | "W" ->
@@ -432,8 +446,8 @@ module TestPollUnreadableEntries =
                     | _ ->
                         let argument =
                             match cut with
-                            | "none" -> PollEntriesArgument.Readable (lead :: List.replicate (k - 1) idle)
-                            | _ -> PollEntriesArgument.Unreadable (uint32 (k + 1))
+                            | "none" -> readableArray (lead :: List.replicate (k - 1) idle)
+                            | _ -> unmappedArray (uint32 (k + 1))
 
                         match poll argument 0 system with
                         | Ok (PollOutcome.Answered (_, count), system) -> (count, "-"), system
@@ -482,7 +496,7 @@ module TestPollUnreadableEntries =
                 let system, _ = world run.Privileged run.Platform
                 let count = uint32 (nfds &&& 0xFFFFFFFFUL)
 
-                match poll (PollEntriesArgument.Unreadable count) 0 system, rv, errno with
+                match poll (unmappedArray count) 0 system, rv, errno with
                 | Ok (PollOutcome.Answered ([], 0), after), 0, "-" when after = system -> ()
                 | Ok (PollOutcome.Failed UnixError.EFAULT, after), -1, "Bad address" when after = system -> ()
                 // 1025 entries pass Linux's screen for a soft limit of 1025 or
@@ -491,7 +505,7 @@ module TestPollUnreadableEntries =
                 | other -> failwith $"%s{run.Name}: nfds %d{nfds} answered %A{other}"
 
     [<Test>]
-    let ``an unreadable array answers what the screen answers, or EFAULT, or as an empty one`` () : unit =
+    let ``every array answers what the screen answers, then as an empty one, then by its buffer`` () : unit =
         let platforms =
             [
                 SimulatedUnixPlatform.linuxX64
@@ -513,21 +527,55 @@ module TestPollUnreadableEntries =
                             1, Gen.choose (0, Int32.MaxValue) |> Gen.map (fun n -> uint32 n + 2147483648u)
                         ]
 
+                let! buffer =
+                    Gen.elements
+                        [
+                            UserBuffer.Unmapped 0UL
+                            UserBuffer.Unmapped 8UL
+                            UserBuffer.Opaque
+                            UserBuffer.Addressless
+                        ]
+
                 let! milliseconds = Gen.elements [ 0 ; 1 ; 100 ; -1 ; -2 ]
-                return platform, privileged, count, milliseconds
+                return platform, privileged, count, buffer, milliseconds
             }
 
-        let property (platform : SimulatedUnixPlatform, privileged : bool, count : uint32, milliseconds : int) : bool =
+        let property
+            (
+                platform : SimulatedUnixPlatform,
+                privileged : bool,
+                count : uint32,
+                buffer : UserBuffer,
+                milliseconds : int
+            )
+            : bool
+            =
             let system, _ = world privileged platform
-            let unreadable = poll (PollEntriesArgument.Unreadable count) milliseconds system
+
+            let fds : CopiedArgument<PollEntry list> =
+                match buffer with
+                | UserBuffer.Unmapped address -> CopiedArgument.Unmapped address
+                | UserBuffer.Opaque -> CopiedArgument.Opaque
+                | UserBuffer.Addressless -> CopiedArgument.Addressless
+                | UserBuffer.Mapped -> failwith "the generator makes no readable array"
+
+            let answer = poll (fds, count) milliseconds system
+
+            // What the buffer decides, once the count has passed the screen.
+            let byBuffer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal> =
+                match buffer with
+                | UserBuffer.Unmapped _ -> Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                | UserBuffer.Opaque -> Error (PollRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+                | UserBuffer.Addressless -> Error (PollRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+                | UserBuffer.Mapped -> failwith "unreachable"
 
             if count = 0u then
-                unreadable = poll (PollEntriesArgument.Readable []) milliseconds system
+                answer = poll (readableArray []) milliseconds system
             elif count <= 1100u then
                 // The same count of readable entries, none of which reports.
                 let readable =
                     poll
-                        (PollEntriesArgument.Readable (
+                        (readableArray (
                             List.replicate
                                 (int count)
                                 {
@@ -540,12 +588,53 @@ module TestPollUnreadableEntries =
 
                 match readable with
                 | Ok (PollOutcome.Failed UnixError.EINVAL, _)
-                | Error (PollRefusal.UnmodelledEntryCount _) -> unreadable = readable
-                | _ -> unreadable = Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                | Error (PollRefusal.UnmodelledEntryCount _) -> answer = readable
+                | _ -> answer = byBuffer
             else
                 match PollEntryCount.screen platform (privilegeOf privileged) count with
-                | Ok (Some error) -> unreadable = Ok (PollOutcome.Failed error, system)
-                | Error refusal -> unreadable = Error refusal
-                | Ok None -> unreadable = Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                | Ok (Some error) -> answer = Ok (PollOutcome.Failed error, system)
+                | Error refusal -> answer = Error refusal
+                | Ok None -> answer = byBuffer
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 300, Prop.forAll (Arb.fromGen gen) property)
+
+    [<Test>]
+    let ``a readable array stops at its copy, naming eight bytes an entry`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxArm64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let system, writeEnd = world false platform
+            let caller = Callers.thread thread system
+
+            match UnixPoll.tryPoll caller UserBuffer.Mapped 3u 0 system with
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                PausedPoll.count paused |> shouldEqual 3
+
+                PausedPoll.copyRange paused
+                |> shouldEqual
+                    {
+                        FirstByte = 0
+                        ByteCount = 24
+                    }
+
+                let entries =
+                    [
+                        {
+                            PollEntry.Fd = -1
+                            Events = pollIn
+                        }
+                        {
+                            PollEntry.Fd = writeEnd
+                            Events = pollOut
+                        }
+                        {
+                            PollEntry.Fd = -1
+                            Events = pollIn
+                        }
+                    ]
+
+                UnixPoll.tryPollWithEntries entries paused
+                |> Result.map fst
+                |> shouldEqual (Ok (PollOutcome.Answered ([ 0s ; pollOut ; 0s ], 1)))
+
+                (fun () -> UnixPoll.tryPollWithEntries (List.take 2 entries) paused |> ignore)
+                |> shouldFail<InvalidOperationException>
+            | other -> failwith $"%A{platform}: a readable array of three entries answered %A{other}"

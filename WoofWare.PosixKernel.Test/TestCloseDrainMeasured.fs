@@ -594,15 +594,14 @@ module TestCloseDrainMeasured =
                 system <- after
             | "poll0" ->
                 match
-                    UnixPoll.tryPoll
+                    PollCall.tryPoll
                         (Callers.thread 0 system)
-                        (PollEntriesArgument.Readable
-                            [
-                                {
-                                    Fd = dup
-                                    Events = 0x5s
-                                }
-                            ])
+                        [
+                            {
+                                Fd = dup
+                                Events = 0x5s
+                            }
+                        ]
                         0
                         system
                 with

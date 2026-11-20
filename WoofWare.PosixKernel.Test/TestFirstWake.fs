@@ -421,15 +421,14 @@ module TestFirstWake =
             let r, w, system = pipe system
 
             let park (thread : int) (system : UnixSystem<int, string>) =
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread thread system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = r
-                                Events = 0x0001s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = r
+                            Events = 0x0001s
+                        }
+                    ]
                     milliseconds
                     system
                 |> sleeps

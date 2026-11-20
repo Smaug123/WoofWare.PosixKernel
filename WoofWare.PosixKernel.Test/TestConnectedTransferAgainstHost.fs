@@ -692,15 +692,14 @@ module TestConnectedTransferAgainstHost =
 
         let revents, system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.leader system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = fd
-                                Events = everyEvent flavour
-                            }
-                        ])
+                    [
+                        {
+                            Fd = fd
+                            Events = everyEvent flavour
+                        }
+                    ]
                     0
                     system
             with

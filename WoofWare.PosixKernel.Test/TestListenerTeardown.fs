@@ -183,15 +183,14 @@ module TestListenerTeardown =
 
         let revents, system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 1 system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = fd
-                                Events = events
-                            }
-                        ])
+                    [
+                        {
+                            Fd = fd
+                            Events = events
+                        }
+                    ]
                     0
                     system
             with
@@ -561,15 +560,14 @@ module TestListenerTeardown =
 
         let listenerPoll, system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 1 system)
-                    (PollEntriesArgument.Readable
-                        [
-                            {
-                                Fd = listener
-                                Events = 0x1s
-                            }
-                        ])
+                    [
+                        {
+                            Fd = listener
+                            Events = 0x1s
+                        }
+                    ]
                     0
                     system
             with

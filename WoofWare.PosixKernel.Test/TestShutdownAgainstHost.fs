@@ -2199,15 +2199,14 @@ module TestShutdownAgainstHost =
 
                 let revents, after =
                     match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.leader system)
-                            (PollEntriesArgument.Readable
-                                [
-                                    {
-                                        Fd = fd
-                                        Events = rdyEvents flavour
-                                    }
-                                ])
+                            [
+                                {
+                                    Fd = fd
+                                    Events = rdyEvents flavour
+                                }
+                            ]
                             0
                             system
                     with

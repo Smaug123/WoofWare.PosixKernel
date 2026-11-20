@@ -352,9 +352,10 @@ module TestPollEntryCount =
                 if row.Label = "unmapped-buffer" || row.Count <= 1_048_577L then
                     let count = uint32 row.Count
 
-                    let argument =
+                    // The probe's unmapped buffer is at address 8.
+                    let fds =
                         if row.Label = "unmapped-buffer" then
-                            PollEntriesArgument.Unreadable count
+                            CopiedArgument.Unmapped 8UL
                         else
                             let lead =
                                 match row.Label with
@@ -393,13 +394,13 @@ module TestPollEntryCount =
                                             Events = pollIn
                                         }
 
-                            PollEntriesArgument.Readable entries
+                            CopiedArgument.Readable entries
 
                     let caller = Callers.thread thread system
-                    let viaPoll = UnixPoll.tryPoll caller argument row.Timeout system
+                    let viaPoll = PollCall.tryPollCopied caller fds count row.Timeout system
 
                     let viaStep =
-                        match UnixSystem.tryStep caller (Syscall.Poll (argument, row.Timeout)) system with
+                        match UnixSystem.tryStep caller (Syscall.Poll (fds, count, row.Timeout)) system with
                         | Ok (SteppedCall.Poll (outcome, after)) -> Ok (outcome, after)
                         | Ok other -> failwith $"step of a poll answered %A{other}"
                         | Error (SyscallRefusal.Poll refusal) -> Error refusal
@@ -479,10 +480,10 @@ module TestPollEntryCount =
                     Events = pollIn
                 }
 
-        UnixPoll.tryPoll (Callers.thread thread system) (PollEntriesArgument.Readable (entries 1025)) 0 system
+        PollCall.tryPoll (Callers.thread thread system) (entries 1025) 0 system
         |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Linux, 1025u, 1024)))
 
-        UnixPoll.tryPoll (Callers.thread thread system) (PollEntriesArgument.Readable (entries 1024)) 0 system
+        PollCall.tryPoll (Callers.thread thread system) (entries 1024) 0 system
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Answered (List.replicate 1024 0s, 0)))
 
@@ -499,16 +500,16 @@ module TestPollEntryCount =
         let root, _, _ = worldAs true SimulatedUnixPlatform.macOsArm64
         let user, _, _ = world SimulatedUnixPlatform.macOsArm64
 
-        UnixPoll.tryPoll (Callers.thread thread root) (PollEntriesArgument.Readable (entries 1024)) 0 root
+        PollCall.tryPoll (Callers.thread thread root) (entries 1024) 0 root
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Answered (List.replicate 1024 0s, 0)))
 
-        UnixPoll.tryPoll (Callers.thread thread root) (PollEntriesArgument.Readable (entries 1025)) 0 root
+        PollCall.tryPoll (Callers.thread thread root) (entries 1025) 0 root
         |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 1025u, 256)))
 
-        UnixPoll.tryPoll (Callers.thread thread root) (PollEntriesArgument.Readable (entries 10241)) 0 root
+        PollCall.tryPoll (Callers.thread thread root) (entries 10241) 0 root
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Failed UnixError.EINVAL))
 
-        UnixPoll.tryPoll (Callers.thread thread user) (PollEntriesArgument.Readable (entries 257)) 0 user
+        PollCall.tryPoll (Callers.thread thread user) (entries 257) 0 user
         |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 257u, 256)))
