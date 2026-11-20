@@ -101,7 +101,14 @@ type Signal =
     /// <para />
     /// In WoofWare.PosixKernel, offsets are between 0 and 32 inclusive, which gives raw signal numbers
     /// of 32 through 64.
+    /// <para />
+    /// The offset counts from the kernel's lowest real-time signal, 32, not from glibc's <c>SIGRTMIN</c>.
+    /// glibc keeps 32 and 33 (<c>RealTime 0</c> and <c>RealTime 1</c>) for its own threads, so its
+    /// <c>SIGRTMIN</c> is 34, and a program's <c>SIGRTMIN + n</c> is <c>RealTime (n + 2)</c>.
     /// </remarks>
+    /// <example>
+    /// Under Linux, raw signal number 34, glibc's <c>SIGRTMIN</c>, is <c>RealTime 2</c>.
+    /// </example>
     | RealTime of offset : int
 
 /// <summary>

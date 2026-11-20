@@ -334,6 +334,12 @@ type internal EphemeralPortUse =
     /// towards `destination` (`PortHolderRules.connectSearchMeets`).
     | ConnectTo of destination : Ipv4Endpoint
 
+/// Constants about the simulated machine: the defaults that a boot image takes
+/// for what the client does not configure, the bounds that `UnixBootImage`'s
+/// setters check (such as `isProtectedFilesOf`), and a few measured sizes.
+///
+/// The machine's state itself is internal to this library. A client reads a
+/// running machine through `UnixSystem`'s queries.
 [<RequireQualifiedAccess>]
 module UnixMachineState =
 
@@ -347,8 +353,9 @@ module UnixMachineState =
             SimulatedUnixPlatform.screensUserBufferUpFront platform
             && ObservedUserAddressLimit.architectureOf limit = Some (SimulatedUnixPlatform.architecture platform)
 
-    /// Latest `BootTime`, in whole seconds since the Unix epoch, from which the
-    /// realtime clock stays inside `time_t` however long the machine stays up: the
+    /// The latest boot time that `UnixBootImage.withBootTime` accepts, in whole
+    /// seconds since the Unix epoch. From any later boot time, the realtime
+    /// clock could leave `time_t` if the machine stayed up long enough. It is the
     /// largest `time_t`, less the whole seconds in the longest uptime the clock
     /// can hold (`Int64.MaxValue` nanoseconds), less one more second that the
     /// two nanosecond parts can carry.
@@ -648,8 +655,8 @@ module UnixMachineState =
             failwith
                 $"UnixMachineState.pipe: %O{pipeId} names no pipe in this kernel's pipe table. Every PipeId reachable by a caller comes from an open file description, and UnixSystemDefect.DanglingPipe exists to make that unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
 
-    /// The `st_dev` a pipe reports on a machine of `flavour` that has not
-    /// configured one.
+    /// The `st_dev` which a pipe reports on a machine of `flavour` whose client
+    /// has not configured one: what `UnixBootImage.withPipeDevice None` gives.
     ///
     /// On Linux, 0xc: the pipe filesystem's device on the Linux 6.18.5 machine
     /// its pipes were measured on. Any other small number would do as well,
@@ -1290,7 +1297,9 @@ module UnixMachineState =
         | SimulatedUnixFlavour.Linux -> TcpTimeWaitSysctls.Linux 1_000_000_000L
         | SimulatedUnixFlavour.Darwin -> TcpTimeWaitSysctls.Darwin 15_000_000_000L
 
-    /// The `somaxconn` sysctl's default on each flavour, measured on the
+    /// The `somaxconn` sysctl's default on each flavour: what a machine has when
+    /// the client does not configure it, or configures it with
+    /// `UnixBootImage.withSoMaxConn None`. Measured on the
     /// probe machines (2026-08-21): `net.core.somaxconn` reads 4096 on the
     /// Linux 6.18 container (the machine default since 5.4) and
     /// `kern.ipc.somaxconn` reads 128 on macOS 26.
@@ -1299,7 +1308,9 @@ module UnixMachineState =
         | SimulatedUnixFlavour.Linux -> 4096
         | SimulatedUnixFlavour.Darwin -> 128
 
-    /// The TCP send buffer sysctl's default on each flavour, measured on the
+    /// The TCP send buffer sysctl's default on each flavour: what a machine has
+    /// when the client does not configure it, or configures it with
+    /// `UnixBootImage.withTcpSendSpace None`. Measured on the
     /// probe machines (2026-10-02): `net.inet.tcp.sendspace` reads 131072 on
     /// Darwin 27.0.0, and `net.ipv4.tcp_wmem` reads `4096 16384 4194304` on
     /// the Linux 6.18.5 container, whose middle value a fresh TCP socket's
@@ -1330,7 +1341,9 @@ module UnixMachineState =
         | SimulatedUnixFlavour.Linux -> 212992
         | SimulatedUnixFlavour.Darwin -> 9216
 
-    /// The TCP receive buffer sysctl's default on each flavour, measured on
+    /// The TCP receive buffer sysctl's default on each flavour: what a machine
+    /// has when the client does not configure it, or configures it with
+    /// `UnixBootImage.withTcpReceiveSpace None`. Measured on
     /// the probe machines (2026-10-07): `net.inet.tcp.recvspace` reads 131072
     /// on Darwin 27.0.0, and `net.ipv4.tcp_rmem` reads `4096 131072 9042912`
     /// on the Linux 6.18.5 container, whose middle value a fresh TCP socket's
@@ -1340,8 +1353,10 @@ module UnixMachineState =
         | SimulatedUnixFlavour.Linux -> 131072
         | SimulatedUnixFlavour.Darwin -> 131072
 
-    /// The ceiling a TCP send buffer autotunes to, by default on each flavour,
-    /// measured on the probe machines (2026-10-07): `net.ipv4.tcp_wmem` reads
+    /// The default on each flavour of the ceiling to which a TCP send buffer
+    /// autotunes: what a machine has when the client does not configure it, or
+    /// configures it with `UnixBootImage.withTcpSendSpaceMax None`. Measured on
+    /// the probe machines (2026-10-07): `net.ipv4.tcp_wmem` reads
     /// `4096 16384 4194304` on the Linux 6.18.5 container, and a connection's
     /// `SO_SNDBUF` grows to its last value as a writer fills it;
     /// `net.inet.tcp.autosndbufmax` reads 4194304 on Darwin 27.0.0.
@@ -1366,8 +1381,10 @@ module UnixMachineState =
     let darwinLoopbackSendPipe : int = 49152
 
     /// The most a Darwin socket buffer can hold, in bytes: the default of the
-    /// `kern.ipc.maxsockbuf` sysctl, measured on Darwin 27.0.0. Darwin refuses
-    /// a `net.inet.tcp.sendspace` above it, and caps any buffer at it.
+    /// `kern.ipc.maxsockbuf` sysctl, measured on Darwin 27.0.0. Darwin caps any
+    /// buffer at it, and answers ERANGE for a larger `net.inet.tcp.sendspace`,
+    /// so `UnixBootImage.withTcpSendSpace` does not accept one for a Darwin
+    /// machine.
     let darwinSocketBufferMax : int = 8388608
 
     /// The realtime clock's reading, to the nanosecond, on `machine` when

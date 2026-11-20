@@ -144,7 +144,8 @@ type Credentials =
         /// The effective group is represented separately by <c>EffectiveGroup</c>.
         /// <para />
         /// The platforms differ on how <c>getgroups(2)</c> (<c>UnixCredentials.getgroups</c>) presents this list.
-        /// See <c>GroupListReport</c> for the configuration which controls that presentation.
+        /// <c>SimulatedUnixPlatform.groupListReport</c> holds the flavour's rule (see <c>GroupListReport</c>),
+        /// which the kernel already applies.
         /// </remarks>
         SupplementaryGroups : GroupId list
     }

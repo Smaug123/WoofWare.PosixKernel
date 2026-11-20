@@ -2,6 +2,10 @@ namespace WoofWare.PosixKernel
 
 /// What a flavour's `fchmodat(2)` does when `AT_SYMLINK_NOFOLLOW` leaves it at
 /// a symbolic link.
+///
+/// `SimulatedUnixPlatform.symlinkModeChange` hands this out, and the simulated
+/// kernel already applies it. A client reads it only to learn what the kernel
+/// will do (see "Flavours and divergence from host platforms" in the README).
 [<RequireQualifiedAccess>]
 type SymlinkModeChange =
     /// EOPNOTSUPP, changing nothing, whoever asks: the link's owner, root, or

@@ -1,6 +1,6 @@
 namespace WoofWare.PosixKernel
 
-/// When a flavour's `link(2)` refuses a source that is a directory.
+/// When a flavour's `link(2)` answers `EPERM` for a source that is a directory.
 [<RequireQualifiedAccess>]
 type DirectorySourceRefusal =
     /// EPERM as soon as the source has resolved, before the new pathname is
@@ -10,8 +10,15 @@ type DirectorySourceRefusal =
     /// included. Linux.
     | Last
 
-/// Everything a flavour's `link(2)` and `linkat(2)` do differently from the
-/// other's.
+/// Two ways in which a flavour's `link(2)` and `linkat(2)` differ from the
+/// other flavour's. The walk of the new name is
+/// `SimulatedUnixPlatform.finalNameTrailingSeparator`'s, and Linux's
+/// `fs.protected_hardlinks` is the machine's `ProtectedFiles` configuration.
+///
+/// `SimulatedUnixPlatform.linkRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 type LinkRules =
     {
         /// Whether plain `link(2)` follows a symbolic link in its source's

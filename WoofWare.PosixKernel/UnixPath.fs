@@ -128,7 +128,7 @@ module DirectoryEntryName =
             $"\"%s{name}\" is a path component, not an entry name; this library derives it from the directory graph rather than storing it"
 
     /// <summary>Parse a single directory-entry name, or throw.</summary>
-    /// <remarks>This is <c>FileName.parse</c> except it throws instead of describing the error as a Result.</remarks>
+    /// <remarks>This is <c>DirectoryEntryName.parse</c> except it throws instead of describing the error as a Result.</remarks>
     /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not a directory-entry name. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : DirectoryEntryName =
         match parse candidate with
@@ -164,7 +164,7 @@ module DirectoryEntryName =
                 Refusal.exceptionOf
                     operation
                     (RefusalKind.Contradictory parameter)
-                    $"%s{describe error}. A FileName that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with FileName.parse instead."
+                    $"%s{describe error}. A DirectoryEntryName that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with DirectoryEntryName.parse instead."
             )
 
     /// <summary>
@@ -237,7 +237,7 @@ module PathComponent =
         | PathComponent.Name name -> DirectoryEntryName.toByteString name
 
 /// <summary>
-/// Why a .NET string is not usable as a Unix path supplied to the kernel by a syscall.
+/// Why a .NET string is not usable as a Unix path.
 /// </summary>
 ///
 /// <remarks>
@@ -251,7 +251,7 @@ type UnixPathError =
     /// <remarks>
     /// Distinct from the <i>empty</i> path, whose parse is permitted.
     /// The empty string is a legal C string and a process can legally supply it to a syscall;
-    /// the kernel only rejects it at resolution time (with <c>ENOENT</c>).
+    /// the kernel deals with it only when it resolves the path (see <c>UnixPath.empty</c>).
     /// </remarks>
     | Null
     /// <summary>
@@ -261,13 +261,16 @@ type UnixPathError =
     | Text of defect : UnixPathTextDefect
 
 /// <summary>
-/// A path exactly as a process handed it to a syscall.
+/// A path, kept byte for byte as a process would pass it to a syscall.
 /// </summary>
 /// <remarks>
 /// Possibly relative, possibly containing "." and ".." components and symlinks,
 /// possibly with a trailing separator.
 ///
 /// This is the input to the <c>VirtualFileSystem</c> resolution walk.
+/// The syscall functions do not take a <c>UnixPath</c>: they take <c>PathArgumentBytes</c>, which the
+/// kernel copies in and turns into one. A client meets <c>UnixPath</c> in
+/// <c>PathWalk.resolveExistingFromRoot</c> and <c>SymlinkTarget.toUnixPath</c>.
 ///
 /// Contrast <c>AbsoluteUnixPath</c>, which is the strictly narrower shape
 /// <c>getcwd(3)</c> can <i>return</i>.
@@ -532,7 +535,9 @@ module UnixPath =
     /// <summary>The empty path: neither rooted nor naming any component.</summary>
     /// <remarks>
     /// A legal C string, and one a process really can pass, so it parses.
-    /// However, no resolution of it can succeed, and the kernel reports <c>ENOENT</c> when you try.
+    /// Most calls answer <c>ENOENT</c> for it. The exceptions are the <c>*at</c> calls under Linux's
+    /// <c>AT_EMPTY_PATH</c>, and Linux's <c>readlinkat</c>, for which the empty path names what
+    /// <c>dirfd</c> names.
     /// </remarks>
     let empty : UnixPath =
         {
@@ -546,11 +551,11 @@ module UnixPath =
     let isEmpty (path : UnixPath) : bool = UnixByteString.length path.Raw = 0
 
     /// <summary>
-    /// Take a byte string a process supplied as a path.
+    /// Take a byte string as a path.
     /// </summary>
     /// <remarks>
-    /// Every NUL-free byte string (and hence every <c>UnixByteString</c>) is valid for
-    /// a caller to pass to a syscall, so this cannot fail.
+    /// A process may pass any NUL-free byte string (and hence any <c>UnixByteString</c>) to a syscall
+    /// as a path, so this cannot fail.
     /// </remarks>
     let ofByteString (bytes : UnixByteString) : UnixPath =
         // Stores the bytes verbatim, for the reasons `parse` gives.
@@ -566,7 +571,7 @@ module UnixPath =
         | Ok bytes -> ofByteString bytes
         | Error defect -> failwith $"UnixPath.root: %s{UnixPathText.describe defect}"
 
-    /// <summary>Parse a path which a process supplied.</summary>
+    /// <summary>Parse a .NET string as a path.</summary>
     ///
     /// <remarks>
     /// Stores the UTF-8 encoding of the candidate verbatim.
@@ -597,9 +602,9 @@ module UnixPath =
 
     /// <summary><c>UnixPath.parse</c>, but throwing on error if parse fails.</summary>
     /// <remarks>
-    /// Don't use this for paths arriving from a process, because
-    /// a process can legally pass a path which contains NULs; the kernel must
-    /// then reply to the process with an error, rather than crashing.
+    /// Use this only for a path which the client writes itself, such as configuration.
+    /// A path from a process is bytes, which the client passes to a syscall as
+    /// <c>PathArgumentBytes.Bytes</c> without ever parsing a .NET string.
     /// </remarks>
     /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not a path. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : UnixPath =

@@ -44,22 +44,36 @@ module internal NodeTypeField =
 
 /// How a flavour's `mknod(2)` treats the type of node it is asked for, and so
 /// what it does before it reads its path.
+///
+/// Of the nodes `mknod(2)` can make, this library makes only a regular file.
+/// Wherever a call would make a FIFO, a socket, a character device or a block
+/// device, this library refuses it. Each case below says where in the call
+/// that happens.
+///
+/// `SimulatedUnixPlatform.mkNodRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 [<RequireQualifiedAccess>]
 type MkNodRules =
-    /// Linux's. The type is screened first, ahead of the path's copy-in and
-    /// the `dirfd`, whoever asks: a directory is EPERM, and a field naming
-    /// no type it makes (a symbolic link among them) is EINVAL. Any other
-    /// type goes on to walk its path, never following a final link, as
-    /// `SimulatedUnixPlatform.finalNameTrailingSeparator` says, and is
-    /// created as `open(O_CREAT|O_EXCL)` creates;
-    /// a character or block device needs privilege only once its name has
-    /// been found free and its directory writable.
+    /// Linux's. The kernel screens the type first, ahead of the path's copy-in
+    /// and the `dirfd`, whoever the caller is: a directory is EPERM, and a type
+    /// field naming no type that Linux makes (a symbolic link among them) is
+    /// EINVAL. For any other type, the kernel walks the path without following
+    /// a final link, as `SimulatedUnixPlatform.finalNameTrailingSeparator` says,
+    /// and checks the new name as `open(O_CREAT|O_EXCL)` checks it. A character
+    /// or block device needs privilege only once its name has been found free
+    /// and its directory writable, except that anyone may make a character
+    /// device numbered 0. This library refuses any node but a regular
+    /// file only after all these checks have passed.
     | TypeBeforePath
-    /// Darwin's. For a caller without privilege, a FIFO is `mkfifo(2)`'s
-    /// business, and any other type, a regular file's included, is EPERM
-    /// before the path is copied in. A privileged caller's path is walked
-    /// first, as `open(O_CREAT|O_EXCL)` walks it; then a FIFO, a character
-    /// device or a block device is made, and any other type is EINVAL.
+    /// Darwin's. For a caller without privilege, the kernel answers EPERM for
+    /// every type but a FIFO, a regular file included, before it copies the path
+    /// in. This library refuses a FIFO at that point, because Darwin then
+    /// behaves as `mkfifo(2)`, whose rules have not been measured. For a
+    /// privileged caller, the kernel first walks the path as
+    /// `open(O_CREAT|O_EXCL)` walks it. Then any type but a FIFO, a character
+    /// device or a block device is EINVAL, and this library refuses those three.
     | PrivilegeBeforePath
 
 /// What `mknod(2)` goes on to make once the type field has passed its

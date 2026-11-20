@@ -2,52 +2,63 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// What an `accept(2)` that took a connection wrote of the connection's peer
-/// address.
+/// What the client stores in the process's memory for the peer address of an
+/// `accept(2)` that took a connection, or for the source address of a
+/// datagram that `recvfrom(2)` took. This library has stored nothing (see
+/// "What every client does" in the README).
 [<RequireQualifiedAccess ; NoComparison>]
 type PeerAddressCopy =
-    /// The kernel wrote `copiedOut` to the start of the caller's address buffer
-    /// and `reportedLength` to its length cell: the client's address as this
-    /// platform's socket address structure for the listener's family (so far
-    /// only ever a `struct sockaddr_in`: this kernel has no IPv6 listener), cut
-    /// to the length the caller declared and so possibly empty, and that
-    /// structure's untruncated size. As for `getsockname`, the declared length
-    /// bounds what is written and not what is reported: a call declaring 8
-    /// writes eight bytes and still reports 16.
+    /// The client stores `copiedOut` at the start of the process's address
+    /// buffer, and `reportedLength` in the process's length cell. In which
+    /// order a kernel makes those two stores when they overlap is unmeasured,
+    /// and this library does not say.
     ///
-    /// A `recvfrom(2)` writes its datagram's source so, but for Darwin's whose
-    /// copy of the source faulted, which writes nothing to the buffer and the
-    /// length the cell held back to the cell, and its writes of 0 to the
-    /// cell for a length of 0 or a receive of nothing.
+    /// For an `accept`, `copiedOut` is the connecting socket's address, laid
+    /// out as the platform's socket address structure for the listener's
+    /// family, and cut to the length that the process declared. It may be
+    /// empty. The structure is always a `struct sockaddr_in`, because this
+    /// library has no IPv6 listener. `reportedLength` is the size of the whole
+    /// structure. As for `getsockname`, the declared length limits the bytes
+    /// stored and not the length reported: a call declaring 8 stores eight
+    /// bytes and reports 16.
+    ///
+    /// For a `recvfrom`, `copiedOut` is the datagram's source in the same way,
+    /// with three Darwin exceptions. When the copy of the source faulted,
+    /// `copiedOut` is empty and `reportedLength` is the length that the cell
+    /// already held. When the declared length was 0, or the receive took no
+    /// datagram, `copiedOut` is empty and `reportedLength` is 0.
     | Written of copiedOut : ImmutableArray<byte> * reportedLength : int
-    /// The caller's address buffer was NULL, so the kernel wrote nothing: not
-    /// the buffer, and not the length cell either, which it never read. A
-    /// `recvfrom(2)` answers this too where it copies no source and writes
-    /// nothing to the cell: for a NULL source, or a NULL cell.
+    /// The client stores nothing: neither the address buffer nor the length
+    /// cell changes. An `accept` answers this when the process's address
+    /// buffer is NULL, and the kernel then never reads the length cell. A
+    /// `recvfrom` answers this when it copies no source and writes nothing to
+    /// the cell: for a NULL source, or a NULL cell.
     | NotRequested
 
 /// What became of an `accept(2)` this kernel could answer.
 [<RequireQualifiedAccess ; NoComparison>]
 type AcceptOutcome =
-    /// The call failed with this errno, and nothing about the listener changed.
-    /// The accept queue in particular is untouched: measured on both flavours,
-    /// a failed `accept` leaves a queued connection queued.
+    /// The process's call returns -1 and sets errno to `error`. Nothing about
+    /// the listener changed: in particular, a queued connection stays queued.
     ///
-    /// Answered by `finishAccept`, the thread is no longer parked in the system
-    /// this rides with.
+    /// When `finishAccept` answers this, the thread is no longer asleep in the
+    /// system that comes back with it.
     | Failed of error : UnixError
-    /// A connection was dequeued and a socket materialised onto it. `fd` is the
-    /// descriptor that socket is open on, and `address` what the kernel wrote
-    /// of the connection's peer address.
+    /// The kernel took a connection off the queue and made a socket for it.
+    /// The process's call returns `fd`, the new descriptor onto that socket.
+    /// `address` says what the client stores for the connection's peer
+    /// address.
     | Accepted of fd : int * address : PeerAddressCopy
-    /// The call failed with this errno after it had taken the oldest connection
-    /// off the accept queue, and the connection is gone: its server end is
-    /// closed as `close` closes an accepted socket, so the client sees an
-    /// orderly shutdown and its registrations are signalled. No descriptor is
-    /// allocated. The system that rides with this records all of that.
+    /// The process's call returns -1 and sets errno to `error`, after the
+    /// kernel had taken the oldest connection off the accept queue. The
+    /// connection is gone. The kernel closed its server end as `close` closes
+    /// an accepted socket, and what the connecting socket and its epoll and
+    /// kqueue registrations see follows from that close's usual rules. No
+    /// descriptor is allocated. The system that comes back with this answer records all of
+    /// that.
     ///
-    /// Linux's answer, `EINVAL`, for a negative declared length, which it reads
-    /// only once it holds the connection.
+    /// Linux answers this, with `EINVAL`, for a negative declared length,
+    /// which it reads only once it holds the connection.
     | DroppedConnection of error : UnixError
     /// The call did not return: the listener is blocking and its accept queue
     /// is empty. The calling thread is parked, and sleeps until
@@ -461,10 +472,17 @@ type internal ConnectAddress =
         ZeroFilledAddress : Ipv4Address
     }
 
-/// A `connect(2)` stopped where the kernel copies the caller's
-/// `struct sockaddr` in: `UnixConnection.connect` answers it,
-/// `PausedConnect.copyRange` says which bytes of the address buffer to copy,
-/// and `UnixConnection.connectWithAddress` takes them and finishes the call.
+/// A `connect(2)` that has stopped at the point where the kernel copies the
+/// process's `struct sockaddr` in. `UnixConnection.connect` answers one.
+///
+/// To finish the call, the client reads the bytes that
+/// `PausedConnect.copyRange` names from the process's address buffer, and
+/// passes them to `UnixConnection.connectWithAddress`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `connectWithAddress` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
 [<NoEquality ; NoComparison>]
 type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
@@ -482,10 +500,11 @@ type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
 
 [<RequireQualifiedAccess>]
 module PausedConnect =
-    /// The bytes of the address buffer the kernel copies: what
-    /// `UnixConnection.connectWithAddress` takes. Always from the start of the
-    /// buffer, and the whole of the length the caller declared, as far as the
-    /// kernel reads one.
+    /// Which bytes of the process's address buffer the kernel copies, and so
+    /// which bytes `UnixConnection.connectWithAddress` takes: the first
+    /// `declaredLength` bytes, since the kernel copies the whole declared
+    /// length before it looks at any field. Never empty: a `connect` that
+    /// copies nothing answers without stopping.
     let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (paused : PausedConnect<'Thread, 'Handler>)
         : CopyRange
@@ -2091,31 +2110,38 @@ module UnixConnection =
             system
 
     /// <summary>
-    /// `connect(2)`, made by `caller`: point `fd` at the address in the
-    /// `struct sockaddr` the caller declared `declaredLength` bytes long at
-    /// `address`, or ask what pointing it there would answer.
+    /// `connect(2)`, made by `caller`: connect `fd` to the address held in the
+    /// process's `struct sockaddr`, which the process declared to be
+    /// `declaredLength` bytes long.
     /// </summary>
     /// <remarks>
-    /// Every answer the call gives before the kernel copies the sockaddr in
-    /// comes first, as `CallProgress.Answered`, with the system unchanged.
-    /// Otherwise the call stops at the copy, and `connectWithAddress`, given
-    /// the bytes `PausedConnect.copyRange` names, reads the family, port and
-    /// address out of them itself. The copy is judged as `UnixSocket.bind`'s
-    /// is, with one difference of order, measured: Linux's `connect` copies
-    /// the sockaddr in before it asks whether the descriptor is a socket,
-    /// where its `bind` and both of Darwin's ask first.
+    /// `address` is the client's description of the process's address buffer
+    /// (see `UserBuffer`), and the client passes `UserBuffer.Mapped` only when
+    /// every one of the `declaredLength` bytes is readable, as for
+    /// `UnixSocket.bind`.
     ///
-    /// A connect answers 0, or fails with the errno the syscall leaves.
-    /// `EINPROGRESS` is a failure like any other, which a caller reports as it
-    /// reports any other errno; the connection it defers is already settled on
-    /// the socket's phase.
+    /// Every answer that the call gives before the kernel copies the sockaddr
+    /// in comes first, as `CallProgress.Answered`, with the system unchanged.
+    /// Otherwise the call stops at the copy (`CallProgress.NeedsCopyIn`). The
+    /// client then reads the bytes that `PausedConnect.copyRange` names and
+    /// passes them to `connectWithAddress`, which decodes the family, port and
+    /// address itself. The copy is judged as for `UnixSocket.bind`, with one
+    /// difference of order: Linux's `connect` copies the sockaddr in before it
+    /// checks that the descriptor is a socket, whereas Linux's `bind` and both
+    /// of Darwin's calls check first.
     ///
-    /// It takes the thread, and its outcome is a `SyscallOutcome`, because under
-    /// Linux a blocking connect to a listener whose accept queue is full sleeps
-    /// (`ParkedSyscall.Connect`): the paused call holds the thread, so the
-    /// connect `connectWithAddress` finishes can park it. No connect sleeps in
-    /// this version: that one is refused. A thread that is parked already, or
-    /// that the table does not hold, fails loudly.
+    /// The process's call returns 0, or returns -1 with an errno.
+    /// `EINPROGRESS` is an errno like any other, and the client reports it as
+    /// it reports any other. By the time this library answers `EINPROGRESS`,
+    /// the connection attempt has already finished: the socket is connected,
+    /// or it holds a pending `ECONNREFUSED` that `getsockopt(SO_ERROR)` reads.
+    ///
+    /// This function takes the thread, and answers a `SyscallOutcome`, because
+    /// under Linux a blocking connect to a listener whose accept queue is full
+    /// sleeps (`ParkedSyscall.Connect`). No connect sleeps in this version:
+    /// that connect is refused. A thread that is already asleep in a call, or
+    /// that the process does not have, makes this function throw
+    /// `InvalidOperationException`.
     /// </remarks>
     let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
@@ -2148,10 +2174,16 @@ module UnixConnection =
         Entry.resume (Shape.result Shape.withSystem) (tryConnectWithAddressIn copied paused)
 
     /// <summary>
-    /// The rest of the `connect` `paused` stopped: `copied`, exactly the bytes
-    /// `PausedConnect.copyRange` names, is the sockaddr the kernel reads the
-    /// family, port and address out of. See `connect`.
+    /// Finish the `connect` that `paused` holds. `copied` is exactly the bytes
+    /// that `PausedConnect.copyRange` names, read by the client from the
+    /// process's address buffer; the kernel reads the family, port and address
+    /// from them. See `connect`.
     /// </summary>
+    /// <remarks>
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see
+    /// `PausedConnect`).
+    /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedConnect.copyRange`'s `ByteCount` long.</exception>
     let connectWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
@@ -2641,67 +2673,83 @@ module UnixConnection =
             system
 
     /// `accept(2)`, made by `caller`: take the oldest completed connection off
-    /// `fd`'s accept queue and hand back a descriptor onto the server side of
-    /// it; or, for a blocking listener with nothing queued, sleep until a
-    /// connection arrives.
+    /// the accept queue of `fd`, and answer a new descriptor onto the server
+    /// end of that connection. When the listener is blocking and its queue is
+    /// empty, the thread instead sleeps until a connection arrives.
     ///
-    /// `destination` is where the peer address would be copied out, and
-    /// `declaredLength` how much of it may be written. As for `getsockname`, the
-    /// declared length **does not bound what is reported**: a call declaring 8
-    /// writes eight bytes and still reports 16.
+    /// `destination` is the client's description of the process's address
+    /// buffer (see `UserBuffer`). `declaredLength` is the 32-bit value that
+    /// the client read from the process's length cell before making this
+    /// call. This library has no way to hear that the length cell itself is
+    /// NULL or unreadable when `destination` is not NULL, so a client facing
+    /// such a cell has no answer to give from this function. A blocking call
+    /// that sleeps keeps this value: under Linux, which reads the cell only
+    /// after the wait, a change that another thread makes to the cell while
+    /// the call sleeps is not seen (see `ParkedAccept.DeclaredLength`).
     ///
-    /// `declaredLength` is the 32-bit word the caller read out of its length
-    /// cell. Linux reads it as an `int`, and only once it holds a connection:
-    /// a negative one fails with `EINVAL` after the connection has been taken
-    /// off the queue, which loses it (`AcceptOutcome.DroppedConnection`).
-    /// Darwin reads it as the `socklen_t` it is, so no length is an error there.
+    /// The answer carries the peer address that the client stores into the
+    /// process's memory (`PeerAddressCopy`); this library stores nothing. As
+    /// for `getsockname`, the declared length limits how many bytes are
+    /// stored, but **not the length reported**: a call declaring 8 stores
+    /// eight bytes and reports 16.
     ///
-    /// A NULL `destination` (`UserBuffer.Unmapped 0UL`) takes no length, and
-    /// `declaredLength` is then `None`; for any other destination it is `Some`,
-    /// and a call that breaks either rule throws `ArgumentException`. Neither
-    /// flavour reads or writes the length cell through a NULL destination, so
-    /// such a call takes the connection and writes nothing
-    /// (`PeerAddressCopy.NotRequested`), whatever the cell holds; a cell that is
-    /// itself NULL, as in `accept(fd, NULL, NULL)`, is never dereferenced.
+    /// Linux reads `declaredLength` as an `int`, and only once it holds a
+    /// connection. So a negative length fails with `EINVAL` after the
+    /// connection has been taken off the queue, and the connection is lost
+    /// (`AcceptOutcome.DroppedConnection`). Darwin reads it as a `socklen_t`,
+    /// so no length is an error there.
     ///
-    /// A call that writes nothing through a destination other than NULL never
-    /// looks at it: at a declared length of zero every such buffer succeeds,
-    /// including one naming no storage. A `UserBuffer.Addressless` one is the
-    /// exception, refused once a connection is there to take, since whether the
-    /// kernel writes the length cell turns on whether it is NULL.
+    /// A NULL `destination` is `UserBuffer.Unmapped 0UL`, and the client then
+    /// passes `None` for `declaredLength`. For any other destination the
+    /// client passes `Some`. A call that breaks either rule throws
+    /// `ArgumentException`. Neither flavour reads or writes the length cell
+    /// when the destination is NULL, so such a call takes the connection and
+    /// stores nothing (`PeerAddressCopy.NotRequested`), whatever the cell
+    /// holds. A cell that is itself NULL, as in `accept(fd, NULL, NULL)`, is
+    /// never dereferenced.
     ///
-    /// Every `AcceptOutcome.Failed` leaves the listener exactly as it was, the
+    /// When the call stores nothing through a destination other than NULL, the
+    /// kernel never looks at that destination: at a declared length of zero,
+    /// every such buffer succeeds, including one that names no storage. The
+    /// exception is a `UserBuffer.Addressless` destination, which is refused
+    /// once there is a connection to take, because whether the kernel writes
+    /// the length cell depends on whether the destination is NULL.
+    ///
+    /// Every `AcceptOutcome.Failed` leaves the listener exactly as it was, its
     /// queue included.
     ///
-    /// A listener whose description is blocking and whose queue is empty parks
-    /// the caller's thread until a connection is queued, and the call is finished with
-    /// `finishAccept`. It waits for ever: `SO_RCVTIMEO`, which bounds such a
-    /// wait on Linux (and not on Darwin), is an option `setsockopt` refuses to
-    /// set. Of several threads parked on one listener, a connection wakes the one
-    /// that parked first (see `UnixWait.wake`). The destination is not looked
-    /// at before the call sleeps.
+    /// When the listener's description is blocking and its queue is empty,
+    /// the caller's thread sleeps until a connection is queued, and the client
+    /// finishes the call with `finishAccept` once the thread is woken (see
+    /// "What every client does" in the README). The thread waits for ever:
+    /// `SO_RCVTIMEO`, which bounds such a wait on Linux (but not on Darwin), is
+    /// an option that `setsockopt` refuses to set. When several threads sleep
+    /// on one listener, a connection wakes the one that went to sleep first
+    /// (see `UnixWait.wake`). The kernel does not look at the destination
+    /// before the thread sleeps.
     ///
-    /// Under Darwin, a close of the descriptor a sleeping accept was made
-    /// through ends every accept asleep on the listener, through that
-    /// descriptor or another, and leaves the listener drained
-    /// (`SocketDescription.Drained`); see `UnixDescriptor.close`. A later accept on
-    /// it that finds a connection queued takes it, and a non-blocking one that
-    /// finds none answers `EAGAIN`; one that would sleep is refused.
+    /// Under Darwin, closing the descriptor through which a sleeping accept was
+    /// made ends every accept asleep on the listener, whichever descriptor it
+    /// used, and leaves the listener drained (`SocketDescription.Drained`); see
+    /// `UnixDescriptor.close`. A later accept on a drained listener takes a
+    /// queued connection if there is one. If there is none, a non-blocking
+    /// accept answers `EAGAIN`, and a blocking one is refused.
     ///
-    /// The accepted descriptor inherits `O_NONBLOCK` from the description this
-    /// call was made through, on the flavours whose kernels do that: see
-    /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client whose
-    /// own sockets want one answer on every platform clears it itself.
+    /// On the flavours whose kernels do so, the accepted descriptor inherits
+    /// `O_NONBLOCK` from the description through which this call was made: see
+    /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client that
+    /// wants the same behaviour on every platform clears or sets the flag
+    /// itself, for instance with `UnixDescriptor.setNonBlocking`.
     ///
-    /// `flags` is Linux's `accept4(2)` flag word, and 0 is `accept(2)`. Its
-    /// `SOCK_NONBLOCK` makes the new socket non-blocking and its `SOCK_CLOEXEC`
+    /// `flags` is Linux's `accept4(2)` flag word, and 0 means `accept(2)`.
+    /// `SOCK_NONBLOCK` makes the new socket non-blocking, and `SOCK_CLOEXEC`
     /// gives the new descriptor `FD_CLOEXEC`, from the moment the call makes
-    /// them, a call that slept included; neither changes whether the call
-    /// itself sleeps. Any other bit is `EINVAL`, after `EBADF` and ahead of
-    /// every other answer. Darwin has no `accept4`, so there a `flags` other
-    /// than 0 throws `PlatformNotSupportedException`.
+    /// them, including when the call slept first. Neither flag changes whether
+    /// the call itself sleeps. Any other bit is `EINVAL`, after `EBADF` and
+    /// before every other answer. Darwin has no `accept4`, so there any
+    /// `flags` other than 0 throws `PlatformNotSupportedException`.
     ///
-    /// The caller's thread must not already be parked.
+    /// The caller's thread must not already be asleep in a call.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -2886,44 +2934,51 @@ module UnixConnection =
             (tryFinishAcceptIn (Caller.thread caller))
             system
 
-    /// Finish the `accept` `caller` is parked in: look at the listener's queue
-    /// again, as a woken real accept does, and answer.
+    /// Finish the `accept` in which `caller` sleeps: look at the listener's
+    /// queue again, as a real accept does when woken, and answer.
     ///
-    /// Hands over the oldest connection on the queue, copying its peer address
-    /// out to the destination the call was entered with; see `accept` for the
-    /// destinations that refuses. A queue found empty again (another caller
-    /// took the connection) parks the thread again, behind every other park,
-    /// which on a real kernel puts it at the back of the listener's queue of
-    /// accepters. So does a listener whose description has become non-blocking
-    /// while the call slept: measured on both flavours (`blocking-accept.c`
-    /// section F), a sleeping accept is not woken by that, and goes on waiting.
+    /// When a connection is queued, the call takes the oldest one. The answer
+    /// carries the peer address that the client stores through the
+    /// destination with which the call was made (`PeerAddressCopy`); see
+    /// `accept` for the destinations it refuses. When the queue is empty again
+    /// (another thread took the connection), the thread goes back to sleep,
+    /// behind every other sleeping thread, as a real kernel puts it at the
+    /// back of the listener's queue of accepting threads. The thread also goes
+    /// back to sleep if the listener's description became non-blocking while
+    /// it slept: that change does not wake a sleeping accept.
     ///
-    /// On the flavours whose accepted socket inherits `O_NONBLOCK`, it inherits
-    /// the listening description's flag as it stands when the call finishes.
+    /// On the flavours whose accepted socket inherits `O_NONBLOCK`, the socket
+    /// takes the listening description's flag as it stands when this call
+    /// finishes.
     ///
-    /// With the queue empty, a signal the thread would take as it returned to
-    /// user mode interrupts the call (`AcceptOutcome.Interrupted`), and the
-    /// thread's return (`UnixSignal.onReturnToUser`) says whether it fails
-    /// with `EINTR` or restarts. Either way the thread leaves the listener's
-    /// queue of accepters, and issuing the call again puts it at the back. An
-    /// answer, `Interrupted` included, clears the park. Under Linux a queued
-    /// connection beats such a signal; under Darwin the signal beats it, and
-    /// the connection stays queued. Under Darwin a call a connection woke is
-    /// refused where such a signal is pending and another thread is asleep in
-    /// an accept on the listener: Darwin leaves that thread asleep, the
-    /// connection whose wake the first took still queued, where this library
-    /// would wake it.
+    /// When the queue is empty and the thread would take a signal on its
+    /// return to user mode, the signal interrupts the call
+    /// (`AcceptOutcome.Interrupted`). The thread's return
+    /// (`UnixSignal.onReturnToUser`) then says whether the call fails with
+    /// `EINTR` or restarts. Either way the thread leaves the listener's queue
+    /// of accepting threads, and a new accept puts it at the back. Every
+    /// answer but `AcceptOutcome.WouldBlock`, `Interrupted` included, leaves
+    /// the thread no longer asleep. On `WouldBlock`, which can happen when
+    /// another thread took the connection first, the thread is asleep again,
+    /// and the client waits for another wake.
+    /// Under Linux a queued connection takes priority over such a signal.
+    /// Under Darwin the signal takes priority, and the connection stays
+    /// queued. Under Darwin, a call that a connection woke is refused when such
+    /// a signal is pending and another thread sleeps in an accept on the
+    /// listener: Darwin leaves that other thread asleep with the connection
+    /// still queued, whereas this library would wake it.
     ///
-    /// The sleeping call holds the listener, so it outlives its last descriptor
-    /// until the call returns. A listener no descriptor names goes as the call
-    /// answers, resetting each connection left in its queue, as a close of the
-    /// listener's last descriptor does.
+    /// The sleeping call holds the listener, which therefore outlives its last
+    /// descriptor until the call returns. If no descriptor names the listener
+    /// by then, the listener goes when the call answers, and each connection
+    /// left in its queue is reset, as when the listener's last descriptor is
+    /// closed.
     ///
-    /// An accept a close has ended (`SleepTarget.EndedByClose`, under Darwin)
-    /// answers `ECONNABORTED`, whatever is queued and whatever signal is
-    /// pending, and leaves the queue as it is.
+    /// An accept that a close has ended (`SleepTarget.EndedByClose`, under
+    /// Darwin) answers `ECONNABORTED`, whatever is queued and whatever signal
+    /// is pending, and leaves the queue as it is.
     ///
-    /// `caller` must be parked in an accept, and woken (`UnixWait.wake`).
+    /// `caller` must be asleep in an accept, and woken (`UnixWait.wake`).
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -3054,33 +3109,34 @@ module UnixConnection =
             (tryShutdownIn fd how)
             system
 
-    /// `shutdown(2)` of `fd`, with `how` raw: `SHUT_RD` (0), `SHUT_WR` (1) or
-    /// `SHUT_RDWR` (2) on both flavours.
+    /// `shutdown(2)` of `fd`. `how` is the raw value that the process passed:
+    /// `SHUT_RD` (0), `SHUT_WR` (1) or `SHUT_RDWR` (2) on both flavours.
     ///
-    /// Screened in the measured order (`tcp-shutdown.c` in
-    /// docs/plans/2026-10-08-tcp-shutdown-linger, section U): EBADF, then
-    /// ENOTSOCK, then EINVAL for any other `how`, then the socket's state.
-    /// An IPv4 or IPv6 socket with no connection answers ENOTCONN under
-    /// Darwin, and is refused under Linux, which still marks the sides `how`
-    /// names shut, for a later connection, where this kernel keeps no shut
-    /// sides on a socket without a connection.
+    /// The checks come in this order: `EBADF`, then `ENOTSOCK`, then `EINVAL`
+    /// for any other `how`, then the socket's state. An IPv4 or IPv6 socket
+    /// without a connection answers `ENOTCONN` under Darwin. Under Linux it is
+    /// refused: Linux still marks the named sides shut for a later connection,
+    /// and this library keeps no shut sides on a socket without a connection.
     ///
-    /// On a connected stream socket the call shuts the sides `how` names, by
-    /// each flavour's rules: shutting the send side
-    /// sends a FIN behind what is still unsent; shutting the receive side makes
-    /// reads answer end of file once what was queued is read, which Darwin
-    /// discards. Linux answers ENOTCONN once the connection was reset or both
-    /// FINs have arrived; Darwin answers ENOTCONN to a side already shut, and
-    /// of `SHUT_RDWR` applies the receive side alone if the send side was
-    /// already shut, and nothing if the receive side was. Every registration
-    /// the call's wakes reach is signalled: on Linux every one on the socket,
-    /// for every call; on Darwin the filter of each side it shut; and the
-    /// peer's, when the FIN reaches it. A Linux socket whose completed connect
-    /// had not been reported is reported by the call: a later `connect`
-    /// answers EISCONN (measured, section U, `connect-unreported`).
+    /// On a connected stream socket, the call shuts the sides that `how`
+    /// names, by each flavour's rules. Shutting the send side sends a FIN
+    /// after the bytes not yet sent. Shutting the receive side makes reads
+    /// answer end of file once the queued bytes have been read; Darwin
+    /// discards those bytes instead. Linux answers `ENOTCONN` once the
+    /// connection has been reset or both FINs have arrived. Darwin answers
+    /// `ENOTCONN` for a side already shut. For `SHUT_RDWR`, Darwin shuts only
+    /// the receive side if the send side was already shut, and nothing if the
+    /// receive side was.
     ///
-    /// A parked read or write on either end may have an answer afterwards;
-    /// `UnixWait.wake` finds it.
+    /// The shutdown reaches epoll and kqueue registrations as follows: on
+    /// Linux, every registration on the socket, for every call; on Darwin, the
+    /// registrations of the filter for each side that the call shut; and the
+    /// peer's registrations, when the FIN reaches the peer. On a Linux socket
+    /// whose completed connect had not yet been reported, the call reports it,
+    /// so a later `connect` answers `EISCONN`.
+    ///
+    /// Afterwards, a sleeping read or write on either end may be able to go
+    /// on; `UnixWait.wake` finds it.
     let shutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)

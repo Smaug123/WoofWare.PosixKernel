@@ -126,26 +126,29 @@ module ObjectLifetime =
             | None -> false
         )
 
-    /// Every inode that must not be freed: every process's current directory
-    /// and every open file description's inode, closed under
-    /// `DirectoryContent.Parent`.
+    /// Every inode that must not be freed although no name may reach it: every
+    /// process's current directory, every open file description's inode, and
+    /// every ancestor of those through `DirectoryContent.Parent`.
     ///
-    /// The closure is not caution — it is measured. `rmdir` can remove a
-    /// directory something still holds, and that orphan keeps its "..": probed
-    /// on both flavours, with `a/b` and the current directory inside `b`,
-    /// `rmdir(b)` then `rmdir(a)` both succeed and `stat("..")` still answers
-    /// `a`'s inode while `stat("../..")` still answers the live grandparent's.
-    /// So a held orphan holds its whole ancestor chain, and freeing one of them
-    /// would leave a `DirectoryContent.Parent` naming an inode the graph no
-    /// longer contains.
+    /// A client uses it to check the filesystem's own rules:
+    /// `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system)
+    /// (UnixSystem.fileSystem system)`, which takes it as `pinned`.
     ///
-    /// This is the set `VirtualFileSystem.checkInvariants` takes as `pinned`.
-    /// Ancestors that are still reachable from the root are in it too,
-    /// harmlessly: its users only ever ask about an inode no name reaches.
+    /// The ancestors are included because a directory that `rmdir` removed
+    /// while something held it keeps its "..", so it keeps its whole ancestor
+    /// chain alive. Ancestors that a name still reaches are in the set too,
+    /// which does no harm, because `checkInvariants` asks only about inodes
+    /// that no name reaches.
     let pinnedInodes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
+        // Measured on both flavours: with `a/b` and the current directory
+        // inside `b`, `rmdir(b)` then `rmdir(a)` both succeed, and `stat("..")`
+        // still answers `a`'s inode while `stat("../..")` answers the live
+        // grandparent's. Freeing an ancestor of a held orphan would leave a
+        // `DirectoryContent.Parent` naming an inode that the graph no longer
+        // contains.
         pinnedOn system.Machine.FileSystem system.Machine
 
     /// Whether `graph` has `inode` and names it nowhere, it is not the root,

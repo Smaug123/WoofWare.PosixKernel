@@ -1,9 +1,17 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Everything a kernel does differently when <c>open(2)</c> is asked to create.
+/// Most of the ways a kernel's <c>open(2)</c> differs when it is asked to create.
 /// </summary>
 /// <remarks>
+/// Other differences are elsewhere: <c>SimulatedUnixPlatform.newInodeGroupRule</c> (the new file's group),
+/// <c>SimulatedUnixPlatform.umaskStoredBits</c> (the umask), and the machine's <c>ProtectedFiles</c>
+/// configuration.
+/// <para />
+/// <c>SimulatedUnixPlatform.creatingOpenRules</c> hands this out, and the simulated kernel already applies it.
+/// A client reads it only to learn what the kernel will do; no function takes one, and building one changes nothing
+/// (see "Flavours and divergence from host platforms" in the README).
+/// <para />
 /// All these rules were measured on macOS 26.6/APFS and Linux 6.x, at an unprivileged uid.
 /// </remarks>
 type CreatingOpenRules =
@@ -18,8 +26,8 @@ type CreatingOpenRules =
         /// fails where a plain `open(dir, O_RDONLY)` succeeds — while Darwin
         /// treats `O_CREAT` as having no bearing on an object that exists.
         ///
-        /// `O_EXCL`'s EEXIST is measured to beat this on both, so a caller must
-        /// check that first.
+        /// On both flavours, `O_EXCL`'s EEXIST is measured to come before this
+        /// refusal.
         RefusesExistingDirectory : bool
         /// What a path that consumed *no component at all* — "/" itself, or a
         /// symlink whose target is "/" — owes a creating open.

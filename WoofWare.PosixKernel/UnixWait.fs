@@ -88,10 +88,10 @@ type FinishedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : 
 /// What a woken thread's call answered once `UnixWait.finish` finished it: one
 /// case for each kind of call a thread parks in, named as that kind's
 /// `ParkedSyscall` case is, holding exactly what that kind's own finishing
-/// function answers. For a write, which stops partway to copy from the
-/// caller's buffer, that is what its resumption answers once given what the
-/// buffer of the `Syscall` that `finish` was given holds, since `finish` never
-/// stops partway.
+/// function answers. A write stops partway to copy from the process's buffer,
+/// but `finish` never stops partway: for a write, the case holds what the
+/// write's resumption answers, given the bytes in the buffer of the `Syscall`
+/// that `finish` was given.
 ///
 /// As those answers do, it may hold the call's answer, the thread asleep in
 /// the call again, waiting for a new wake, or the call interrupted by a signal
@@ -246,9 +246,14 @@ module internal FinishRefusal =
 /// Deciding which parked threads a system wakes, and finishing a woken
 /// thread's call.
 ///
-/// Wakes are pulled rather than pushed: nothing that makes a condition true
-/// wakes anyone. A client asks `wake` of each state it reaches instead, so no
-/// producer can forget to wake a waiter.
+/// A call that would block answers `WouldBlock`, and this library parks its
+/// thread. Nothing wakes that thread by itself: a change that lets the call go
+/// on, made by another call or by `UnixSystem.advanceClock`, does not wake it.
+/// Instead, the client calls `wake` on each system it reaches, and then
+/// finishes each woken thread's call with `finish` (or the finishing function
+/// of the call's family). The client never makes the parked call again to
+/// resume it. See "What every client does" and "Sleeping and waking" in the
+/// README.
 [<RequireQualifiedAccess>]
 module UnixWait =
 
@@ -542,10 +547,18 @@ module UnixWait =
     /// with each of them woken (`ParkState.Woken`). If none wakes, the system
     /// answered is equal to `system`.
     ///
-    /// A woken thread stays parked until the finishing function of the call it
-    /// is parked in finishes it, and only a woken thread's call may be
-    /// finished. Until then it is not asked again: it is the client's to run,
-    /// when it chooses.
+    /// A woken thread stays parked until the client finishes its call, with
+    /// `finish` or the finishing function of the call's family, and only a
+    /// woken thread's call may be finished. Until then, `wake` does not ask
+    /// about it again, and the client chooses when to run it.
+    ///
+    /// The client should not leave a woken thread unfinished indefinitely. On
+    /// a queue whose waiters a kernel wakes one at a time (described below), a
+    /// thread that something to take from the queue woke holds the queue: no
+    /// other waiter on it wakes for that queue's readiness until that thread
+    /// has finished its call (`ParkState.Woken`). Another waiter can still
+    /// wake for its own deadline or for a signal. Those other waiters may be in other processes. A
+    /// thread that only a signal or its deadline woke holds no queue.
     ///
     /// A waiter whose `flock` has become grantable, whose polled descriptor is
     /// ready, whose deadline has passed, or to which a signal with a handler is
@@ -886,21 +899,22 @@ module UnixWait =
             (tryFinishIn call (Caller.thread caller))
             system
 
-    /// Finish the call `caller` is parked in, once `wake` has woken it, through
-    /// the finishing function of that call's family, and answer the
-    /// `FinishedCall` case named as the call's `ParkedSyscall` case is, holding
-    /// exactly what that function answers.
+    /// Finish the call in which `caller` is parked, once `wake` has woken it.
+    /// This runs the finishing function of that call's family, and answers the
+    /// `FinishedCall` case with the same name as the call's `ParkedSyscall`
+    /// case, holding exactly what that function answers.
     ///
-    /// `call` is the `Syscall` the thread made, as `UnixSystem.step` takes it,
-    /// with what the caller's memory holds now: a woken write copies the next
-    /// of its bytes from its buffer as the buffer is when the call is
-    /// finished, and `finish` hands the write's resumption, which
-    /// `UnixReadWrite.writeWithBytes` is, the bytes of `call`'s buffer it
-    /// copies, so that it never stops partway. A woken Linux `recvfrom` reads
-    /// its length cell once its datagram has come, and `finish` hands its
-    /// resumption, which `UnixReadWrite.recvfromWithLength` is, what `call`'s
-    /// cell holds. Every other call is finished without reading `call`'s
-    /// arguments.
+    /// `call` is the `Syscall` that the thread made, in the form
+    /// `UnixSystem.step` takes, but holding what the process's memory holds
+    /// now, as the client reads it. A client that made the call through the
+    /// call's own function builds the matching `Syscall` case here. Two calls
+    /// read it. A woken write copies its next bytes from its buffer as the
+    /// buffer is when the call is finished: `finish` hands the bytes of
+    /// `call`'s buffer to the write's resumption (`UnixReadWrite.writeWithBytes`),
+    /// so it never stops partway. A woken Linux `recvfrom` reads its length
+    /// cell once its datagram has arrived: `finish` hands what `call`'s cell
+    /// holds to its resumption (`UnixReadWrite.recvfromWithLength`). Every
+    /// other call is finished without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it

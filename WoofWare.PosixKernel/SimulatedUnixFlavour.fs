@@ -1,12 +1,16 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// Which Unix we are simulating.
+/// Which Unix we are simulating: Linux or Darwin.
 /// </summary>
 /// <remarks>
-/// This is essentially a bundling of the many different ways various Unix platforms can differ.
-/// (For example, it includes errno numbering, permission bit handling on symlinks, whether <c>stat</c>
-/// reports creation times, etc.)
+/// The client does not configure a flavour directly. It chooses a <c>SimulatedUnixPlatform</c>
+/// (for example <c>SimulatedUnixPlatform.linuxX64</c>), whose flavour <c>SimulatedUnixPlatform.flavour</c> reads.
+/// <para />
+/// The flavour decides most of the ways the two Unixes differ, such as errno numbering, permission bit handling
+/// on symlinks, and whether <c>stat</c> reports creation times. Some behaviour follows the platform's kernel version
+/// or build instead, so the platform, not the flavour, says what the kernel does
+/// (see "Flavours and divergence from host platforms" in the README).
 /// </remarks>
 [<RequireQualifiedAccess>]
 type SimulatedUnixFlavour =

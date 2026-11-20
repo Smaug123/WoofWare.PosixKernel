@@ -303,8 +303,13 @@ module internal CloseRefusal =
         | CloseRefusal.DarwinEndedWriteSignal (_, inner) -> EndedWriteSignalRefusal.kind inner
         | CloseRefusal.LingeringCloseDeferredToCall _ -> RefusalKind.Unmodelled
 
-/// A status flag the flavour's `fcntl(F_SETFL)` would set, and this kernel
-/// does not model.
+/// A status flag that the flavour's `fcntl(F_SETFL)` would set, but that this
+/// library does not model, so `UnixDescriptor.fcntl` refuses an `F_SETFL` word
+/// carrying it.
+///
+/// No public answer carries one of these: this library uses them only to
+/// name the flags in the message of the `UnmodelledException` that such a
+/// call throws.
 [<RequireQualifiedAccess>]
 type UnmodelledStatusFlag =
     /// `O_APPEND`, on both flavours.
@@ -414,26 +419,32 @@ module internal Dup3Refusal =
         | Dup3Refusal.NotProvided _ -> RefusalKind.NotOnPlatform
         | Dup3Refusal.ClosingTarget inner -> CloseRefusal.kind inner
 
-/// What a change to a descriptor's `O_NONBLOCK` answered.
+/// What `UnixDescriptor.setNonBlocking` answered.
 ///
-/// Store and answer are separate because for a kqueue they disagree: its bit
-/// toggles and the call still reports a failure.
+/// Whether the flag changed and whether the call succeeded are separate
+/// questions, because on a Darwin kqueue the answers differ: the flag
+/// changes, and the call still fails.
 [<RequireQualifiedAccess>]
 type SetNonBlockingAnswer =
-    /// The flag is now what the caller asked for, and the call succeeded.
+    /// The flag now has the requested value, and the call succeeded.
     | Set
     /// The call failed with this errno.
     ///
-    /// The system still comes back, and the flag may have changed with it: on a
-    /// kqueue the bit toggles and the answer is `ENOTTY` anyway.
+    /// The system still comes back, and the flag may have changed in it: on a
+    /// Darwin kqueue the flag changes and the answer is `ENOTTY` anyway.
     | Failed of error : UnixError
 
 /// What `ioctl(fd, FIONREAD, &count)` answered.
 [<RequireQualifiedAccess>]
 type BytesAvailableAnswer =
-    /// The call returned 0, having written `count` into the caller's `int`.
+    /// The process's call returns 0. This library has stored nothing: the
+    /// client stores `count` in the process's `int` at the destination, as a C
+    /// `int` in the simulated machine's byte order
+    /// (`SimulatedUnixPlatform.encodeCInt`). See "What every client does" in
+    /// the README.
     | Reported of count : int
-    /// The call returned -1 with this errno, and wrote nothing.
+    /// The process's call returns -1 and sets errno to `error`. The
+    /// destination stays as it was.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer an `ioctl(FIONREAD)`.
@@ -441,8 +452,10 @@ type BytesAvailableAnswer =
 type internal BytesAvailableRefusal =
     /// The destination has no answer at the copy.
     | Buffer of BufferRefusal
-    /// The descriptor `fd` names something other than a pipe or a connected
-    /// TCP socket, for which what `FIONREAD` answers is not modelled.
+    /// The descriptor `fd` names a kind of object for which this library does
+    /// not model what `FIONREAD` answers: a regular file, a directory, an epoll
+    /// instance, a kqueue, a FIFO, or a socket that is neither a connected TCP
+    /// socket nor one that receives datagrams.
     | UnmodelledTarget of fd : int
 
 [<RequireQualifiedAccess>]
@@ -453,7 +466,7 @@ module internal BytesAvailableRefusal =
         match refusal with
         | BytesAvailableRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | BytesAvailableRefusal.UnmodelledTarget fd ->
-            $"fd %d{fd} is neither an end of a pipe nor a connected TCP socket, and FIONREAD is answered here for those only. The other kinds answer per kind and per flavour (measured, pipe-syscalls.c): a regular file reports its size less the offset on both; a directory is ENOTTY on Linux and reports a number of its own on Darwin; a socket reports what it has queued; an epoll instance is EINVAL and a kqueue ENOTTY. Model the kind before answering."
+            $"fd %d{fd} names a regular file, a directory, an epoll instance, a kqueue, a FIFO, or a socket that is neither a connected TCP socket nor one that receives datagrams, and this library does not model FIONREAD for any of those. Real kernels answer these per kind and per flavour (measured, pipe-syscalls.c): a regular file reports its size less the offset on both; a directory is ENOTTY on Linux and reports a number of its own on Darwin; a socket reports what it has queued; an epoll instance is EINVAL and a kqueue ENOTTY. Model the kind before answering."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : BytesAvailableRefusal) : RefusalKind =
@@ -461,8 +474,8 @@ module internal BytesAvailableRefusal =
         | BytesAvailableRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | BytesAvailableRefusal.UnmodelledTarget _ -> RefusalKind.Unmodelled
 
-/// The settings of a terminal, as `tcgetattr(3)` writes them into the
-/// caller's `struct termios`.
+/// The settings of a terminal, which `tcgetattr(3)` writes into the
+/// process's `struct termios`.
 ///
 /// Its representation is internal, so a later version may change what it
 /// holds without breaking a client; a client builds none. Nothing in this
@@ -478,11 +491,11 @@ type TerminalSettings =
 type TerminalAttributesAnswer =
     /// `tcgetattr` returns -1 and `isatty` returns 0, each with this errno.
     | NotATerminal of error : UnixError
-    /// `fd` is a terminal: `tcgetattr` returns 0, having written `settings`
-    /// into the caller's `struct termios`, and `isatty` returns 1.
+    /// `fd` is a terminal: `tcgetattr` returns 0 and `isatty` returns 1. The
+    /// client would store `settings` in the process's `struct termios`.
     ///
-    /// Reserved: nothing this kernel models is a terminal, so nothing in this
-    /// version answers it.
+    /// Reserved: this library models no terminal, so nothing in this version
+    /// answers it.
     | Attributes of settings : TerminalSettings
 
 /// Why this kernel will not answer an `ioctl(2)` of `FICLONE`.
@@ -1195,12 +1208,12 @@ module UnixDescriptor =
     /// other value EINVAL, but only once the descriptor has been screened: a
     /// closed descriptor is EBADF and a pipe ESPIPE whatever the advice.
     ///
-    /// Refused where the platform's libc has no such call (Darwin): no program
-    /// could have made it.
+    /// Throws `PlatformNotSupportedException` where the platform's libc has no
+    /// such call (Darwin), since no program could have made it.
     ///
-    /// A pure hint: this kernel models no readahead, so a `Completed` answer
-    /// leaves the system exactly as it arrived. That is why no system comes
-    /// back.
+    /// The advice is only a hint, and this library does not model readahead,
+    /// so a `Completed` answer leaves the system exactly as it was. That is why
+    /// no system comes back.
     ///
     /// The rows this implements are measured on Linux 6.18.5 aarch64 by
     /// `docs/probes/fadvise/fadvise.py`. The path they exercise
@@ -1684,25 +1697,35 @@ module UnixDescriptor =
             (tryBytesAvailableIn fd destination)
             system
 
-    /// `ioctl(fd, FIONREAD, &count)`: how many bytes a read of the pipe end or
-    /// connected TCP socket `fd` names could take now, written into the
-    /// caller's `int` at `destination`.
+    /// `ioctl(fd, FIONREAD, &count)`: how many bytes a read through `fd` could
+    /// take now, where `fd` names an end of a pipe, a connected TCP socket, a
+    /// UDP socket or an inotify instance.
     ///
-    /// On Linux both ends of a pipe report the bytes the pipe holds, even once
-    /// the read end has closed; on Darwin the read end reports them and the
-    /// write end reports 0. A connected socket reports what waits in its
-    /// receive buffer. A UDP socket reports, on Linux, the oldest datagram's
-    /// length, and on Darwin its receive buffer's count, which charges each
-    /// datagram its source address and a control record beside its bytes. EBADF for a descriptor that is not open, whatever the
-    /// destination; EFAULT for an unmapped destination, whatever is held. A
-    /// device answers its driver's errno whatever the destination: under
-    /// Linux, `ENOTTY` for `/dev/null` and `EINVAL` for `/dev/urandom`.
-    /// Refused for every other descriptor.
+    /// `destination` is the client's description of the process's `int`
+    /// (see `UserBuffer`). The answer carries the count, which the client
+    /// stores there (`BytesAvailableAnswer.Reported`); this library stores
+    /// nothing.
     ///
-    /// The system comes back with the answer, changed only for a Linux UDP
-    /// socket, whose call moves the datagrams that have arrived into the
-    /// queue a receive takes from, as Linux's does, which decides when the
-    /// receive buffer has room again.
+    /// On Linux, both ends of a pipe report the bytes that the pipe holds, even
+    /// after the read end has closed. On Darwin, the read end reports them and
+    /// the write end reports 0. A connected TCP socket reports the bytes
+    /// waiting in its receive buffer. A UDP socket reports, on Linux, the
+    /// length of the oldest datagram, and on Darwin the count of its receive
+    /// buffer, which charges each datagram for its source address and a
+    /// control record as well as its bytes. An inotify instance reports the
+    /// bytes that a read of every queued record would return.
+    ///
+    /// A descriptor that is not open is `EBADF`, whatever the destination. A
+    /// device answers its driver's errno, whatever the destination: under
+    /// Linux, `ENOTTY` for `/dev/null` and `EINVAL` for `/dev/urandom`. Every
+    /// descriptor not listed above is refused, whatever the destination. For
+    /// a descriptor that would report a count, an unmapped destination is
+    /// `EFAULT`.
+    ///
+    /// The system comes back with the answer. It changes only for a Linux UDP
+    /// socket: as on Linux, the call moves the datagrams that have arrived into
+    /// the queue from which a receive takes them, and that move decides when
+    /// the receive buffer has room again.
     let bytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -3065,8 +3088,8 @@ module UnixDescriptor =
     ///
     /// Any other bit in `flags` is `EINVAL`, ahead of everything; then the same
     /// descriptor on both sides is `EINVAL`, open or not; then `dup2`'s
-    /// answers and refusals. Refused under the Darwin flavour, which has no
-    /// `dup3`.
+    /// answers and refusals. Under the Darwin flavour, which has no `dup3`,
+    /// this function throws `PlatformNotSupportedException`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`.</exception>
     let dup3<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -3112,13 +3135,21 @@ module UnixDescriptor =
         | SyscallAnswer.Completed _, system -> SetNonBlockingAnswer.Set, system
         | SyscallAnswer.Failed error, system -> SetNonBlockingAnswer.Failed error, system
 
-    /// Set or clear `O_NONBLOCK` on the open file description `fd` names, as
-    /// `fcntl(fd, F_GETFL)` and then `fcntl(fd, F_SETFL, word)` with the bit
-    /// changed do; the flag is shared with every descriptor naming the
-    /// description.
+    /// Set or clear `O_NONBLOCK` on the open file description that `fd` names,
+    /// with the effect of `fcntl(fd, F_GETFL)` followed by
+    /// `fcntl(fd, F_SETFL, word)` with the bit changed. Every descriptor that
+    /// names the description sees the change.
     ///
-    /// `EBADF` for a descriptor that is not open. On a Darwin kqueue the flag
-    /// is set and the answer is `ENOTTY` (see `SetNonBlockingAnswer.Failed`).
+    /// This is a convenience for the client, not a call that a process makes,
+    /// so `Syscall` has no case for it and `UnixSystem.step` cannot make it.
+    /// Both halves happen in one function, so no other call comes between
+    /// them. `caller` must still be a thread that could make a call: not
+    /// asleep in one, and not owing a return to user mode. Otherwise this
+    /// function throws `InvalidOperationException`.
+    ///
+    /// A descriptor that is not open answers `EBADF`. On a Darwin kqueue the
+    /// flag changes and the answer is `ENOTTY` (see
+    /// `SetNonBlockingAnswer.Failed`).
     let setNonBlocking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -3152,9 +3183,15 @@ module UnixDescriptor =
             failwith
                 $"UnixDescriptor.isNonBlocking: F_GETFL on fd %d{fd} was refused (%s{FcntlRefusal.describe refusal}), but it is a modelled command (this is a bug in this library)."
 
-    /// Whether the open file description `fd` names carries `O_NONBLOCK`, as
-    /// `fcntl(fd, F_GETFL)` reports it; `None` for a descriptor that is not
-    /// open, which `F_GETFL` answers `EBADF`.
+    /// Whether the open file description that `fd` names carries
+    /// `O_NONBLOCK`, as `fcntl(fd, F_GETFL)` would report it. `None` for a
+    /// descriptor that is not open, for which `F_GETFL` answers `EBADF`.
+    ///
+    /// This is a query for the client, not a call that a process makes, so
+    /// `Syscall` has no case for it. Even so, `caller` must be a thread that
+    /// could make a call: not asleep in one, and not owing a return to user
+    /// mode. Otherwise this function throws `InvalidOperationException`, so a
+    /// client cannot ask on behalf of a sleeping thread.
     let isNonBlocking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)

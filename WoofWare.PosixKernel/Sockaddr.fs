@@ -1,28 +1,22 @@
 namespace WoofWare.PosixKernel
 
-/// Where a `struct sockaddr`'s address family sits and how wide it is — the only
-/// part of the socket-address layout the two Unixes lay out differently.
+/// One field of one of the `sockaddr` structs, as a byte range within it, for
+/// a client that reads or writes the bytes of a socket address in the
+/// process's memory.
 ///
-/// BSD gave `struct sockaddr` a leading one-byte `sa_len` and narrowed
-/// `sa_family_t` to one byte to pay for it; Linux kept the original two-byte
-/// `sa_family_t` and has no length byte. That is why every *later* field agrees
-/// between the two — `sin_port` at 2, `sin_addr` at 4, `sin6_addr` at 8,
-/// `sin6_scope_id` at 24, all measured on both — since the two layouts spend the
-/// same two leading bytes differently rather than in different amounts.
+/// Use the predefined fields, such as `InternetSockaddr.port` and
+/// `InternetV6Sockaddr.scopeId`, rather than building one: the record does not
+/// check that an offset and a width describe a real field. Every use is either
+/// "read these bytes" or "does the declared length reach them".
 ///
-/// One field of one of the `sockaddr` structs, as a byte range within it.
-///
-/// Offset and width travel together because a caller that has one always wants
-/// the other: every use is either "read these bytes" or "does the caller's
-/// declared length reach them".
-///
-/// **Carries no byte order**, deliberately. The fields' orders are kernel ABI --
-/// `sin_port` and `sin_addr` are network order, `sin6_scope_id` is the host's --
-/// but whether a given *caller* swaps is that caller's own contract, and callers
-/// do not agree: one that hands back the port in host order and the address word
-/// verbatim swaps one network-order field and not the other. An order carried here would invite an
-/// order-normalising accessor, and the first caller to reach for one would
-/// silently acquire a swap its own contract does not have.
+/// **It carries no byte order**, deliberately. The order of each field is
+/// fixed by the kernel's ABI (`sin_port` and `sin_addr` are in network order,
+/// `sin6_scope_id` in the machine's own order), but clients do not agree on
+/// whether they swap a field. One that hands back the port in machine order
+/// and the address word unchanged swaps one network-order field and not the
+/// other. An order carried here would invite an accessor that normalises the
+/// order, which would silently swap a field for a client whose own contract
+/// does not.
 type SockaddrField =
     {
         /// Byte offset of the field from the start of the struct.
@@ -131,8 +125,15 @@ module InternetV6Sockaddr =
             Width = 4
         }
 
-/// A pair of numbers rather than an `int * int` so that no caller can pair an
-/// offset with the wrong width: the two vary together and never independently.
+/// Where a `struct sockaddr`'s address family sits and how wide it is: the only
+/// part of the socket-address layout that the two Unixes lay out differently.
+///
+/// BSD gave `struct sockaddr` a leading one-byte `sa_len`, and narrowed
+/// `sa_family_t` to one byte to make room for it; Linux kept the original
+/// two-byte `sa_family_t` and has no length byte. So every *later* field is at
+/// the same offset on both (`sin_port` at 2, `sin_addr` at 4, `sin6_addr` at 8,
+/// `sin6_scope_id` at 24, all measured on both), because the two layouts use
+/// the same two leading bytes in different ways.
 [<RequireQualifiedAccess>]
 type SockaddrFamilyField =
     /// Linux: `sa_family_t` is a two-byte `unsigned short` at offset 0, in the

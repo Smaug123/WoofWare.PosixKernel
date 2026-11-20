@@ -1,8 +1,8 @@
 namespace WoofWare.PosixKernel
 
 /// <summary>
-/// An IPv4 address, stored in host order.
-/// The wire layout a process passes is network order.
+/// An IPv4 address, held as its numeric value, independent of any machine's byte order.
+/// In the process's memory, as in <c>struct sockaddr_in</c>, the address is in network order.
 /// </summary>
 /// <remarks>
 /// Every 32-bit value is an address, so the case is public: build one with <c>Ipv4Address 0x7F000001u</c>
@@ -20,19 +20,22 @@ type Ipv4Address = | Ipv4Address of uint32
 /// <remarks>
 /// This is what <c>bind(2)</c> associates a socket with, and what <c>getsockname(2)</c> reports back.
 ///
-/// Both fields are stored in host order.
-/// The wire layout a process passes is network order.
+/// Both fields are held as numeric values, independent of any machine's byte order.
+/// In the process's memory, as in <c>struct sockaddr_in</c>, both are in network order.
 /// </remarks>
+/// <example>
+/// <c>127.0.0.1:8080</c> is <c>{ Address = Ipv4Address 0x7F000001u ; Port = 8080us }</c>.
+/// </example>
 type Ipv4Endpoint =
     {
         /// The address.
         Address : Ipv4Address
-        /// The port, host order.
+        /// The port, as a number: 8080 is `8080us`.
         Port : uint16
     }
 
 /// <summary>
-/// An IPv4 prefix that Linux considers local to this host, as represented by a route of type <c>local</c>
+/// An IPv4 prefix that Linux considers local to this machine, as represented by a route of type <c>local</c>
 /// in Linux's local routing table.
 /// </summary>
 /// <remarks>
@@ -45,7 +48,7 @@ type Ipv4Endpoint =
 /// (It does <i>not</i> extend that to an interface's subnet. Having <c>192.168.1.10/24</c> assigned
 /// to an interface doesn't make <c>192.168.1.11</c> bindable, because that is considered a
 /// route to a <i>peer</i>, not to this machine.)
-/// Darwin instead restricts binding to addresses assigned to the host.
+/// Darwin instead restricts binding to addresses assigned to the machine.
 ///
 /// Two prefixes are equal exactly when they name the same set of addresses: the
 /// network address has no bit set past the prefix length.

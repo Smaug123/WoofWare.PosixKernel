@@ -170,8 +170,8 @@ module AbsoluteUnixPath =
         | None -> Ok (AbsoluteUnixPath candidate)
 
     /// <summary>
-    /// Parse a host-supplied string into an absolute Unix path, or explain why
-    /// it is not one.
+    /// Parse a string which the client supplies into an absolute Unix path, or
+    /// explain why it is not one.
     /// </summary>
     ///
     /// <remarks>

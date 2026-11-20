@@ -270,22 +270,36 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
     /// or restarts, the client making it again before the thread runs any
     /// other code of its own.
     | Resumes of interrupted : InterruptedCall option
-    /// A frame for every caught signal the thread takes now, pushed all at once,
-    /// innermost first: the head's handler runs first, and
-    /// each handler's `UnixSignal.sigreturn` is followed by another
-    /// `UnixSignal.onReturnToUser`, which may push more frames before the next
-    /// one down runs. Never empty.
+    /// One frame for each caught signal the thread takes now, all pushed at
+    /// once, innermost first. Never empty.
     ///
-    /// `interrupted` is `Some` if a signal interrupted the call the thread is
-    /// returning from (an `Interrupted` answer): once every handler has
-    /// returned, the call fails with `EINTR`, or restarts, the client making it
-    /// again before the thread runs any other code of its own.
+    /// The client runs the handlers itself, one at a time, starting with the
+    /// head of the list. For each frame, it runs the frame's handler
+    /// (`HandlerFrame.Action`) on the thread, for the frame's signal
+    /// (`HandlerFrame.Entry`). When that handler returns, the client calls
+    /// `UnixSignal.sigreturn` with the frame's `HandlerFrame.Id`, and then
+    /// `UnixSignal.onReturnToUser` again, which may push more frames before the
+    /// next frame down runs. This library has written nothing to the process's
+    /// stack: see `HandlerFrame`, and "Running a signal handler" in the README.
+    ///
+    /// `interrupted` is `Some` if a signal interrupted the call from which the
+    /// thread is returning (an `Interrupted` answer). Once every handler has
+    /// returned, that call either fails with `EINTR`, or restarts, in which
+    /// case the client makes it again before the thread runs any other code of
+    /// its own.
     | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list * interrupted : InterruptedCall option
-    /// No handler claims the signal and its kernel default is to suspend the
-    /// whole process. The library holds no stopped state, so the client acts
-    /// on it. Where another signal is still deliverable to the thread, its
-    /// return is not over: a client that carries on asks
-    /// `UnixSignal.onReturnToUser` again before the thread runs its own code.
+    /// No handler claims the signal, and its default action stops the whole
+    /// process.
+    ///
+    /// This library keeps no stopped state, and nothing in it continues a
+    /// stopped process. So a client should treat the stop as unsupported and
+    /// stop running the process, rather than carry on as if the process were
+    /// still running (see "Signals" in the README).
+    ///
+    /// If another signal is still deliverable to the thread, its return to
+    /// user mode is not over, and `UnixSignal.owesReturn` answers `true`. A
+    /// client that carries on regardless calls `UnixSignal.onReturnToUser`
+    /// again before the thread runs its own code.
     | ProcessStopped of signal : Signal
     /// No handler claims the signal, its kernel default is to resume a stopped
     /// process, and the thread does not block it: the kernel discarded it as it
@@ -318,8 +332,10 @@ type SigactionAnswer<'Handler when 'Handler : equality> =
     /// The call returned 0: `previous` is the disposition the signal had
     /// before the call.
     | Completed of previous : SignalDisposition<'Handler>
-    /// The call returned -1, changed nothing, and the client stores `error`
-    /// wherever its libc keeps errno.
+    /// The process's call failed with `error`, and changed nothing. The client
+    /// delivers `error` to the process as `SyscallAnswer.Failed` describes:
+    /// `sigaction(3)` returns -1 and sets errno, and the raw system call that
+    /// `UnixSignal.sigactionSyscall` answers reports it by its own convention.
     | Failed of error : UnixError
 
 /// What a call that changes a thread's signal mask answered:
@@ -329,10 +345,11 @@ type SignalMaskAnswer =
     /// The call returned 0: `previous` is the calling thread's mask before
     /// the call.
     | Completed of previous : SignalMask
-    /// The call changed nothing, and failed with `error`: `sigprocmask` and
-    /// `rt_sigprocmask` return -1 and the client stores `error` wherever its
-    /// libc keeps errno, and `pthread_sigmask` returns `error` itself, leaving
-    /// errno alone.
+    /// The process's call changed nothing, and failed with `error`. The client
+    /// delivers `error` to the process as that call reports failure:
+    /// `sigprocmask` returns -1 and sets errno; `rt_sigprocmask`, a raw system
+    /// call, reports it by its own convention; and `pthread_sigmask` returns
+    /// `error` itself, leaving errno alone.
     | Failed of error : UnixError
 
 /// What became of a `sigsuspend(2)` or `pause(2)` this kernel could answer.
@@ -694,25 +711,37 @@ module UnixSignal =
             (tryOnReturnToUserIn (Caller.thread caller))
             system
 
-    /// What the thread `caller` names takes as it returns to user mode: its own
-    /// signals, and if it is the process's leader, the process's too; under Linux, a thread other
-    /// than the leader also takes a signal pending on the process that the
-    /// leader blocks and it does not, where the signal's default terminates or
-    /// stops the process. A client asks this before
-    /// the thread next runs its own code: after every system call it makes,
-    /// `sigreturn` included. It may ask at any other time the thread is not
-    /// asleep in a syscall, as a preempted thread returns to user mode.
+    /// The return to user mode of the thread that `caller` names: which pending
+    /// signals the thread takes, and what each does. The thread takes its own
+    /// signals, and, if it is the process's leader, the process's too. Under
+    /// Linux, a thread other than the leader also takes a signal pending on the
+    /// process if the leader blocks the signal, this thread does not block it,
+    /// and the signal's default action terminates or stops the process.
     ///
-    /// A thread must return before it makes another call when a signal
-    /// interrupted its last call (an `Interrupted` answer), and from the moment
-    /// a signal is deliverable to it, whichever thread's call made it so; every
-    /// call the thread makes until then throws `InvalidOperationException`.
-    /// `owesReturn` says whether it must.
+    /// When to call it: the thread must make this return before its next call
+    /// whenever `owesReturn` answers `true`, which is after a call that a signal
+    /// interrupted (an `Interrupted` answer), from the moment a signal is
+    /// deliverable to it, whichever thread's call made it so, and while a
+    /// return it began is not over. Until it returns, every
+    /// call the thread makes throws `InvalidOperationException`. A signal can
+    /// become deliverable to a thread while the thread makes no call at all,
+    /// when another thread's `kill` or `pthreadKill` sends it one, so calling
+    /// this after each of the thread's own calls is not enough: the client
+    /// asks `owesReturn` before the thread runs again, and calls this when it
+    /// answers `true`. The client may also call this when nothing is owed, at
+    /// any time the thread is not parked in a syscall, as a preempted thread
+    /// returns to user mode. A thread that `UnixWait.wake` has woken is still
+    /// parked until its call is finished. Such a call is still subject to the refusals
+    /// below: under Linux, for example, a leader that owes nothing is refused
+    /// when it blocks a caught process-directed signal that another thread
+    /// does not. See "What every client
+    /// does" in the README.
     ///
-    /// Returns the possibly-updated system in every case, because an answer can
-    /// change the state without producing an action (see the Ignore rule
-    /// below), and a client that dropped the no-action system would replay
-    /// those discards forever.
+    /// Every case answers a system, which the client keeps even when the
+    /// answer asks it to do nothing: the return can still have changed the
+    /// state, for example by discarding an ignored signal (see below). A client
+    /// that dropped that system would find the same signals to discard on
+    /// every later return.
     ///
     /// The signals are walked in the order a thread takes them, skipping any
     /// that the thread's mask blocks, and what happens to each is its disposition
@@ -753,8 +782,9 @@ module UnixSignal =
     /// the mask the call replaced back as it returns: the first frame pushed
     /// (the outermost) saves that mask rather than the temporary one, so the
     /// handler's `sigreturn` restores it, and a return that pushes no frame
-    /// restores it at once, unless it answers `DefaultContinue`, whose return
-    /// goes on under the temporary mask when the client asks again. Each frame
+    /// restores it at once, unless it answers
+    /// `ReturnToUserOutcome.ContinueDiscarded`, after which the return goes on
+    /// under the temporary mask when the client calls this again. Each frame
     /// after the first saves the mask the one before it set, as for any other
     /// return.
     ///
@@ -829,17 +859,24 @@ module UnixSignal =
         | Some state -> state.Owes.IsSome
         | None -> false
 
-    /// Whether the thread `caller` names owes a return to user mode
-    /// (`onReturnToUser`) before it makes another call: `true` exactly when
-    /// any call it made now would throw `InvalidOperationException` for that
-    /// return. It owes one after a call a signal interrupted, from the moment
-    /// a signal is deliverable to it, whichever thread's call made it so, and
-    /// while a return it began is not over. A client asks this before the
-    /// thread runs more of its own code, and returns the thread to user mode
-    /// where it answers `true`. Changes nothing.
+    /// Whether the thread that `caller` names must make a return to user mode
+    /// (`onReturnToUser`) before it makes another call. It answers `true`
+    /// exactly when any call the thread made now would throw
+    /// `InvalidOperationException` because of that owed return. The thread
+    /// owes one after a call that a signal interrupted, from the moment a
+    /// signal is deliverable to it, whichever thread's call made it so, and
+    /// while a return it began is not over. Changes nothing.
     ///
-    /// `false` for a thread asleep in a syscall, which owes nothing until its
-    /// call has answered, and for a name the process has no thread by.
+    /// A client asks this before the thread runs more of its own code, and
+    /// calls `onReturnToUser` when it answers `true`. Calling `onReturnToUser`
+    /// after each of the thread's calls does not replace this check: another
+    /// thread's `kill` or `pthreadKill` can make a signal deliverable to this
+    /// thread between its calls (see "What every client does" in the
+    /// README).
+    ///
+    /// Answers `false` for a thread asleep in a syscall, which owes nothing
+    /// until its call has answered, and for a name by which the process has no
+    /// thread.
     ///
     /// Throws `InvalidOperationException` if the system holds no process
     /// `Caller.processId caller`, which is a bug in the client.

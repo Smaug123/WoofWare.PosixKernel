@@ -23,17 +23,18 @@ module GetRandomFlags =
 /// What `getrandom(2)` did, for a request this kernel could answer.
 [<RequireQualifiedAccess>]
 type GetRandomAnswer =
-    /// The bytes to place in the caller's buffer, which the caller fetches
-    /// from the draw, all at once or a range at a time; the syscall returns
-    /// `EntropyDraw.count draw`. That can be fewer than were asked for: see
-    /// `UnixEntropy.getRandomMaxTransfer`. The system that comes back with this
-    /// answer has already moved its pool past them.
+    /// The client fetches the bytes from the draw, all at once or a range at a
+    /// time, and stores them at the start of the process's buffer; the
+    /// process's call returns `EntropyDraw.count draw`. That can be fewer than
+    /// the process asked for: see `UnixEntropy.getRandomMaxTransfer`. The
+    /// system that comes back with this answer has already moved its pool past
+    /// them.
     ///
-    /// A count of zero means the call moved nothing and the buffer was not
-    /// touched at all.
+    /// A count of zero means that the call moved nothing and did not touch the
+    /// buffer at all.
     | Completed of draw : EntropyDraw
-    /// The syscall returns -1 and the caller stores `error` wherever its libc
-    /// keeps errno. Nothing was drawn from the pool.
+    /// The process's call returns -1, and the client sets the calling thread's errno
+    /// to `error`. Nothing was drawn from the pool.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer a `getrandom`.
@@ -63,16 +64,16 @@ module internal GetRandomRefusal =
 /// What `getentropy(2)` did, for a request this kernel could answer.
 [<RequireQualifiedAccess>]
 type GetEntropyAnswer =
-    /// The bytes to place in the caller's buffer, exactly as many as were asked
-    /// for, which the caller fetches from the draw; the syscall returns 0. The
-    /// system that comes back with this answer has already moved its pool past
-    /// them.
+    /// The client fetches the bytes from the draw, which holds exactly as many
+    /// as the process asked for, and stores them at the start of the process's
+    /// buffer; the process's call returns 0. The system that comes back with
+    /// this answer has already moved its pool past them.
     ///
-    /// A count of zero means the call was asked for nothing and the buffer was
-    /// not touched at all.
+    /// A count of zero means that the process asked for nothing, and the call
+    /// did not touch the buffer at all.
     | Completed of draw : EntropyDraw
-    /// The syscall returns -1 and the caller stores `error` wherever its libc
-    /// keeps errno. Nothing was drawn from the pool.
+    /// The process's call returns -1, and the client sets the calling thread's errno
+    /// to `error`. Nothing was drawn from the pool.
     | Failed of error : UnixError
 
 /// Why this kernel will not answer a `getentropy`.
@@ -231,14 +232,16 @@ module UnixEntropy =
             system
 
     /// <summary>
-    /// `getrandom(2)`: fill the caller's buffer with up to `count` bytes from
-    /// the entropy pool, and return how many.
+    /// `getrandom(2)`: draw up to `count` bytes from the entropy pool. The
+    /// answer carries the draw, and the client stores its bytes in the
+    /// process's buffer.
     ///
     /// `flags` is the raw argument, any combination of `GetRandomFlags`. It is
     /// EINVAL if it has any other bit set, or both `GetRandomFlags.Random` and
     /// `GetRandomFlags.Insecure`, whatever the buffer and the count.
     ///
-    /// Never blocks. Linux-only: under any other flavour the call is refused.
+    /// Never blocks. Linux-only: under any other flavour it throws
+    /// `PlatformNotSupportedException`.
     ///
     /// `caller` is the thread making the call, which must be one of the process's,
     /// and not asleep in another call.
@@ -294,12 +297,14 @@ module UnixEntropy =
             system
 
     /// <summary>
-    /// `getentropy(2)`: fill all `length` bytes of the caller's buffer from the
-    /// entropy pool.
+    /// `getentropy(2)`: draw `length` bytes from the entropy pool. The answer
+    /// carries the draw, and the client stores its bytes in the process's
+    /// buffer.
     ///
     /// A `length` above `getEntropyMaxLength` is EINVAL, whatever the buffer.
     ///
-    /// Darwin-only: under any other flavour the call is refused.
+    /// Darwin-only: under any other flavour it throws
+    /// `PlatformNotSupportedException`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getentropy` system call.</exception>
     let getEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

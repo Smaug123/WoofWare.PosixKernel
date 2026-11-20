@@ -52,7 +52,12 @@ type internal OwnerChangeTarget =
 /// `lchown(2)` and `fchown(2)`.
 ///
 /// The flavours disagree about every part of it, so each case is one flavour's
-/// whole rule, which `UnixPathResolution.chown` and its relatives apply.
+/// whole rule.
+///
+/// `SimulatedUnixPlatform.ownerChangeRule` hands this out, and
+/// `UnixPathResolution.chown` and its relatives already apply it. A client
+/// reads it only to learn what the kernel will do (see "Flavours and
+/// divergence from host platforms" in the README).
 [<RequireQualifiedAccess>]
 type OwnerChangeRule =
     /// An unprivileged caller may name a user only if it owns the inode and

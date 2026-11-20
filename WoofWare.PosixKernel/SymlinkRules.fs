@@ -10,7 +10,14 @@ type EmptySymlinkTarget =
     /// that every walk through answers ENOENT. Darwin.
     | Accepted
 
-/// Everything a flavour's `symlink(2)` does differently from the other's.
+/// How a flavour's `symlink(2)` treats an empty target, which is where it
+/// differs from the other flavour's apart from the walk of the link's own path
+/// (`SimulatedUnixPlatform.finalNameTrailingSeparator`).
+///
+/// `SimulatedUnixPlatform.symlinkRules` hands this out, and the simulated kernel
+/// already applies it. A client reads it only to learn what the kernel will do;
+/// no function takes one, and building one changes nothing (see "Flavours and
+/// divergence from host platforms" in the README).
 type SymlinkRules =
     {
         /// What an empty target does.

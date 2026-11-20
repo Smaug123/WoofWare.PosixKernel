@@ -1,13 +1,16 @@
 namespace WoofWare.PosixKernel
 
-/// What a thread parked in a syscall is waiting for: one primitive, or the first
-/// of several.
+/// What a thread parked in a syscall is waiting for: one primitive, or
+/// whichever of several holds first.
 ///
-/// Data, and deliberately transparent: a client that cannot make progress needs
-/// to *read* a condition as well as evaluate it — for example, to advance the
-/// virtual clock to the nearest deadline when nothing is runnable, which
-/// `UnixWait.deadlines` answers from the parks' conditions and a predicate could
-/// not. So no case may carry a function.
+/// A call that would block answers its thread's condition beside `WouldBlock`,
+/// and `WakeCondition.ofPark` gives the condition of any park. The client need
+/// not evaluate a condition: this library decides when it holds, and the client
+/// learns that from `UnixWait.wake`, then finishes the call (see "What every
+/// client does" in the README). A condition is plain data so that a client can
+/// read it, for example to see which deadline a sleeping call has;
+/// `UnixWait.deadlines` gathers those deadlines from every sleeping park; a
+/// woken park whose call is not yet finished contributes none.
 [<RequireQualifiedAccess>]
 type WakeCondition =
     /// Wait for this one primitive.
@@ -16,8 +19,8 @@ type WakeCondition =
     /// could never end.
     ///
     /// Only the set of primitives it contains matters, so nesting and repetition
-    /// are immaterial: `satisfied` of an `AnyOf` is the union of `satisfied` of
-    /// its members.
+    /// make no difference: the primitives of an `AnyOf` that hold are the union
+    /// of those that hold in each of its members.
     | AnyOf of first : WakeCondition * rest : WakeCondition list
 
 [<RequireQualifiedAccess>]
@@ -397,17 +400,16 @@ module WakeCondition =
     /// for, or a signal (`WakePrimitive.SignalDeliverable`), whichever comes
     /// first.
     ///
-    /// The direction that generalises, and the one every reader of a park should
-    /// use. A record is *richer* than its condition — a parked `epoll_wait` also carries
-    /// the event count its finishing call will copy out with, which no condition
-    /// mentions — so record to condition is total where condition to record is
-    /// not. A parked `poll` that watches no descriptor and has no deadline waits
-    /// for a signal alone, and so does a parked `sigsuspend`.
-    ///
-    /// Deriving rather than storing the condition beside the record is what stops
-    /// the two disagreeing: a client cannot park a thread on one object while
-    /// polling for another, because the thing polled *is* the thing parked on.
+    /// A park holds more than its condition: a parked `epoll_wait` also holds
+    /// the event count with which its finishing call copies events out, which
+    /// no condition mentions. So a condition can always be read from a park, but
+    /// a park cannot be rebuilt from a condition. A parked `poll` that watches no
+    /// descriptor and has no deadline waits for a signal alone, and so does a
+    /// parked `sigsuspend`.
     let ofPark (parked : ParkedSyscall) : WakeCondition =
+        // Derived from the park rather than stored beside it, so that the two
+        // cannot disagree: what a wake polls is exactly what the thread is
+        // parked on.
         let ended = WakeCondition.Primitive WakePrimitive.EndedByClose
 
         let own : WakeCondition list =

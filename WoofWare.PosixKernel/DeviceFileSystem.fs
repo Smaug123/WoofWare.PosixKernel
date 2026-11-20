@@ -191,8 +191,10 @@ module internal Devfs =
 [<RequireQualifiedAccess>]
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module CharacterDevice =
-    /// Every device this kernel has a driver for: a character device node can
-    /// be opened only if it holds the number one of these is registered under.
+    /// Every device for which this kernel has a Linux driver. On Linux, opening
+    /// a character device node is refused unless the node holds the number
+    /// under which one of these is registered. This kernel has no Darwin
+    /// driver, so on Darwin opening any device node is refused.
     let all : CharacterDevice list = [ CharacterDevice.Null ; CharacterDevice.URandom ]
 
     /// What an `ioctl(2)` the device's Linux driver does not recognise answers:
