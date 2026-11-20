@@ -305,7 +305,7 @@ module TestSockNameFaultLength =
             secondReported : string *
             expected : string
         /// An overlapping row, and which order its bytes match.
-        | Overlap of call : string * line : string * returned : string * verdict : string
+        | Overlap of call : string * declared : uint32 * line : string * returned : string * verdict : string
 
     /// One overlap recording: the kernel it ran on, and its lines.
     type private OverlapRecording =
@@ -321,7 +321,7 @@ module TestSockNameFaultLength =
 
     let private overlapRow : Regex =
         Regex
-            @"^(\S+)\s+D=[0-9]+\s+k=-?[0-9]+\s+r=([-0-9]+)\s+errno=[0-9]+\s+(addr-first|length-first|either|NEITHER)\b"
+            @"^(\S+)\s+D=([0-9]+)\s+k=-?[0-9]+\s+r=([-0-9]+)\s+errno=[0-9]+\s+(addr-first|length-first|either|NEITHER)\b"
 
     let private overlapRecording (resource : string) : OverlapRecording =
         let name = $"WoofWare.PosixKernel.Test.overlapping-output-order.%s{resource}"
@@ -360,7 +360,13 @@ module TestSockNameFaultLength =
                                 group control 7
                             )
                         elif row.Success then
-                            OverlapLine.Overlap (group row 1, line, group row 2, group row 3)
+                            OverlapLine.Overlap (
+                                group row 1,
+                                UInt32.Parse (group row 2),
+                                line,
+                                group row 3,
+                                group row 4
+                            )
                         else
                             failwith $"%s{resource}: unparsed row %s{line}"
                     )
@@ -370,19 +376,24 @@ module TestSockNameFaultLength =
     let private overlapRecordings : Lazy<OverlapRecording list> =
         lazy (overlapResources |> List.map overlapRecording)
 
-    /// The verdicts of `recording`'s rows that tell the two orders apart, by
-    /// call. Fails on a row that matched neither order or whose call failed.
-    let private decisive (recording : OverlapRecording) : Map<string, string list> =
+    /// The declared length and verdict of each of `recording`'s rows that tell
+    /// the two orders apart, by call. Fails on a row that matched neither order
+    /// or whose call failed.
+    let private decisive (recording : OverlapRecording) : Map<string, (uint32 * string) list> =
         recording.Lines
         |> List.choose (fun line ->
             match line with
             | OverlapLine.Control _ -> None
-            | OverlapLine.Overlap (call, text, returned, verdict) ->
+            | OverlapLine.Overlap (call, declared, text, returned, verdict) ->
                 (recording.Resource, text, returned)
                 |> shouldEqual (recording.Resource, text, "0")
 
                 verdict |> shouldNotEqual "NEITHER"
-                if verdict = "either" then None else Some (call, verdict)
+
+                if verdict = "either" then
+                    None
+                else
+                    Some (call, (declared, verdict))
         )
         |> List.groupBy fst
         |> List.map (fun (call, rows) -> call, List.map snd rows)
@@ -427,7 +438,7 @@ module TestSockNameFaultLength =
             let rows = decisive recording
 
             for call in nameCalls do
-                let verdicts = rows |> Map.tryFind call |> Option.defaultValue []
+                let verdicts = rows |> Map.tryFind call |> Option.defaultValue [] |> List.map snd
 
                 (recording.Resource, call, List.isEmpty verdicts)
                 |> shouldEqual (recording.Resource, call, false)
@@ -458,24 +469,25 @@ module TestSockNameFaultLength =
             SimulatedUnixPlatform.ipv6OnlyOption platform
         | other -> failwith $"unknown option %s{other}"
 
+    /// The getsockopt options each flavour's recording measures.
+    let private recordedOptions (platform : SimulatedUnixPlatform) : Set<string> =
+        let common =
+            Set.ofList [ "SO_REUSEADDR" ; "SO_ERROR" ; "SO_LINGER" ; "TCP_NODELAY" ; "IPV6_V6ONLY" ]
+
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> common
+        | SimulatedUnixFlavour.Darwin -> Set.add "SO_LINGER_SEC" common
+
     /// A successful getsockopt stores the value and the length in the order in
-    /// which the model's faulting getsockopt of the same option says the kernel
-    /// does: the length first exactly when the fault finds it already written.
+    /// which the model's faulting getsockopt of the same option, at the same
+    /// declared length, says the kernel does: the length first exactly when
+    /// the fault finds it already written.
     [<Test>]
     let ``a successful getsockopt stores in the model's fault order for every recorded option`` () : unit =
         for recording in overlapRecordings.Force () do
-            let options =
-                recording.Lines
-                |> List.choose (fun line ->
-                    match line with
-                    | OverlapLine.Control (call, _, _, _, _, _, _) when not (nameCalls.Contains call) -> Some call
-                    | _ -> None
-                )
-                |> Set.ofList
-
             let rows = decisive recording
 
-            for label in options do
+            for label in recordedOptions recording.Platform do
                 let domain, level, name = optionOf recording.Platform label
 
                 let system : UnixSystem<int, string> =
@@ -485,19 +497,24 @@ module TestSockNameFaultLength =
                 let fd, system =
                     NewSocket.create domain SocketKind.Stream SocketProtocol.Default system
 
-                let expected =
-                    match SockOptCalls.get fd level name (UserBuffer.Unmapped 0x1000UL) UserBuffer.Mapped 4u system with
+                let modelOrder (declared : uint32) : string =
+                    match
+                        SockOptCalls.get fd level name (UserBuffer.Unmapped 0x1000UL) UserBuffer.Mapped declared system
+                    with
                     | Ok (GetSockOptAnswer.Failed (UnixError.EFAULT, Some _), _) -> "length-first"
                     | Ok (GetSockOptAnswer.Failed (UnixError.EFAULT, None), _) -> "addr-first"
-                    | other -> failwith $"%s{recording.Resource} %s{label}: the faulting get answered %A{other}"
+                    | other ->
+                        failwith
+                            $"%s{recording.Resource} %s{label} at %d{declared}: the faulting get answered %A{other}"
 
                 let verdicts = rows |> Map.tryFind label |> Option.defaultValue []
 
                 (recording.Resource, label, List.isEmpty verdicts)
                 |> shouldEqual (recording.Resource, label, false)
 
-                (recording.Resource, label, List.distinct verdicts)
-                |> shouldEqual (recording.Resource, label, [ expected ])
+                for declared, verdict in verdicts do
+                    (recording.Resource, label, declared, verdict)
+                    |> shouldEqual (recording.Resource, label, declared, modelOrder declared)
 
     /// The Linux overlap recordings must lie on both sides of 6.18, or the
     /// comparison could not tell the versioned rule from one that ignored the
