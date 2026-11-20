@@ -1,0 +1,68 @@
+# Darwin 27.2.0 arm64, uid 501
+# control offsets (d_off / d_seekoff): .=0 ..=0 a=0 c=0 d=0 e=0 b=0
+# smallest count accepted: 64 (r=64)
+# fixture: prot_none=0x102bcc000 edge=0x102bd4000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
+closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=high     : r=-1 errno=EBADF pos=-1->-1
+regular-file   dest=ok       : r=-1 errno=EINVAL pos=0->0
+regular-file   dest=null     : r=-1 errno=EINVAL pos=0->0
+regular-file   dest=prot_none: r=-1 errno=EINVAL pos=0->0
+regular-file   dest=high     : r=-1 errno=EINVAL pos=0->0
+count-1        dest=ok       : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=null     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=prot_none: r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=high     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=ok       : r=224 errno=0 pos=0->2147483647 then=0:
+start          dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=prot_none: r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=high     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# after-first: first read of 32 bytes r=-1 
+after-first    dest=ok       : r=224 errno=0 pos=0->2147483647 then=0:
+# after-first: first read of 32 bytes r=-1 
+after-first    dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# after-first: first read of 32 bytes r=-1 
+after-first    dest=prot_none: r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# after-first: first read of 32 bytes r=-1 
+after-first    dest=high     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+partial-R1     dest=edge     : r=-1 errno=EFAULT pos=0->32
+# partial-R1: first writable record now 1:.
+# partial-R1: then=0:
+partial-R1+8   dest=edge     : r=-1 errno=EFAULT pos=0->32
+# partial-R1+8: first writable record now 1:.
+# partial-R1+8: then=0:
+partial-R1+R2  dest=edge     : r=-1 errno=EFAULT pos=0->8589934595
+# partial-R1+R2: first writable record now 1:.
+# partial-R1+R2: then=4:c,d,e,b
+partial-R1+R2+R3 dest=edge     : r=-1 errno=EFAULT pos=0->12884901892
+# partial-R1+R2+R3: first writable record now 1:.
+# partial-R1+R2+R3: then=4:c,d,e,b
+end            dest=ok       : r=0 errno=0 pos=2147483647->2147483647 then=0:
+end            dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end            dest=prot_none: r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end            dest=high     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end-partial    dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+removed        dest=ok       : r=0 errno=0 pos=0->2147483647 then=0:
+removed        dest=null     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
+removed        dest=prot_none: r=-1 errno=EFAULT pos=0->2147483647 then=0:
+removed        dest=high     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
+atime          dest=ok       : r=224 errno=0 atime=moved
+atime          dest=null     : r=-1 errno=EFAULT atime=kept
+atime          dest=prot_none: r=-1 errno=EFAULT atime=kept
+atime          dest=high     : r=-1 errno=EFAULT atime=kept
+devfs-start    dest=ok       : r=3096 errno=0 pos=0->1532
+# devfs-start: then 264 entries
+devfs-start    dest=null     : r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 360 entries
+devfs-start    dest=prot_none: r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 360 entries
+devfs-start    dest=high     : r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 360 entries
+# devfs control r=11888; R1=32
+devfs-partial  dest=edge     : r=-1 errno=EFAULT pos=0->32
+# devfs-partial: then 357 entries
+devfs-end      dest=ok       : r=0 errno=0 pos=5980->5980
+devfs-end      dest=null     : r=-1 errno=EFAULT pos=5980->5980
+devfs-end      dest=prot_none: r=-1 errno=EFAULT pos=5980->5980
+devfs-end      dest=high     : r=-1 errno=EFAULT pos=5980->5980

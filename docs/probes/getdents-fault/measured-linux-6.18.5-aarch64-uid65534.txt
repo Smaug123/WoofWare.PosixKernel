@@ -1,0 +1,53 @@
+# Linux 6.18.5 aarch64, uid 65534
+# control offsets (d_off / d_seekoff): .=1 ..=7 e=6 d=5 c=4 b=3 a=2147483647
+# smallest count accepted: 24 (r=24)
+# fixture: prot_none=0xffffb635e000 edge=0xffffb635d000 (page 4096); control r=168: 7 entries .,..,e,d,c,b,a; R1=24 R2=24
+closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=high     : r=-1 errno=EBADF pos=-1->-1
+regular-file   dest=ok       : r=-1 errno=ENOTDIR pos=0->0
+regular-file   dest=null     : r=-1 errno=ENOTDIR pos=0->0
+regular-file   dest=prot_none: r=-1 errno=ENOTDIR pos=0->0
+regular-file   dest=high     : r=-1 errno=ENOTDIR pos=0->0
+count-1        dest=ok       : r=-1 errno=EINVAL pos=0->0 then=7:.,..,e,d,c,b,a
+count-1        dest=null     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,e,d,c,b,a
+count-1        dest=prot_none: r=-1 errno=EINVAL pos=0->0 then=7:.,..,e,d,c,b,a
+count-1        dest=high     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,e,d,c,b,a
+start          dest=ok       : r=168 errno=0 pos=0->2147483647 then=0:
+start          dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+start          dest=prot_none: r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+start          dest=high     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+# after-first: first read of 24 bytes r=24 .
+after-first    dest=ok       : r=144 errno=0 pos=1->2147483647 then=0:
+# after-first: first read of 24 bytes r=24 .
+after-first    dest=null     : r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
+# after-first: first read of 24 bytes r=24 .
+after-first    dest=prot_none: r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
+# after-first: first read of 24 bytes r=24 .
+after-first    dest=high     : r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
+partial-R1     dest=edge     : r=24 errno=0 pos=0->1
+# partial-R1: first writable record now 1:.
+# partial-R1: then=6:..,e,d,c,b,a
+partial-R1+8   dest=edge     : r=24 errno=0 pos=0->1
+# partial-R1+8: first writable record now 1:.
+# partial-R1+8: then=6:..,e,d,c,b,a
+partial-R1+R2  dest=edge     : r=48 errno=0 pos=0->7
+# partial-R1+R2: first writable record now 1:.
+# partial-R1+R2: then=5:e,d,c,b,a
+partial-R1+R2+R3 dest=edge     : r=72 errno=0 pos=0->6
+# partial-R1+R2+R3: first writable record now 1:.
+# partial-R1+R2+R3: then=4:d,c,b,a
+end            dest=ok       : r=0 errno=0 pos=2147483647->2147483647 then=0:
+end            dest=null     : r=0 errno=0 pos=2147483647->2147483647 then=0:
+end            dest=prot_none: r=0 errno=0 pos=2147483647->2147483647 then=0:
+end            dest=high     : r=0 errno=0 pos=2147483647->2147483647 then=0:
+end-partial    dest=edge     : r=0 errno=0 pos=2147483647->2147483647
+removed        dest=ok       : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+removed        dest=null     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+removed        dest=prot_none: r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+removed        dest=high     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+atime          dest=ok       : r=168 errno=0 atime=moved
+atime          dest=null     : r=-1 errno=EFAULT atime=moved
+atime          dest=prot_none: r=-1 errno=EFAULT atime=moved
+atime          dest=high     : r=-1 errno=EFAULT atime=moved
