@@ -161,6 +161,7 @@ module TestDirectoryDescription =
                 (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (rooted path))
+                UserBuffer.Mapped
                 system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Inode

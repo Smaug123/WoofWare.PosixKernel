@@ -22,7 +22,12 @@ module TestDeviceFileSystemAgainstHost =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private modelStatus (system : UnixSystem<int, string>) (path : string) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofText path)
+            UserBuffer.Mapped
+            system
 
     [<Test>]
     let ``each device node's link count, device number and mode are the host's`` () : unit =
@@ -47,7 +52,13 @@ module TestDeviceFileSystemAgainstHost =
         HostStat.onMeasuredHost (fun flavour ->
             let system = booted flavour
 
-            match UnixPathResolution.tryStatfs (Callers.leader system) (PathArg.ofText "/dev/null") system with
+            match
+                UnixPathResolution.tryStatfs
+                    (Callers.leader system)
+                    (PathArg.ofText "/dev/null")
+                    UserBuffer.Mapped
+                    system
+            with
             | Ok (FileSystemStatisticsAnswer.Reported statistics) ->
                 // O_RDONLY: the host's /dev/null is readable by everyone.
                 let fd = HostCalls.openFile ("/dev/null", 0, 0)

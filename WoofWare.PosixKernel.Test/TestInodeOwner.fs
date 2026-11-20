@@ -179,6 +179,7 @@ module TestInodeOwner =
                 (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context path))
+                UserBuffer.Mapped
                 system
         with
         | Ok (FileStatusAnswer.Reported status) ->

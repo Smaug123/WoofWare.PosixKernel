@@ -169,13 +169,17 @@ module TestPathCopyIn =
                 | Error refusal -> failwith $"%s{call} %s{arguments} refused: %A{refusal}"
             )
 
+        let buffer (nullBuffer : bool) : UserBuffer =
+            if nullBuffer then
+                UserBuffer.Unmapped 0UL
+            else
+                UserBuffer.Mapped
+
         let stat (policy : SymlinkPolicy) (nullBuffer : bool) =
             Some (fun path system ->
-                match UnixPathResolution.tryStat (Callers.leader system) policy path system with
+                match UnixPathResolution.tryStat (Callers.leader system) policy path (buffer nullBuffer) system with
                 | Ok (FileStatusAnswer.Failed error) -> Some error
-                // The buffer is the caller's to write: the walk has answered by
-                // now, so an unwritable one is EFAULT exactly where it succeeded.
-                | Ok (FileStatusAnswer.Reported _) -> if nullBuffer then Some UnixError.EFAULT else None
+                | Ok (FileStatusAnswer.Reported _) -> None
                 | Error refusal -> failwith $"stat refused: %s{StatRefusal.describe refusal}"
             )
 
@@ -189,9 +193,10 @@ module TestPathCopyIn =
 
         let statfs (nullBuffer : bool) =
             Some (fun path system ->
-                match Answered.statfs (Callers.leader system) path system with
-                | FileSystemStatisticsAnswer.Failed error -> Some error
-                | FileSystemStatisticsAnswer.Reported _ -> if nullBuffer then Some UnixError.EFAULT else None
+                match UnixPathResolution.tryStatfs (Callers.leader system) path (buffer nullBuffer) system with
+                | Ok (FileSystemStatisticsAnswer.Failed error) -> Some error
+                | Ok (FileSystemStatisticsAnswer.Reported _) -> None
+                | Error refusal -> failwith $"statfs refused: %s{StatFsRefusal.describe refusal}"
             )
 
         match call, arguments with
@@ -622,16 +627,27 @@ module TestPathCopyIn =
             holds
                 {
                     Name = $"stat %A{policy}"
-                    Bytes = fun path system -> UnixPathResolution.tryStat (Callers.leader system) policy path system
-                    Parsed = Lone.UnixPathResolution.statParsed AtDirectory.CurrentDirectory policy
+                    Bytes =
+                        fun path system ->
+                            UnixPathResolution.tryStat (Callers.leader system) policy path UserBuffer.Mapped system
+                    Parsed =
+                        fun path system ->
+                            Lone.UnixPathResolution.statParsed
+                                AtDirectory.CurrentDirectory
+                                policy
+                                path
+                                UserBuffer.Mapped
+                                system
                     FailedWithoutChange = fun error _ answer -> answer = Ok (FileStatusAnswer.Failed error)
                 }
 
         holds
             {
                 Name = "statfs"
-                Bytes = fun path system -> UnixPathResolution.tryStatfs (Callers.leader system) path system
-                Parsed = Lone.UnixPathResolution.statfsParsed
+                Bytes =
+                    fun path system ->
+                        UnixPathResolution.tryStatfs (Callers.leader system) path UserBuffer.Mapped system
+                Parsed = fun path system -> Lone.UnixPathResolution.statfsParsed path UserBuffer.Mapped system
                 FailedWithoutChange = fun error _ answer -> answer = Ok (FileSystemStatisticsAnswer.Failed error)
             }
 

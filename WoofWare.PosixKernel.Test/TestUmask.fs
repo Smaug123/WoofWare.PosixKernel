@@ -289,6 +289,7 @@ module TestUmask =
                 (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context p))
+                UserBuffer.Mapped
                 system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode &&& 0o7777

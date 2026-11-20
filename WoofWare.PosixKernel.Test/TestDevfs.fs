@@ -181,7 +181,12 @@ module TestDevfs =
         UnixSystem.advanceClock nanoseconds system
 
     let private lstat (path : string) (system : UnixSystem<int, string>) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofText path)
+            UserBuffer.Mapped
+            system
 
     let private reported (path : string) (system : UnixSystem<int, string>) : FileStatus =
         match lstat path system with
@@ -459,7 +464,9 @@ module TestDevfs =
         for row in rows do
             let fields = fieldsOf row
 
-            match UnixPathResolution.tryStatfs (Callers.leader system) (PathArg.ofText row.[1]) system with
+            match
+                UnixPathResolution.tryStatfs (Callers.leader system) (PathArg.ofText row.[1]) UserBuffer.Mapped system
+            with
             | Ok (FileSystemStatisticsAnswer.Reported (FileSystemStatistics.Darwin statistics)) ->
                 statistics.Type |> shouldEqual (uint32 fields.["type"])
                 UnixByteString.toEscaped statistics.TypeName |> shouldEqual fields.["name"]
@@ -531,7 +538,7 @@ module TestDevfs =
         seek 5L 0 |> shouldEqual (SyscallAnswer.Completed 5L)
         seek -1L 0 |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-        match UnixPathResolution.fstatfs (Callers.leader system) fd system with
+        match UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system with
         | FileSystemStatisticsAnswer.Reported (FileSystemStatistics.Darwin statistics) ->
             statistics.Type |> shouldEqual 19u
         | other -> failwith $"fstatfs: %A{other}"

@@ -153,10 +153,11 @@ module TestLinkCount =
                 (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (rooted path))
+                UserBuffer.Mapped
                 system
             |> reported $"lstat %s{path}"
         | LinkCountObservation.Held path ->
-            UnixPathResolution.tryFstat (Callers.leader system) held.[path] system
+            UnixPathResolution.tryFstat (Callers.leader system) held.[path] UserBuffer.Mapped system
             |> reported $"fstat %s{path}"
 
     /// The scenarios, each with what it observes. Every row is one
@@ -273,7 +274,12 @@ module TestLinkCount =
                 |> List.fold applyToModel (Map.empty, systemOn platform)
 
             let root =
-                UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText "/") system
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText "/")
+                    UserBuffer.Mapped
+                    system
                 |> reported "stat /"
 
             match SimulatedUnixPlatform.flavour platform with
@@ -294,7 +300,12 @@ module TestLinkCount =
                 Answered.rmdir (Callers.leader system) (rooted "c") system |> completed "rmdir"
 
             let here =
-                UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText ".") system
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText ".")
+                    UserBuffer.Mapped
+                    system
                 |> reported "stat ."
 
             match SimulatedUnixPlatform.flavour platform with
@@ -467,9 +478,9 @@ module TestLinkCount =
                     observeModel held system (LinkCountObservation.Path "d/f")
                     observeModel held system (LinkCountObservation.Path "d/.hidden")
                     observeModel held system (LinkCountObservation.Held "d/f")
-                    UnixPathResolution.tryFstat (Callers.leader system) readFd system
+                    UnixPathResolution.tryFstat (Callers.leader system) readFd UserBuffer.Mapped system
                     |> reported "fstat read end"
-                    UnixPathResolution.tryFstat (Callers.leader system) writeFd system
+                    UnixPathResolution.tryFstat (Callers.leader system) writeFd UserBuffer.Mapped system
                     |> reported "fstat write end"
                 ]
 
@@ -494,12 +505,12 @@ module TestLinkCount =
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                 | other -> failwith $"pipe2: %A{other}"
 
-            (UnixPathResolution.tryFstat (Callers.leader system) readFd system
+            (UnixPathResolution.tryFstat (Callers.leader system) readFd UserBuffer.Mapped system
              |> reported "read end")
                 .LinkCount
             |> shouldEqual expected
 
-            (UnixPathResolution.tryFstat (Callers.leader system) writeFd system
+            (UnixPathResolution.tryFstat (Callers.leader system) writeFd UserBuffer.Mapped system
              |> reported "write end")
                 .LinkCount
             |> shouldEqual expected
@@ -509,7 +520,7 @@ module TestLinkCount =
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"close: %A{other}"
 
-            (UnixPathResolution.tryFstat (Callers.leader system) readFd system
+            (UnixPathResolution.tryFstat (Callers.leader system) readFd UserBuffer.Mapped system
              |> reported "read end, writer closed")
                 .LinkCount
             |> shouldEqual expected
@@ -613,7 +624,7 @@ module TestLinkCount =
                     let host = HostStat.fstat flavour hostFd
 
                     let model =
-                        UnixPathResolution.tryFstat (Callers.leader system) modelFd system
+                        UnixPathResolution.tryFstat (Callers.leader system) modelFd UserBuffer.Mapped system
                         |> reported "fstat pipe"
                         |> HostStat.ofModel
 

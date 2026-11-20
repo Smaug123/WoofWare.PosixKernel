@@ -894,7 +894,12 @@ module TestCredentialChange =
             | other -> failwith $"open: %A{other}"
 
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText "/tmp/owned") system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (PathArg.ofText "/tmp/owned")
+                UserBuffer.Mapped
+                system
         with
         | Ok (FileStatusAnswer.Reported status) -> $"owner=%O{status.UserId}:%O{status.GroupId}" |> shouldEqual row.[2]
         | other -> failwith $"stat: %A{other}"

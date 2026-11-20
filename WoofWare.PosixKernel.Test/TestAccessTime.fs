@@ -165,7 +165,7 @@ module TestAccessTime =
         | other -> failwith $"%s{context}: pwrite(%d{fd}) answered %s{brief other}"
 
     let private status (cell : Cell) (policy : SymlinkPolicy) (target : string) : FileStatus =
-        match step cell (Syscall.Stat (policy, path target)) with
+        match step cell (Syscall.Stat (policy, path target, UserBuffer.Mapped)) with
         | SteppedCall.Stat (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"%s{context}: stat(%s{target}) answered %s{brief other}"
 

@@ -32,7 +32,7 @@ type internal SyscallRefusal<'Thread> =
     | FChOwn of FChOwnRefusal
     | FChOwnAt of FChOwnAtRefusal
     | UTimensAt of UTimensAtRefusal
-    | StatFs of PathRefusal
+    | StatFs of StatFsRefusal
     | GetCwd of GetCwdRefusal
     | ChDir of PathRefusal
     | Access of AccessRefusal
@@ -107,6 +107,7 @@ type internal SyscallRefusal<'Thread> =
     | GetCpu of GetCpuRefusal
     | Futex of FutexRefusal
     | GetHostName of GetHostNameRefusal
+    | FStatFs of BufferRefusal
     /// The call is `call`, a reserved case: this library does not model the
     /// call it names yet.
     | Reserved of call : string
@@ -141,7 +142,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.FChOwn refusal -> $"fchown: %s{FChOwnRefusal.describe refusal}"
         | SyscallRefusal.FChOwnAt refusal -> $"fchownat: %s{FChOwnAtRefusal.describe refusal}"
         | SyscallRefusal.UTimensAt refusal -> $"utimensat: %s{UTimensAtRefusal.describe refusal}"
-        | SyscallRefusal.StatFs refusal -> $"statfs: %s{PathRefusal.describe refusal}"
+        | SyscallRefusal.StatFs refusal -> $"statfs: %s{StatFsRefusal.describe refusal}"
         | SyscallRefusal.GetCwd refusal -> $"getcwd: %s{GetCwdRefusal.describe refusal}"
         | SyscallRefusal.ChDir refusal -> $"chdir: %s{PathRefusal.describe refusal}"
         | SyscallRefusal.Access refusal -> $"access: %s{AccessRefusal.describe refusal}"
@@ -217,6 +218,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
         | SyscallRefusal.Futex refusal -> $"futex: %s{FutexRefusal.describe refusal}"
         | SyscallRefusal.GetHostName refusal -> $"gethostname: %s{GetHostNameRefusal.describe refusal}"
+        | SyscallRefusal.FStatFs refusal -> $"fstatfs: %s{BufferRefusal.describe refusal}"
         | SyscallRefusal.Reserved call ->
             $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
 
@@ -246,7 +248,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.FChOwn inner -> FChOwnRefusal.kind inner
         | SyscallRefusal.FChOwnAt inner -> FChOwnAtRefusal.kind inner
         | SyscallRefusal.UTimensAt inner -> UTimensAtRefusal.kind inner
-        | SyscallRefusal.StatFs inner -> PathRefusal.kind inner
+        | SyscallRefusal.StatFs inner -> StatFsRefusal.kind inner
         | SyscallRefusal.GetCwd inner -> GetCwdRefusal.kind inner
         | SyscallRefusal.ChDir inner -> PathRefusal.kind inner
         | SyscallRefusal.Access inner -> AccessRefusal.kind inner
@@ -321,6 +323,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
         | SyscallRefusal.Futex inner -> FutexRefusal.kind inner
         | SyscallRefusal.GetHostName inner -> GetHostNameRefusal.kind inner
+        | SyscallRefusal.FStatFs inner -> BufferRefusal.kind inner
         | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
 
 /// A way this system's tables disagree with each other — a state no kernel
@@ -1699,16 +1702,16 @@ module UnixSystem =
             UnixCredentials.tryGetgroups caller destination size system
             |> Result.map SteppedCall.GetGroups
             |> Result.mapError SyscallRefusal.GetGroups
-        | Syscall.Stat (policy, path) ->
-            UnixPathResolution.tryStat caller policy path system
+        | Syscall.Stat (policy, path, destination) ->
+            UnixPathResolution.tryStat caller policy path destination system
             |> Result.map SteppedCall.Stat
             |> Result.mapError SyscallRefusal.Stat
-        | Syscall.FStat fd ->
-            UnixPathResolution.tryFstat caller fd system
+        | Syscall.FStat (fd, destination) ->
+            UnixPathResolution.tryFstat caller fd destination system
             |> Result.map SteppedCall.FStat
             |> Result.mapError SyscallRefusal.FStat
-        | Syscall.FStatAt (dirfd, path, flags) ->
-            UnixPathResolution.tryFstatat caller dirfd path flags system
+        | Syscall.FStatAt (dirfd, path, destination, flags) ->
+            UnixPathResolution.tryFstatat caller dirfd path destination flags system
             |> Result.map SteppedCall.FStatAt
             |> Result.mapError SyscallRefusal.FStatAt
         | Syscall.ChMod (path, mode) ->
@@ -1743,11 +1746,14 @@ module UnixSystem =
             UnixPathResolution.tryUtimensat caller dirfd path times flags system
             |> Result.map SteppedCall.UTimensAt
             |> Result.mapError SyscallRefusal.UTimensAt
-        | Syscall.StatFs path ->
-            UnixPathResolution.tryStatfs caller path system
+        | Syscall.StatFs (path, destination) ->
+            UnixPathResolution.tryStatfs caller path destination system
             |> Result.map SteppedCall.StatFs
             |> Result.mapError SyscallRefusal.StatFs
-        | Syscall.FStatFs fd -> Ok (SteppedCall.FStatFs (UnixPathResolution.fstatfs caller fd system))
+        | Syscall.FStatFs (fd, destination) ->
+            UnixPathResolution.tryFstatfs caller fd destination system
+            |> Result.map SteppedCall.FStatFs
+            |> Result.mapError SyscallRefusal.FStatFs
         | Syscall.GetCwd (destination, capacity) ->
             UnixPathResolution.tryGetcwd caller destination capacity system
             |> Result.map SteppedCall.GetCwd

@@ -1056,6 +1056,7 @@ module TestPermissionStanding =
                             (Callers.leader system)
                             SymlinkPolicy.NoFollowFinal
                             (PathArg.ofPath (path "/d/kid"))
+                            UserBuffer.Mapped
                             system
                     with
                     | Ok (FileStatusAnswer.Reported _) -> true
@@ -1104,6 +1105,7 @@ module TestPermissionStanding =
                     (Callers.leader system)
                     SymlinkPolicy.NoFollowFinal
                     (PathArg.ofPath (path (p + "/nx")))
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Failed error) -> Some error
@@ -1372,6 +1374,7 @@ module TestPermissionStanding =
                             (Callers.leader system)
                             SymlinkPolicy.NoFollowFinal
                             (PathArg.ofPath (path "/d/kid"))
+                            UserBuffer.Mapped
                             system
                     with
                     | Ok (FileStatusAnswer.Reported _) -> true

@@ -382,6 +382,7 @@ module TestOpenFlagWord =
                     (Callers.leader system)
                     SymlinkPolicy.NoFollowFinal
                     (PathArg.ofText path)
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported status) -> Some status.Size

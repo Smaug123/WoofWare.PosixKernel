@@ -332,15 +332,21 @@ module TestCallerChecks =
             running
                 "UnixPathResolution.stat"
                 (fun caller system ->
-                    UnixPathResolution.stat caller SymlinkPolicy.Follow root system
+                    UnixPathResolution.stat caller SymlinkPolicy.Follow root UserBuffer.Mapped system
                     |> ignore<FileStatusAnswer>
                 )
             running
                 "UnixPathResolution.fstat"
-                (fun caller system -> UnixPathResolution.fstat caller 0 system |> ignore<FileStatusAnswer>)
+                (fun caller system ->
+                    UnixPathResolution.fstat caller 0 UserBuffer.Mapped system
+                    |> ignore<FileStatusAnswer>
+                )
             running
                 "UnixPathResolution.fstatat"
-                (fun caller system -> UnixPathResolution.fstatat caller 0 root 0 system |> ignore<FileStatusAnswer>)
+                (fun caller system ->
+                    UnixPathResolution.fstatat caller 0 root UserBuffer.Mapped 0 system
+                    |> ignore<FileStatusAnswer>
+                )
             running
                 "UnixPathResolution.chmod"
                 (fun caller system -> UnixPathResolution.chmod caller root 0o755 system |> ignore)
@@ -377,12 +383,15 @@ module TestCallerChecks =
             running
                 "UnixPathResolution.statfs"
                 (fun caller system ->
-                    UnixPathResolution.statfs caller root system
+                    UnixPathResolution.statfs caller root UserBuffer.Mapped system
                     |> ignore<FileSystemStatisticsAnswer>
                 )
             running
                 "UnixPathResolution.fstatfs"
-                (fun caller system -> UnixPathResolution.fstatfs caller 0 system |> ignore<FileSystemStatisticsAnswer>)
+                (fun caller system ->
+                    UnixPathResolution.fstatfs caller 0 UserBuffer.Mapped system
+                    |> ignore<FileSystemStatisticsAnswer>
+                )
             running
                 "UnixPathResolution.getcwd"
                 (fun caller system ->

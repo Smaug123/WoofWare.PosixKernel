@@ -166,6 +166,7 @@ module BindingProbes =
                     (Callers.leader system)
                     SymlinkPolicy.Follow
                     (PathArg.ofPath (rooted path))
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported _) -> None

@@ -1,0 +1,238 @@
+# Linux 6.18.5 aarch64, uid 65534
+# fixture: prot_none=0xffff99ed8000 straddle=0xffff99ed6ff8 (page 4096)
+# fixture: closed descriptor 9
+stat     file                   dest=ok      : r=0 errno=0
+stat     file                   dest=null    : r=-1 errno=EFAULT
+stat     file                   dest=prot_none: r=-1 errno=EFAULT
+stat     file                   dest=high    : r=-1 errno=EFAULT
+stat     file                   dest=straddle: r=-1 errno=EFAULT changed=8/8
+stat     symlink-to-file        dest=ok      : r=0 errno=0
+stat     symlink-to-file        dest=null    : r=-1 errno=EFAULT
+stat     symlink-to-file        dest=prot_none: r=-1 errno=EFAULT
+stat     symlink-to-file        dest=high    : r=-1 errno=EFAULT
+stat     symlink-to-file        dest=straddle: r=-1 errno=EFAULT changed=8/8
+stat     missing                dest=ok      : r=-1 errno=ENOENT
+stat     missing                dest=null    : r=-1 errno=ENOENT
+stat     missing                dest=prot_none: r=-1 errno=ENOENT
+stat     missing                dest=high    : r=-1 errno=ENOENT
+stat     missing                dest=straddle: r=-1 errno=ENOENT changed=0/8
+stat     empty                  dest=ok      : r=-1 errno=ENOENT
+stat     empty                  dest=null    : r=-1 errno=ENOENT
+stat     empty                  dest=prot_none: r=-1 errno=ENOENT
+stat     empty                  dest=high    : r=-1 errno=ENOENT
+stat     empty                  dest=straddle: r=-1 errno=ENOENT changed=0/8
+stat     file-as-directory      dest=ok      : r=-1 errno=ENOTDIR
+stat     file-as-directory      dest=null    : r=-1 errno=ENOTDIR
+stat     file-as-directory      dest=prot_none: r=-1 errno=ENOTDIR
+stat     file-as-directory      dest=high    : r=-1 errno=ENOTDIR
+stat     file-as-directory      dest=straddle: r=-1 errno=ENOTDIR changed=0/8
+stat     unsearchable           dest=ok      : r=-1 errno=EACCES
+stat     unsearchable           dest=null    : r=-1 errno=EACCES
+stat     unsearchable           dest=prot_none: r=-1 errno=EACCES
+stat     unsearchable           dest=high    : r=-1 errno=EACCES
+stat     unsearchable           dest=straddle: r=-1 errno=EACCES changed=0/8
+stat     long-name              dest=ok      : r=-1 errno=ENAMETOOLONG
+stat     long-name              dest=null    : r=-1 errno=ENAMETOOLONG
+stat     long-name              dest=prot_none: r=-1 errno=ENAMETOOLONG
+stat     long-name              dest=high    : r=-1 errno=ENAMETOOLONG
+stat     long-name              dest=straddle: r=-1 errno=ENAMETOOLONG changed=0/8
+stat     loop                   dest=ok      : r=-1 errno=ELOOP
+stat     loop                   dest=null    : r=-1 errno=ELOOP
+stat     loop                   dest=prot_none: r=-1 errno=ELOOP
+stat     loop                   dest=high    : r=-1 errno=ELOOP
+stat     loop                   dest=straddle: r=-1 errno=ELOOP changed=0/8
+stat     unreadable-path        dest=ok      : r=-1 errno=EFAULT
+stat     unreadable-path        dest=null    : r=-1 errno=EFAULT
+stat     unreadable-path        dest=prot_none: r=-1 errno=EFAULT
+stat     unreadable-path        dest=high    : r=-1 errno=EFAULT
+stat     unreadable-path        dest=straddle: r=-1 errno=EFAULT changed=0/8
+lstat    symlink                dest=ok      : r=0 errno=0
+lstat    symlink                dest=null    : r=-1 errno=EFAULT
+lstat    symlink                dest=prot_none: r=-1 errno=EFAULT
+lstat    symlink                dest=high    : r=-1 errno=EFAULT
+lstat    symlink                dest=straddle: r=-1 errno=EFAULT changed=8/8
+lstat    missing                dest=ok      : r=-1 errno=ENOENT
+lstat    missing                dest=null    : r=-1 errno=ENOENT
+lstat    missing                dest=prot_none: r=-1 errno=ENOENT
+lstat    missing                dest=high    : r=-1 errno=ENOENT
+lstat    missing                dest=straddle: r=-1 errno=ENOENT changed=0/8
+lstat    unsearchable           dest=ok      : r=-1 errno=EACCES
+lstat    unsearchable           dest=null    : r=-1 errno=EACCES
+lstat    unsearchable           dest=prot_none: r=-1 errno=EACCES
+lstat    unsearchable           dest=high    : r=-1 errno=EACCES
+lstat    unsearchable           dest=straddle: r=-1 errno=EACCES changed=0/8
+fstat    file                   dest=ok      : r=0 errno=0
+fstat    file                   dest=null    : r=-1 errno=EFAULT
+fstat    file                   dest=prot_none: r=-1 errno=EFAULT
+fstat    file                   dest=high    : r=-1 errno=EFAULT
+fstat    file                   dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    directory              dest=ok      : r=0 errno=0
+fstat    directory              dest=null    : r=-1 errno=EFAULT
+fstat    directory              dest=prot_none: r=-1 errno=EFAULT
+fstat    directory              dest=high    : r=-1 errno=EFAULT
+fstat    directory              dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    pipe-read-end          dest=ok      : r=0 errno=0
+fstat    pipe-read-end          dest=null    : r=-1 errno=EFAULT
+fstat    pipe-read-end          dest=prot_none: r=-1 errno=EFAULT
+fstat    pipe-read-end          dest=high    : r=-1 errno=EFAULT
+fstat    pipe-read-end          dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    inherited-pipe         dest=ok      : r=0 errno=0
+fstat    inherited-pipe         dest=null    : r=-1 errno=EFAULT
+fstat    inherited-pipe         dest=prot_none: r=-1 errno=EFAULT
+fstat    inherited-pipe         dest=high    : r=-1 errno=EFAULT
+fstat    inherited-pipe         dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    socket                 dest=ok      : r=0 errno=0
+fstat    socket                 dest=null    : r=-1 errno=EFAULT
+fstat    socket                 dest=prot_none: r=-1 errno=EFAULT
+fstat    socket                 dest=high    : r=-1 errno=EFAULT
+fstat    socket                 dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    event-queue            dest=ok      : r=0 errno=0
+fstat    event-queue            dest=null    : r=-1 errno=EFAULT
+fstat    event-queue            dest=prot_none: r=-1 errno=EFAULT
+fstat    event-queue            dest=high    : r=-1 errno=EFAULT
+fstat    event-queue            dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstat    negative-fd            dest=ok      : r=-1 errno=EBADF
+fstat    negative-fd            dest=null    : r=-1 errno=EBADF
+fstat    negative-fd            dest=prot_none: r=-1 errno=EBADF
+fstat    negative-fd            dest=high    : r=-1 errno=EBADF
+fstat    negative-fd            dest=straddle: r=-1 errno=EBADF changed=0/8
+fstat    closed-fd              dest=ok      : r=-1 errno=EBADF
+fstat    closed-fd              dest=null    : r=-1 errno=EBADF
+fstat    closed-fd              dest=prot_none: r=-1 errno=EBADF
+fstat    closed-fd              dest=high    : r=-1 errno=EBADF
+fstat    closed-fd              dest=straddle: r=-1 errno=EBADF changed=0/8
+fstatat  cwd-file               dest=ok      : r=0 errno=0
+fstatat  cwd-file               dest=null    : r=-1 errno=EFAULT
+fstatat  cwd-file               dest=prot_none: r=-1 errno=EFAULT
+fstatat  cwd-file               dest=high    : r=-1 errno=EFAULT
+fstatat  cwd-file               dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  dirfd-missing          dest=ok      : r=-1 errno=ENOENT
+fstatat  dirfd-missing          dest=null    : r=-1 errno=ENOENT
+fstatat  dirfd-missing          dest=prot_none: r=-1 errno=ENOENT
+fstatat  dirfd-missing          dest=high    : r=-1 errno=ENOENT
+fstatat  dirfd-missing          dest=straddle: r=-1 errno=ENOENT changed=0/8
+fstatat  closed-dirfd           dest=ok      : r=-1 errno=EBADF
+fstatat  closed-dirfd           dest=null    : r=-1 errno=EBADF
+fstatat  closed-dirfd           dest=prot_none: r=-1 errno=EBADF
+fstatat  closed-dirfd           dest=high    : r=-1 errno=EBADF
+fstatat  closed-dirfd           dest=straddle: r=-1 errno=EBADF changed=0/8
+fstatat  file-as-dirfd          dest=ok      : r=-1 errno=ENOTDIR
+fstatat  file-as-dirfd          dest=null    : r=-1 errno=ENOTDIR
+fstatat  file-as-dirfd          dest=prot_none: r=-1 errno=ENOTDIR
+fstatat  file-as-dirfd          dest=high    : r=-1 errno=ENOTDIR
+fstatat  file-as-dirfd          dest=straddle: r=-1 errno=ENOTDIR changed=0/8
+fstatat  pipe-as-dirfd          dest=ok      : r=-1 errno=ENOTDIR
+fstatat  pipe-as-dirfd          dest=null    : r=-1 errno=ENOTDIR
+fstatat  pipe-as-dirfd          dest=prot_none: r=-1 errno=ENOTDIR
+fstatat  pipe-as-dirfd          dest=high    : r=-1 errno=ENOTDIR
+fstatat  pipe-as-dirfd          dest=straddle: r=-1 errno=ENOTDIR changed=0/8
+fstatat  bad-flag               dest=ok      : r=-1 errno=EINVAL
+fstatat  bad-flag               dest=null    : r=-1 errno=EINVAL
+fstatat  bad-flag               dest=prot_none: r=-1 errno=EINVAL
+fstatat  bad-flag               dest=high    : r=-1 errno=EINVAL
+fstatat  bad-flag               dest=straddle: r=-1 errno=EINVAL changed=0/8
+fstatat  bad-flag-missing       dest=ok      : r=-1 errno=EINVAL
+fstatat  bad-flag-missing       dest=null    : r=-1 errno=EINVAL
+fstatat  bad-flag-missing       dest=prot_none: r=-1 errno=EINVAL
+fstatat  bad-flag-missing       dest=high    : r=-1 errno=EINVAL
+fstatat  bad-flag-missing       dest=straddle: r=-1 errno=EINVAL changed=0/8
+fstatat  nofollow-loop          dest=ok      : r=0 errno=0
+fstatat  nofollow-loop          dest=null    : r=-1 errno=EFAULT
+fstatat  nofollow-loop          dest=prot_none: r=-1 errno=EFAULT
+fstatat  nofollow-loop          dest=high    : r=-1 errno=EFAULT
+fstatat  nofollow-loop          dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  unsearchable           dest=ok      : r=-1 errno=EACCES
+fstatat  unsearchable           dest=null    : r=-1 errno=EACCES
+fstatat  unsearchable           dest=prot_none: r=-1 errno=EACCES
+fstatat  unsearchable           dest=high    : r=-1 errno=EACCES
+fstatat  unsearchable           dest=straddle: r=-1 errno=EACCES changed=0/8
+fstatat  empty-path-file        dest=ok      : r=0 errno=0
+fstatat  empty-path-file        dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-file        dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-file        dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-file        dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  empty-path-closed      dest=ok      : r=-1 errno=EBADF
+fstatat  empty-path-closed      dest=null    : r=-1 errno=EBADF
+fstatat  empty-path-closed      dest=prot_none: r=-1 errno=EBADF
+fstatat  empty-path-closed      dest=high    : r=-1 errno=EBADF
+fstatat  empty-path-closed      dest=straddle: r=-1 errno=EBADF changed=0/8
+fstatat  empty-path-pipe        dest=ok      : r=0 errno=0
+fstatat  empty-path-pipe        dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-pipe        dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-pipe        dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-pipe        dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  empty-path-socket      dest=ok      : r=0 errno=0
+fstatat  empty-path-socket      dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-socket      dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-socket      dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-socket      dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  empty-path-null-path   dest=ok      : r=0 errno=0
+fstatat  empty-path-null-path   dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-null-path   dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-null-path   dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-null-path   dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatat  empty-path-unreadable-path dest=ok      : r=-1 errno=EFAULT
+fstatat  empty-path-unreadable-path dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-unreadable-path dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-unreadable-path dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-unreadable-path dest=straddle: r=-1 errno=EFAULT changed=0/8
+fstatat  empty-path-closed-null-path dest=ok      : r=-1 errno=EBADF
+fstatat  empty-path-closed-null-path dest=null    : r=-1 errno=EBADF
+fstatat  empty-path-closed-null-path dest=prot_none: r=-1 errno=EBADF
+fstatat  empty-path-closed-null-path dest=high    : r=-1 errno=EBADF
+fstatat  empty-path-closed-null-path dest=straddle: r=-1 errno=EBADF changed=0/8
+fstatat  empty-path-closed-unreadable-path dest=ok      : r=-1 errno=EFAULT
+fstatat  empty-path-closed-unreadable-path dest=null    : r=-1 errno=EFAULT
+fstatat  empty-path-closed-unreadable-path dest=prot_none: r=-1 errno=EFAULT
+fstatat  empty-path-closed-unreadable-path dest=high    : r=-1 errno=EFAULT
+fstatat  empty-path-closed-unreadable-path dest=straddle: r=-1 errno=EFAULT changed=0/8
+statfs   file                   dest=ok      : r=0 errno=0
+statfs   file                   dest=null    : r=-1 errno=EFAULT
+statfs   file                   dest=prot_none: r=-1 errno=EFAULT
+statfs   file                   dest=high    : r=-1 errno=EFAULT
+statfs   file                   dest=straddle: r=-1 errno=EFAULT changed=8/8
+statfs   missing                dest=ok      : r=-1 errno=ENOENT
+statfs   missing                dest=null    : r=-1 errno=ENOENT
+statfs   missing                dest=prot_none: r=-1 errno=ENOENT
+statfs   missing                dest=high    : r=-1 errno=ENOENT
+statfs   missing                dest=straddle: r=-1 errno=ENOENT changed=0/8
+statfs   file-as-directory      dest=ok      : r=-1 errno=ENOTDIR
+statfs   file-as-directory      dest=null    : r=-1 errno=ENOTDIR
+statfs   file-as-directory      dest=prot_none: r=-1 errno=ENOTDIR
+statfs   file-as-directory      dest=high    : r=-1 errno=ENOTDIR
+statfs   file-as-directory      dest=straddle: r=-1 errno=ENOTDIR changed=0/8
+statfs   unsearchable           dest=ok      : r=-1 errno=EACCES
+statfs   unsearchable           dest=null    : r=-1 errno=EACCES
+statfs   unsearchable           dest=prot_none: r=-1 errno=EACCES
+statfs   unsearchable           dest=high    : r=-1 errno=EACCES
+statfs   unsearchable           dest=straddle: r=-1 errno=EACCES changed=0/8
+statfs   loop                   dest=ok      : r=-1 errno=ELOOP
+statfs   loop                   dest=null    : r=-1 errno=ELOOP
+statfs   loop                   dest=prot_none: r=-1 errno=ELOOP
+statfs   loop                   dest=high    : r=-1 errno=ELOOP
+statfs   loop                   dest=straddle: r=-1 errno=ELOOP changed=0/8
+fstatfs  file                   dest=ok      : r=0 errno=0
+fstatfs  file                   dest=null    : r=-1 errno=EFAULT
+fstatfs  file                   dest=prot_none: r=-1 errno=EFAULT
+fstatfs  file                   dest=high    : r=-1 errno=EFAULT
+fstatfs  file                   dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatfs  directory              dest=ok      : r=0 errno=0
+fstatfs  directory              dest=null    : r=-1 errno=EFAULT
+fstatfs  directory              dest=prot_none: r=-1 errno=EFAULT
+fstatfs  directory              dest=high    : r=-1 errno=EFAULT
+fstatfs  directory              dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatfs  pipe-read-end          dest=ok      : r=0 errno=0
+fstatfs  pipe-read-end          dest=null    : r=-1 errno=EFAULT
+fstatfs  pipe-read-end          dest=prot_none: r=-1 errno=EFAULT
+fstatfs  pipe-read-end          dest=high    : r=-1 errno=EFAULT
+fstatfs  pipe-read-end          dest=straddle: r=-1 errno=EFAULT changed=8/8
+fstatfs  negative-fd            dest=ok      : r=-1 errno=EBADF
+fstatfs  negative-fd            dest=null    : r=-1 errno=EBADF
+fstatfs  negative-fd            dest=prot_none: r=-1 errno=EBADF
+fstatfs  negative-fd            dest=high    : r=-1 errno=EBADF
+fstatfs  negative-fd            dest=straddle: r=-1 errno=EBADF changed=0/8
+fstatfs  closed-fd              dest=ok      : r=-1 errno=EBADF
+fstatfs  closed-fd              dest=null    : r=-1 errno=EBADF
+fstatfs  closed-fd              dest=prot_none: r=-1 errno=EBADF
+fstatfs  closed-fd              dest=high    : r=-1 errno=EBADF
+fstatfs  closed-fd              dest=straddle: r=-1 errno=EBADF changed=0/8

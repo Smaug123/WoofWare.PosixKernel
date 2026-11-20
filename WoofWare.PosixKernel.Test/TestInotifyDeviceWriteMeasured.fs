@@ -91,7 +91,14 @@ module TestInotifyDeviceWriteMeasured =
     /// chooses its own way: the device number and link count `path` names,
     /// `st_rdev` in glibc's `major` and `minor`.
     let private identity (path : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText path) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (PathArg.ofText path)
+                UserBuffer.Mapped
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) ->
             let rdev = uint64 status.SpecialFileDevice
             let major = ((rdev >>> 32) &&& 0xFFFFF000UL) ||| ((rdev >>> 8) &&& 0xFFFUL)

@@ -1589,7 +1589,8 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
 
         let status =
-            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
+            UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
+            |> reported
 
         // `S_IFREG ||| 0o644`, composed by the library so that the two bands are
         // assembled in one place rather than by every client.
@@ -1619,7 +1620,8 @@ module TestUnixSystemStep =
         let fd, system = withOpenDirectory linux
 
         let status =
-            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
+            UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
+            |> reported
 
         status.Mode |> shouldEqual 0o40755
         // Linux's default mount is tmpfs, where an empty directory is 40 bytes.
@@ -1715,14 +1717,14 @@ module TestUnixSystemStep =
         // the epoch, is a distinction no zeroed field could carry.
         let linuxFd, linuxSystem = withOpenFile linux
 
-        (UnixPathResolution.tryFstat (Callers.leader linuxSystem) linuxFd linuxSystem
+        (UnixPathResolution.tryFstat (Callers.leader linuxSystem) linuxFd UserBuffer.Mapped linuxSystem
          |> reported)
             .BirthTime
         |> shouldEqual None
 
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        (UnixPathResolution.tryFstat (Callers.leader darwinSystem) darwinFd darwinSystem
+        (UnixPathResolution.tryFstat (Callers.leader darwinSystem) darwinFd UserBuffer.Mapped darwinSystem
          |> reported)
             .BirthTime
         |> shouldEqual (Some epoch)
@@ -1746,7 +1748,8 @@ module TestUnixSystemStep =
             |> Become.fully (Credentials.ofIds (UserId.parseOrFail "test" 41u) (GroupId.parseOrFail "test" 43u) [])
 
         let status =
-            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
+            UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
+            |> reported
 
         status.UserId |> shouldEqual Owners.linuxDefault.User
         status.GroupId |> shouldEqual Owners.linuxDefault.Group
@@ -1776,7 +1779,7 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``fstat of a descriptor that is not open is EBADF`` () : unit =
-        UnixPathResolution.tryFstat (Callers.leader linux) 7 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 7 UserBuffer.Mapped linux
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.EBADF))
 
     [<Test>]
@@ -1793,20 +1796,20 @@ module TestUnixSystemStep =
         // inode to answer them from, or for a launched pipe no owner or
         // timestamps. The launch table's pipes are the machine's first, in
         // descriptor order.
-        UnixPathResolution.tryFstat (Callers.leader linux) 0 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 0 UserBuffer.Mapped linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 0L)))
 
-        UnixPathResolution.tryFstat (Callers.leader linux) 1 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 1 UserBuffer.Mapped linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 1L)))
 
         let queueFd, queueSystem = withEpoll linux
 
-        UnixPathResolution.tryFstat (Callers.leader queueSystem) queueFd queueSystem
+        UnixPathResolution.tryFstat (Callers.leader queueSystem) queueFd UserBuffer.Mapped queueSystem
         |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let socketFd, socketSystem = withSocket linux
 
-        UnixPathResolution.tryFstat (Callers.leader socketSystem) socketFd socketSystem
+        UnixPathResolution.tryFstat (Callers.leader socketSystem) socketFd UserBuffer.Mapped socketSystem
         |> shouldEqual (Error (FStatRefusal.Socket socketZero))
 
     [<Test>]
@@ -1952,9 +1955,10 @@ module TestUnixSystemStep =
             (Callers.leader system)
             SymlinkPolicy.Follow
             (PathArg.ofPath (statPath "/d/inner/t"))
+            UserBuffer.Mapped
             system
         |> shouldEqual (
-            UnixPathResolution.tryFstat (Callers.leader withDescriptor) fd withDescriptor
+            UnixPathResolution.tryFstat (Callers.leader withDescriptor) fd UserBuffer.Mapped withDescriptor
             |> reported
             |> FileStatusAnswer.Reported
             |> Ok
@@ -1974,6 +1978,7 @@ module TestUnixSystemStep =
                     (Callers.leader system)
                     SymlinkPolicy.Follow
                     (PathArg.ofPath (statPath "/l"))
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported status) ->
@@ -1987,6 +1992,7 @@ module TestUnixSystemStep =
                     (Callers.leader system)
                     SymlinkPolicy.NoFollowFinal
                     (PathArg.ofPath (statPath "/l"))
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported status) ->
@@ -2006,6 +2012,7 @@ module TestUnixSystemStep =
             (Callers.leader system)
             SymlinkPolicy.Follow
             (PathArg.ofPath (statPath "/d/inner/nope"))
+            UserBuffer.Mapped
             system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -2145,7 +2152,12 @@ module TestUnixSystemStep =
 
             [
                 (match
-                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath path) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.Follow
+                        (PathArg.ofPath path)
+                        UserBuffer.Mapped
+                        system
                  with
                  | Ok (FileStatusAnswer.Failed error) -> error
                  | other -> failwith $"expected a failure, got %A{other}")
@@ -2227,7 +2239,12 @@ module TestUnixSystemStep =
                         UnixError.ENOENT
 
                 match
-                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText text) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.Follow
+                        (PathArg.ofText text)
+                        UserBuffer.Mapped
+                        system
                 with
                 | Ok (FileStatusAnswer.Failed actual) -> actual |> shouldEqual expected
                 | other -> failwith $"expected %O{expected} at %d{length} bytes, got %A{other}"
@@ -2255,6 +2272,7 @@ module TestUnixSystemStep =
                 (Callers.leader after)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (statPath "/d"))
+                UserBuffer.Mapped
                 after
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode |> shouldEqual 0o40750
@@ -2281,6 +2299,7 @@ module TestUnixSystemStep =
             (Callers.leader system)
             SymlinkPolicy.NoFollowFinal
             (PathArg.ofPath (statPath "/d/inner/gone"))
+            UserBuffer.Mapped
             system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -2296,6 +2315,7 @@ module TestUnixSystemStep =
             (Callers.leader after)
             SymlinkPolicy.Follow
             (PathArg.ofPath (statPath "/d/inner/t"))
+            UserBuffer.Mapped
             after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -2331,6 +2351,7 @@ module TestUnixSystemStep =
             (Callers.leader after)
             SymlinkPolicy.Follow
             (PathArg.ofPath (statPath "/d/inner/t"))
+            UserBuffer.Mapped
             after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -2360,7 +2381,12 @@ module TestUnixSystemStep =
             |> fun system -> Answered.rmdir (Callers.leader system) (statPath "/d/inner") system |> completed
             |> fun system -> Answered.rmdir (Callers.leader system) (statPath "/d") system |> completed
 
-        UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after
+        UnixPathResolution.tryStat
+            (Callers.leader after)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d"))
+            UserBuffer.Mapped
+            after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -2467,12 +2493,18 @@ module TestUnixSystemStep =
                     (Callers.leader after)
                     SymlinkPolicy.Follow
                     (PathArg.ofText "/d/inner/new")
+                    UserBuffer.Mapped
                     after
             with
             | Ok (FileStatusAnswer.Reported _) -> ()
             | other -> failwith $"/d/inner/new was not created: %A{other}"
 
-            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/new") after
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofText "/new")
+                UserBuffer.Mapped
+                after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"mkdirat(/d/inner, new) did not create: %A{other}"
 
@@ -2519,7 +2551,12 @@ module TestUnixSystemStep =
 
         match viaStep with
         | Ok (SyscallAnswer.Completed _, after) ->
-            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/d/inner") after
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofText "/d/inner")
+                UserBuffer.Mapped
+                after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"unlinkat(/d, inner, AT_REMOVEDIR) did not remove: %A{other}"
 
@@ -4807,6 +4844,7 @@ module TestUnixSystemStep =
                 (Callers.leader after)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (statPath "/d/inner/gone"))
+                UserBuffer.Mapped
                 after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -6230,6 +6268,7 @@ module TestUnixSystemStep =
             (Callers.leader moved)
             SymlinkPolicy.NoFollowFinal
             (PathArg.ofPath (statPath "/f"))
+            UserBuffer.Mapped
             moved
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
@@ -6238,6 +6277,7 @@ module TestUnixSystemStep =
                 (Callers.leader moved)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (statPath "/victim"))
+                UserBuffer.Mapped
                 moved
         with
         | Ok (FileStatusAnswer.Reported _) -> ()

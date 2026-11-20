@@ -291,7 +291,7 @@ module TestFaultingFileWrite =
         let system = UnixSystem.advanceClock 1_000_000_000L system
 
         let stat (system : UnixSystem<int, string>) : FileStatus =
-            match UnixPathResolution.fstat caller fd system with
+            match UnixPathResolution.fstat caller fd UserBuffer.Mapped system with
             | FileStatusAnswer.Reported status -> status
             | other -> failwith $"fstat: %A{other}"
 

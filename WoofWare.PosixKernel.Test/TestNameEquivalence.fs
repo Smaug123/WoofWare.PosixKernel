@@ -183,7 +183,12 @@ module TestNameEquivalence =
             | Error fault -> failwith $"Darwin refused the seed: %s{FileSystemSeedFault.describe fault}"
 
         match
-            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (arg ([ byte '/' ] @ nfd)) system
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.Follow
+                (arg ([ byte '/' ] @ nfd))
+                UserBuffer.Mapped
+                system
         with
         | Error (StatRefusal.Path (PathRefusal.UndecidedNameEquivalence _)) -> ()
         | other -> failwith $"expected the NFD spelling's lookup to be refused, got %A{other}"
@@ -208,6 +213,7 @@ module TestNameEquivalence =
                         (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (arg ([ byte '/' ] @ name))
+                        UserBuffer.Mapped
                         system
                 with
                 | Ok (FileStatusAnswer.Reported status) -> status.Inode
@@ -299,7 +305,7 @@ module TestNameEquivalence =
         descriptorErrnoOf answer, system
 
     let private statOf (policy : SymlinkPolicy) (path : byte list) (system : UnixSystem<int, string>) =
-        UnixPathResolution.tryStat (Callers.leader system) policy (arg path) system
+        UnixPathResolution.tryStat (Callers.leader system) policy (arg path) UserBuffer.Mapped system
         |> answered StatRefusal.describe
 
     /// `stat(path)`, as the probe prints it: `same` if it reaches `expected`.
@@ -467,7 +473,7 @@ module TestNameEquivalence =
                 | DescriptorAnswer.Returned fd as answer, system ->
                     let opened =
                         match
-                            UnixPathResolution.tryFstat (Callers.leader system) fd system
+                            UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
                             |> answered FStatRefusal.describe
                         with
                         | FileStatusAnswer.Reported status -> which status.Inode

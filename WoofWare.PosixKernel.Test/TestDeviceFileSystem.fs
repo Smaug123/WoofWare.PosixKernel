@@ -95,7 +95,12 @@ module TestDeviceFileSystem =
             (UnixTimestamp.ofSeconds 1_700_000_000L)
 
     let private stat (path : string) (system : UnixSystem<int, string>) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText path) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.Follow
+            (PathArg.ofText path)
+            UserBuffer.Mapped
+            system
 
     let private reported (path : string) (system : UnixSystem<int, string>) : FileStatus =
         match stat path system with
@@ -247,6 +252,7 @@ module TestDeviceFileSystem =
                     (Callers.leader system)
                     SymlinkPolicy.NoFollowFinal
                     (PathArg.ofText path)
+                    UserBuffer.Mapped
                     system
                 |> shouldEqual (Ok (FileStatusAnswer.Reported status))
 
@@ -621,7 +627,7 @@ module TestDeviceFileSystem =
             | DescriptorAnswer.Returned fd, system -> fd, system
             | other -> failwith $"opening /dev: %A{other}"
 
-        UnixPathResolution.fstatfs (Callers.leader system) fd system
+        UnixPathResolution.fstatfs (Callers.leader system) fd UserBuffer.Mapped system
         |> shouldEqual expected
 
         // The root filesystem is not the device filesystem.
@@ -684,7 +690,7 @@ module TestDeviceFileSystem =
         )
 
         // Through a descriptor, the root reports what `stat` of its path does.
-        UnixPathResolution.tryFstat (Callers.leader system) fd system
+        UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system
         |> shouldEqual (Ok (FileStatusAnswer.Reported (reported "/dev" system)))
 
     [<Test>]
@@ -1386,6 +1392,7 @@ module TestDeviceFileSystem =
                     (Callers.leader system)
                     SymlinkPolicy.NoFollowFinal
                     (PathArg.ofText path)
+                    UserBuffer.Mapped
                     system
             with
             | Ok (FileStatusAnswer.Reported status) ->

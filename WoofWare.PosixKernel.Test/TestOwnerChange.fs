@@ -1386,7 +1386,7 @@ module TestOwnerChange =
         | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat(%d{fd}): %A{other}"
 

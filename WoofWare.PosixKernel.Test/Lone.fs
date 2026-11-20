@@ -584,17 +584,19 @@ module internal Lone =
             (directory : AtDirectory)
             (policy : SymlinkPolicy)
             (path : UnixPath)
+            (destination : UserBuffer)
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<FileStatusAnswer, StatRefusal>
             =
-            WoofWare.PosixKernel.UnixPathResolution.statParsed directory policy path (view system)
+            WoofWare.PosixKernel.UnixPathResolution.statParsed directory policy path destination (view system)
 
         let statfsParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (path : UnixPath)
+            (destination : UserBuffer)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<FileSystemStatisticsAnswer, PathRefusal>
+            : Result<FileSystemStatisticsAnswer, StatFsRefusal>
             =
-            WoofWare.PosixKernel.UnixPathResolution.statfsParsed path (view system)
+            WoofWare.PosixKernel.UnixPathResolution.statfsParsed path destination (view system)
 
         let walkStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (directory : AtDirectory)

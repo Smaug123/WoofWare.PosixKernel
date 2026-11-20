@@ -377,6 +377,7 @@ module TestUnixPathBytes =
                         (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (PathArg.ofPath (pathOf [ slash ; byte 'l' ]))
+                        UserBuffer.Mapped
                         system
                 with
                 | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual (int64 bytes.Length)
@@ -401,6 +402,7 @@ module TestUnixPathBytes =
                 (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte '.' ]))
+                UserBuffer.Mapped
                 system
         with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode &&& 0o170000 |> shouldEqual 0o040000
@@ -425,6 +427,7 @@ module TestUnixPathBytes =
                 (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte 'a' ]))
+                UserBuffer.Mapped
                 system
 
         // Fits, so the walk proceeds into the target, whose first component

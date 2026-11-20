@@ -186,6 +186,7 @@ module TestUTimensAt =
             (Callers.leader system)
             (atFdCwd caller)
             (PathArg.ofText path)
+            UserBuffer.Mapped
             (noFollow caller)
             system
 
@@ -611,7 +612,7 @@ module TestUTimensAt =
     /// where this library will not say, as for an event queue, whose times
     /// the probe never saw move.
     let private descriptorSnapshot (system : UnixSystem<int, string>) (fd : int) : Snapshot option =
-        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok answer -> snapshotOf answer
         | Error _ -> None
 
