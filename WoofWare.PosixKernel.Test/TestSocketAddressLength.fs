@@ -325,9 +325,10 @@ module TestSocketAddressLength =
 
     /// Whether the kernel reads the length cell, and whether it writes
     /// anything, turns on whether the destination is NULL, which a destination
-    /// the client has no address for might be: so once a connection is there
-    /// to take, such a call is refused at every length, and the connection
-    /// stays queued.
+    /// the client has no address for might be: so with a connection there to
+    /// take, such a call is refused at every length, and the connection stays
+    /// queued. (Darwin asks before anything else, so it is refused there
+    /// whatever is queued.)
     [<Test>]
     let ``an addressless destination is refused at every length once a connection is queued`` () : unit =
         for platform in platforms do
@@ -467,10 +468,11 @@ module TestSocketAddressLength =
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
-    /// A blocking accept reads the length only once a connection has arrived
-    /// and been taken, so on Linux a negative one sleeps, then drops the
+    /// A blocking Linux accept reads the length only once a connection has
+    /// arrived and been taken, so a negative one sleeps, then drops the
     /// connection that wakes it (measured: EINVAL after the connect, and the
-    /// queue empty).
+    /// queue empty). The cell is read as it is when the call finishes, which
+    /// here is what it held as the call slept.
     [<Test>]
     let ``a blocking accept with a negative length sleeps, then drops the connection that wakes it`` () : unit =
         for platform in platforms do
