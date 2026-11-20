@@ -253,7 +253,9 @@ type ReadDirectoryAnswer =
     /// The next entry, which the client stores into the process's buffer. The
     /// description's position has moved past it.
     | Entry of record : DirectoryRecord
-    /// There is nothing further: the process's `getdents` returns 0.
+    /// There is nothing further. If the client has stored no record in this
+    /// batch, the process's `getdents` returns 0; otherwise it returns the
+    /// bytes already stored (see `UnixNamespace.readDirectoryEntry`).
     | EndOfDirectory
     /// The process's `getdents` returns -1 with errno set to `error`.
     | Failed of error : UnixError
@@ -1880,7 +1882,10 @@ module UnixNamespace =
     /// To fill a buffer with several records, the client calls this once per
     /// record. Every system is an immutable value, so when a record does not
     /// fit, the client carries on from the system it had before that call, and
-    /// the entry stays next. This library takes no buffer, so what the
+    /// the entry stays next. The process's call returns the number of bytes
+    /// the client stored in this batch; it returns 0 only when the first call
+    /// of the batch answers `ReadDirectoryAnswer.EndOfDirectory`. This library
+    /// takes no buffer, so what the
     /// process's call answers for a buffer too small for even one record, or
     /// one the client cannot write, is for the client to decide.
     ///

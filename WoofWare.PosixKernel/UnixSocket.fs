@@ -2295,15 +2295,16 @@ module UnixSocket =
     /// A socket without a peer answers `ENOTCONN` in every address family,
     /// before the declared length is checked. Such sockets include one never
     /// connected, a listener, and a datagram socket connected to port 0 (which
-    /// Linux allows). A socket whose connect answered `ECONNREFUSED` has no
-    /// peer either, nor does a connected socket that a reset reached, whether
+    /// Linux allows). A socket whose connect failed with `ECONNREFUSED` has no
+    /// peer either, whether the connect answered it or answered `EINPROGRESS`
+    /// with it pending, nor does a connected socket that a reset reached, whether
     /// or not its error has been read: these answer `ENOTCONN` on Linux and
     /// `EINVAL` on Darwin, which answers `EINVAL` for any socket that can
     /// neither send nor receive.
     ///
-    /// When this library has answered a connect with `EINPROGRESS`, the
-    /// connection has already completed, so `getpeername` reports the peer at
-    /// once. Darwin answers `ENOTCONN` until the loopback handshake lands,
+    /// When this library has answered a connect with `EINPROGRESS` and the
+    /// connection succeeded, it has already completed, so `getpeername`
+    /// reports the peer at once. Darwin answers `ENOTCONN` until the loopback handshake lands,
     /// and this library does not model that delay.
     ///
     /// Changes nothing, and so returns no system.

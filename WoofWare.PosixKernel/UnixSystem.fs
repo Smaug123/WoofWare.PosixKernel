@@ -2243,9 +2243,10 @@ module UnixSystem =
     /// reach at least to the end of that range; bytes past it are not read.
     /// `step` never shows the client that range. The length that the process
     /// passed for the buffer always covers it, but a call may copy far less
-    /// than that length (a `setsockopt` of an `int` option copies 4 bytes,
-    /// whatever length the process declared), and reading the whole length may
-    /// touch memory that the process's call never reads. A client that cannot
+    /// than that length (a `setsockopt` of an `int` option that reaches its
+    /// copy copies 4 bytes, whatever larger length the process declared), and
+    /// reading the whole length may touch memory that the process's call never
+    /// reads. A client that cannot
     /// read that far uses the call's own function, whose paused call says
     /// exactly which bytes it copies.
     ///

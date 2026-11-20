@@ -1,6 +1,6 @@
 namespace WoofWare.PosixKernel
 
-/// When a flavour's `link(2)` refuses a source that is a directory.
+/// When a flavour's `link(2)` answers `EPERM` for a source that is a directory.
 [<RequireQualifiedAccess>]
 type DirectorySourceRefusal =
     /// EPERM as soon as the source has resolved, before the new pathname is
