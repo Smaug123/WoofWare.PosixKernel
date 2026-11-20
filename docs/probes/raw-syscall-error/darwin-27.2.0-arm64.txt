@@ -1,0 +1,9 @@
+Darwin 27.2.0 arm64; ENOENT=2 EBADF=9 ELOOP=62; getpid()=28191
+getpid()         carry_in=0: ret=0x0000000000006e1f (28191) carry_out=0 | libc: ret=28191 errno=0(0)
+getpid()         carry_in=1: ret=0x0000000000006e1f (28191) carry_out=0 | libc: ret=28191 errno=0(0)
+close(-1)        carry_in=0: ret=0x0000000000000009 (9) carry_out=1 | libc: ret=-1 errno=9(EBADF)
+close(-1)        carry_in=1: ret=0x0000000000000009 (9) carry_out=1 | libc: ret=-1 errno=9(EBADF)
+chdir(missing)   carry_in=0: ret=0x0000000000000002 (2) carry_out=1 | libc: ret=-1 errno=2(ENOENT)
+chdir(missing)   carry_in=1: ret=0x0000000000000002 (2) carry_out=1 | libc: ret=-1 errno=2(ENOENT)
+chdir(loop)      carry_in=0: ret=0x000000000000003e (62) carry_out=1 | libc: ret=-1 errno=62(ELOOP)
+chdir(loop)      carry_in=1: ret=0x000000000000003e (62) carry_out=1 | libc: ret=-1 errno=62(ELOOP)

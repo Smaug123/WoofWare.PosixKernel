@@ -1,0 +1,9 @@
+Darwin 27.2.0 arm64
+sizeof(struct kevent)=32: ident@0 filter@8 flags@10 fflags@12 data@16 udata@24
+sizeof(struct kevent64_s)=48: ident@0 filter@8 flags@10 fflags@12 data@16 udata@24 ext@32
+kevent: rv=2,2 bytes changed=[0, 63] ident 0x1111 at 0 ident 0x2222 at 32
+kevent64: rv=2,2 bytes changed=[0, 95] ident 0x1111 at 0 ident 0x2222 at 48
+empty kqueue, nevents=INT_MAX: rv=0 errno=0
+two ready, room for two, nevents=INT_MAX: rv=2 errno=0 ident=0x1111 ident=0x2222
+2 ready, room for two before PROT_NONE, nevents=3: rv=2 errno=0
+3 ready, room for two before PROT_NONE, nevents=3: rv=-1 errno=14

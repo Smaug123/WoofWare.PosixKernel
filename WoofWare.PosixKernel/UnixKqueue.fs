@@ -6,8 +6,8 @@ namespace WoofWare.PosixKernel
 /// from the process's memory and passes to `UnixKqueue.kevent`, or an entry
 /// which a `KeventOutcome` answers for the eventlist. This library never
 /// touches the process's memory: the client stores each answered entry into
-/// the process's eventlist, as one `struct kevent` (see "What every client
-/// does" in the README).
+/// the process's eventlist, as one `struct kevent`, which is 32 bytes on arm64
+/// (see "What every client does" in the README).
 type Kevent =
     {
         /// `ident`: what the filter watches. For `KeventFilter.Read` and
@@ -777,10 +777,13 @@ module UnixKqueue =
     ///
     /// The answered entries come back in the `KeventOutcome`, and the client
     /// stores them into the process's eventlist: this library writes nothing
-    /// there. `eventlist` only describes where that eventlist is. This library
-    /// refuses a change that it does not apply, a call that reports events
-    /// into an eventlist that is not `Mapped`, and an echo into an `Opaque` or
-    /// `Addressless` eventlist.
+    /// there. Each entry is one `struct kevent`, which is 32 bytes on arm64, so
+    /// the client stores the entry at index `i` 32 * `i` bytes into the
+    /// eventlist. `eventlist` only describes where that eventlist is. No
+    /// `nevents` is too large: Darwin reaches only the entries it stores, never
+    /// a range of `nevents` entries. This library refuses a change that it does
+    /// not apply, a call that reports events into an eventlist that is not
+    /// `Mapped`, and an echo into an `Opaque` or `Addressless` eventlist.
     ///
     /// The caller must not already be asleep in a call. Under the Linux flavour
     /// every call throws `PlatformNotSupportedException`: Linux has no kqueue.
@@ -798,6 +801,11 @@ module UnixKqueue =
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
+        // `sizeof(struct kevent)`, and that `nevents` has no bound and screens
+        // no range of the eventlist, are measured by docs/probes/kevent-size
+        // (Darwin 27.2.0 arm64): the kernel stores events at a 32-byte stride,
+        // INT_MAX is answered as any count is, and an eventlist that reaches an
+        // unmapped page faults only once an event is stored onto it.
         tryKevent caller kq nchanges changes nevents eventlist timeout system
         |> Refusal.orRaise "UnixKqueue.kevent" KeventRefusal.kind KeventRefusal.describe
 
@@ -995,7 +1003,8 @@ module UnixKqueue =
     /// which goes then if no descriptor names it any more.
     ///
     /// The events come back in `KeventOutcome.Answered`, and the client stores
-    /// them into the eventlist the call was made with; see `kevent` for the
+    /// them into the eventlist the call was made with, one 32-byte
+    /// `struct kevent` each on arm64, as for `kevent`; see `kevent` for the
     /// eventlists for which this library refuses the call.
     ///
     /// `caller` must be parked in a `kevent`, and woken (`UnixWait.wake`).

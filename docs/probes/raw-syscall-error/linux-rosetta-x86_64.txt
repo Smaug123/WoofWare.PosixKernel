@@ -1,0 +1,9 @@
+Linux 6.18.5 x86_64; ENOENT=2 EBADF=9 ELOOP=40; getpid()=7
+getpid()         carry_in=0: ret=0x0000000000000007 (7) carry_out=0 | libc: ret=7 errno=0(0)
+getpid()         carry_in=1: ret=0x0000000000000007 (7) carry_out=1 | libc: ret=7 errno=0(0)
+close(-1)        carry_in=0: ret=0xfffffffffffffff7 (-9) carry_out=0 | libc: ret=-1 errno=9(EBADF)
+close(-1)        carry_in=1: ret=0xfffffffffffffff7 (-9) carry_out=1 | libc: ret=-1 errno=9(EBADF)
+chdir(missing)   carry_in=0: ret=0xfffffffffffffffe (-2) carry_out=0 | libc: ret=-1 errno=2(ENOENT)
+chdir(missing)   carry_in=1: ret=0xfffffffffffffffe (-2) carry_out=1 | libc: ret=-1 errno=2(ENOENT)
+chdir(loop)      carry_in=0: ret=0xffffffffffffffd8 (-40) carry_out=0 | libc: ret=-1 errno=40(ELOOP)
+chdir(loop)      carry_in=1: ret=0xffffffffffffffd8 (-40) carry_out=1 | libc: ret=-1 errno=40(ELOOP)
