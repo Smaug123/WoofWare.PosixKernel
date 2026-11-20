@@ -1,7 +1,7 @@
 # Darwin 27.2.0 arm64, uid 501
 # control offsets (d_off / d_seekoff): .=0 ..=0 a=0 c=0 d=0 e=0 b=0
 # smallest count accepted: 64 (r=64)
-# fixture: prot_none=0x104d0c000 edge=0x104d14000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
+# fixture: prot_none=0x100d70000 edge=0x100d78000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
 closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
@@ -43,6 +43,8 @@ end            dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647 then
 end            dest=prot_none: r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
 end            dest=high     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
 end-partial    dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-mostly     dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-last-byte  dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
 removed        dest=ok       : r=0 errno=0 pos=0->2147483647 then=0:
 removed        dest=null     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
 removed        dest=prot_none: r=-1 errno=EFAULT pos=0->2147483647 then=0:

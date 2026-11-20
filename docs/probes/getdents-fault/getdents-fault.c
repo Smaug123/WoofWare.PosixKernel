@@ -281,6 +281,9 @@ int main(int argc, char **argv) {
         int n;
         rest(fd, out, sizeof out, &n);
         row("end-partial", "edge", fd, edge - r1, 4096, 0);
+        // And through ones whose last 24 bytes, or last byte, are not.
+        row("end-mostly", "edge", fd, edge - (4096 - 24), 4096, 0);
+        row("end-last-byte", "edge", fd, edge - 4095, 4096, 0);
         close(fd);
     }
     for (int d = 0; d < 4; d++) {
