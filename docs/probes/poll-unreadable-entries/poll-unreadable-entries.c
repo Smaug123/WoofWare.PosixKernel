@@ -38,7 +38,12 @@
 //      taken. `charge-after=23040` means the poll moved the first ten (it
 //      polled the receiver); 46080 means it did not. Rows: no poll; the
 //      array readable whole (nfds = k); and cut at an entry boundary
-//      (nfds = k + 1), for k = 1, 31 and 600, with timeout 0.
+//      (nfds = k + 1), for k = 1, 31 and 600, with timeout 0. Each of the
+//      ten takes must return a datagram of 1000 bytes, or the probe stops.
+//   H  Linux only: an nfds_t wider than 32 bits (glibc's is unsigned long),
+//      at NULL and at an unmapped address: 2^32, 2^32 + 1 and 2^32 + 1025,
+//      with timeout 0, the soft limit at 1024 again. The kernel's own nfds
+//      is an unsigned int.
 //
 // Every row is `section label nfds=N timeout=T rv=R errno=E` and what else it
 // names; errno is `-` when the call succeeded.
@@ -71,6 +76,9 @@
 //      at 46080, as no poll does, where the whole array polls the receiver
 //      (rv 1, POLLIN, 23040), for every k: the entries it could read were
 //      not polled.
+//   H  Linux: the kernel reads the low 32 bits of nfds alone. 2^32 is
+//      answered as nfds 0 (rv 0, wherever it points), 2^32 + 1 as nfds 1
+//      (EFAULT), and 2^32 + 1025 as nfds 1025 (EINVAL, above the limit).
 #define _GNU_SOURCE
 #include <errno.h>
 #include <poll.h>
@@ -284,12 +292,32 @@ static void section_s_row(long page, unsigned int k, int cut)
     }
     for (int i = 0; i < 10; i++) send1(s, r, &to);
     char buf[2000];
-    for (int i = 0; i < 10; i++) recv(r, buf, sizeof buf, MSG_DONTWAIT);
+    for (int i = 0; i < 10; i++)
+        if (recv(r, buf, sizeof buf, MSG_DONTWAIT) != 1000) { fprintf(stderr, "S %s: take %d failed\n", label, i); exit(1); }
     printf("S %s nfds=%u timeout=0 rv=%d errno=%s charge-after=%u revents0=0x%hx\n", label, cut ? nfds : 0, rv,
            rv < 0 ? strerror(e) : "-", meminfo(r, SK_MEMINFO_RMEM_ALLOC), (unsigned short)p[0].revents);
     munmap(base, (pages + 1) * page);
     close(r);
     close(s);
+}
+
+static void section_h(void)
+{
+    set_soft(1024);
+    nfds_t counts[] = { (nfds_t)1 << 32, ((nfds_t)1 << 32) + 1, ((nfds_t)1 << 32) + 1025 };
+    for (size_t k = 0; k < sizeof counts / sizeof counts[0]; k++)
+    {
+        void *bufs[] = { NULL, unmapped };
+        const char *labels[] = { "null", "unmapped" };
+        for (int b = 0; b < 2; b++)
+        {
+            errno = 0;
+            int rv = poll(bufs[b], counts[k], 0);
+            int e = errno;
+            printf("H %s nfds=%llu timeout=0 rv=%d errno=%s\n", labels[b], (unsigned long long)counts[k], rv,
+                   rv < 0 ? strerror(e) : "-");
+        }
+    }
 }
 
 static void section_s(long page)
@@ -329,6 +357,7 @@ int main(void)
     section_w(page, ready_fd);
 #ifdef __linux__
     section_s(page);
+    section_h();
 #endif
     return 0;
 }

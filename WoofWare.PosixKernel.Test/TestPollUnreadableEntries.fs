@@ -1,6 +1,7 @@
 namespace WoofWare.PosixKernel.Test
 
 open System
+open System.Collections.Immutable
 open System.IO
 open System.Reflection
 open System.Text.RegularExpressions
@@ -313,15 +314,20 @@ module TestPollUnreadableEntries =
                 if row.Errno <> "Bad address" || row.Slept || row.Revents0 <> "0x5a5a" then
                     failwith $"%s{run.Name}: %A{row}"
 
-    /// Section S: on Linux, a partly readable array does not poll the entries
-    /// it could read, seen through a blocking UDP receiver's reader queue,
-    /// which a poll of it refills: the charge of the datagrams taken after a
-    /// faulting poll comes back as late as with no poll at all.
+    /// Section S, replayed through the model: on Linux, a partly readable
+    /// array does not poll the entries it could read. A poll of a blocking
+    /// UDP receiver refills its reader queue, which shows in the charge left
+    /// after ten more datagrams arrive and ten are taken: as late as with no
+    /// poll at all after a faulting poll, and given back after a poll of the
+    /// whole array.
     [<Test>]
-    let ``a partly readable array was measured to poll none of its readable entries under Linux`` () : unit =
+    let ``a partly readable array polls none of its readable entries under Linux, as measured`` () : unit =
         let pattern =
             Regex
                 @"^S k=(\d+) cut=(no-poll|none|entry) lead=udp nfds=(\d+) timeout=0 rv=(-?\d+) errno=(.+) charge-after=(\d+) revents0=(\S+)$"
+
+        let payload = ImmutableArray.CreateRange (Array.create 1000 (byte 'r'))
+        let msgDontWait = 0x40
 
         for run in runs |> List.filter (fun run -> run.Name.StartsWith "linux") do
             let measured =
@@ -330,18 +336,150 @@ module TestPollUnreadableEntries =
                     let m = pattern.Match line
 
                     if m.Success then
-                        Some (m.Groups.[2].Value, m.Groups.[4].Value, m.Groups.[5].Value, m.Groups.[6].Value)
+                        Some (
+                            int m.Groups.[1].Value,
+                            m.Groups.[2].Value,
+                            int m.Groups.[4].Value,
+                            m.Groups.[5].Value,
+                            int m.Groups.[6].Value
+                        )
                     else
                         None
                 )
 
             List.length measured |> shouldEqual 9
 
-            for cut, rv, errno, charge in measured do
-                match cut with
-                | "no-poll" -> (rv, errno, charge) |> shouldEqual ("0", "-", "46080")
-                | "none" -> (rv, errno, charge) |> shouldEqual ("1", "-", "23040")
-                | _ -> (rv, errno, charge) |> shouldEqual ("-1", "Bad address", "46080")
+            for k, cut, rv, errno, charge in measured do
+                let system, _ = world run.Privileged run.Platform
+                let caller = Callers.thread thread system
+
+                let receiver, system =
+                    NewSocket.createAs caller SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
+
+                let system =
+                    match
+                        CopyIn.bindAs
+                            caller
+                            receiver
+                            UserBuffer.Mapped
+                            16u
+                            (CopyIn.inet run.Platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 0us))
+                            system
+                    with
+                    | Ok (BindAnswer.Bound _, system) -> system
+                    | other -> failwith $"bind: %A{other}"
+
+                let socketId =
+                    match FileDescriptorRegistry.tryFindTarget receiver (Lone.fileDescriptors system) with
+                    | Some (OpenFileTarget.Socket socketId) -> socketId
+                    | other -> failwith $"fd %d{receiver} is %A{other}"
+
+                let port =
+                    match (UnixMachineState.socket socketId (Kernel.machine system)).Ipv4Binding with
+                    | Some binding -> binding.Endpoint.Port
+                    | None -> failwith "the receiver has no binding"
+
+                let sender, system =
+                    NewSocket.createAs caller SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
+
+                let system =
+                    match
+                        CopyIn.connectAs
+                            caller
+                            sender
+                            UserBuffer.Mapped
+                            16u
+                            (CopyIn.inet run.Platform (Ipv4Endpoint.ofParts Ipv4Address.loopback port))
+                            system
+                    with
+                    | Ok (SyscallAnswer.Completed 0L, system) -> system
+                    | other -> failwith $"connect: %A{other}"
+
+                let ten (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                    (system, [ 1..10 ])
+                    ||> List.fold (fun system _ ->
+                        match WriteOutcomes.admitThenSendAs caller sender UserBuffer.Mapped payload 0 system with
+                        | Ok (WriteStep.Returns (WriteAnswer.Completed 1000L, system)) -> system
+                        | other -> failwith $"send: %A{other}"
+                    )
+
+                let idle =
+                    {
+                        PollEntry.Fd = -1
+                        Events = pollIn
+                    }
+
+                let lead =
+                    {
+                        PollEntry.Fd = receiver
+                        Events = pollIn
+                    }
+
+                let system = ten system
+
+                let answered, system =
+                    match cut with
+                    | "no-poll" -> (0, "-"), system
+                    | _ ->
+                        let argument =
+                            match cut with
+                            | "none" -> PollEntriesArgument.Readable (lead :: List.replicate (k - 1) idle)
+                            | _ -> PollEntriesArgument.Unreadable (uint32 (k + 1))
+
+                        match poll argument 0 system with
+                        | Ok (PollOutcome.Answered (_, count), system) -> (count, "-"), system
+                        | Ok (PollOutcome.Failed UnixError.EFAULT, system) -> (-1, "Bad address"), system
+                        | other -> failwith $"%s{run.Name}: poll of %A{argument} answered %A{other}"
+
+                let system = ten system
+
+                let system =
+                    (system, [ 1..10 ])
+                    ||> List.fold (fun system _ ->
+                        match UnixReadWrite.tryRecv caller receiver UserBuffer.Mapped 2000UL msgDontWait system with
+                        | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.Length = 1000 ->
+                            system
+                        | other -> failwith $"recv: %A{other}"
+                    )
+
+                let modelledCharge =
+                    DatagramReceiver.charged (UnixMachineState.datagramReceiver socketId (Kernel.machine system))
+
+                (k, cut, answered, modelledCharge) |> shouldEqual (k, cut, (rv, errno), charge)
+
+    /// Section H: Linux reads only the low 32 bits of a wider `nfds_t`, so a
+    /// client gives `Unreadable` the count those bits hold.
+    [<Test>]
+    let ``Linux reads the low 32 bits of nfds, as measured`` () : unit =
+        let pattern =
+            Regex @"^H (null|unmapped) nfds=(\d+) timeout=0 rv=(-?\d+) errno=(.+)$"
+
+        for run in runs |> List.filter (fun run -> run.Name.StartsWith "linux") do
+            let measured =
+                run.Lines
+                |> List.choose (fun line ->
+                    let m = pattern.Match line
+
+                    if m.Success then
+                        Some (UInt64.Parse m.Groups.[2].Value, int m.Groups.[3].Value, m.Groups.[4].Value)
+                    else
+                        None
+                )
+
+            List.length measured |> shouldEqual 6
+
+            for nfds, rv, errno in measured do
+                nfds |> shouldBeGreaterThan (uint64 UInt32.MaxValue)
+                let system, _ = world run.Privileged run.Platform
+                let count = uint32 (nfds &&& 0xFFFFFFFFUL)
+
+                match poll (PollEntriesArgument.Unreadable count) 0 system, rv, errno with
+                | Ok (PollOutcome.Answered ([], 0), after), 0, "-" when after = system -> ()
+                | Ok (PollOutcome.Failed UnixError.EFAULT, after), -1, "Bad address" when after = system -> ()
+                // 1025 entries pass Linux's screen for a soft limit of 1025 or
+                // more, which the library does not assume; the probe's was 1024.
+                | Error (PollRefusal.UnmodelledEntryCount (_, c, _)), -1, "Invalid argument" when c = count -> ()
+                | other -> failwith $"%s{run.Name}: nfds %d{nfds} answered %A{other}"
 
     [<Test>]
     let ``an unreadable array answers what the screen answers, or EFAULT, or as an empty one`` () : unit =

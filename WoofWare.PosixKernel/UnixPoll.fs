@@ -81,7 +81,9 @@ type PollEntriesArgument =
     /// Some byte of the array's `count` entries could not be read: the
     /// pointer is NULL, or the memory it names stops being readable before
     /// the end of the `count` entries. `count` is the call's `nfds`, which the
-    /// kernel takes as an unsigned 32-bit count on both flavours.
+    /// kernel takes as an unsigned 32-bit count on both flavours: under Linux,
+    /// where the C library's `nfds_t` is wider, the kernel reads only its low
+    /// 32 bits.
     ///
     /// The kernel screens `count` before it reads the array, so the call can
     /// fail with `EINVAL` rather than `EFAULT`. A `count` of 0 reads nothing,
