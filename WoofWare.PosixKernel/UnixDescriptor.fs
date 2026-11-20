@@ -306,12 +306,8 @@ module internal CloseRefusal =
 /// A status flag that the flavour's `fcntl(F_SETFL)` would set, but that this
 /// library does not model, so `UnixDescriptor.fcntl` refuses an `F_SETFL` word
 /// carrying it.
-///
-/// No public answer carries one of these: this library uses them only to
-/// name the flags in the message of the `UnmodelledException` that such a
-/// call throws.
 [<RequireQualifiedAccess>]
-type UnmodelledStatusFlag =
+type internal UnmodelledStatusFlag =
     /// `O_APPEND`, on both flavours.
     | Append
     /// `O_ASYNC` (Linux's `FASYNC`), on both flavours.
@@ -322,7 +318,7 @@ type UnmodelledStatusFlag =
     | NoAccessTime
 
 [<RequireQualifiedAccess>]
-module UnmodelledStatusFlag =
+module internal UnmodelledStatusFlag =
     /// The flag's name in the flavour's `<fcntl.h>`.
     let name (flag : UnmodelledStatusFlag) : string =
         match flag with

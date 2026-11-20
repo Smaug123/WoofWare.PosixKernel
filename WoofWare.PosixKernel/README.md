@@ -122,7 +122,7 @@ How a process starts is a `ProcessLaunch`.
 The setters in the `ProcessLaunch` module set the rest, such as `ProcessLaunch.withCredentials`, `ProcessLaunch.withCurrentDirectory`, `ProcessLaunch.withEnvironment` and `ProcessLaunch.withUmask`.
 `UnixBootImage.boot launch` launches the machine's first process, to give the `UnixSystem` its first syscall takes.
 A launch describes requested settings independently of a platform; the same description can be used on different machines.
-`UnixBootImage.boot` and `UnixSystem.launch` fill in omitted credentials and the pending-signal limit from the target machine's defaults, and check its descriptor bound, credentials, umask, processor and current directory.
+`UnixBootImage.boot` and `UnixSystem.launch` fill in omitted credentials and the pending-signal limit from the target machine's defaults, and check its descriptor bound, credentials, umask, processor and current directory; they refuse a supplied pipe holding more bytes than one `write(2)` moves.
 An explicit pending-signal limit on Darwin throws `PlatformNotSupportedException` at launch; an omitted limit leaves its process with none.
 `ProcessLaunch.create` still rejects negative descriptor numbers immediately.
 
