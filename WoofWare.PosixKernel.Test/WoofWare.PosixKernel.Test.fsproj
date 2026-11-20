@@ -439,6 +439,9 @@
     <EmbeddedResource Include="..\docs\probes\first-wake\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.darwin.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
+    <!-- docs/probes/raw-syscall-error's native arm64 outputs. `TestUnixError` replays them. -->
+    <EmbeddedResource Include="..\docs\probes\raw-syscall-error\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.rawSyscallError.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\raw-syscall-error\darwin-27.2.0-arm64.txt" LogicalName="WoofWare.PosixKernel.Test.rawSyscallError.darwin.txt" />
     <!-- docs/probes/clear-child-tid. `TestFutex` replays its `wait=` rows. -->
     <EmbeddedResource Include="..\docs\probes\clear-child-tid\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.clear-child-tid.linux.txt" />
     <!-- docs/probes/futex-bitset. `TestFutexBitset` replays it. -->
