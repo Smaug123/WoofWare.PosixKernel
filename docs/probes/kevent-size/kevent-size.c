@@ -33,6 +33,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
 #include <sys/mman.h>
@@ -67,8 +68,10 @@ static int ready_kqueue(int use64) {
         EV_SET(&ch[1], 0x2222, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
         rv[1] = kevent(kq, ch, 2, NULL, 0, NULL);
     }
-    if (rv[0] != 0 || rv[1] != 0)
+    if (rv[0] != 0 || rv[1] != 0) {
         printf("ready_kqueue(%d): register rv=%d, trigger rv=%d, errno=%d\n", use64, rv[0], rv[1], errno);
+        exit(1);
+    }
     return kq;
 }
 
@@ -144,7 +147,10 @@ int main(void) {
     {
         long page = sysconf(_SC_PAGESIZE);
         unsigned char *map = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-        mprotect(map + page, page, PROT_NONE);
+        if (map == MAP_FAILED || mprotect(map + page, page, PROT_NONE) != 0) {
+            printf("guard page: mmap or mprotect failed\n");
+            return 1;
+        }
         struct kevent *list = (struct kevent *)(map + page - 2 * sizeof(struct kevent));
         for (int ready = 2; ready <= 3; ready++) {
             int kq = ready_kqueue(0);
@@ -152,7 +158,10 @@ int main(void) {
                 struct kevent ch[2];
                 EV_SET(&ch[0], 0x3333, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
                 EV_SET(&ch[1], 0x3333, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
-                kevent(kq, ch, 2, NULL, 0, NULL);
+                if (kevent(kq, ch, 2, NULL, 0, NULL) != 0) {
+                    printf("third event: registration failed, errno=%d\n", errno);
+                    return 1;
+                }
             }
             errno = 0;
             int rv = kevent(kq, NULL, 0, list, 3, &zero);

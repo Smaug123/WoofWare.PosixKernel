@@ -401,15 +401,16 @@ module UnixThreadLifecycle =
     /// `CLONE_CHILD_CLEARTID` or by `set_tid_address(2)`. While another thread shares
     /// its address space, as every other thread of its process does, the kernel then
     /// does two more things at its exit: it stores 0 into the four bytes at that
-    /// address, and it wakes one waiter in a shared futex wait on that word
-    /// (`FUTEX_WAIT` or `FUTEX_WAIT_BITSET`, without `FUTEX_PRIVATE_FLAG`). If the
-    /// process cannot write those bytes, the kernel does neither, and the thread still
-    /// exits as any other does, with no signal.
+    /// address, and it makes a shared `FUTEX_WAKE` of one waiter on that word. The wake
+    /// wakes what such a wake wakes, such as a `FUTEX_WAIT` or `FUTEX_WAIT_BITSET`
+    /// without `FUTEX_PRIVATE_FLAG`, and no private waiter. If the process cannot
+    /// write those bytes, the store does not happen, the wake is made all the same,
+    /// and the thread exits as any other does, with no signal.
     /// This library holds no such address, so the client does both: it stores the 0
-    /// into the process's memory, and it wakes the waiter, which is asleep in a block
-    /// of the client's own, since `UnixFutex.futex` refuses a futex wait without
-    /// `FUTEX_PRIVATE_FLAG`. The exit wakes no private futex waiter on the word, and
-    /// this function wakes no futex waiter at all. Darwin has no such address.
+    /// into the process's memory, and it makes the wake, whose waiter is asleep in a
+    /// block of the client's own, since `UnixFutex.futex` refuses a futex wait without
+    /// `FUTEX_PRIVATE_FLAG`. This function wakes no futex waiter at all. Darwin has no
+    /// such address.
     ///
     /// The process carries on unless this was its last thread. Then, on Linux, the
     /// process ends, having exited with `status`, and is removed from the system at

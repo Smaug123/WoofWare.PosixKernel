@@ -23,9 +23,12 @@
 // its value and nothing is woken. A thread which never set the address leaves
 // the word alone. A word the process cannot write (read-only, PROT_NONE, or
 // in the unmapped page at 0) is left as it was, and the thread exits as any
-// other does: the process carries on, unsignalled. Nor is a shared waiter on
-// such a word woken: one asleep on the word before its page became read-only
-// or PROT_NONE times out. set_tid_address returns the caller's thread ID.
+// other does: the process carries on, unsignalled. The wake is made whether or
+// not the store was: it wakes the waiter wherever a shared FUTEX_WAKE of the
+// word can be made, as on a MAP_SHARED page made read-only after the waiter
+// slept, and not where such a wake fails with EFAULT, as on a private page made
+// read-only or PROT_NONE, or a shared one made PROT_NONE. set_tid_address
+// returns the caller's thread ID.
 //
 // Output beside this file, measured 2026-11-20, three runs with the same rows
 // (timings aside; which of the two-shared row's waiters woke could differ,
@@ -62,8 +65,10 @@
 //                    ordinary, and what the word holds after (read access
 //                    restored to read it).
 //   wait-then-protect=<kind> a shared FUTEX_WAIT waiter asleep on the word,
-//                    whose page then becomes read-only or PROT_NONE before
-//                    the exit: whether the waiter wakes.
+//                    in a private or a MAP_SHARED anonymous page which then
+//                    becomes read-only or PROT_NONE before the exit: whether
+//                    the waiter wakes, and what the probe's own shared
+//                    FUTEX_WAKE of the word answers under that protection.
 //   last-thread=<how> the word in a MAP_SHARED page, set by a single-threaded
 //                    forked child process which then ends by SYS_exit or by
 //                    SYS_exit_group; a thread of the parent waits on the word
@@ -225,12 +230,23 @@ static void *exiter_main(void *arg) {
     return NULL;
 }
 
-// Wait until the thread `e` names has gone: tgkill answers ESRCH.
+// Wait until the thread `tid` names has gone: tgkill answers ESRCH. Any
+// other failure means the probe cannot tell, and ends the row as invalid.
+static void await_tid_gone(long tid) {
+    long rc;
+    while ((rc = syscall(SYS_tgkill, getpid(), tid, 0)) == 0)
+        usleep(1000);
+    if (errno != ESRCH) {
+        printf("tgkill-failed errno=%s\n", strerror(errno));
+        fflush(stdout);
+        _exit(ROW_INVALID);
+    }
+}
+
 static void await_gone(struct exiter *e) {
     while (__atomic_load_n(&e->tid, __ATOMIC_SEQ_CST) == 0)
         usleep(1000);
-    while (syscall(SYS_tgkill, getpid(), e->tid, 0) == 0)
-        usleep(1000);
+    await_tid_gone(e->tid);
 }
 
 static void start_exiter(struct exiter *e) {
@@ -314,10 +330,16 @@ static int row_two_shared(void) {
     return ok ? 0 : ROW_INVALID;
 }
 
-// A process-private page holding SENTINEL at offset 64.
-static unsigned char *sentinel_page(void) {
-    unsigned char *map =
-        mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+// An anonymous page, process-private or MAP_SHARED, holding SENTINEL at
+// offset 64.
+static unsigned char *sentinel_page(int shared) {
+    unsigned char *map = mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE,
+                              (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_ANONYMOUS, -1, 0);
+    if (map == MAP_FAILED) {
+        printf("mmap-failed\n");
+        fflush(stdout);
+        _exit(ROW_INVALID);
+    }
     *(uint32_t *)(map + 64) = SENTINEL;
     return map;
 }
@@ -329,7 +351,7 @@ static int row_unwritable(const char *kind) {
     if (strcmp(kind, "null-page") == 0) {
         word = (uint32_t *)0x10;
     } else {
-        map = sentinel_page();
+        map = sentinel_page(0);
         word = (uint32_t *)(map + 64);
         if (mprotect(map, page, strcmp(kind, "read-only") == 0 ? PROT_READ : PROT_NONE) != 0) {
             printf("unwritable=%s: mprotect-failed\n", kind);
@@ -353,11 +375,14 @@ static int row_unwritable(const char *kind) {
     return 0;
 }
 
-// A shared FUTEX_WAIT waiter asleep on a word of a process-private page, whose
-// protection then becomes `prot`, so that the process cannot write the word,
-// before the thread whose clear_child_tid it is exits.
-static int row_wait_then_protect(const char *kind, int prot) {
-    unsigned char *map = sentinel_page();
+// A shared FUTEX_WAIT waiter asleep on a word of an anonymous page, private
+// or MAP_SHARED, whose protection then becomes `prot`, so that the process
+// cannot write the word, before the thread whose clear_child_tid it is exits.
+// Then, under the same protection, the probe makes its own shared FUTEX_WAKE
+// of one waiter on the word (`own-wake`), which has no waiter left to wake:
+// 0 if the wake can be made there, or its errno.
+static int row_wait_then_protect(const char *kind, int prot, int shared) {
+    unsigned char *map = sentinel_page(shared);
     uint32_t *word = (uint32_t *)(map + 64);
     struct waiter w = {word, FUTEX_WAIT, 0, 0, 0, 0, 0};
     struct exiter e = {word, 0, 0, 0};
@@ -365,6 +390,9 @@ static int row_wait_then_protect(const char *kind, int prot) {
     printf("wait-then-protect=%s: ", kind);
     int ok = run_waiters(&w, 1, &e, map, prot);
     print_waiter(&w);
+    errno = 0;
+    long woke = syscall(SYS_futex, word, FUTEX_WAKE, 1, NULL, NULL, 0);
+    printf(" own-wake=%ld/%s", woke, ename(woke < 0 ? errno : 0));
     if (mprotect(map, sysconf(_SC_PAGESIZE), PROT_READ) != 0) {
         printf(" mprotect-failed\n");
         return ROW_INVALID;
@@ -426,8 +454,7 @@ static int row_last_thread(const char *how) {
                 pthread_create(&t, NULL, control_thread, p);
                 while (__atomic_load_n(&p->control_tid, __ATOMIC_SEQ_CST) == 0)
                     usleep(1000);
-                while (syscall(SYS_tgkill, getpid(), p->control_tid, 0) == 0)
-                    usleep(1000);
+                await_tid_gone(p->control_tid);
                 _exit(0);
             }
             syscall(SYS_set_tid_address, &p->cell.word);
@@ -463,7 +490,10 @@ static int row_last_thread(const char *how) {
     printf(" ");
     print_cell(&p->cell);
     printf(" child-exited=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-    return asleep && seen ? 0 : ROW_INVALID;
+    // A child that did not reach the exit being measured, or that ended any
+    // other way, invalidates the row.
+    int clean = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return asleep && seen && clean ? 0 : ROW_INVALID;
 }
 
 // ------------------------------------------------------------------- main
@@ -500,8 +530,10 @@ static int r_wait_bitset_private(void) { return row_wait("FUTEX_WAIT_BITSET_PRIV
 static int r_unwritable_read_only(void) { return row_unwritable("read-only"); }
 static int r_unwritable_prot_none(void) { return row_unwritable("prot-none"); }
 static int r_unwritable_null_page(void) { return row_unwritable("null-page"); }
-static int r_protect_read_only(void) { return row_wait_then_protect("read-only", PROT_READ); }
-static int r_protect_none(void) { return row_wait_then_protect("prot-none", PROT_NONE); }
+static int r_protect_read_only(void) { return row_wait_then_protect("private-read-only", PROT_READ, 0); }
+static int r_protect_none(void) { return row_wait_then_protect("private-prot-none", PROT_NONE, 0); }
+static int r_protect_shared_read_only(void) { return row_wait_then_protect("shared-read-only", PROT_READ, 1); }
+static int r_protect_shared_none(void) { return row_wait_then_protect("shared-prot-none", PROT_NONE, 1); }
 static int r_last_exit(void) { return row_last_thread("exit"); }
 static int r_last_exit_group(void) { return row_last_thread("exit_group"); }
 static int r_last_control(void) { return row_last_thread("control"); }
@@ -521,6 +553,8 @@ int main(void) {
     in_child(r_unwritable_null_page);
     in_child(r_protect_read_only);
     in_child(r_protect_none);
+    in_child(r_protect_shared_read_only);
+    in_child(r_protect_shared_none);
     in_child(r_last_exit);
     in_child(r_last_exit_group);
     in_child(r_last_control);
