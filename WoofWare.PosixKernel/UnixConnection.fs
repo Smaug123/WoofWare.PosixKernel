@@ -11,11 +11,12 @@ type PeerAddressCopy =
     /// The client stores `copiedOut` at the start of the process's address
     /// buffer, and `reportedLength` in the process's length cell. When the two
     /// overlap, the store that the kernel makes second wins the bytes they
-    /// share. Linux 6.18.5 stores the length first, so the address wins;
-    /// Darwin 27.2.0 stores the address first, so the length wins. That holds
-    /// for `accept` and `recvfrom` alike (measured:
-    /// `docs/probes/overlapping-output-order`). No Linux before 6.18 has been
-    /// measured. This library does not choose an order for the client.
+    /// share. Linux from 6.18 stores the length first, so the address wins.
+    /// Darwin, and Linux before 6.18, store the address first, so the length
+    /// wins. That holds for `accept` and `recvfrom` alike (measured on Linux
+    /// 6.12.111, 6.17.13 and 6.18.5 and Darwin 27.2.0:
+    /// `docs/probes/overlapping-output-order`). This library does not choose
+    /// an order for the client.
     ///
     /// For an `accept`, `copiedOut` is the connecting socket's address, laid
     /// out as the platform's socket address structure for the listener's

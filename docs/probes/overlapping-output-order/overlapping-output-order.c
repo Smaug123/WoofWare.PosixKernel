@@ -45,10 +45,19 @@
 //   commit 1fb0e471611d);
 //   getsockopt reads addr-first for SO_REUSEADDR, SO_ERROR and SO_LINGER, the
 //   SOL_SOCKET options, and length-first for TCP_NODELAY and IPV6_V6ONLY.
-//
-// No Linux before 6.18 was measured: the sockname-fault-length probe beside
-// this one ran older kernels under full-system emulation, which was not
-// available when this one was run.
+// * linux-6.12.111-x86_64.txt, linux-6.17.13-x86_64.txt,
+//   linux-6.18.5-x86_64.txt: Debian trixie's and trixie-backports'
+//   linux-image-*-amd64, booted under full-system emulation with this probe
+//   linked statically (`gcc -static`, built in `container --arch amd64` with
+//   the gcc:14 image) as the initramfs's /init, which brings up the loopback
+//   interface itself and powers off when done, as the sockname-fault-length
+//   probe beside this one was run:
+//     qemu-system-x86_64 -m 1G -cpu max -kernel vmlinuz -initrd init.cpio.gz \
+//       -append "console=ttyS0 panic=-1 quiet" -nographic -no-reboot
+//   The console's firmware and kernel-log lines are removed. 6.18.5 reads as
+//   it does on aarch64. 6.12.111 and 6.17.13 read addr-first for getsockname,
+//   getpeername (IPv4 and IPv6), accept and recvfrom, and getsockopt reads as
+//   it does on 6.18.5.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <net/if.h>
