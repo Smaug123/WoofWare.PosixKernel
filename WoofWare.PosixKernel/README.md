@@ -1220,7 +1220,7 @@ match read restarted with
 `UnixThreadLifecycle.spawn caller child cpu` starts a thread the client names `child`, on processor `cpu`, with a copy of the caller's signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
 `UnixThreadLifecycle.exitThread caller status` ends the caller's thread, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
 It throws `InvalidOperationException` for a thread parked in a syscall, and refuses the process's leader while any other thread lives and, on Darwin, the process's last thread: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
-On Linux, a thread that is not the process's last and has a `clear_child_tid` address (`CLONE_CHILD_CLEARTID`, `set_tid_address(2)`) has the kernel store 0 into the word there at its exit, and wake one shared futex waiter on it.
+On Linux, a thread with a `clear_child_tid` address (`CLONE_CHILD_CLEARTID`, `set_tid_address(2)`) that is not the process's last has the kernel store 0 into the word there at its exit, where the process can write it, and wake one shared futex waiter on it.
 This library holds no such address, so the client does both (see `UnixThreadLifecycle.exitThread`).
 `UnixThreadLifecycle.exitGroup caller status` ends every thread at once, parked ones included.
 
@@ -1381,7 +1381,7 @@ The same goes for the C library's other state in user space, such as the copy of
 
 **Where they meet.** A failed call answers `Failed` with a `UnixError`.
 The client converts it to a number with `UnixError.toRawErrnoUnder` and stores it wherever its C library would.
-A client that answers the syscall instruction itself, below any C library, hands the number back as the kernel does: negated in the result register on Linux, and positive, with the carry flag set, on Darwin (see `RawErrnoNumbering`).
+A client that answers the syscall instruction itself, below any C library, hands the number back as the kernel does, which on arm64 is negated in `x0` on Linux, and positive in `x0`, with the carry flag set, on Darwin (see `RawErrnoNumbering`).
 The environment the library holds is the one the process was started with (`ProcessLaunch.withEnvironment`).
 
 ### Running a signal handler

@@ -398,11 +398,13 @@ module UnixThreadLifecycle =
     /// it was running, if any, becomes idle. The client stops running the thread.
     ///
     /// On Linux, a thread can have a `clear_child_tid` address, set by `clone(2)`'s
-    /// `CLONE_CHILD_CLEARTID` or by `set_tid_address(2)`. Unless the thread is the
-    /// process's last, the kernel then does two more things at its exit: it stores 0
-    /// into the four bytes at that address, and it wakes one waiter in a shared futex
-    /// wait on that word (`FUTEX_WAIT` or `FUTEX_WAIT_BITSET`, without
-    /// `FUTEX_PRIVATE_FLAG`).
+    /// `CLONE_CHILD_CLEARTID` or by `set_tid_address(2)`. While another thread shares
+    /// its address space, as every other thread of its process does, the kernel then
+    /// does two more things at its exit: it stores 0 into the four bytes at that
+    /// address, and it wakes one waiter in a shared futex wait on that word
+    /// (`FUTEX_WAIT` or `FUTEX_WAIT_BITSET`, without `FUTEX_PRIVATE_FLAG`). If the
+    /// process cannot write those bytes, the store does not happen, and the thread
+    /// still exits as any other does, with no signal.
     /// This library holds no such address, so the client does both: it stores the 0
     /// into the process's memory, and it wakes the waiter, which is asleep in a block
     /// of the client's own, since `UnixFutex.futex` refuses a futex wait without

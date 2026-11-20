@@ -7,3 +7,6 @@ empty kqueue, nevents=INT_MAX: rv=0 errno=0
 two ready, room for two, nevents=INT_MAX: rv=2 errno=0 ident=0x1111 ident=0x2222
 2 ready, room for two before PROT_NONE, nevents=3: rv=2 errno=0
 3 ready, room for two before PROT_NONE, nevents=3: rv=-1 errno=14
+empty kqueue, eventlist=0xFFFFFFFFFFFF0000, nevents=1: rv=0 errno=0
+empty kqueue, eventlist=0xFFFFFFFFFFFF0000, nevents=2147483647: rv=0 errno=0
+two ready, eventlist=0xFFFFFFFFFFFF0000, nevents=1: rv=-1 errno=14

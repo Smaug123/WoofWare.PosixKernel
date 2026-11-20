@@ -7,17 +7,19 @@
 // against nevents * sizeof(struct kevent) before it copies anything out, as
 // Linux's epoll_wait screens maxevents * sizeof(struct epoll_event): an
 // nevents of INT_MAX, both on an empty kqueue and with two events ready and
-// room for only those two.
+// room for only those two; an eventlist that reaches a PROT_NONE page; and an
+// eventlist outside user space.
 //
 // The events are two EVFILT_USER registrations, idents 0x1111 and 0x2222,
 // each triggered with NOTE_TRIGGER.
 //
 // Results on Darwin 27.2.0 arm64: struct kevent is 32 bytes and kevent64_s
 // 48, by sizeof and by the stride of the kernel's stores alike, and kevent
-// screens nothing against nevents: INT_MAX is answered as any count is, and
-// an eventlist which reaches an unmapped page faults (EFAULT) only once an
-// event is copied onto it. The x86-64 compiler lays both structs out at the
-// same sizes.
+// screens nothing against nevents: INT_MAX is answered as any count is, an
+// eventlist which reaches an unmapped page faults (EFAULT) only once an event
+// is copied onto it, and an eventlist outside user space altogether is
+// answered as any other while no event is copied, and with EFAULT once one
+// is. The x86-64 compiler lays both structs out at the same sizes.
 //
 // Output beside this file, measured 2026-11-20: darwin-27.2.0-arm64.txt,
 // natively:
@@ -158,6 +160,26 @@ int main(void) {
                    rv < 0 ? errno : 0);
             close(kq);
         }
+    }
+    // An eventlist at an address outside user space altogether, so that any
+    // range check of it, numeric or by mapping, would fail: an empty kqueue,
+    // for one event and for INT_MAX, and, as the control, two events ready.
+    {
+        struct kevent *outside = (struct kevent *)(uintptr_t)0xFFFFFFFFFFFF0000ull;
+        int kq = kqueue();
+        int counts[] = {1, INT_MAX};
+        for (int i = 0; i < 2; i++) {
+            errno = 0;
+            int rv = kevent(kq, NULL, 0, outside, counts[i], &zero);
+            printf("empty kqueue, eventlist=0xFFFFFFFFFFFF0000, nevents=%d: rv=%d errno=%d\n", counts[i], rv,
+                   rv < 0 ? errno : 0);
+        }
+        close(kq);
+        kq = ready_kqueue(0);
+        errno = 0;
+        int rv = kevent(kq, NULL, 0, outside, 1, &zero);
+        printf("two ready, eventlist=0xFFFFFFFFFFFF0000, nevents=1: rv=%d errno=%d\n", rv, rv < 0 ? errno : 0);
+        close(kq);
     }
     return 0;
 }

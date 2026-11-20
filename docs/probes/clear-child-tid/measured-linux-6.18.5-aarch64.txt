@@ -3,11 +3,15 @@ ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
 5
 store: before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a set_tid_address-returned-gettid=yes
 store-control: before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a
-wait=FUTEX_WAIT: ret=0 errno=0 took=204 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
-wait=FUTEX_WAIT_PRIVATE: ret=-1 errno=ETIMEDOUT took=1000 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
-wait=FUTEX_WAIT_BITSET: ret=0 errno=0 took=200 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
-wait=FUTEX_WAIT_BITSET_PRIVATE: ret=-1 errno=ETIMEDOUT took=1002 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
-two-shared: woken=1 waiter0: ret=0 errno=0 took=204 waiter1: ret=-1 errno=ETIMEDOUT took=1005 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
-last-thread=exit: ret=-1 errno=ETIMEDOUT took=1005 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
-last-thread=exit_group: ret=-1 errno=ETIMEDOUT took=1005 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
-last-thread=control: ret=0 errno=0 took=200 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0
+wait=FUTEX_WAIT: asleep=1 exit-before-deadline=yes ret=0 errno=0 took=2 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_PRIVATE: asleep=1 exit-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1003 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_BITSET: asleep=1 exit-before-deadline=yes ret=0 errno=0 took=2 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_BITSET_PRIVATE: asleep=1 exit-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1004 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+two-shared: asleep=1 exit-before-deadline=yes woken=1 waiter0: ret=0 errno=0 took=2 waiter1: ret=-1 errno=ETIMEDOUT took=1000 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+unwritable=read-only: thread-gone=yes process-runs=yes word=0x5a5a5a5a
+unwritable=prot-none: thread-gone=yes process-runs=yes
+unwritable=null-page: thread-gone=yes process-runs=yes
+last-thread=exit: asleep=1 released-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1005 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
+last-thread=exit_group: asleep=1 released-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1002 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
+last-thread=control: asleep=1 released-before-deadline=yes ret=0 errno=0 took=2 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0
+last-thread=clone-vm: asleep=1 released-before-deadline=yes ret=0 errno=0 took=1 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0

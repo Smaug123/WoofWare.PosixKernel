@@ -2,7 +2,8 @@ namespace WoofWare.PosixKernel
 
 // How each kernel hands a raw errno back is measured by
 // docs/probes/raw-syscall-error, on Darwin 27.2.0 arm64 and Linux 6.18.5
-// aarch64.
+// aarch64. No x86-64 kernel has been measured: the probe's x86-64 Linux output
+// is Rosetta's translation onto the aarch64 kernel.
 
 /// <summary>
 /// Describes which platform's errno convention the kernel is using.
@@ -17,13 +18,13 @@ namespace WoofWare.PosixKernel
 /// </remarks>
 /// <remarks>
 /// The two kernels also hand a failed syscall's errno back to the process differently, at the syscall instruction itself.
-/// Linux returns the errno negated in the result register (<c>x0</c> on arm64).
-/// Darwin returns the errno itself, positive, in the result register, and sets the carry flag; a call that succeeds returns with the carry flag clear.
+/// On arm64, Linux returns the errno negated in <c>x0</c>.
+/// Darwin returns the errno itself, positive, in <c>x0</c>, and sets the carry flag; a call that succeeds returns with the carry flag clear.
 /// Either way, the number is in that platform's own numbering.
 /// </remarks>
 /// <example>
 /// A <c>chdir(2)</c> through a symbolic link that names itself fails with <c>ELOOP</c>.
-/// The syscall instruction returns -40 on Linux, and 62 with the carry flag set on Darwin.
+/// On arm64, the syscall instruction returns -40 on Linux, and 62 with the carry flag set on Darwin.
 /// </example>
 [<RequireQualifiedAccess>]
 type RawErrnoNumbering =

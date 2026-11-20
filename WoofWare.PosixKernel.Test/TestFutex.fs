@@ -972,7 +972,11 @@ module TestFutex =
         let rows =
             clearChildTid
             |> List.choose (fun line ->
-                let row = Regex.Match (line, @"^wait=(\S+): ret=(-?\d+) errno=(\S+) took=\d+ ")
+                let row =
+                    Regex.Match (
+                        line,
+                        @"^wait=(\S+): asleep=1 exit-before-deadline=yes ret=(-?\d+) errno=(\S+) took=\d+ "
+                    )
 
                 if row.Success then
                     Some (line, row.Groups.[1].Value, row.Groups.[3].Value)
@@ -993,13 +997,19 @@ module TestFutex =
             | "FUTEX_WAIT_BITSET_PRIVATE" ->
                 (line, errno) |> shouldEqual (line, "ETIMEDOUT")
 
-                let op =
-                    if op = "FUTEX_WAIT_PRIVATE" then
-                        UnixFutex.FutexWaitPrivate
-                    else
-                        UnixFutex.FutexWaitBitsetPrivate
-
                 let pid, system = boot 2
+
+                // The probe's waits time out after 1 s: a relative timeout for
+                // FUTEX_WAIT_PRIVATE, an instant on the monotonic clock for the
+                // bitset wait.
+                let op, timeout =
+                    if op = "FUTEX_WAIT_PRIVATE" then
+                        UnixFutex.FutexWaitPrivate, seconds 1L 0L
+                    else
+                        let deadline = UnixSystem.nanosecondsSinceBoot system + 1_000_000_000L
+
+                        UnixFutex.FutexWaitBitsetPrivate,
+                        seconds (deadline / 1_000_000_000L) (deadline % 1_000_000_000L)
 
                 let system =
                     match
@@ -1010,7 +1020,7 @@ module TestFutex =
                             op
                             0
                             (CopiedArgument.Readable 0u)
-                            TimespecArgument.Null
+                            timeout
                             UnixFutex.FutexBitsetMatchAny
                             system
                     with
@@ -1022,8 +1032,15 @@ module TestFutex =
                     | ProcessFate.Continues ((), system) -> system
                     | ProcessFate.ProcessEnded _ -> failwith $"%s{line}: the exit ended the process"
 
-                let woken, _ = sweep pid system
+                let woken, system = sweep pid system
                 (line, woken) |> shouldEqual (line, [])
+
+                // Still asleep in its wait, which its deadline then ends.
+                let woken, system = sweep pid (UnixSystem.advanceClock 1_000_000_000L system)
+                (line, woken) |> shouldEqual (line, [ 0 ])
+
+                (line, fst (finish pid 0 system))
+                |> shouldEqual (line, failed UnixError.ETIMEDOUT)
             | other -> failwith $"the probe names no wait %s{other}"
 
     [<Test>]

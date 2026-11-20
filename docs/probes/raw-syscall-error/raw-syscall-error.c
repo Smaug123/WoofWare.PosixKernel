@@ -78,19 +78,19 @@ static struct raw raw1(long nr, uint64_t a0, int carry_in) {
 #else
     uint64_t rax = (uint64_t)nr;
 #endif
-    uint64_t flags;
+    uint8_t carry;
     if (carry_in)
-        __asm__ volatile("stc\n\tsyscall\n\tpushfq\n\tpopq %[f]"
-                         : "+a"(rax), [f] "=r"(flags)
+        __asm__ volatile("stc\n\tsyscall\n\tsetc %[c]"
+                         : "+a"(rax), [c] "=q"(carry)
                          : "D"(a0)
                          : "rcx", "r11", "rdx", "memory", "cc");
     else
-        __asm__ volatile("clc\n\tsyscall\n\tpushfq\n\tpopq %[f]"
-                         : "+a"(rax), [f] "=r"(flags)
+        __asm__ volatile("clc\n\tsyscall\n\tsetc %[c]"
+                         : "+a"(rax), [c] "=q"(carry)
                          : "D"(a0)
                          : "rcx", "r11", "rdx", "memory", "cc");
     r.ret = rax;
-    r.carry = (int)(flags & 1);
+    r.carry = carry;
 #else
 #error "unmeasured architecture"
 #endif
@@ -121,14 +121,20 @@ int main(void) {
     printf("%s %s %s; ENOENT=%d EBADF=%d ELOOP=%d; getpid()=%d\n", u.sysname, u.release, u.machine, ENOENT, EBADF,
            ELOOP, (int)getpid());
 
-    char loop[64];
-    snprintf(loop, sizeof loop, "/tmp/rse-loop-%d", (int)getpid());
-    unlink(loop);
+    // A directory of the probe's own, holding a symbolic link to itself and
+    // nothing else, so that `missing` is certainly missing.
+    char dir[] = "/tmp/rse-XXXXXX";
+    if (mkdtemp(dir) == NULL) {
+        perror("mkdtemp");
+        return 1;
+    }
+    char loop[64], missing[64];
+    snprintf(loop, sizeof loop, "%s/loop", dir);
+    snprintf(missing, sizeof missing, "%s/missing", dir);
     if (symlink(loop, loop) != 0) {
         perror("symlink");
         return 1;
     }
-    const char *missing = "/nonexistent-raw-syscall-error-probe";
 
     long lr;
     int le;
@@ -154,5 +160,6 @@ int main(void) {
     row("chdir(loop)", SYS_chdir, (uint64_t)(uintptr_t)loop, lr, le);
 
     unlink(loop);
+    rmdir(dir);
     return 0;
 }
