@@ -2,7 +2,10 @@
 // getsockopt(2) store their two outputs -- the address (or option value) into
 // the process's buffer, and the length into its socklen_t cell -- observed by
 // making the two overlap, so that the store made second overwrites the bytes
-// they share.
+// they share. getsockname and getpeername are measured on a connected IPv4
+// TCP socket (a struct sockaddr_in, 16 bytes) and, as getsockname6 and
+// getpeername6, on a dual-mode IPv6 one connected through a v4-mapped address
+// (a struct sockaddr_in6, 28 bytes); accept and recvfrom on IPv4 TCP and UDP.
 //
 // Each row puts the cell at offset k from the start of the buffer (k < 0: the
 // buffer starts inside the cell), declares the length D in the cell, makes the
@@ -32,13 +35,14 @@
 //
 // * darwin-27.2.0-arm64.txt: natively (macOS 27.2.1),
 //     cc -Wall -O1 -o /tmp/p overlapping-output-order.c && /tmp/p
-//   Every row that tells the orders apart reads addr-first, for every call and
-//   option.
+//   Every row that tells the orders apart reads addr-first, for every call,
+//   address family and option.
 // * linux-6.18.5-aarch64.txt: Apple's `container` 1.4.1, gcc:14 image,
 //     container run --rm -v "$PWD":/p -w /p gcc:14 sh -c
 //       'cc -Wall -O1 -o /tmp/p overlapping-output-order.c && /tmp/p'
-//   getsockname, getpeername, accept and recvfrom read length-first (their
-//   move_addr_to_user stores the length first from 6.18, commit 1fb0e471611d);
+//   getsockname, getpeername (IPv4 and IPv6), accept and recvfrom read
+//   length-first (their move_addr_to_user stores the length first from 6.18,
+//   commit 1fb0e471611d);
 //   getsockopt reads addr-first for SO_REUSEADDR, SO_ERROR and SO_LINGER, the
 //   SOL_SOCKET options, and length-first for TCP_NODELAY and IPV6_V6ONLY.
 //
@@ -59,6 +63,7 @@
 #include <sys/reboot.h>
 #endif
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -67,9 +72,17 @@
 #define BUF 8
 // The region printed: from SHOW_FROM, SHOW bytes.
 #define SHOW_FROM 4
-#define SHOW 32
+#define SHOW 40
 #define KMIN (-3)
-#define KMAX 20
+#define KMAX 30
+
+// The calls go through syscall(2) with the buffer and the cell as plain byte
+// addresses: the cell is often misaligned for a socklen_t, and libc declares
+// the two output pointers of these calls restrict, so neither may reach libc's
+// own declarations. Darwin deprecates syscall(2), which still makes the call.
+#ifdef __APPLE__
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
 
 static void lo_up(void) {
     int s = socket(AF_INET, SOCK_DGRAM, 0);
@@ -93,7 +106,7 @@ static void die(const char *what) {
 // out for this very call, read through a separate, ample buffer.
 struct call {
     const char *name;
-    int (*make)(struct call *self, void *buf, socklen_t *cell, unsigned char *expect);
+    int (*make)(struct call *self, void *buf, void *cell, unsigned char *expect);
     int fd;      // the socket the call is made on
     int peer;    // accept: the listener's address is in `addr`; recvfrom: the sender
     int level;   // getsockopt
@@ -101,23 +114,25 @@ struct call {
     struct sockaddr_in addr;
 };
 
-static int make_getsockname(struct call *self, void *buf, socklen_t *cell, unsigned char *expect) {
+static int answer(long r) { return r < 0 ? -1 : 0; }
+
+static int make_getsockname(struct call *self, void *buf, void *cell, unsigned char *expect) {
     unsigned char big[128];
     socklen_t bl = sizeof big;
     if (getsockname(self->fd, (struct sockaddr *)big, &bl) != 0) die("getsockname expect");
     memcpy(expect, big, sizeof big);
-    return getsockname(self->fd, (struct sockaddr *)buf, cell);
+    return answer(syscall(SYS_getsockname, self->fd, buf, cell));
 }
 
-static int make_getpeername(struct call *self, void *buf, socklen_t *cell, unsigned char *expect) {
+static int make_getpeername(struct call *self, void *buf, void *cell, unsigned char *expect) {
     unsigned char big[128];
     socklen_t bl = sizeof big;
     if (getpeername(self->fd, (struct sockaddr *)big, &bl) != 0) die("getpeername expect");
     memcpy(expect, big, sizeof big);
-    return getpeername(self->fd, (struct sockaddr *)buf, cell);
+    return answer(syscall(SYS_getpeername, self->fd, buf, cell));
 }
 
-static int make_accept(struct call *self, void *buf, socklen_t *cell, unsigned char *expect) {
+static int make_accept(struct call *self, void *buf, void *cell, unsigned char *expect) {
     int c = socket(AF_INET, SOCK_STREAM, 0);
     if (connect(c, (struct sockaddr *)&self->addr, sizeof self->addr) != 0) die("connect");
     unsigned char big[128];
@@ -125,7 +140,7 @@ static int make_accept(struct call *self, void *buf, socklen_t *cell, unsigned c
     socklen_t bl = sizeof big;
     if (getsockname(c, (struct sockaddr *)big, &bl) != 0) die("getsockname client");
     memcpy(expect, big, sizeof big);
-    int a = accept(self->fd, (struct sockaddr *)buf, cell);
+    int a = (int)syscall(SYS_accept, self->fd, buf, cell);
     int e = errno;
     if (a >= 0) close(a);
     close(c);
@@ -133,7 +148,7 @@ static int make_accept(struct call *self, void *buf, socklen_t *cell, unsigned c
     return a >= 0 ? 0 : -1;
 }
 
-static int make_recvfrom(struct call *self, void *buf, socklen_t *cell, unsigned char *expect) {
+static int make_recvfrom(struct call *self, void *buf, void *cell, unsigned char *expect) {
     unsigned char big[128];
     memset(big, 0, sizeof big);
     socklen_t bl = sizeof big;
@@ -141,17 +156,17 @@ static int make_recvfrom(struct call *self, void *buf, socklen_t *cell, unsigned
     memcpy(expect, big, sizeof big);
     if (sendto(self->peer, "x", 1, 0, (struct sockaddr *)&self->addr, sizeof self->addr) != 1) die("sendto");
     char data[16];
-    ssize_t r = recvfrom(self->fd, data, sizeof data, 0, (struct sockaddr *)buf, cell);
+    long r = syscall(SYS_recvfrom, self->fd, data, sizeof data, 0, buf, cell);
     return r == 1 ? 0 : -1;
 }
 
-static int make_getsockopt(struct call *self, void *buf, socklen_t *cell, unsigned char *expect) {
+static int make_getsockopt(struct call *self, void *buf, void *cell, unsigned char *expect) {
     unsigned char big[128];
     memset(big, 0, sizeof big);
     socklen_t bl = sizeof big;
     if (getsockopt(self->fd, self->level, self->option, big, &bl) != 0) die("getsockopt expect");
     memcpy(expect, big, sizeof big);
-    return getsockopt(self->fd, self->level, self->option, buf, cell);
+    return answer(syscall(SYS_getsockopt, self->fd, self->level, self->option, buf, cell));
 }
 
 static void hex(const unsigned char *p, int n) {
@@ -187,7 +202,7 @@ static int control(struct call *c, int declared, int *n_out, socklen_t *l_out) {
     }
     int n = end[0] > end[1] ? end[0] : end[1];
     int expected = memcmp(run[0], expect[0], n) == 0 && memcmp(run[1], expect[1], n) == 0;
-    printf("%-11s D=%-3d control  r=%d,%d errno=%d,%d n=%d L=%u,%u expected=%s stored=",
+    printf("%-13s D=%-3d control  r=%d,%d errno=%d,%d n=%d L=%u,%u expected=%s stored=",
            c->name, declared, r[0], r[1], e[0], e[1], n, cell[0], cell[1],
            expected ? "yes" : "no");
     hex(run[0], n);
@@ -205,7 +220,7 @@ static void overlapping(struct call *c, int declared, int n, socklen_t l, int k)
     put_cell(cellp, (socklen_t)declared);
     memcpy(before, region, REGION);
     errno = 0;
-    int r = c->make(c, buf, (socklen_t *)cellp, expect);
+    int r = c->make(c, buf, cellp, expect);
     int e = r == 0 ? 0 : errno;
 
     memcpy(al, before, REGION);
@@ -221,7 +236,7 @@ static void overlapping(struct call *c, int declared, int n, socklen_t l, int k)
     else if (memcmp(region, al, REGION) == 0) verdict = same ? "either" : "addr-first";
     else if (memcmp(region, la, REGION) == 0) verdict = "length-first";
     else verdict = "NEITHER";
-    printf("%-11s D=%-3d k=%-3d r=%d errno=%d %-12s ", c->name, declared, k, r, e, verdict);
+    printf("%-13s D=%-3d k=%-3d r=%d errno=%d %-12s ", c->name, declared, k, r, e, verdict);
     hex(region + SHOW_FROM, SHOW);
     if (verdict[0] == 'N') {
         printf(" addr-first=");
@@ -285,6 +300,33 @@ int main(void) {
     sweep(&gpn, addr_lengths, nal);
     sweep(&acc, addr_lengths, nal);
     sweep(&rcv, addr_lengths, nal);
+
+    // A dual-mode IPv6 stream socket connected to the IPv4 listener through
+    // its v4-mapped address, whose names are a 28-byte struct sockaddr_in6.
+    int zero = 0;
+    int c6 = socket(AF_INET6, SOCK_STREAM, 0);
+    struct sockaddr_in6 mapped;
+    memset(&mapped, 0, sizeof mapped);
+#ifdef __APPLE__
+    mapped.sin6_len = sizeof mapped;
+#endif
+    mapped.sin6_family = AF_INET6;
+    mapped.sin6_port = la.sin_port;
+    mapped.sin6_addr.s6_addr[10] = 0xff;
+    mapped.sin6_addr.s6_addr[11] = 0xff;
+    memcpy(&mapped.sin6_addr.s6_addr[12], &la.sin_addr, 4);
+    if (c6 < 0 || setsockopt(c6, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof zero) != 0
+        || connect(c6, (struct sockaddr *)&mapped, sizeof mapped) != 0) {
+        perror("dual-mode connect: the IPv6 getsockname and getpeername rows are skipped");
+    } else {
+        int cs6 = accept(l, NULL, NULL);
+        if (cs6 < 0) die("accept dual-mode");
+        const int addr6_lengths[] = { 10, 20, 26, 28, 128 };
+        struct call gsn6 = { .name = "getsockname6", .make = make_getsockname, .fd = c6 };
+        struct call gpn6 = { .name = "getpeername6", .make = make_getpeername, .fd = c6 };
+        sweep(&gsn6, addr6_lengths, sizeof addr6_lengths / sizeof addr6_lengths[0]);
+        sweep(&gpn6, addr6_lengths, sizeof addr6_lengths / sizeof addr6_lengths[0]);
+    }
 
     // Options, on unconnected sockets, set to values whose bytes differ from
     // the lengths stored beside them.
