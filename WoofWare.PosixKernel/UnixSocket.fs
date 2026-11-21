@@ -2227,42 +2227,10 @@ module UnixSocket =
         | Ok LengthCellRead.Faults -> Ok (SockNameAdmission.Answered UnixError.EFAULT)
         | Ok LengthCellRead.Reads -> Ok (SockNameAdmission.ReadLength name)
 
-    /// A `getsockname(2)` or `getpeername(2)` past `admission`, given the
-    /// `socklen_t` read out of the caller's length cell where `admission` says
-    /// the kernel reads it, or `None` where it does not. Fails loudly unless
-    /// `declaredLength` is present exactly when the kernel reads the cell,
-    /// naming `call` as the call that was given it.
-    let private nameWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (call : string)
-        (admission : Result<SockNameAdmission, GetSockNameRefusal>)
-        (destination : UserBuffer)
-        (declaredLength : uint32 option)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<GetSockNameAnswer, GetSockNameRefusal>
-        =
-        let lengthNeverRead (reason : string) =
-            if declaredLength.IsSome then
-                failwith
-                    $"UnixSocket.%s{call}: the caller supplied a length that the kernel never reads, because %s{reason} (this is a bug in the caller)."
-
-        match admission with
-        | Error refusal ->
-            lengthNeverRead "the call is refused before it would"
-            Error refusal
-        | Ok (SockNameAdmission.Answered error) ->
-            lengthNeverRead $"the call answers %O{error} first"
-            Ok (GetSockNameAnswer.Failed (error, None))
-        | Ok (SockNameAdmission.ReadLength name) ->
-            match declaredLength with
-            | Some declaredLength -> reportName name destination declaredLength system
-            | None ->
-                failwith
-                    $"UnixSocket.%s{call}: the kernel reads the caller's length cell, but the caller supplied no length (this is a bug in the caller)."
-
     /// Everything `getsockname(2)` decides before the kernel reads the
     /// caller's length cell at `length`: the step before the read that
     /// `getsockname` answers as a `CallProgress`. Changes nothing.
-    let internal tryAdmitGetSockName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let private tryAdmitGetSockName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (length : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
@@ -2292,21 +2260,6 @@ module UnixSocket =
             | None -> Ipv4Endpoint.ofParts Ipv4Address.any 0us
 
         admitLengthCell (encodeName system.Machine socketId socket endpoint) length
-
-    /// A `getsockname` made in one step, given the `socklen_t` read out of the
-    /// caller's length cell where `tryAdmitGetSockName` says the kernel reads it,
-    /// or `None` where it does not: what `getsockname` and then
-    /// `getsocknameWithLength` answer together. Fails loudly unless
-    /// `declaredLength` is present exactly when the admission reads the cell.
-    let internal tryGetsocknameLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (fd : int)
-        (destination : UserBuffer)
-        (length : UserBuffer)
-        (declaredLength : uint32 option)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<GetSockNameAnswer, GetSockNameRefusal>
-        =
-        nameWithLength "getsockname" (tryAdmitGetSockName fd length system) destination declaredLength system
 
     /// `tryGetsockname` once `Entry` has admitted its caller.
     let private tryGetsocknameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2422,7 +2375,7 @@ module UnixSocket =
     /// Everything `getpeername(2)` decides before the kernel reads the
     /// caller's length cell at `length`: the step before the read that
     /// `getpeername` answers as a `CallProgress`. Changes nothing.
-    let internal tryAdmitGetPeerName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let private tryAdmitGetPeerName<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (length : UserBuffer)
         (system : ProcessView<'Thread, 'Handler>)
@@ -2512,21 +2465,6 @@ module UnixSocket =
             | TcpEndState.Closed _ ->
                 failwith
                     $"UnixSocket.getpeername: socket %O{socketId} is the %A{connectionEnd} end of %O{connectionId}, which the connection records as closed (this is a bug in this library: UnixSystem.checkInvariants reports it as ConnectionEndClosedUnderSocket)."
-
-    /// A `getpeername` made in one step, given the `socklen_t` read out of the
-    /// caller's length cell where `tryAdmitGetPeerName` says the kernel reads it,
-    /// or `None` where it does not: what `getpeername` and then
-    /// `getpeernameWithLength` answer together. Fails loudly unless
-    /// `declaredLength` is present exactly when the admission reads the cell.
-    let internal tryGetpeernameLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (fd : int)
-        (destination : UserBuffer)
-        (length : UserBuffer)
-        (declaredLength : uint32 option)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<GetSockNameAnswer, GetSockNameRefusal>
-        =
-        nameWithLength "getpeername" (tryAdmitGetPeerName fd length system) destination declaredLength system
 
     /// `tryGetpeername` once `Entry` has admitted its caller.
     let private tryGetpeernameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
