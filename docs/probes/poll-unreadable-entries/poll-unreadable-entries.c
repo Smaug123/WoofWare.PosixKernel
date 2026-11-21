@@ -11,9 +11,10 @@
 //      and one more, and 4294967295; each with timeout 0, -1, 100 and -2. A
 //      250 ms timer cuts a sleep short, so EINTR means the call slept.
 //   Z  nfds 0, at NULL, at an unmapped address (8), and at a PROT_NONE page
-//      (its label gives its address); each with timeout 0, 100 and -1. `slept` says whether the call took
-//      at least 50 ms; a delay in scheduling the probe can set it too, so it
-//      means something only for a call that should sleep.
+//      (its label gives its address); each with timeout 0, 100 and -1.
+//      `slept` says whether the call took at least 90 ms, where every sleep
+//      a row means is at least 100 ms; a delay in scheduling the probe that
+//      long can set it too.
 //   Y  addresses at and past the top of the user address space, which a
 //      kernel can screen without reading anything: on arm64 2^48 - 1, 2^48
 //      and 2^48 + 1 (the limit with a 48-bit virtual address); on x86-64
@@ -63,9 +64,9 @@
 //   Darwin: cc -Wall -O1 -o /tmp/pue poll-unreadable-entries.c && /tmp/pue
 //   Linux, root (Apple's `container`, gcc:14 image):
 //     container run --rm -v "$PWD":/probe gcc:14 sh -c 'gcc -Wall -O1 -o /tmp/pue /probe/poll-unreadable-entries.c && /tmp/pue'
-//   Linux x86-64, as /init of an initramfs booted under QEMU (it brings the
-//   loopback interface up first when it runs as pid 1, and powers off at the
-//   end): in an amd64 debian:trixie container, install gcc, libc6-dev and
+//   Linux x86-64, as /init of an initramfs booted under QEMU (run as /init
+//   with pid 1, it brings the loopback interface up first and powers off at
+//   the end): in an amd64 debian:trixie container, install gcc, libc6-dev and
 //   cpio, `apt-get download` a linux-image-*-amd64 package and take its
 //   vmlinuz, build this probe with `gcc -static -O1` as /init in a directory
 //   holding an empty /proc, and `find . | cpio -o -H newc | gzip` it; then
@@ -171,8 +172,10 @@ static void row(const char *section, const char *label, void *buf, unsigned int 
     disarm_timer();
     char after[16] = "-";
     if (revents0) snprintf(after, sizeof after, "0x%hx", (unsigned short)*revents0);
+    // Every sleep a row means is at least 100 ms, so a delay in scheduling
+    // the probe has to reach 90 ms to pass for one.
     printf("%s %s nfds=%u timeout=%d rv=%d errno=%s slept=%s revents0=%s\n", section, label, nfds, timeout, rv,
-           rv < 0 ? strerror(e) : "-", elapsed >= 50 ? "yes" : "no", after);
+           rv < 0 ? strerror(e) : "-", elapsed >= 90 ? "yes" : "no", after);
 }
 
 static void set_soft(rlim_t soft)
@@ -418,11 +421,13 @@ static void loopback_up(void)
 
 static int run(void);
 
-int main(void)
+int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
 #ifdef __linux__
-    if (getpid() == 1)
+    // The initramfs mode: run by the kernel as /init, not as a container's
+    // entrypoint, which is pid 1 too.
+    if (getpid() == 1 && argc >= 1 && strcmp(argv[0], "/init") == 0)
     {
         loopback_up();
         int rc = run();

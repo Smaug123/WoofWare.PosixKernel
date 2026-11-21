@@ -520,9 +520,12 @@ type PausedPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             Thread : 'Thread
             Count : int
             Milliseconds : int
-            /// The system the call was made in: everything a `poll` does
-            /// before the copy is a question.
+            /// The view of the caller's process the call was made in:
+            /// everything a `poll` does before the copy is a question.
             System : ProcessView<'Thread, 'Handler>
+            /// The kernel `System` is a view of, handed back whole by a
+            /// resumption that changes nothing.
+            Origin : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -1579,6 +1582,7 @@ module UnixPoll =
     /// `tryPoll` once `Entry` has admitted its caller.
     let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (origin : UnixSystem<'Thread, 'Handler>)
         (fds : UserBuffer)
         (nfds : uint32)
         (milliseconds : int)
@@ -1597,53 +1601,36 @@ module UnixPoll =
         | Ok None ->
 
         // Measured (`docs/probes/poll-unreadable-entries`, sections Z and Y):
-        // no entries read nothing, wherever `fds` points. Linux still checks
-        // the array's address against the user address limit when it writes
-        // the entries back, after it has polled, and fails with EFAULT there;
-        // Darwin checks nothing. The machine's `UserBufferCheck` holds that
-        // limit under Linux, and is `AtCopyTime` under Darwin.
+        // no entries read nothing, wherever `fds` points, though the platform
+        // may check the address after polling.
         if nfds = 0u then
             let platform = system.Machine.UnixPlatform
 
-            // Measured on exactly these kernels, so no other version is taken
-            // to agree (x86-64 with four- and five-level paging alike). An
-            // address within the limit passes every rule a kernel could
-            // screen it by (and none), so only one past it needs the
-            // measurement.
-            let measured =
-                match SimulatedUnixPlatform.kernel platform, SimulatedUnixPlatform.architecture platform with
-                | SimulatedUnixKernel.Linux (version, _), architecture ->
-                    let at (major : uint32) (minor : uint32) (patch : uint32) : LinuxKernelVersion =
-                        {
-                            Major = major
-                            Minor = minor
-                            Patch = patch
-                        }
-
-                    match architecture with
-                    | SimulatedUnixArchitecture.Arm64 -> version = at 6u 18u 5u
-                    | SimulatedUnixArchitecture.X64 -> version = at 6u 12u 113u || version = at 6u 18u 5u
-                | SimulatedUnixKernel.Darwin _, _ -> false
+            // The limit is the machine's (`UnixBootImage.withUserAddressLimit`),
+            // which its `UserBufferCheck` holds under Linux. An address within
+            // it passes every rule a kernel could screen it by (and none), so
+            // only one past it needs the platform's rule.
+            let pastTheLimit (address : uint64) : bool =
+                match UnixMachineState.userBufferCheck system.Machine with
+                | UserBufferCheck.BeforeOperation limit -> address > limit
+                | UserBufferCheck.AtCopyTime -> false
 
             let writeBackFaults =
-                match fds, UnixMachineState.userBufferCheck system.Machine with
-                | UserBuffer.Unmapped address, check when UserBufferCheck.faultsBeforeOperation check address 0UL ->
-                    if measured then
-                        Ok true
-                    else
-                        Error (
-                            PollRefusal.UnmeasuredZeroEntryAddress (
-                                address,
-                                SimulatedUnixPlatform.kernel platform,
-                                SimulatedUnixPlatform.architecture platform
-                            )
+                match SimulatedUnixPlatform.zeroEntryPollAddressCheck platform, fds with
+                | ZeroEntryPollAddressCheck.Unchecked, _ -> Ok false
+                | _, UserBuffer.Mapped
+                | _, UserBuffer.Opaque -> Ok false
+                | _, UserBuffer.Addressless -> Error PollRefusal.AddresslessZeroEntryArray
+                | _, UserBuffer.Unmapped address when not (pastTheLimit address) -> Ok false
+                | ZeroEntryPollAddressCheck.AgainstUserAddressLimit, UserBuffer.Unmapped _ -> Ok true
+                | ZeroEntryPollAddressCheck.Unmeasured, UserBuffer.Unmapped address ->
+                    Error (
+                        PollRefusal.UnmeasuredZeroEntryAddress (
+                            address,
+                            SimulatedUnixPlatform.kernel platform,
+                            SimulatedUnixPlatform.architecture platform
                         )
-                | UserBuffer.Unmapped _, _ -> Ok false
-                | UserBuffer.Mapped, _
-                | UserBuffer.Opaque, _
-                | UserBuffer.Addressless, UserBufferCheck.AtCopyTime -> Ok false
-                | UserBuffer.Addressless, UserBufferCheck.BeforeOperation _ ->
-                    Error PollRefusal.AddresslessZeroEntryArray
+                    )
 
             match writeBackFaults, fds with
             | Error refusal, _ -> Error refusal
@@ -1672,6 +1659,7 @@ module UnixPoll =
                 Count = int nfds
                 Milliseconds = milliseconds
                 System = system
+                Origin = origin
             }
             : PausedPoll<'Thread, 'Handler>)
             |> CallProgress.NeedsCopyIn
@@ -1691,7 +1679,7 @@ module UnixPoll =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryPollIn (Caller.thread caller) fds nfds milliseconds)
+            (tryPollIn (Caller.thread caller) system fds nfds milliseconds)
             system
 
     /// `poll(2)`: what each entry reports, and how many entries report
@@ -1821,7 +1809,11 @@ module UnixPoll =
         (paused : PausedPoll<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryPollWithEntriesIn entries paused)
+        Entry.resumeFrom
+            paused.Origin
+            paused.System
+            (Shape.result Shape.withSystem)
+            (tryPollWithEntriesIn entries paused)
 
     /// Finish the `poll` that `paused` holds. `entries` are the
     /// `PausedPoll.count` entries of the process's array, in order, as the

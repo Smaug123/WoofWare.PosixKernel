@@ -1054,6 +1054,25 @@ module internal Entry =
 
         Shape.map unfocus shape answer
 
+    /// `resume`, for a call whose paused value kept `origin`, the kernel the
+    /// call was made in, and `focused`, the view it made of it: each view is
+    /// put back as `call` puts it back, so a resumption that changed nothing
+    /// hands back `origin` itself (`ProcessView.unfocusFrom`).
+    let resumeFrom<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
+        (origin : UnixSystem<'Thread, 'Handler>)
+        (focused : ProcessView<'Thread, 'Handler>)
+        (shape : Shape<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
+        (answer : 'InView)
+        : 'InKernel
+        =
+        let unfocus =
+            {
+                Back = ProcessView.unfocusFrom origin focused
+                Without = ProcessView.unfocusWithout
+            }
+
+        Shape.map unfocus shape answer
+
     /// A question about the process `pid` that no thread of it asks, such as
     /// which threads it has: fails with `InvalidOperationException` unless
     /// the kernel holds a process `pid`, and otherwise answers what `body`

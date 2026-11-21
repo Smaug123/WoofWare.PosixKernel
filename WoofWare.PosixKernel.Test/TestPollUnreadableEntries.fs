@@ -942,3 +942,26 @@ module TestPollUnreadableEntries =
 
             poll (unmappedArrayAt (pastTheLimit platform) 0u) 0 system
             |> shouldEqual (Ok (PollOutcome.Failed UnixError.EFAULT, system))
+
+    /// A poll that changes nothing hands back the very system it was made
+    /// in, through its pause as through no pause, so that a client comparing
+    /// systems by reference (as `UnixWait.wake`'s memo does) sees no change.
+    [<Test>]
+    let ``a poll that changes nothing hands back the system it was made in`` () : unit =
+        for platform in [ linuxArm64_6_18_5 ; darwin27_2 ] do
+            let system, _ = world false platform
+
+            let idle =
+                [
+                    {
+                        PollEntry.Fd = -1
+                        Events = pollIn
+                    }
+                ]
+
+            for fds, nfds in [ readableArray idle ; readableArray [] ; unmappedArrayAt 8UL 1u ] do
+                match PollCall.tryPollCopied (Callers.thread thread system) fds nfds 0 system with
+                | Ok (_, after) ->
+                    if not (obj.ReferenceEquals (after, system)) then
+                        failwith $"%A{platform}: a poll of %A{fds} changed nothing but handed back another system"
+                | Error refusal -> failwith $"%A{platform}: refused %A{refusal}"
