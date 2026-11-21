@@ -638,7 +638,7 @@ module TestBlockingAccept =
                             {
                                 Listener = SleepTarget.Waiting listeners.[park.Listener]
                                 Destination = UserBuffer.Mapped
-                                Cell = AcceptLengthCell.Read 16u
+                                Cell = AcceptCalls.forgedCell platform
                                 NewSocketNonBlocking = false
                                 NewSocketCloseOnExec = false
                             })
@@ -1945,7 +1945,7 @@ module TestBlockingAccept =
                     {
                         Listener = SleepTarget.Waiting (listener, fd)
                         Destination = UserBuffer.Mapped
-                        Cell = AcceptLengthCell.Read 16u
+                        Cell = AcceptCalls.forgedCell platform
                         NewSocketNonBlocking = false
                         NewSocketCloseOnExec = false
                     })
@@ -1969,7 +1969,7 @@ module TestBlockingAccept =
                 {
                     Listener = SleepTarget.Waiting (absent, 1_000)
                     Destination = UserBuffer.Mapped
-                    Cell = AcceptLengthCell.Read 16u
+                    Cell = AcceptCalls.forgedCell platform
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 })

@@ -801,7 +801,7 @@ module TestSyscallInterruption =
                 {
                     Listener = waiting
                     Destination = UserBuffer.Mapped
-                    Cell = AcceptLengthCell.Read 16u
+                    Cell = AcceptCalls.forgedCellUnder SimulatedUnixFlavour.Linux
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 }

@@ -89,6 +89,96 @@ A listener-queued cell=unmapped dest=mapped -> EFAULT cellafter=- written=0 queu
 A listener-queued cell=16 dest=mapped -> OK cellafter=16 written=16 queued=no client=eof
 A listener-queued cell=0 dest=mapped -> OK cellafter=16 written=0 queued=no client=eof
 A listener-queued cell=-1 dest=mapped -> EINVAL cellafter=-1 written=0 queued=no client=eof
+A listener-queued-blocking cell=null dest=null -> OK cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=unmapped dest=null -> OK cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=16 dest=null -> OK cellafter=16 written=0 queued=no client=eof
+A listener-queued-blocking cell=0 dest=null -> OK cellafter=0 written=0 queued=no client=eof
+A listener-queued-blocking cell=-1 dest=null -> OK cellafter=-1 written=0 queued=no client=eof
+A listener-queued-blocking cell=null dest=unmapped -> EFAULT cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=unmapped dest=unmapped -> EFAULT cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=16 dest=unmapped -> EFAULT cellafter=16 written=0 queued=no client=eof
+A listener-queued-blocking cell=0 dest=unmapped -> OK cellafter=16 written=0 queued=no client=eof
+A listener-queued-blocking cell=-1 dest=unmapped -> EINVAL cellafter=-1 written=0 queued=no client=eof
+A listener-queued-blocking cell=null dest=mapped -> EFAULT cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=unmapped dest=mapped -> EFAULT cellafter=- written=0 queued=no client=eof
+A listener-queued-blocking cell=16 dest=mapped -> OK cellafter=16 written=16 queued=no client=eof
+A listener-queued-blocking cell=0 dest=mapped -> OK cellafter=16 written=0 queued=no client=eof
+A listener-queued-blocking cell=-1 dest=mapped -> EINVAL cellafter=-1 written=0 queued=no client=eof
+A unix-stream-listener cell=null dest=null -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=unmapped dest=null -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=16 dest=null -> EAGAIN cellafter=16 written=0
+A unix-stream-listener cell=0 dest=null -> EAGAIN cellafter=0 written=0
+A unix-stream-listener cell=-1 dest=null -> EAGAIN cellafter=-1 written=0
+A unix-stream-listener cell=null dest=unmapped -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=unmapped dest=unmapped -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=16 dest=unmapped -> EAGAIN cellafter=16 written=0
+A unix-stream-listener cell=0 dest=unmapped -> EAGAIN cellafter=0 written=0
+A unix-stream-listener cell=-1 dest=unmapped -> EAGAIN cellafter=-1 written=0
+A unix-stream-listener cell=null dest=mapped -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=unmapped dest=mapped -> EAGAIN cellafter=- written=0
+A unix-stream-listener cell=16 dest=mapped -> EAGAIN cellafter=16 written=0
+A unix-stream-listener cell=0 dest=mapped -> EAGAIN cellafter=0 written=0
+A unix-stream-listener cell=-1 dest=mapped -> EAGAIN cellafter=-1 written=0
+A unix-dgram cell=null dest=null -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=unmapped dest=null -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=16 dest=null -> EOPNOTSUPP cellafter=16 written=0
+A unix-dgram cell=0 dest=null -> EOPNOTSUPP cellafter=0 written=0
+A unix-dgram cell=-1 dest=null -> EOPNOTSUPP cellafter=-1 written=0
+A unix-dgram cell=null dest=unmapped -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=unmapped dest=unmapped -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=16 dest=unmapped -> EOPNOTSUPP cellafter=16 written=0
+A unix-dgram cell=0 dest=unmapped -> EOPNOTSUPP cellafter=0 written=0
+A unix-dgram cell=-1 dest=unmapped -> EOPNOTSUPP cellafter=-1 written=0
+A unix-dgram cell=null dest=mapped -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=unmapped dest=mapped -> EOPNOTSUPP cellafter=- written=0
+A unix-dgram cell=16 dest=mapped -> EOPNOTSUPP cellafter=16 written=0
+A unix-dgram cell=0 dest=mapped -> EOPNOTSUPP cellafter=0 written=0
+A unix-dgram cell=-1 dest=mapped -> EOPNOTSUPP cellafter=-1 written=0
+A unix-seqpacket-listener cell=null dest=null -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=unmapped dest=null -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=16 dest=null -> EAGAIN cellafter=16 written=0
+A unix-seqpacket-listener cell=0 dest=null -> EAGAIN cellafter=0 written=0
+A unix-seqpacket-listener cell=-1 dest=null -> EAGAIN cellafter=-1 written=0
+A unix-seqpacket-listener cell=null dest=unmapped -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=unmapped dest=unmapped -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=16 dest=unmapped -> EAGAIN cellafter=16 written=0
+A unix-seqpacket-listener cell=0 dest=unmapped -> EAGAIN cellafter=0 written=0
+A unix-seqpacket-listener cell=-1 dest=unmapped -> EAGAIN cellafter=-1 written=0
+A unix-seqpacket-listener cell=null dest=mapped -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=unmapped dest=mapped -> EAGAIN cellafter=- written=0
+A unix-seqpacket-listener cell=16 dest=mapped -> EAGAIN cellafter=16 written=0
+A unix-seqpacket-listener cell=0 dest=mapped -> EAGAIN cellafter=0 written=0
+A unix-seqpacket-listener cell=-1 dest=mapped -> EAGAIN cellafter=-1 written=0
+A inet6-stream-listener cell=null dest=null -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=unmapped dest=null -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=16 dest=null -> EAGAIN cellafter=16 written=0
+A inet6-stream-listener cell=0 dest=null -> EAGAIN cellafter=0 written=0
+A inet6-stream-listener cell=-1 dest=null -> EAGAIN cellafter=-1 written=0
+A inet6-stream-listener cell=null dest=unmapped -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=unmapped dest=unmapped -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=16 dest=unmapped -> EAGAIN cellafter=16 written=0
+A inet6-stream-listener cell=0 dest=unmapped -> EAGAIN cellafter=0 written=0
+A inet6-stream-listener cell=-1 dest=unmapped -> EAGAIN cellafter=-1 written=0
+A inet6-stream-listener cell=null dest=mapped -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=unmapped dest=mapped -> EAGAIN cellafter=- written=0
+A inet6-stream-listener cell=16 dest=mapped -> EAGAIN cellafter=16 written=0
+A inet6-stream-listener cell=0 dest=mapped -> EAGAIN cellafter=0 written=0
+A inet6-stream-listener cell=-1 dest=mapped -> EAGAIN cellafter=-1 written=0
+A inet6-dgram cell=null dest=null -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=unmapped dest=null -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=16 dest=null -> EOPNOTSUPP cellafter=16 written=0
+A inet6-dgram cell=0 dest=null -> EOPNOTSUPP cellafter=0 written=0
+A inet6-dgram cell=-1 dest=null -> EOPNOTSUPP cellafter=-1 written=0
+A inet6-dgram cell=null dest=unmapped -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=unmapped dest=unmapped -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=16 dest=unmapped -> EOPNOTSUPP cellafter=16 written=0
+A inet6-dgram cell=0 dest=unmapped -> EOPNOTSUPP cellafter=0 written=0
+A inet6-dgram cell=-1 dest=unmapped -> EOPNOTSUPP cellafter=-1 written=0
+A inet6-dgram cell=null dest=mapped -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=unmapped dest=mapped -> EOPNOTSUPP cellafter=- written=0
+A inet6-dgram cell=16 dest=mapped -> EOPNOTSUPP cellafter=16 written=0
+A inet6-dgram cell=0 dest=mapped -> EOPNOTSUPP cellafter=0 written=0
+A inet6-dgram cell=-1 dest=mapped -> EOPNOTSUPP cellafter=-1 written=0
 A accept4-bad-flags cell=null dest=null -> EINVAL cellafter=- written=0 queued=yes client=none
 A accept4-bad-flags cell=unmapped dest=null -> EINVAL cellafter=- written=0 queued=yes client=none
 A accept4-bad-flags cell=16 dest=null -> EINVAL cellafter=16 written=0 queued=yes client=none

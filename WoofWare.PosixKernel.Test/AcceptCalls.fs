@@ -97,3 +97,15 @@ module internal AcceptCalls =
         match UnixConnection.finishAccept caller system with
         | CallProgress.Answered answer -> answer
         | CallProgress.NeedsCopyIn paused -> UnixConnection.acceptWithLength contents paused
+
+    /// The length cell of a sleeping accept on `platform` whose cell holds 16,
+    /// for a test that forges the park: read already under Darwin, and still
+    /// to be read under Linux.
+    let forgedCellUnder (flavour : SimulatedUnixFlavour) : AcceptLengthCell =
+        match flavour with
+        | SimulatedUnixFlavour.Darwin -> AcceptLengthCell.Read 16u
+        | SimulatedUnixFlavour.Linux -> AcceptLengthCell.Unread UserBuffer.Mapped
+
+    /// `forgedCellUnder` the flavour of `platform`.
+    let forgedCell (platform : SimulatedUnixPlatform) : AcceptLengthCell =
+        forgedCellUnder (SimulatedUnixPlatform.flavour platform)

@@ -105,6 +105,7 @@ module TestAcceptLengthCellMeasured =
 
         match
             reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun line -> line.TrimEnd '\r')
             |> List.ofArray
         with
         | [] -> failwith $"%s{resource} is empty"
@@ -230,6 +231,16 @@ module TestAcceptLengthCellMeasured =
         | Ok (ReadAnswer.Failed error, _) -> $"%A{error}"
         | other -> failwith $"the client's read answered %A{other}"
 
+    /// A non-blocking socket of `domain` and `kind`, with no client.
+    let private otherFamily
+        (domain : SocketDomain)
+        (kind : SocketKind)
+        (system : UnixSystem<int, string>)
+        : int * int option * UnixSystem<int, string>
+        =
+        let fd, system = NewSocket.create domain kind SocketProtocol.Default system
+        fd, None, NonBlocking.set fd system
+
     /// A section A fixture: the descriptor the call is made on, the client
     /// connected to it if any, and the system.
     let private build
@@ -259,7 +270,31 @@ module TestAcceptLengthCellMeasured =
             let fd, system = listener true system
             let client, system = connectClient system
             fd, Some client, system
+        | "listener-queued-blocking" ->
+            let fd, system = listener false system
+            let client, system = connectClient system
+            fd, Some client, system
+        // This library models no accept on a Unix-domain or IPv6 socket, and
+        // refuses one as soon as it sees the domain, so the socket's phase,
+        // which the probe built, does not reach the answer: only Darwin's read
+        // of the cell, which comes first, does.
+        | "unix-stream-listener" -> otherFamily SocketDomain.Unix SocketKind.Stream system
+        | "unix-dgram" -> otherFamily SocketDomain.Unix SocketKind.Datagram system
+        | "unix-seqpacket-listener" -> otherFamily SocketDomain.Unix SocketKind.SeqPacket system
+        | "inet6-stream-listener" -> otherFamily SocketDomain.Inet6 SocketKind.Stream system
+        | "inet6-dgram" -> otherFamily SocketDomain.Inet6 SocketKind.Datagram system
         | other -> failwith $"unknown fixture %s{other}"
+
+    /// The fixtures whose accept this library refuses for their domain.
+    let private otherFamilies : Set<string> =
+        Set.ofList
+            [
+                "unix-stream-listener"
+                "unix-dgram"
+                "unix-seqpacket-listener"
+                "inet6-stream-listener"
+                "inet6-dgram"
+            ]
 
     let private buffer (pointer : Pointer) : UserBuffer =
         match pointer with
@@ -346,9 +381,31 @@ module TestAcceptLengthCellMeasured =
             AcceptCalls.tryAcceptThrough (Callers.leader system) fd destination cell (contents row.Cell) flags system
         with
         | Error refusal ->
-            // Only a fault while the peer's address is copied out is refused.
+            let flavour = SimulatedUnixPlatform.flavour measurement.Platform
+
+            // Refused: a fault while the peer's address is copied out through
+            // an unmapped destination, where there is something to copy and
+            // Linux has not answered EINVAL for a negative length first; and
+            // an accept on a socket of another family, but for Darwin's EFAULT
+            // for a cell it cannot read, which comes before the domain.
+            let copyFaults =
+                match row.Cell with
+                | Pointer.Holds value ->
+                    row.Destination = Pointer.Unmapped
+                    && value <> 0
+                    && not (flavour = SimulatedUnixFlavour.Linux && value < 0)
+                | Pointer.Null
+                | Pointer.Unmapped -> false
+
+            let darwinFaultFirst =
+                flavour = SimulatedUnixFlavour.Darwin
+                && row.Destination <> Pointer.Null
+                && held.IsNone
+
             match refusal with
-            | AcceptRefusal.UnmeasuredCopyOutFault _ when row.Destination = Pointer.Unmapped -> false
+            | AcceptRefusal.UnmeasuredCopyOutFault _ when copyFaults -> false
+            | AcceptRefusal.UnmodelledDomain _ when Set.contains row.Fixture otherFamilies && not darwinFaultFirst ->
+                false
             | _ -> fail measurement row $"the model refused: %s{AcceptRefusal.describe refusal}"
         | Ok (outcome, after) ->
             let answer, cellAfter, written = shown row held outcome
@@ -397,6 +454,18 @@ module TestAcceptLengthCellMeasured =
             | Pointer.Unmapped -> None
 
         let atFinish = row.ChangedTo |> Option.orElse held
+
+        // Darwin reads a cell of real storage before it sleeps, so it stops for
+        // it in the call; Linux never does before it holds a connection.
+        let shouldStop =
+            flavour = SimulatedUnixFlavour.Darwin
+            && held.IsSome
+            && row.Destination <> Pointer.Null
+
+        let stopped = stops (UnixConnection.tryAccept caller fd destination cell 0 system)
+
+        if stopped <> shouldStop then
+            fail measurement row $"the call stopped for the cell: %b{stopped}"
 
         match AcceptCalls.tryAcceptThrough caller fd destination cell (contents row.Cell) 0 system with
         | Error refusal -> fail measurement row $"the model refused: %s{AcceptRefusal.describe refusal}"
@@ -479,16 +548,19 @@ module TestAcceptLengthCellMeasured =
                     replaySleep measurement row
                     compared <- compared + 1
 
-            // Not vacuous: section A holds 15 rows for each of six fixtures,
-            // and Linux's accept4 a seventh; B 4 and C 3. The refused rows are
-            // those of the queued listener through an unmapped destination
-            // whose copy would fault: the cell holding 16 on both, and holding
-            // -1 on Darwin, which reads it as a length; Linux answers EINVAL
-            // for that, and a length of 0 copies nothing on either.
+            // Not vacuous: section A holds 15 rows for each of 11 fixtures,
+            // and on Linux two more (a Unix-domain seqpacket listener, which
+            // Darwin lacks, and accept4); B 4 and C 3. The refused rows are:
+            // those of the two queued listeners through an unmapped
+            // destination whose copy would fault, the cell holding 16 on both
+            // flavours and -1 on Darwin, which reads it as a length; and every
+            // row of the other families' fixtures (5 on Linux, 4 on Darwin),
+            // but the 4 per fixture on Darwin through a non-NULL destination
+            // and a cell it cannot read, which answer EFAULT first.
             let fixtures, refusedRows =
                 match SimulatedUnixPlatform.flavour measurement.Platform with
-                | SimulatedUnixFlavour.Linux -> 7, 1
-                | SimulatedUnixFlavour.Darwin -> 6, 2
+                | SimulatedUnixFlavour.Linux -> 13, 2 + 5 * 15
+                | SimulatedUnixFlavour.Darwin -> 11, 4 + 4 * 11
 
             let rows = 15 * fixtures + 4 + 3
             measurement.Rows |> List.length |> shouldEqual rows

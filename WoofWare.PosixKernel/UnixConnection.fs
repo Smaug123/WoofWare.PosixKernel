@@ -2999,6 +2999,12 @@ module UnixConnection =
                     }
 
                 let copy =
+                    match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, parked.Cell with
+                    | SimulatedUnixFlavour.Linux, AcceptLengthCell.Read _ ->
+                        failwith
+                            $"UnixConnection.finishAccept: thread %O{thread}'s Linux accept holds a length cell it read before it slept, but Linux reads the cell only once it holds a connection (this is a bug in this library, or in a caller that assembled the park by hand)."
+                    | _ -> ()
+
                     match parked.Cell, read with
                     | AcceptLengthCell.Read _, Some _ ->
                         failwith

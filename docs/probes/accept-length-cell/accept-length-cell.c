@@ -21,21 +21,30 @@
 // Sections:
 //   A  a call that cannot sleep, on: a closed descriptor, a pipe, an idle
 //      stream socket (EINVAL), a datagram socket (EOPNOTSUPP), an empty
-//      non-blocking listener (EAGAIN), and a non-blocking listener with one
-//      connection queued; on Linux also accept4 with an unknown flag bit
-//      (EINVAL) on a listener with one connection queued.
+//      non-blocking listener (EAGAIN), a non-blocking and a blocking listener
+//      with one connection queued, a Unix-domain stream listener (empty and
+//      non-blocking), a Unix-domain datagram socket, a Unix-domain seqpacket
+//      listener (empty and non-blocking; Linux alone has one), an IPv6 stream
+//      listener (empty and non-blocking) and an IPv6 datagram socket; on Linux
+//      also accept4 with an unknown flag bit (EINVAL) on a listener with one
+//      connection queued.
 //   B  a blocking listener with nothing queued, through a NULL or unmapped
-//      cell and a NULL or mapped buffer, a thread connecting 200 ms later:
-//      the answer, whether the call slept (`slept=`), and the connection's
-//      fate as in A.
+//      cell and a NULL or mapped buffer, a thread connecting 200 ms after the
+//      call is entered: the answer, whether the call slept (`slept=`: it
+//      returned only after the thread connected), and the connection's fate
+//      as in A.
 //   C  a blocking accept into a mapped buffer through a cell holding 16, asleep
 //      on an empty listener, whose cell another thread changes to 4, 0 or -1
-//      before it connects: which value the call used.
+//      200 ms after the call is entered, and then connects: which value the
+//      call used.
+// Each B and C row is made twice, through the two fills, as A's are.
 //
-// The probe exits 1 if a fixture cannot be built, or if a state it waits for
-// does not arrive within two seconds.
+// The probe exits 1 if a fixture cannot be built; if a state it waits for (a
+// queued connection) does not arrive within two seconds; if a B or C thread
+// acts less than 100 ms after the call was entered, so that the call may not
+// have been in the kernel yet; or if a row's two calls disagree.
 //
-// Outputs beside this file, measured 2026-11-20:
+// Outputs beside this file, measured 2026-11-21:
 //
 // * darwin-27.2.0-arm64.txt: natively, from this directory,
 //     cc -Wall -O1 -pthread -o /tmp/p accept-length-cell.c && /tmp/p
@@ -55,6 +64,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -155,8 +165,37 @@ static void name(char *out, size_t size, enum kind k, int held, int is_cell) {
 }
 
 // The fixtures of section A, each built afresh for each call.
-enum fixture { CLOSED, PIPE, IDLE, DGRAM, EMPTY, QUEUED, BADFLAGS };
-static const char *fixture_names[] = { "closed", "pipe", "tcp-idle", "udp", "listener-empty", "listener-queued", "accept4-bad-flags" };
+enum fixture { CLOSED, PIPE, IDLE, DGRAM, EMPTY, QUEUED, QUEUED_BLOCKING, UNIX_STREAM, UNIX_DGRAM, UNIX_SEQPACKET, INET6_STREAM, INET6_DGRAM, BADFLAGS };
+static const char *fixture_names[] = { "closed", "pipe", "tcp-idle", "udp", "listener-empty", "listener-queued", "listener-queued-blocking", "unix-stream-listener", "unix-dgram", "unix-seqpacket-listener", "inet6-stream-listener", "inet6-dgram", "accept4-bad-flags" };
+
+// A socket of `domain` and `type`, non-blocking, and listening if `listens`:
+// a Unix-domain one bound to a fresh path, an IPv6 one to the loopback.
+static int other_family(int domain, int type, int listens) {
+    int fd = socket(domain, type, 0);
+    need(fd >= 0, "socket of another family");
+    if (domain == AF_UNIX) {
+        static int serial = 0;
+        struct sockaddr_un a;
+        memset(&a, 0, sizeof a);
+        a.sun_family = AF_UNIX;
+        snprintf(a.sun_path, sizeof a.sun_path, "/tmp/alc-%d-%d", (int)getpid(), serial++);
+        unlink(a.sun_path);
+        need(bind(fd, (struct sockaddr *)&a, sizeof a) == 0, "bind a Unix-domain socket");
+        unlink(a.sun_path);
+    } else {
+        struct sockaddr_in6 a;
+        memset(&a, 0, sizeof a);
+#ifdef __APPLE__
+        a.sin6_len = sizeof a;
+#endif
+        a.sin6_family = AF_INET6;
+        a.sin6_addr = in6addr_loopback;
+        need(bind(fd, (struct sockaddr *)&a, sizeof a) == 0, "bind an IPv6 socket");
+    }
+    if (listens) need(listen(fd, 4) == 0, "listen on another family");
+    set_nonblocking(fd, 1);
+    return fd;
+}
 
 struct built { int fd; int client; int extra; };
 
@@ -193,6 +232,15 @@ static struct built build(enum fixture f) {
         b.fd = listener(1);
         b.client = connect_to(b.fd);
         break;
+    case QUEUED_BLOCKING:
+        b.fd = listener(0);
+        b.client = connect_to(b.fd);
+        break;
+    case UNIX_STREAM: b.fd = other_family(AF_UNIX, SOCK_STREAM, 1); break;
+    case UNIX_DGRAM: b.fd = other_family(AF_UNIX, SOCK_DGRAM, 0); break;
+    case UNIX_SEQPACKET: b.fd = other_family(AF_UNIX, SOCK_SEQPACKET, 1); break;
+    case INET6_STREAM: b.fd = other_family(AF_INET6, SOCK_STREAM, 1); break;
+    case INET6_DGRAM: b.fd = other_family(AF_INET6, SOCK_DGRAM, 0); break;
     }
     return b;
 }
@@ -231,6 +279,7 @@ static void row_a(enum fixture f, enum kind ck, int held, enum kind dk) {
         cellafter[i] = cell;
         if (b.client >= 0 && i == 0) {
             client = client_view(b.client);
+            set_nonblocking(b.fd, 1);
             int again = accept(b.fd, NULL, NULL);
             queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
             if (again >= 0) close(again);
@@ -256,67 +305,85 @@ static long now_ms(void) {
     return t.tv_sec * 1000L + t.tv_usec / 1000;
 }
 
-struct connector { int listener; int delay_ms; int client; int *cell; int new_cell; };
+// A thread that, 200 ms after the call was entered, writes `new_cell` to the
+// cell (if `cell` is not NULL) and then connects a client to the listener,
+// recording when it acted.
+struct connector { int listener; long entered; long acted; int client; int *cell; int new_cell; };
 
 static void *connector_main(void *arg) {
     struct connector *c = arg;
-    usleep(c->delay_ms * 1000);
+    while (now_ms() - c->entered < 200) usleep(10000);
+    c->acted = now_ms();
     if (c->cell) *c->cell = c->new_cell;
-    c->client = connect_to(c->listener);
+    c->client = socket(AF_INET, SOCK_STREAM, 0);
+    need(c->client >= 0, "socket for a client");
+    struct sockaddr_in a = loopback(port_of(c->listener));
+    need(connect(c->client, (struct sockaddr *)&a, sizeof a) == 0, "connect a client");
     return NULL;
 }
 
-static void row_b(enum kind ck, enum kind dk) {
+struct trial { int e; int cellafter; int slept; const char *client; const char *queued; };
+
+// One blocking accept on an empty listener through the cell `ck` (holding 16
+// where it is storage) and the buffer `dk` filled with `fill`, a thread acting
+// as `connector_main` says, changing the cell to `new_cell` if `change`.
+static struct trial sleeper(enum kind ck, enum kind dk, int change, int new_cell, unsigned char fill, unsigned char *buf) {
+    struct trial r;
     int l = listener(0);
-    unsigned char buf[128];
-    memset(buf, 0xAA, sizeof buf);
+    memset(buf, fill, 128);
     int cell = 16;
-    struct connector c = { l, 200, -1, NULL, 0 };
+    struct connector c = { l, 0, 0, -1, change ? &cell : NULL, new_cell };
+    c.entered = now_ms();
     pthread_t t;
     need(pthread_create(&t, NULL, connector_main, &c) == 0, "pthread_create");
-    long start = now_ms();
-    int e = call(QUEUED, l, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
-    long took = now_ms() - start;
+    long entered = now_ms();
+    r.e = call(QUEUED, l, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
+    long returned = now_ms();
     pthread_join(t, NULL);
-    const char *client = client_view(c.client);
+    need(c.acted - entered >= 100, "the thread acted at least 100 ms after the call was entered");
+    r.slept = returned >= c.acted;
+    r.cellafter = cell;
+    r.client = client_view(c.client);
     set_nonblocking(l, 1);
     int again = accept(l, NULL, NULL);
-    const char *queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
+    r.queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
     if (again >= 0) close(again);
+    close(c.client);
+    close(l);
+    return r;
+}
+
+static int written_over(unsigned char *first, unsigned char *second) {
     int written = 0;
-    for (int i = 0; i < 128; i++) if (buf[i] != 0xAA) written++;
+    for (int i = 0; i < 128; i++) if (first[i] != 0xAA || second[i] != 0x55) written++;
+    return written;
+}
+
+static void agree(struct trial a, struct trial b) {
+    need(a.e == b.e && a.cellafter == b.cellafter && a.slept == b.slept && strcmp(a.client, b.client) == 0
+             && strcmp(a.queued, b.queued) == 0,
+         "a row's two calls agreeing");
+}
+
+static void row_b(enum kind ck, enum kind dk) {
+    unsigned char first[128], second[128];
+    struct trial a = sleeper(ck, dk, 0, 0, 0xAA, first);
+    struct trial b = sleeper(ck, dk, 0, 0, 0x55, second);
+    agree(a, b);
     char cn[32], dn[32];
     name(cn, sizeof cn, ck, 16, 1);
     name(dn, sizeof dn, dk, 0, 0);
-    printf("B blocking-empty cell=%s dest=%s -> %s slept=%s written=%d queued=%s client=%s\n", cn, dn, en(e),
-           took >= 150 ? "yes" : "no", written, queued, client);
-    close(c.client);
-    close(l);
+    printf("B blocking-empty cell=%s dest=%s -> %s slept=%s written=%d queued=%s client=%s\n", cn, dn, en(a.e),
+           a.slept ? "yes" : "no", dk == HOLDS ? written_over(first, second) : 0, a.queued, a.client);
 }
 
 static void row_c(int new_cell) {
-    int l = listener(0);
-    unsigned char bufs[128];
-    memset(bufs, 0xAA, sizeof bufs);
-    int cell = 16;
-    struct connector c = { l, 200, -1, &cell, new_cell };
-    pthread_t t;
-    need(pthread_create(&t, NULL, connector_main, &c) == 0, "pthread_create");
-    long start = now_ms();
-    int e = call(QUEUED, l, bufs, (socklen_t *)&cell);
-    long took = now_ms() - start;
-    pthread_join(t, NULL);
-    int written = 0;
-    for (int i = 0; i < 128; i++) if (bufs[i] != 0xAA) written++;
-    const char *client = client_view(c.client);
-    set_nonblocking(l, 1);
-    int again = accept(l, NULL, NULL);
-    const char *queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
-    if (again >= 0) close(again);
-    printf("C cell=16 changed-to=%d dest=mapped -> %s slept=%s cellafter=%d written=%d queued=%s client=%s\n", new_cell, en(e),
-           took >= 150 ? "yes" : "no", cell, written, queued, client);
-    close(c.client);
-    close(l);
+    unsigned char first[128], second[128];
+    struct trial a = sleeper(HOLDS, HOLDS, 1, new_cell, 0xAA, first);
+    struct trial b = sleeper(HOLDS, HOLDS, 1, new_cell, 0x55, second);
+    agree(a, b);
+    printf("C cell=16 changed-to=%d dest=mapped -> %s slept=%s cellafter=%d written=%d queued=%s client=%s\n", new_cell,
+           en(a.e), a.slept ? "yes" : "no", a.cellafter, written_over(first, second), a.queued, a.client);
 }
 
 int main(void) {
@@ -328,7 +395,11 @@ int main(void) {
     faulting = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     need(faulting != MAP_FAILED, "mmap a PROT_NONE page");
 
-    enum fixture fixtures[] = { CLOSED, PIPE, IDLE, DGRAM, EMPTY, QUEUED
+    enum fixture fixtures[] = { CLOSED, PIPE, IDLE, DGRAM, EMPTY, QUEUED, QUEUED_BLOCKING, UNIX_STREAM, UNIX_DGRAM,
+#ifdef __linux__
+                                UNIX_SEQPACKET,
+#endif
+                                INET6_STREAM, INET6_DGRAM
 #ifdef __linux__
                                 , BADFLAGS
 #endif
