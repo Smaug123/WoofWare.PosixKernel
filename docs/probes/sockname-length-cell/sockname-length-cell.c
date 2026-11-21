@@ -184,12 +184,22 @@ static int connect_to(int c, unsigned addr, unsigned short port) {
     return r == 0 ? 0 : errno;
 }
 
-static unsigned short dead_port(void) {
+// A loopback port nothing listens on, and the socket holding it. Linux refuses
+// a connect to a port bound and not listening, so the socket stays open until
+// the connect has settled, and nothing else can take the port meanwhile.
+// Darwin does not refuse such a connect (it times out), so there the socket is
+// closed at once and -1 is answered in its place.
+static unsigned short dead_port(int *holder) {
     int t = tcp();
     struct sockaddr_in a = sin_of(INADDR_LOOPBACK, 0);
     need(bind(t, (struct sockaddr *)&a, sizeof a) == 0, "bind for a dead port");
     unsigned short p = port_of(t);
+#ifdef __linux__
+    *holder = t;
+#else
     close(t);
+    *holder = -1;
+#endif
     return p;
 }
 
@@ -269,7 +279,9 @@ int main(void) {
     }
     {
         int c = tcp();
-        int e = connect_to(c, INADDR_LOOPBACK, dead_port());
+        int holder;
+        int e = connect_to(c, INADDR_LOOPBACK, dead_port(&holder));
+        if (holder >= 0) close(holder);
         printf("# tcp-refused: blocking connect -> %s\n", en(e));
         need(e == ECONNREFUSED, "a refused blocking connect");
         fixture("tcp-refused", c);
@@ -279,11 +291,13 @@ int main(void) {
     {
         int c = tcp();
         need(fcntl(c, F_SETFL, fcntl(c, F_GETFL) | O_NONBLOCK) == 0, "O_NONBLOCK");
-        int e = connect_to(c, INADDR_LOOPBACK, dead_port());
+        int holder;
+        int e = connect_to(c, INADDR_LOOPBACK, dead_port(&holder));
         printf("# tcp-refusal-pending: non-blocking connect -> %s\n", en(e));
         need(e == EINPROGRESS, "a non-blocking connect in progress");
         // The connect is over, refused, once the socket is writable.
         await(c, POLLOUT, "the refusal of the non-blocking connect");
+        if (holder >= 0) close(holder);
         fixture("tcp-refusal-pending", c);
         int pending = so_error(c);
         printf("# tcp-refusal-pending: SO_ERROR after the rows -> %s\n", en(pending));
