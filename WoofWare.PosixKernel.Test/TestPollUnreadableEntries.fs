@@ -625,7 +625,18 @@ module TestPollUnreadableEntries =
                     | UserBufferCheck.BeforeOperation limit -> Some limit
                     | UserBufferCheck.AtCopyTime -> None
 
+                // Measured on Linux 6.18.5 arm64 alone, and refused elsewhere.
+                let measured = platform = SimulatedUnixPlatform.linuxArm64
+
                 match buffer, limit with
+                | UserBuffer.Unmapped address, Some limit when address > limit && not measured ->
+                    answer = Error (
+                        PollRefusal.UnmeasuredZeroEntryAddress (
+                            address,
+                            SimulatedUnixPlatform.kernel platform,
+                            SimulatedUnixPlatform.architecture platform
+                        )
+                    )
                 | UserBuffer.Unmapped address, Some limit when address > limit ->
                     if milliseconds = 0 then
                         answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
@@ -701,3 +712,47 @@ module TestPollUnreadableEntries =
                 (fun () -> UnixPoll.tryPollWithEntries (List.take 2 entries) paused |> ignore)
                 |> shouldFail<InvalidOperationException>
             | other -> failwith $"%A{platform}: a readable array of three entries answered %A{other}"
+
+    [<Test>]
+    let ``a zero-entry poll past the address limit is refused where unmeasured`` () : unit =
+        let olderArm64 =
+            SimulatedUnixPlatform.createOrFail
+                "TestPollUnreadableEntries"
+                (SimulatedUnixKernel.Linux (
+                    {
+                        Major = 6u
+                        Minor = 17u
+                        Patch = 0u
+                    },
+                    LinuxKernelBuild.SmallBuffer960
+                ))
+                SimulatedUnixArchitecture.Arm64
+                SimulatedPageSize.FourKiB
+                "6.17.0"
+
+        let address = ObservedUserAddressLimit.Arm64FortyEightBit + 1UL
+
+        for platform in [ olderArm64 ; SimulatedUnixPlatform.linuxX64 ] do
+            let system, _ = world false platform
+
+            let address =
+                match SimulatedUnixPlatform.architecture platform with
+                | SimulatedUnixArchitecture.Arm64 -> address
+                | SimulatedUnixArchitecture.X64 -> ObservedUserAddressLimit.X64FourLevelPaging + 1UL
+
+            poll (unmappedArrayAt address 0u) 0 system
+            |> shouldEqual (
+                Error (
+                    PollRefusal.UnmeasuredZeroEntryAddress (
+                        address,
+                        SimulatedUnixPlatform.kernel platform,
+                        SimulatedUnixPlatform.architecture platform
+                    )
+                )
+            )
+
+        // The measured kernel answers it.
+        let system, _ = world false SimulatedUnixPlatform.linuxArm64
+
+        poll (unmappedArrayAt address 0u) 0 system
+        |> shouldEqual (Ok (PollOutcome.Failed UnixError.EFAULT, system))

@@ -76,6 +76,15 @@ type internal PollRefusal =
     /// entries back, even where a signal ended it; this kernel does not model
     /// a sleeping call whose answer is that fault.
     | UnmodelledWriteBackFault of address : uint64 * milliseconds : int
+    /// Under Linux, the call names no entries at `address`, which lies past
+    /// the machine's user address limit, on a kernel and architecture where
+    /// what that answers is unmeasured: Linux 6.18.5 on arm64 fails with
+    /// `EFAULT` as it writes the entries back, and older kernels are read,
+    /// from their source, to check no address for no entries.
+    | UnmeasuredZeroEntryAddress of
+        address : uint64 *
+        kernel : SimulatedUnixKernel *
+        architecture : SimulatedUnixArchitecture
 
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -93,8 +102,8 @@ type PollOutcome =
     /// more entries than any process's `RLIMIT_NOFILE` lets it name (more than
     /// 10240 under Darwin, and more than 2147483584 under Linux); and `EFAULT`,
     /// for an array of at least one entry at an address naming no storage
-    /// (`UserBuffer.Unmapped`), and under Linux for an array of no entries at
-    /// an address past the machine's user address limit.
+    /// (`UserBuffer.Unmapped`), and under Linux 6.18.5 on arm64 for an array
+    /// of no entries at an address past the machine's user address limit.
     | Failed of error : UnixError
     /// `poll` did not return, and the calling thread is now asleep in it.
     /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
@@ -189,6 +198,8 @@ module internal PollRefusal =
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
         | PollRefusal.Buffer refusal -> $"the array of struct pollfd: %s{BufferRefusal.describe refusal}"
+        | PollRefusal.UnmeasuredZeroEntryAddress (address, kernel, architecture) ->
+            $"the poll names no entries at 0x%x{address}, past the machine's user address limit, on %A{kernel} %A{architecture}. Linux 6.18.5 on arm64 polls and then fails with EFAULT as it writes the entries back; whether this kernel and architecture check the address of no entries, and against which limit, is unmeasured."
         | PollRefusal.UnmodelledWriteBackFault (address, milliseconds) ->
             $"the poll names no entries at 0x%x{address}, past the machine's user address limit, with a timeout of %d{milliseconds}ms. Linux waits for the timeout, or until a signal ends the wait, and then fails with EFAULT as it writes the entries back, even after a signal; this kernel does not model a sleeping poll whose answer is that fault."
 
@@ -206,6 +217,7 @@ module internal PollRefusal =
         | PollRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | PollRefusal.Buffer inner -> BufferRefusal.kind inner
         | PollRefusal.UnmodelledWriteBackFault _ -> RefusalKind.Unmodelled
+        | PollRefusal.UnmeasuredZeroEntryAddress _ -> RefusalKind.Unmodelled
 
 /// The flags `epoll_create1(2)` accepts, in Linux's numbering.
 [<RequireQualifiedAccess>]
@@ -1581,9 +1593,36 @@ module UnixPoll =
         // Darwin checks nothing. The machine's `UserBufferCheck` holds that
         // limit under Linux, and is `AtCopyTime` under Darwin.
         if nfds = 0u then
+            let platform = system.Machine.UnixPlatform
+
+            // Measured on Linux 6.18.5 arm64 alone. An address within the
+            // limit passes every rule a kernel could screen it by (and none),
+            // so only one past it needs the measurement.
+            let measured =
+                match SimulatedUnixPlatform.kernel platform, SimulatedUnixPlatform.architecture platform with
+                | SimulatedUnixKernel.Linux (version, _), SimulatedUnixArchitecture.Arm64 ->
+                    version
+                    >= {
+                           Major = 6u
+                           Minor = 18u
+                           Patch = 5u
+                       }
+                | _ -> false
+
             let writeBackFaults =
                 match fds, UnixMachineState.userBufferCheck system.Machine with
-                | UserBuffer.Unmapped address, check -> Ok (UserBufferCheck.faultsBeforeOperation check address 0UL)
+                | UserBuffer.Unmapped address, check when UserBufferCheck.faultsBeforeOperation check address 0UL ->
+                    if measured then
+                        Ok true
+                    else
+                        Error (
+                            PollRefusal.UnmeasuredZeroEntryAddress (
+                                address,
+                                SimulatedUnixPlatform.kernel platform,
+                                SimulatedUnixPlatform.architecture platform
+                            )
+                        )
+                | UserBuffer.Unmapped _, _ -> Ok false
                 | UserBuffer.Mapped, _
                 | UserBuffer.Opaque, _
                 | UserBuffer.Addressless, UserBufferCheck.AtCopyTime -> Ok false
@@ -1656,12 +1695,13 @@ module UnixPoll =
     ///   answer depends on the process's `RLIMIT_NOFILE` is refused instead,
     ///   and throws);
     /// - for a count of 0, the answer of a poll of no entries, which reads
-    ///   nothing. Under Linux an `Unmapped` address past the machine's user
-    ///   address limit (`UnixBootImage.withUserAddressLimit`) fails with
-    ///   `EFAULT` as the call writes its entries back, after it has polled:
-    ///   at once for a timeout of 0, and refused for any other timeout, after
-    ///   which Linux sleeps and then fails. Darwin answers every address as it
-    ///   answers an empty array;
+    ///   nothing. Under Linux 6.18.5 on arm64, an `Unmapped` address past the
+    ///   machine's user address limit (`UnixBootImage.withUserAddressLimit`)
+    ///   fails with `EFAULT` as the call writes its entries back, after it has
+    ///   polled: at once for a timeout of 0, and refused for any other
+    ///   timeout, after which Linux sleeps and then fails. On another Linux
+    ///   kernel or architecture such an address is refused, being unmeasured.
+    ///   Darwin answers every address as it answers an empty array;
     /// - otherwise `EFAULT` for an `Unmapped` array, at once whatever the
     ///   timeout.
     ///
