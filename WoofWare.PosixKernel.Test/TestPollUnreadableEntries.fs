@@ -730,9 +730,24 @@ module TestPollUnreadableEntries =
                 SimulatedPageSize.FourKiB
                 "6.17.0"
 
+        let measuredVersionOnX64 =
+            SimulatedUnixPlatform.createOrFail
+                "TestPollUnreadableEntries"
+                (SimulatedUnixKernel.Linux (
+                    {
+                        Major = 6u
+                        Minor = 18u
+                        Patch = 5u
+                    },
+                    LinuxKernelBuild.SmallBuffer960
+                ))
+                SimulatedUnixArchitecture.X64
+                SimulatedPageSize.FourKiB
+                "6.18.5"
+
         let address = ObservedUserAddressLimit.Arm64FortyEightBit + 1UL
 
-        for platform in [ olderArm64 ; SimulatedUnixPlatform.linuxX64 ] do
+        for platform in [ olderArm64 ; SimulatedUnixPlatform.linuxX64 ; measuredVersionOnX64 ] do
             let system, _ = world false platform
 
             let address =
