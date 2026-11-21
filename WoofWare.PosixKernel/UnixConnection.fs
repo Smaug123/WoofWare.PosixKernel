@@ -101,14 +101,15 @@ type internal AcceptRefusal =
     /// rather than measuring would be the difference between an answer and a
     /// state change.
     | UnmeasuredKind of socket : SocketId * kind : SocketKind
-    /// The accept would succeed and copy the peer address out, but the
-    /// destination is one this library has no answer for: its bytes cannot be
+    /// The destination or the length cell is one this library has no answer
+    /// for, where the kernel reads or checks it: its bytes cannot be
     /// produced, or it is not an address at all.
     ///
-    /// Reached only once a connection has been selected, which is what makes it
-    /// worth distinguishing from `UnmeasuredCopyOutFault` beside it: here the
-    /// kernel *would* have succeeded and dequeued, and it is the client that
-    /// cannot represent the transfer.
+    /// Where that is says nothing about the queue. Darwin checks the
+    /// destination and reads the cell before anything else, even before it
+    /// looks the descriptor up; Linux does so once it has selected a
+    /// connection, where the kernel *would* have dequeued it, and it is the
+    /// client that cannot represent the transfer.
     | Buffer of BufferRefusal
     /// The accept would succeed and copy the peer address out, but the
     /// destination is unmapped, so the copy faults.
