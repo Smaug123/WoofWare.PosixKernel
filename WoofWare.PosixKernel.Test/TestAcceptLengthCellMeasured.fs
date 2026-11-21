@@ -327,7 +327,11 @@ module TestAcceptLengthCellMeasured =
                 match row.Destination with
                 | Pointer.Holds _ -> copied.Length
                 | Pointer.Null
-                | Pointer.Unmapped -> 0
+                | Pointer.Unmapped ->
+                    if copied.Length <> 0 then
+                        failwith $"%s{row.Line}: the model copies %d{copied.Length} bytes through no storage"
+
+                    0
 
             "OK", cellText (Some reported), written
         | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested) -> "OK", cellText held, 0

@@ -37,9 +37,10 @@
 //      on an empty listener, whose cell another thread changes to 4, 0 or -1
 //      once the call is asleep in accept, and then connects: which value the
 //      call used.
-// A thread is asleep in accept when, on Linux, /proc/self/task/<tid>/stat
-// says S and .../syscall names accept or accept4, and on Darwin when
-// thread_info says TH_STATE_WAITING.
+// A thread is asleep in accept when, once it has flagged that it is making
+// the call (nothing between the flag and the call can block), on Linux
+// /proc/self/task/<tid>/stat says S and .../syscall names accept or accept4,
+// and on Darwin thread_info says TH_STATE_WAITING.
 //
 // The probe exits 1 if a fixture cannot be built; if a state it waits for (a
 // queued connection, a sleeping call or a returned one) does not arrive
@@ -60,6 +61,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -372,7 +374,11 @@ struct connector {
     int client;
     int *cell;
     int new_cell;
-    volatile int returned;
+    // Set just before the accept is made, and just after it returns: nothing
+    // between the first and the call can block, so a wait the thread is seen
+    // in after it is set is the accept's.
+    atomic_int entered;
+    atomic_int returned;
     int saw_asleep;
     long acted;
 };
@@ -380,12 +386,18 @@ struct connector {
 static void *connector_main(void *arg) {
     struct connector *c = arg;
     int waited = 0;
-    while (!c->returned && !accepter_asleep()) {
+    while (!atomic_load(&c->entered)) {
+        need(waited < 2000, "the accept entered");
+        usleep(1000);
+        waited++;
+    }
+    waited = 0;
+    while (!atomic_load(&c->returned) && !accepter_asleep()) {
         need(waited < 2000, "the accept asleep, or returned");
         usleep(1000);
         waited++;
     }
-    c->saw_asleep = !c->returned;
+    c->saw_asleep = !atomic_load(&c->returned);
     c->acted = now_ms();
     if (c->cell) *c->cell = c->new_cell;
     struct sockaddr_in a = loopback(port_of(c->listener));
@@ -406,13 +418,18 @@ static void sleeper(enum kind ck, enum kind dk, int change, int new_cell) {
     unsigned char fill = fill_for(client);
     memset(buf, fill, sizeof buf);
     int cell = 16;
-    struct connector c = { l, client, change ? &cell : NULL, new_cell, 0, 0, 0 };
+    struct connector c = { .listener = l, .client = client, .cell = change ? &cell : NULL, .new_cell = new_cell };
+    atomic_init(&c.entered, 0);
+    atomic_init(&c.returned, 0);
     note_accepter();
     pthread_t t;
     need(pthread_create(&t, NULL, connector_main, &c) == 0, "pthread_create");
-    int e = call(QUEUED, l, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
+    void *dest = pointer(dk, buf);
+    socklen_t *cellp = (socklen_t *)pointer(ck, &cell);
+    atomic_store(&c.entered, 1);
+    int e = call(QUEUED, l, dest, cellp);
     long returned = now_ms();
-    c.returned = 1;
+    atomic_store(&c.returned, 1);
     pthread_join(t, NULL);
     if (c.saw_asleep) need(returned >= c.acted, "a call that slept returning after the thread acted");
     const char *seen = client_view(client);

@@ -2114,21 +2114,29 @@ module TestBlockingAccept =
             Lone.UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
             |> shouldEqual (Error (SocketOptionRefusal.UnmodelledOption (socketId, level, option)))
 
-    /// A woken Linux accept reads its length cell only now, as `UnixWait.finish`
-    /// is given it; a cell whose kind has changed since the call was made, so
-    /// that it has become readable or ceased to be, is refused rather than
-    /// answered as it was.
+    /// A woken accept that reads or writes its length cell does so as the
+    /// call was made with it: a woken Linux accept reads it, and a Darwin one,
+    /// which read it before it slept, writes the reported length back. So a
+    /// cell that `UnixWait.finish` is given as another kind -- readable where
+    /// it faulted, or the reverse -- is refused rather than answered as it
+    /// was; but a finish that never reaches the cell, such as one that sleeps
+    /// again because another thread took the connection, answers.
     [<Test>]
-    let ``UnixWait.finish refuses a Linux accept's cell that changed kind while it slept`` () : unit =
-        let platform = SimulatedUnixPlatform.linuxX64
-
-        for parkedWith, finishedWith in
+    let ``UnixWait.finish refuses an accept's cell that changed kind while it slept, where the finish reaches it``
+        ()
+        : unit
+        =
+        let cases =
             [
-                UserBuffer.Mapped, CopiedArgument.Unmapped 0x10000UL
-                UserBuffer.Mapped, CopiedArgument.Unmapped 0UL
-                UserBuffer.Unmapped 0x10000UL, CopiedArgument.Readable 16u
-                UserBuffer.Unmapped 0UL, CopiedArgument.Readable 16u
-            ] do
+                SimulatedUnixPlatform.linuxX64, UserBuffer.Mapped, CopiedArgument.Unmapped 0x10000UL
+                SimulatedUnixPlatform.linuxX64, UserBuffer.Mapped, CopiedArgument.Unmapped 0UL
+                SimulatedUnixPlatform.linuxX64, UserBuffer.Unmapped 0x10000UL, CopiedArgument.Readable 16u
+                SimulatedUnixPlatform.linuxX64, UserBuffer.Unmapped 0UL, CopiedArgument.Readable 16u
+                SimulatedUnixPlatform.macOsArm64, UserBuffer.Mapped, CopiedArgument.Unmapped 0x10000UL
+                SimulatedUnixPlatform.macOsArm64, UserBuffer.Mapped, CopiedArgument.Unmapped 0UL
+            ]
+
+        for platform, parkedWith, finishedWith in cases do
             let fd, system = world platform
 
             let system =
@@ -2162,3 +2170,19 @@ module TestBlockingAccept =
             | FinishedCall.Accept ((AcceptOutcome.Accepted _ | AcceptOutcome.DroppedConnection UnixError.EFAULT), _) ->
                 ()
             | other -> failwith $"%A{parkedWith}: finishing with the same cell answered %A{other}"
+
+            // Another thread takes the connection first, so the finish sleeps
+            // again without reaching the cell, whatever it has become.
+            let stolen =
+                match AcceptCalls.tryAccept (Callers.thread 2 woken) fd UserBuffer.Mapped (Some 16u) 0 woken with
+                | Ok (AcceptOutcome.Accepted _, system) -> system
+                | other -> failwith $"expected thread 2 to take the connection, got %A{other}"
+
+            match
+                UnixWait.finish
+                    (Callers.thread 1 stolen)
+                    (Syscall.Accept (fd, UserBuffer.Mapped, finishedWith, 0))
+                    stolen
+            with
+            | FinishedCall.Accept (AcceptOutcome.WouldBlock _, _) -> ()
+            | other -> failwith $"%A{parkedWith}: a finish that sleeps again answered %A{other}"
