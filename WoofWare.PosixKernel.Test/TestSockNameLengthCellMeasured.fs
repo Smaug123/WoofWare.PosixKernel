@@ -471,10 +471,24 @@ module TestSockNameLengthCellMeasured =
                     compared <- compared + 1
                 | Error refusal ->
                     // Only a call that reaches an address this library does not
-                    // model may be refused, and only once it has the cell.
+                    // model may be refused, and only once it has the cell; and
+                    // not a Linux one holding a negative length, which answers
+                    // EINVAL first.
+                    let negativeOnLinux =
+                        match row.Cell with
+                        | Pointer.Holds value ->
+                            value < 0
+                            && SimulatedUnixPlatform.flavour measurement.Platform = SimulatedUnixFlavour.Linux
+                        | Pointer.Null
+                        | Pointer.Unmapped -> false
+
                     match refusal, row.Cell with
                     | (GetSockNameRefusal.UnmodelledDomain _ | GetSockNameRefusal.UnmodelledInet6Kind _),
-                      Pointer.Holds _ when row.Call = "getsockname" && Set.contains row.Fixture unnamed ->
+                      Pointer.Holds _ when
+                        row.Call = "getsockname"
+                        && Set.contains row.Fixture unnamed
+                        && not negativeOnLinux
+                        ->
                         refused <- refused + 1
                     | _ ->
                         failwith
