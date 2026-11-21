@@ -718,7 +718,9 @@ module TestNamespaceSequence =
             Some (Syscall.Stat (policy, arg path, UserBuffer.Mapped))
         | Op.FStat fd -> descriptor fd |> Option.map (fun fd -> Syscall.FStat (fd, UserBuffer.Mapped))
         | Op.FStatAt (dir, path, flags) -> Some (Syscall.FStatAt (dirfd dir, arg path, UserBuffer.Mapped, flags))
-        | Op.ReadDir fd -> descriptor fd |> Option.map Syscall.ReadDirectoryEntry
+        | Op.ReadDir fd ->
+            descriptor fd
+            |> Option.map (fun fd -> Syscall.ReadDirectoryEntry (fd, UserBuffer.Mapped, DirectoryBatchPlace.First))
         | Op.Getcwd -> Some (Syscall.GetCwd (UserBuffer.Mapped, 4096UL))
         | Op.Chmod (path, mode) -> Some (Syscall.ChMod (arg path, mode))
         | Op.FChmod (fd, mode) -> descriptor fd |> Option.map (fun fd -> Syscall.FChMod (fd, mode))
@@ -869,7 +871,8 @@ module TestNamespaceSequence =
             | Outcome.Status (FileStatusAnswer.Reported _) -> failedOrSucceeded None
             | Outcome.Status (FileStatusAnswer.Failed error) -> failedOrSucceeded (Some error)
             | Outcome.Directory (ReadDirectoryAnswer.Entry _)
-            | Outcome.Directory ReadDirectoryAnswer.EndOfDirectory -> failedOrSucceeded None
+            | Outcome.Directory ReadDirectoryAnswer.EndOfDirectory
+            | Outcome.Directory ReadDirectoryAnswer.Stopped -> failedOrSucceeded None
             | Outcome.Directory (ReadDirectoryAnswer.Failed error) -> failedOrSucceeded (Some error)
             | Outcome.WorkingDirectory (GetCwdAnswer.Reported _) -> failedOrSucceeded None
             | Outcome.WorkingDirectory (GetCwdAnswer.Failed error) -> failedOrSucceeded (Some error)

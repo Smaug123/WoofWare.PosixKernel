@@ -1517,7 +1517,14 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let getdents =
-            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            match
+                UnixNamespace.tryReadDirectoryEntry
+                    (Callers.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    DirectoryBatchPlace.First
+                    system
+            with
             | Ok (ReadDirectoryAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 

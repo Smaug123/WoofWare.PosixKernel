@@ -247,6 +247,17 @@ type DirectoryRecord =
         Kind : DirectoryEntryKind
     }
 
+/// Where in the process's `getdents(2)` buffer the client would store what
+/// one `UnixNamespace.readDirectoryEntry` reads: first, or after records it
+/// has already stored there for the same call.
+[<RequireQualifiedAccess>]
+type DirectoryBatchPlace =
+    /// The client has stored nothing in the buffer for this call yet.
+    | First
+    /// The client has already stored at least one record in the buffer for
+    /// this call.
+    | Following
+
 /// What reading the next entry of a directory descriptor answers.
 [<RequireQualifiedAccess>]
 type ReadDirectoryAnswer =
@@ -259,6 +270,10 @@ type ReadDirectoryAnswer =
     | EndOfDirectory
     /// The process's `getdents` returns -1 with errno set to `error`.
     | Failed of error : UnixError
+    /// The kernel could not store the next entry, and stopped before it: the
+    /// process's `getdents` returns the bytes the client already stored in
+    /// this batch. The entry stays next.
+    | Stopped
 
 /// Why this kernel will not say what reading a directory descriptor yields.
 [<RequireQualifiedAccess>]
@@ -267,6 +282,23 @@ type internal ReadDirectoryRefusal =
     /// `DirectoryPosition.Unenumerable`), and what each filesystem yields from
     /// an offset it did not hand out is its own.
     | UnenumerablePosition of inode : InodeNumber * offset : int64
+    /// Darwin, through a buffer the client cannot write after it has stored
+    /// records there for the same call. Measured, the call answers EFAULT
+    /// with the records left in the buffer, and moves the position by an
+    /// amount of the filesystem's own choosing, which can skip entries never
+    /// returned; this kernel's position is a name, and holds no such offset.
+    | FaultAfterRecords of inode : InodeNumber
+    /// Through a buffer the client cannot write, on a directory of a
+    /// filesystem whose answer to that is unmeasured: NFS.
+    | UnmeasuredDestinationFault of inode : InodeNumber
+    /// Darwin, through a buffer the client cannot write, for the first
+    /// record of a call on a description that earlier calls have read from.
+    /// Measured on APFS, such a call moves the position past an entry it
+    /// never returns.
+    | FaultAtResumedCursor of inode : InodeNumber
+    /// The process's buffer has no answer where the kernel would store into
+    /// it.
+    | Buffer of BufferRefusal
 
 [<RequireQualifiedAccess>]
 module internal ReadDirectoryRefusal =
@@ -276,11 +308,22 @@ module internal ReadDirectoryRefusal =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition (inode, offset) ->
             $"the description onto directory %O{inode} is at offset %d{offset}, where lseek put it. Both kernels accept that offset, but what the next read yields from it is each filesystem's own (tmpfs resumes from the entry with the greatest offset at or below it; APFS skips that many entries, or answers EAGAIN, depending on the high word), and this kernel's position is a name rather than an offset. Only offset 0, which rewinds, is readable from."
+        | ReadDirectoryRefusal.FaultAfterRecords inode ->
+            $"the buffer cannot take what this read of directory %O{inode} would store, and records have already been stored in it for the same __getdirentries64. Measured on Darwin 27.2 (docs/probes/getdents-fault), such a call answers EFAULT through a 4096-byte buffer and the bytes it stored through a 512-byte one, leaves the records it stored in the buffer, and moves the description's position by an amount of the filesystem's own: on APFS, a fault on the second record left it at offset 32, from which nothing more was read, a fault on the third moved it past that record, which was never returned, and a fault on the fourth left it at that record; devfs left offset 32 too, and lost entries. This kernel's position is a name rather than an offset, so it cannot hold where Darwin leaves it."
+        | ReadDirectoryRefusal.UnmeasuredDestinationFault inode ->
+            $"the buffer cannot take what this read of directory %O{inode} would store, and the directory is on NFS. What a directory read answers through such a buffer was measured on tmpfs, APFS and devfs, which differ (Darwin's faults even at the end of the directory, through a status word it cannot write), and NFS's is unmeasured."
+        | ReadDirectoryRefusal.FaultAtResumedCursor inode ->
+            $"the buffer cannot take the first record this getdirentries64 of directory %O{inode} would store, and earlier calls have read from the description. Measured on Darwin 27.2's APFS (docs/probes/getdents-fault, resumed rows), such a call moves the description's position past an entry it never returns, answering EFAULT through a buffer of 1024 bytes or more and 0 through a smaller one; this kernel's position is a name, and the amount is the filesystem's own."
+        | ReadDirectoryRefusal.Buffer refusal -> BufferRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadDirectoryRefusal) : RefusalKind =
         match refusal with
         | ReadDirectoryRefusal.UnenumerablePosition _ -> RefusalKind.Unmodelled
+        | ReadDirectoryRefusal.FaultAfterRecords _ -> RefusalKind.Unmodelled
+        | ReadDirectoryRefusal.UnmeasuredDestinationFault _ -> RefusalKind.Unmodelled
+        | ReadDirectoryRefusal.FaultAtResumedCursor _ -> RefusalKind.Unmodelled
+        | ReadDirectoryRefusal.Buffer inner -> BufferRefusal.kind inner
 
 /// How far `rename(2)` had got with its source when it stopped to copy its
 /// *destination* pathname in — which is not the same point on the two flavours.
@@ -1728,6 +1771,8 @@ module UnixNamespace =
     /// `tryReadDirectoryEntry` once `Entry` has admitted its caller.
     let private tryReadDirectoryEntryIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
+        (destination : UserBuffer)
+        (place : DirectoryBatchPlace)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>, ReadDirectoryRefusal>
         =
@@ -1792,15 +1837,93 @@ module UnixNamespace =
         // stays refused there.
         let orphaned = VirtualFileSystem.isOrphanedDirectory inode system.Machine.FileSystem
 
+        // Where the kernel stores into the process's buffer: `stored` is the
+        // answer when the destination is writable, and otherwise `faulted`
+        // for the first record of the call, and `following` for a later one.
+        // Measured (`docs/probes/getdents-fault`): every errno above comes
+        // first, on both flavours. Linux stores a record at a time, so a fault
+        // on the first is EFAULT with the position where it was, and one on a
+        // later record ends the call with the records before it, the position
+        // just past them; at the end of the directory it stores nothing, and
+        // faults nowhere. Darwin faults at the end of the directory too, and
+        // for a fault after it has stored records see `FaultAfterRecords`.
+        let throughDestination
+            (stored : ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>)
+            (faulted : ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>)
+            (following : Result<ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>, ReadDirectoryRefusal>)
+            : Result<ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>, ReadDirectoryRefusal>
+            =
+            match destination, place with
+            | UserBuffer.Mapped, _ -> Ok stored
+            | UserBuffer.Opaque, _ -> Error (ReadDirectoryRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+            | UserBuffer.Addressless, _ -> Error (ReadDirectoryRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+            | UserBuffer.Unmapped _, DirectoryBatchPlace.First -> Ok faulted
+            | UserBuffer.Unmapped _, DirectoryBatchPlace.Following -> following
+
+        // What a read answers through a buffer it cannot write was measured
+        // on Linux's tmpfs (which a devtmpfs is) and Darwin's APFS and devfs,
+        // and not on NFS.
+        let linuxFaultMeasured =
+            match UnixMachineState.fileSystemOf inode system.Machine with
+            | InodeFileSystem.Typed EmulatedFileSystemType.Tmpfs -> true
+            | InodeFileSystem.Typed _
+            | InodeFileSystem.Devfs -> false
+
+        let darwinFaultMeasured =
+            match UnixMachineState.fileSystemOf inode system.Machine with
+            | InodeFileSystem.Devfs -> true
+            | InodeFileSystem.Typed EmulatedFileSystemType.Apfs -> true
+            | InodeFileSystem.Typed _ -> false
+
+        let darwinThroughDestination
+            (stored : ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>)
+            (faulted : ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>)
+            : Result<ReadDirectoryAnswer * ProcessView<'Thread, 'Handler>, ReadDirectoryRefusal>
+            =
+            match destination with
+            | UserBuffer.Unmapped _ when not darwinFaultMeasured ->
+                Error (ReadDirectoryRefusal.UnmeasuredDestinationFault inode)
+            | _ -> throughDestination stored faulted (Error (ReadDirectoryRefusal.FaultAfterRecords inode))
+
+        let failedEfault = ReadDirectoryAnswer.Failed UnixError.EFAULT
+
         match flavour, orphaned, position with
         | SimulatedUnixFlavour.Linux, true, _ -> Ok (ReadDirectoryAnswer.Failed UnixError.ENOENT, system)
         | _, _, DirectoryPosition.Unenumerable offset ->
             Error (ReadDirectoryRefusal.UnenumerablePosition (inode, offset))
-        | SimulatedUnixFlavour.Darwin, true, DirectoryPosition.Cursor _ ->
-            Ok (
-                ReadDirectoryAnswer.EndOfDirectory,
-                withPosition (DirectoryPosition.Cursor DirectoryCursor.ReturnedDot) system
-            )
+        | SimulatedUnixFlavour.Darwin, true, DirectoryPosition.Cursor cursor ->
+            // Measured on a fresh description: through a buffer it cannot
+            // write, EFAULT, with the position moved to the end all the same,
+            // and EFAULT again from there (the `removed-*` rows). After
+            // earlier reads that stopped short of the end it is unmeasured.
+            // The call that moves the position to the end moves the access
+            // time as a read does, through either buffer, and one at the end
+            // moves nothing (the `removed-atime` rows).
+            let movedToEnd =
+                match cursor with
+                | DirectoryCursor.ReturnedDot -> system
+                | DirectoryCursor.Start
+                | DirectoryCursor.After _
+                | DirectoryCursor.ReturnedDotDot ->
+                    { system with
+                        Machine =
+                            UnixMachineState.afterRead
+                                inode
+                                (UnixMachineState.realtime system.Scheduling system.Machine)
+                                system.Machine
+                    }
+
+            let ended =
+                withPosition (DirectoryPosition.Cursor DirectoryCursor.ReturnedDot) movedToEnd
+
+            match cursor, destination with
+            | DirectoryCursor.Start, _
+            | DirectoryCursor.ReturnedDot, _
+            | _, UserBuffer.Mapped
+            | _, UserBuffer.Opaque
+            | _, UserBuffer.Addressless ->
+                darwinThroughDestination (ReadDirectoryAnswer.EndOfDirectory, ended) (failedEfault, ended)
+            | _, UserBuffer.Unmapped _ -> Error (ReadDirectoryRefusal.FaultAtResumedCursor inode)
         | _, false, DirectoryPosition.Cursor cursor ->
 
         // The directory's access time moves where its filesystem's rule says
@@ -1818,15 +1941,36 @@ module UnixNamespace =
                         system.Machine
             }
 
+        // A Darwin read that faults moves the access time on devfs, as one
+        // that succeeds does, and nothing on APFS (measured: the `atime` and
+        // `devfs-atime` rows). Linux's `iterate_dir` moves it whatever the
+        // copy did (the `atime` rows, on a `strictatime` tmpfs).
+        let faultedRead =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> read
+            | SimulatedUnixFlavour.Darwin when VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem -> read
+            | SimulatedUnixFlavour.Darwin -> system
+
         match VirtualFileSystem.nextDirectoryEntry inode cursor system.Machine.FileSystem with
         | None ->
             match flavour with
+            // Stores nothing, so no destination is consulted: measured 0
+            // through every buffer, writable or not.
             | SimulatedUnixFlavour.Linux -> Ok (ReadDirectoryAnswer.EndOfDirectory, read)
             // devfs moves it at the end too (`docs/probes/devfs-darwin`, TIMES
-            // rows), where APFS does not.
+            // rows), where APFS does not. Darwin faults at the end through a
+            // buffer with any byte it cannot write (measured: the `end-*`
+            // rows, down to the buffer's last byte).
             | SimulatedUnixFlavour.Darwin when VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem ->
-                Ok (ReadDirectoryAnswer.EndOfDirectory, read)
-            | SimulatedUnixFlavour.Darwin -> Ok (ReadDirectoryAnswer.EndOfDirectory, system)
+                darwinThroughDestination (ReadDirectoryAnswer.EndOfDirectory, read) (failedEfault, read)
+            // On APFS a status word it cannot write after records it stored
+            // answers EFAULT, the position at the end where those records
+            // left it (measured: the `start-tail` row). devfs's is unmeasured.
+            | SimulatedUnixFlavour.Darwin ->
+                match destination, place with
+                | UserBuffer.Unmapped _, DirectoryBatchPlace.Following when darwinFaultMeasured ->
+                    Ok (failedEfault, system)
+                | _ -> darwinThroughDestination (ReadDirectoryAnswer.EndOfDirectory, system) (failedEfault, system)
         | Some (name, target, next) ->
 
         let kind =
@@ -1856,12 +2000,42 @@ module UnixNamespace =
                 Kind = kind
             }
 
-        Ok (ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) read)
+        let stored =
+            ReadDirectoryAnswer.Entry record, withPosition (DirectoryPosition.Cursor next) read
+
+        match flavour with
+        | SimulatedUnixFlavour.Linux ->
+            match destination with
+            | UserBuffer.Unmapped _ when not linuxFaultMeasured ->
+                Error (ReadDirectoryRefusal.UnmeasuredDestinationFault inode)
+            | _ -> throughDestination stored (failedEfault, faultedRead) (Ok (ReadDirectoryAnswer.Stopped, faultedRead))
+        | SimulatedUnixFlavour.Darwin ->
+            // A first record through no storage leaves the position alone
+            // on a fresh description (measured: the `start`, `first-*` and
+            // `start-prefix` rows) and on devfs after earlier reads (the
+            // `devfs-resumed` row); on APFS after earlier reads it skips an
+            // entry (the `resumed` rows).
+            let onDevfs = VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem
+
+            match place, cursor, destination with
+            | DirectoryBatchPlace.First, _, _ when onDevfs ->
+                darwinThroughDestination stored (failedEfault, faultedRead)
+            | DirectoryBatchPlace.First, DirectoryCursor.Start, _
+            | _, _, UserBuffer.Mapped
+            | _, _, UserBuffer.Opaque
+            | _, _, UserBuffer.Addressless
+            | DirectoryBatchPlace.Following, _, _ -> darwinThroughDestination stored (failedEfault, faultedRead)
+            | DirectoryBatchPlace.First, _, UserBuffer.Unmapped _ when not darwinFaultMeasured ->
+                Error (ReadDirectoryRefusal.UnmeasuredDestinationFault inode)
+            | DirectoryBatchPlace.First, _, UserBuffer.Unmapped _ ->
+                Error (ReadDirectoryRefusal.FaultAtResumedCursor inode)
 
     /// `readDirectoryEntry`, with a refusal answered as the `Error` rather than raised.
     let internal tryReadDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
+        (destination : UserBuffer)
+        (place : DirectoryBatchPlace)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadDirectoryAnswer * UnixSystem<'Thread, 'Handler>, ReadDirectoryRefusal>
         =
@@ -1870,24 +2044,85 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryReadDirectoryEntryIn fd)
+            (tryReadDirectoryEntryIn fd destination place)
             system
 
     /// Read the next entry of the directory which `fd` names, and move its open
-    /// file description's position past it: one record of `getdents(2)`
-    /// (Linux) or `getdirentries(2)` (Darwin), without either's byte layout.
+    /// file description's position past it: one record of `getdents64(2)`
+    /// (Linux) or `__getdirentries64` (Darwin, the call under `readdir(3)`),
+    /// without either's byte layout. Darwin's older `getdirentries(2)` stores
+    /// another layout, whose faults are unmeasured.
     /// The client stores the record into the process's buffer in the
     /// platform's layout (see `DirectoryRecord`).
     ///
     /// To fill a buffer with several records, the client calls this once per
-    /// record. Every system is an immutable value, so when a record does not
-    /// fit, the client carries on from the system it had before that call, and
-    /// the entry stays next. The process's call returns the number of bytes
-    /// the client stored in this batch; it returns 0 only when the first call
-    /// of the batch answers `ReadDirectoryAnswer.EndOfDirectory`. This library
-    /// takes no buffer, so what the
-    /// process's call answers for a buffer too small for even one record, or
-    /// one the client cannot write, is for the client to decide.
+    /// record, saying with `place` whether it has already stored records in
+    /// the buffer for this call. Every system is an immutable value, so when a
+    /// record does not fit, the client carries on from the system it had
+    /// before that call, and the entry stays next. The process's call returns
+    /// the number of bytes the client stored in this batch; it returns 0 only
+    /// when the first call of the batch answers
+    /// `ReadDirectoryAnswer.EndOfDirectory`. What the process's call answers
+    /// for a buffer too small for even one record is for the client to decide.
+    ///
+    /// `destination` describes the bytes of the process's buffer that the
+    /// answer stores into. `UserBuffer.Mapped` means every one of them is
+    /// writable, and `UserBuffer.Unmapped` that some are not. For a record
+    /// those are, on Linux, its `struct linux_dirent64` up to and including
+    /// its name's NUL, and not the padding after it, which Linux never
+    /// writes; on Darwin, its whole `d_reclen`. At the end of the directory
+    /// and for a removed directory they are, on Linux, none, and on Darwin
+    /// the four-byte status word `getdirentries64` stores in the last four
+    /// bytes of a buffer of 1024 bytes or more, and none in a smaller one.
+    /// Those four bytes hold no record, so on Darwin a record fits only
+    /// within the rest of such a buffer. How many records fit is otherwise
+    /// the client's business: Darwin answers EINVAL, ahead of any EFAULT, for
+    /// a buffer of fewer than 64 bytes on a fresh description of an APFS
+    /// directory that has not been removed (measured; a devfs one took 32
+    /// bytes, and a removed one answered 0), and a devfs call can stop with
+    /// room for another record left in its buffer (measured: 64 bytes of a
+    /// 96-byte buffer).
+    /// Since the client learns which answer it gets, and how long a record
+    /// is, only from the answer, it asks with `UserBuffer.Mapped`, and, if
+    /// the bytes that answer would store into are not all writable, asks
+    /// again from the same system with `UserBuffer.Unmapped`. Through a
+    /// buffer it cannot write:
+    ///
+    /// - every errno other than EFAULT comes first, on both flavours;
+    /// - on Linux, the first record of the call answers EFAULT, with the
+    ///   position where it was, a later record answers
+    ///   `ReadDirectoryAnswer.Stopped`, and the end of the directory answers
+    ///   `ReadDirectoryAnswer.EndOfDirectory`, since nothing is stored there;
+    ///   the access time moves as for a read that succeeded;
+    /// - on Darwin, the first record of a call answers EFAULT, with the
+    ///   position where it was, on a fresh description and, on devfs, after
+    ///   earlier reads; the end of the directory answers EFAULT, as does the
+    ///   end reached by the records the call stored, on APFS; a directory
+    ///   `rmdir` has removed answers EFAULT and moves to its end. The access
+    ///   time moves on devfs, and on APFS only for the call that moves a
+    ///   removed directory to its end.
+    ///
+    /// Through a record only part of which is writable, both kernels store
+    /// some of it before they fault; this library does not say which bytes.
+    ///
+    /// On Darwin these answers assume that `__getdirentries64`'s other
+    /// out-parameter, the position it stores through `basep`, is writable:
+    /// a fault there answers EFAULT whatever the buffer held (measured by
+    /// review, not by the probe), and is outside this library.
+    ///
+    /// Refused on Darwin through a buffer it cannot write after records have
+    /// been stored there for the same call (except at the end of an APFS
+    /// directory, above), and for the first record of a call on an APFS
+    /// description earlier calls have read from, each of which moves the
+    /// position by an amount this kernel cannot hold; and on an NFS
+    /// directory through a buffer it cannot write, which is unmeasured. Also
+    /// refused for a `UserBuffer.Opaque` or `UserBuffer.Addressless`
+    /// destination wherever the kernel would store into it. A Darwin call
+    /// that fills its buffer with records, through a buffer of 1024 bytes or
+    /// more whose status word it cannot write, answers EFAULT and leaves the
+    /// position past the records it stored (measured); the client sees no
+    /// answer here for that, since it stops asking once a record does not
+    /// fit, and must treat it as unmodelled.
     ///
     /// The position belongs to the description, so every descriptor which
     /// `dup(2)` made for it reads onward from the same place, and
@@ -1910,10 +2145,12 @@ module UnixNamespace =
     let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
+        (destination : UserBuffer)
+        (place : DirectoryBatchPlace)
         (system : UnixSystem<'Thread, 'Handler>)
         : ReadDirectoryAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryReadDirectoryEntry caller fd system
+        tryReadDirectoryEntry caller fd destination place system
         |> Refusal.orRaise "UnixNamespace.readDirectoryEntry" ReadDirectoryRefusal.kind ReadDirectoryRefusal.describe
 
     /// `mkdirat`, of a path this kernel has already copied in, starting from

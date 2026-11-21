@@ -1788,8 +1788,8 @@ module UnixSystem =
             UnixNamespace.tryReadlinkat caller dirfd path destination capacity system
             |> Result.map SteppedCall.ReadLinkAt
             |> Result.mapError SyscallRefusal.ReadLinkAt
-        | Syscall.ReadDirectoryEntry fd ->
-            UnixNamespace.tryReadDirectoryEntry caller fd system
+        | Syscall.ReadDirectoryEntry (fd, destination, place) ->
+            UnixNamespace.tryReadDirectoryEntry caller fd destination place system
             |> Result.map SteppedCall.ReadDirectoryEntry
             |> Result.mapError SyscallRefusal.ReadDirectoryEntry
         | Syscall.MkDir (path, mode) ->

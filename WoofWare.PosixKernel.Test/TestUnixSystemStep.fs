@@ -5418,7 +5418,14 @@ module TestUnixSystemStep =
                 | SimulatedUnixFlavour.Linux -> ReadDirectoryAnswer.Failed UnixError.ENOENT
                 | SimulatedUnixFlavour.Darwin -> ReadDirectoryAnswer.EndOfDirectory
 
-            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            match
+                UnixNamespace.tryReadDirectoryEntry
+                    (Callers.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    DirectoryBatchPlace.First
+                    system
+            with
             | Ok (answer, _) -> answer |> shouldEqual expected
             | Error refusal -> failwith $"%A{refusal}"
 

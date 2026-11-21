@@ -467,7 +467,10 @@ module TestCallerChecks =
                 )
             running
                 "UnixNamespace.readDirectoryEntry"
-                (fun caller system -> UnixNamespace.readDirectoryEntry caller 0 system |> ignore)
+                (fun caller system ->
+                    UnixNamespace.readDirectoryEntry caller 0 UserBuffer.Mapped DirectoryBatchPlace.First system
+                    |> ignore
+                )
             running "UnixNamespace.mkdir" (fun caller system -> UnixNamespace.mkdir caller root 0o755 system |> ignore)
             running
                 "UnixNamespace.mkdirat"

@@ -1,7 +1,7 @@
 # Linux 6.18.5 aarch64, uid 65534
 # control offsets (d_off / d_seekoff): .=1 ..=7 e=6 d=5 c=4 b=3 a=2147483647
 # smallest count accepted: 24 (r=24)
-# fixture: prot_none=0xffff80f52000 edge=0xffff80f51000 (page 4096); control r=168: 7 entries .,..,e,d,c,b,a; R1=24 R2=24
+# fixture: prot_none=0xffff846b0000 edge=0xffff846af000 (page 4096); control r=168: 7 entries .,..,e,d,c,b,a; R1=24 R2=24
 closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
 closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
@@ -18,26 +18,22 @@ start          dest=ok       : r=168 errno=0 pos=0->2147483647 then=0:
 start          dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
 start          dest=prot_none: r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
 start          dest=high     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
-# after-first: first read of 24 bytes r=24 .
-after-first    dest=ok       : r=144 errno=0 pos=1->2147483647 then=0:
-# after-first: first read of 24 bytes r=24 .
-after-first    dest=null     : r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
-# after-first: first read of 24 bytes r=24 .
-after-first    dest=prot_none: r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
-# after-first: first read of 24 bytes r=24 .
-after-first    dest=high     : r=-1 errno=EFAULT pos=1->1 then=6:..,e,d,c,b,a
-partial-R1     dest=edge     : r=24 errno=0 pos=0->1
+# after-first: first read of 64 bytes r=48 .,..
+after-first    dest=ok       : r=120 errno=0 pos=7->2147483647 then=0:
+# after-first: first read of 64 bytes r=48 .,..
+after-first    dest=null     : r=-1 errno=EFAULT pos=7->7 then=5:e,d,c,b,a
+# after-first: first read of 64 bytes r=48 .,..
+after-first    dest=prot_none: r=-1 errno=EFAULT pos=7->7 then=5:e,d,c,b,a
+# after-first: first read of 64 bytes r=48 .,..
+after-first    dest=high     : r=-1 errno=EFAULT pos=7->7 then=5:e,d,c,b,a
+partial-R1     dest=edge     : r=24 errno=0 pos=0->1 then=6:..,e,d,c,b,a
 # partial-R1: first writable record now 1:.
-# partial-R1: then=6:..,e,d,c,b,a
-partial-R1+8   dest=edge     : r=24 errno=0 pos=0->1
+partial-R1+8   dest=edge     : r=24 errno=0 pos=0->1 then=6:..,e,d,c,b,a
 # partial-R1+8: first writable record now 1:.
-# partial-R1+8: then=6:..,e,d,c,b,a
-partial-R1+R2  dest=edge     : r=48 errno=0 pos=0->7
+partial-R1+R2  dest=edge     : r=48 errno=0 pos=0->7 then=5:e,d,c,b,a
 # partial-R1+R2: first writable record now 1:.
-# partial-R1+R2: then=5:e,d,c,b,a
-partial-R1+R2+R3 dest=edge     : r=72 errno=0 pos=0->6
+partial-R1+R2+R3 dest=edge     : r=72 errno=0 pos=0->6 then=4:d,c,b,a
 # partial-R1+R2+R3: first writable record now 1:.
-# partial-R1+R2+R3: then=4:d,c,b,a
 end            dest=ok       : r=0 errno=0 pos=2147483647->2147483647 then=0:
 end            dest=null     : r=0 errno=0 pos=2147483647->2147483647 then=0:
 end            dest=prot_none: r=0 errno=0 pos=2147483647->2147483647 then=0:
@@ -49,7 +45,38 @@ removed        dest=ok       : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
 removed        dest=null     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
 removed        dest=prot_none: r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
 removed        dest=high     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+removed-first  dest=null     : r=-1 errno=ENOENT pos=0->0
+removed-again  dest=null     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
 atime          dest=ok       : r=168 errno=0 atime=moved
 atime          dest=null     : r=-1 errno=EFAULT atime=moved
 atime          dest=prot_none: r=-1 errno=EFAULT atime=moved
 atime          dest=high     : r=-1 errno=EFAULT atime=moved
+end-null-512   dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-null-1023  dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-null-1024  dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-null-4096  dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-prefix     dest=edge     : r=0 errno=0 pos=2147483647->2147483647
+start-null-512 dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+start-tail     dest=edge     : r=168 errno=0 pos=0->2147483647 then=0:
+start-prefix   dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+# resumed-null-512: first read of 48 bytes r=48 .,..
+resumed-null-512 dest=null     : r=-1 errno=EFAULT pos=7->7 then=5:e,d,c,b,a
+# resumed-null-512: atime=moved
+# resumed-null-4096: first read of 48 bytes r=48 .,..
+resumed-null-4096 dest=null     : r=-1 errno=EFAULT pos=7->7 then=5:e,d,c,b,a
+# resumed-null-4096: atime=moved
+first-16       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+# first-16: changed 16 of 16 writable bytes
+first-20       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,e,d,c,b,a
+# first-20: changed 19 of 20 writable bytes
+first-21       dest=edge     : r=24 errno=0 pos=0->1 then=6:..,e,d,c,b,a
+# first-21: changed 21 of 21 writable bytes
+first-23       dest=edge     : r=24 errno=0 pos=0->1 then=6:..,e,d,c,b,a
+# first-23: changed 21 of 23 writable bytes
+big-1024       dest=ok       : r=1008 errno=0 pos=0->2147483647 then=0:
+big-tail-1024  dest=edge     : r=1008 errno=0 pos=0->2147483647 then=0:
+partial-R1+R2-512 dest=edge     : r=48 errno=0 pos=0->7 then=5:e,d,c,b,a
+removed-32     dest=null     : r=-1 errno=ENOENT pos=0->0 then=0:<ENOENT>
+removed-atime  dest=ok       : r=-1 errno=ENOENT atime=kept
+removed-atime  dest=null     : r=-1 errno=ENOENT atime=kept
+removed-atime-again dest=null     : r=-1 errno=ENOENT atime=kept

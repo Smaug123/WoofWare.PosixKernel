@@ -647,6 +647,21 @@ WoofWare.PosixKernel.DeviceNumber.major [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.DeviceNumber.minor [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.DeviceNumber.NewDeviceNumber [static method]: (System.UInt32, System.UInt32) -> WoofWare.PosixKernel.DeviceNumber
 WoofWare.PosixKernel.DeviceNumber.Tag [property]: [read-only] int
+WoofWare.PosixKernel.DirectoryBatchPlace inherit obj, implements WoofWare.PosixKernel.DirectoryBatchPlace System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryBatchPlace System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.DirectoryBatchPlace+Tags inherit obj
+WoofWare.PosixKernel.DirectoryBatchPlace+Tags.First [static field]: int = 0
+WoofWare.PosixKernel.DirectoryBatchPlace+Tags.Following [static field]: int = 1
+WoofWare.PosixKernel.DirectoryBatchPlace.Equals [method]: (WoofWare.PosixKernel.DirectoryBatchPlace, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.DirectoryBatchPlace.First [static property]: [read-only] WoofWare.PosixKernel.DirectoryBatchPlace
+WoofWare.PosixKernel.DirectoryBatchPlace.Following [static property]: [read-only] WoofWare.PosixKernel.DirectoryBatchPlace
+WoofWare.PosixKernel.DirectoryBatchPlace.get_First [static method]: unit -> WoofWare.PosixKernel.DirectoryBatchPlace
+WoofWare.PosixKernel.DirectoryBatchPlace.get_Following [static method]: unit -> WoofWare.PosixKernel.DirectoryBatchPlace
+WoofWare.PosixKernel.DirectoryBatchPlace.get_IsFirst [method]: unit -> bool
+WoofWare.PosixKernel.DirectoryBatchPlace.get_IsFollowing [method]: unit -> bool
+WoofWare.PosixKernel.DirectoryBatchPlace.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.DirectoryBatchPlace.IsFirst [property]: [read-only] bool
+WoofWare.PosixKernel.DirectoryBatchPlace.IsFollowing [property]: [read-only] bool
+WoofWare.PosixKernel.DirectoryBatchPlace.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DirectoryContent inherit obj, implements WoofWare.PosixKernel.DirectoryContent System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryContent System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.DirectoryContent..ctor [constructor]: (Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>, WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.PermissionBits)
 WoofWare.PosixKernel.DirectoryContent.Entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>
@@ -3956,7 +3971,7 @@ WoofWare.PosixKernel.ReadAnswer.NewCompleted [static method]: System.Byte System
 WoofWare.PosixKernel.ReadAnswer.NewDrawn [static method]: WoofWare.PosixKernel.EntropyDraw -> WoofWare.PosixKernel.ReadAnswer
 WoofWare.PosixKernel.ReadAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.ReadAnswer
 WoofWare.PosixKernel.ReadAnswer.Tag [property]: [read-only] int
-WoofWare.PosixKernel.ReadDirectoryAnswer inherit obj, implements WoofWare.PosixKernel.ReadDirectoryAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadDirectoryAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.ReadDirectoryAnswer inherit obj, implements WoofWare.PosixKernel.ReadDirectoryAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadDirectoryAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 4 cases
 WoofWare.PosixKernel.ReadDirectoryAnswer+Entry inherit WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer+Entry.get_record [method]: unit -> WoofWare.PosixKernel.DirectoryRecord
 WoofWare.PosixKernel.ReadDirectoryAnswer+Entry.record [property]: [read-only] WoofWare.PosixKernel.DirectoryRecord
@@ -3967,18 +3982,23 @@ WoofWare.PosixKernel.ReadDirectoryAnswer+Tags inherit obj
 WoofWare.PosixKernel.ReadDirectoryAnswer+Tags.EndOfDirectory [static field]: int = 1
 WoofWare.PosixKernel.ReadDirectoryAnswer+Tags.Entry [static field]: int = 0
 WoofWare.PosixKernel.ReadDirectoryAnswer+Tags.Failed [static field]: int = 2
+WoofWare.PosixKernel.ReadDirectoryAnswer+Tags.Stopped [static field]: int = 3
 WoofWare.PosixKernel.ReadDirectoryAnswer.EndOfDirectory [static property]: [read-only] WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer.Equals [method]: (WoofWare.PosixKernel.ReadDirectoryAnswer, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.get_EndOfDirectory [static method]: unit -> WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer.get_IsEndOfDirectory [method]: unit -> bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.get_IsEntry [method]: unit -> bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.get_IsFailed [method]: unit -> bool
+WoofWare.PosixKernel.ReadDirectoryAnswer.get_IsStopped [method]: unit -> bool
+WoofWare.PosixKernel.ReadDirectoryAnswer.get_Stopped [static method]: unit -> WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer.get_Tag [method]: unit -> int
 WoofWare.PosixKernel.ReadDirectoryAnswer.IsEndOfDirectory [property]: [read-only] bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.IsEntry [property]: [read-only] bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.IsFailed [property]: [read-only] bool
+WoofWare.PosixKernel.ReadDirectoryAnswer.IsStopped [property]: [read-only] bool
 WoofWare.PosixKernel.ReadDirectoryAnswer.NewEntry [static method]: WoofWare.PosixKernel.DirectoryRecord -> WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.ReadDirectoryAnswer
+WoofWare.PosixKernel.ReadDirectoryAnswer.Stopped [static property]: [read-only] WoofWare.PosixKernel.ReadDirectoryAnswer
 WoofWare.PosixKernel.ReadDirectoryAnswer.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ReadinessLevel inherit obj, implements WoofWare.PosixKernel.ReadinessLevel System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadinessLevel System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.ReadinessLevel..ctor [constructor]: (bool, bool, bool, bool, bool)
@@ -6828,8 +6848,12 @@ WoofWare.PosixKernel.Syscall`2+Read.get_buffer [method]: unit -> WoofWare.PosixK
 WoofWare.PosixKernel.Syscall`2+Read.get_count [method]: unit -> System.UInt64
 WoofWare.PosixKernel.Syscall`2+Read.get_fd [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.fd [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.get_fd [method]: unit -> int
+WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.get_place [method]: unit -> WoofWare.PosixKernel.DirectoryBatchPlace
+WoofWare.PosixKernel.Syscall`2+ReadDirectoryEntry.place [property]: [read-only] WoofWare.PosixKernel.DirectoryBatchPlace
 WoofWare.PosixKernel.Syscall`2+ReadLink inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+ReadLink.capacity [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+ReadLink.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
@@ -7506,7 +7530,7 @@ WoofWare.PosixKernel.Syscall`2.NewPthreadKill [static method]: ('Thread, int) ->
 WoofWare.PosixKernel.Syscall`2.NewPthreadSigMask [static method]: (int, WoofWare.PosixKernel.SignalMask option) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewPWrite [static method]: (int, System.Byte System.Collections.Immutable.ImmutableArray WoofWare.PosixKernel.CopiedArgument, System.UInt64, System.Int64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewRead [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewReadDirectoryEntry [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewReadDirectoryEntry [static method]: (int, WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.DirectoryBatchPlace) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewReadLink [static method]: (WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserBuffer, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewReadLinkAt [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, WoofWare.PosixKernel.UserBuffer, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewRecv [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt64, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -8707,7 +8731,7 @@ WoofWare.PosixKernel.UnixNamespace.mknod [static method]: 'Thread WoofWare.Posix
 WoofWare.PosixKernel.UnixNamespace.mknodat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> int -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixNamespace.openat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.OpenOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixNamespace.openPath [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.OpenOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixNamespace.readDirectoryEntry [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ReadDirectoryAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixNamespace.readDirectoryEntry [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.DirectoryBatchPlace -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ReadDirectoryAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixNamespace.readlink [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserBuffer -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.ReadLinkAnswer
 WoofWare.PosixKernel.UnixNamespace.readlinkat [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UserBuffer -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.ReadLinkAnswer
 WoofWare.PosixKernel.UnixNamespace.rename [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PathArgumentBytes -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedRename<'Thread, 'Handler>, (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
