@@ -112,6 +112,7 @@ module TestSockNameLengthCellMeasured =
 
         let lines =
             reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun line -> line.TrimEnd '\r')
             |> List.ofArray
 
         match lines with
@@ -328,6 +329,8 @@ module TestSockNameLengthCellMeasured =
         | "inet6-stream-fresh" -> Some (socket SocketDomain.Inet6 SocketKind.Stream system)
         | "inet6-dgram-fresh" -> Some (socket SocketDomain.Inet6 SocketKind.Datagram system)
         | "unix-stream-fresh" -> Some (socket SocketDomain.Unix SocketKind.Stream system)
+        | "unix-dgram-fresh" -> Some (socket SocketDomain.Unix SocketKind.Datagram system)
+        | "unix-seqpacket-fresh" -> Some (socket SocketDomain.Unix SocketKind.SeqPacket system)
         // `socketpair(2)` has no function here.
         | "unix-socketpair" -> None
         | other -> failwith $"unknown fixture %s{other}"
@@ -335,7 +338,13 @@ module TestSockNameLengthCellMeasured =
     /// The fixtures whose own address this library does not model, so that a
     /// `getsockname` which reaches the address is refused.
     let private unnamed : Set<string> =
-        Set.ofList [ "inet6-dgram-fresh" ; "unix-stream-fresh" ]
+        Set.ofList
+            [
+                "inet6-dgram-fresh"
+                "unix-stream-fresh"
+                "unix-dgram-fresh"
+                "unix-seqpacket-fresh"
+            ]
 
     /// An address the probe's unmapped page might have had: this library takes
     /// any unmapped address the same way.
@@ -479,18 +488,19 @@ module TestSockNameLengthCellMeasured =
         : unit
         =
         for measurement in measurements.Value do
-            // Not vacuous: each output holds 540 rows, 15 per call for each of 18 fixtures.
-            // The 30 of `unix-socketpair` cannot be built here. Of the
-            // `getsockname` rows of the two fixtures in `unnamed`, the 9 through
-            // a cell of real storage reach the unmodelled address, except on
-            // Linux the 3 holding -1, which answer EINVAL first.
-            let refusedRows =
+            // Not vacuous: each output holds 30 rows, 15 per call, for each of
+            // 20 fixtures on Linux and 19 on Darwin, which has no Unix-domain
+            // SOCK_SEQPACKET. The 30 of `unix-socketpair` cannot be built here.
+            // Of the `getsockname` rows of each fixture in `unnamed`, the 9
+            // through a cell of real storage reach the unmodelled address,
+            // except on Linux the 3 holding -1, which answer EINVAL first.
+            let rows, refusedRows =
                 match SimulatedUnixPlatform.flavour measurement.Platform with
-                | SimulatedUnixFlavour.Linux -> 12
-                | SimulatedUnixFlavour.Darwin -> 18
+                | SimulatedUnixFlavour.Linux -> 20 * 30, 4 * 6
+                | SimulatedUnixFlavour.Darwin -> 19 * 30, 3 * 9
 
-            measurement.Rows |> List.length |> shouldEqual 540
-            replayed measurement |> shouldEqual (540 - 30 - refusedRows, refusedRows)
+            measurement.Rows |> List.length |> shouldEqual rows
+            replayed measurement |> shouldEqual (rows - 30 - refusedRows, refusedRows)
 
     [<Test>]
     let ``the probe measured what its docstrings claim: which answers come before each kernel reads the cell`` () =
@@ -543,6 +553,9 @@ module TestSockNameLengthCellMeasured =
                 "inet6-stream-fresh"
                 "inet6-dgram-fresh"
                 "unix-stream-fresh"
+                "unix-dgram-fresh"
+                if flavour = SimulatedUnixFlavour.Linux then
+                    "unix-seqpacket-fresh"
                 "unix-socketpair"
             ]
             |> List.collect (fun fixture ->

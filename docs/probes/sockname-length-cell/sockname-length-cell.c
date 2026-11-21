@@ -30,7 +30,7 @@
 // Reading that error takes it, and the same socket is then measured again as
 // the fixture `tcp-refusal-taken` or `tcp-reset-taken`.
 //
-// Outputs beside this file, measured 2026-11-20:
+// Outputs beside this file, measured 2026-11-21:
 //
 // * darwin-27.2.0-arm64.txt: natively,
 //     cc -Wall -O1 -o /tmp/p sockname-length-cell.c && /tmp/p
@@ -375,6 +375,22 @@ int main(void) {
         need(fd >= 0, "socket(AF_UNIX, SOCK_STREAM, 0)");
         fixture("unix-stream-fresh", fd);
         close(fd);
+    }
+    {
+        int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+        need(fd >= 0, "socket(AF_UNIX, SOCK_DGRAM, 0)");
+        fixture("unix-dgram-fresh", fd);
+        close(fd);
+    }
+    {
+        // Darwin has no Unix-domain SOCK_SEQPACKET.
+        int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+        if (fd < 0) {
+            printf("# unix-seqpacket-fresh: socket -> %s\n", en(errno));
+        } else {
+            fixture("unix-seqpacket-fresh", fd);
+            close(fd);
+        }
     }
     {
         int sv[2];

@@ -553,6 +553,39 @@ getpeername unix-stream-fresh cell=16 dest=mapped -> ENOTCONN cellafter=16 writt
 getpeername unix-stream-fresh cell=0 dest=mapped -> ENOTCONN cellafter=0 written=0
 getpeername unix-stream-fresh cell=-1 dest=mapped -> ENOTCONN cellafter=-1 written=0
 # unix-stream-fresh after: fd=3 getsockname=OK getpeername=ENOTCONN
+# unix-dgram-fresh before: fd=3 getsockname=OK getpeername=ENOTCONN
+getsockname unix-dgram-fresh cell=null dest=null -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=unmapped dest=null -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=16 dest=null -> EFAULT cellafter=16 written=0
+getsockname unix-dgram-fresh cell=0 dest=null -> OK cellafter=16 written=0
+getsockname unix-dgram-fresh cell=-1 dest=null -> EFAULT cellafter=-1 written=0
+getsockname unix-dgram-fresh cell=null dest=unmapped -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=unmapped dest=unmapped -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=16 dest=unmapped -> EFAULT cellafter=16 written=0
+getsockname unix-dgram-fresh cell=0 dest=unmapped -> OK cellafter=16 written=0
+getsockname unix-dgram-fresh cell=-1 dest=unmapped -> EFAULT cellafter=-1 written=0
+getsockname unix-dgram-fresh cell=null dest=mapped -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=unmapped dest=mapped -> EFAULT cellafter=- written=0
+getsockname unix-dgram-fresh cell=16 dest=mapped -> OK cellafter=16 written=16
+getsockname unix-dgram-fresh cell=0 dest=mapped -> OK cellafter=16 written=0
+getsockname unix-dgram-fresh cell=-1 dest=mapped -> OK cellafter=16 written=16
+getpeername unix-dgram-fresh cell=null dest=null -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=unmapped dest=null -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=16 dest=null -> ENOTCONN cellafter=16 written=0
+getpeername unix-dgram-fresh cell=0 dest=null -> ENOTCONN cellafter=0 written=0
+getpeername unix-dgram-fresh cell=-1 dest=null -> ENOTCONN cellafter=-1 written=0
+getpeername unix-dgram-fresh cell=null dest=unmapped -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=unmapped dest=unmapped -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=16 dest=unmapped -> ENOTCONN cellafter=16 written=0
+getpeername unix-dgram-fresh cell=0 dest=unmapped -> ENOTCONN cellafter=0 written=0
+getpeername unix-dgram-fresh cell=-1 dest=unmapped -> ENOTCONN cellafter=-1 written=0
+getpeername unix-dgram-fresh cell=null dest=mapped -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=unmapped dest=mapped -> ENOTCONN cellafter=- written=0
+getpeername unix-dgram-fresh cell=16 dest=mapped -> ENOTCONN cellafter=16 written=0
+getpeername unix-dgram-fresh cell=0 dest=mapped -> ENOTCONN cellafter=0 written=0
+getpeername unix-dgram-fresh cell=-1 dest=mapped -> ENOTCONN cellafter=-1 written=0
+# unix-dgram-fresh after: fd=3 getsockname=OK getpeername=ENOTCONN
+# unix-seqpacket-fresh: socket -> errno43
 # unix-socketpair before: fd=3 getsockname=OK getpeername=OK
 getsockname unix-socketpair cell=null dest=null -> EFAULT cellafter=- written=0
 getsockname unix-socketpair cell=unmapped dest=null -> EFAULT cellafter=- written=0

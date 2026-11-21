@@ -2194,8 +2194,9 @@ module UnixSocket =
         // reads the cell as an `int` and answers EINVAL for a negative one,
         // whatever the destination, and stores nothing in the cell. It has the
         // socket's name by then, so it answers EINVAL for a socket whose name
-        // this kernel does not model too: measured for a Unix-domain socket and
-        // an IPv6 datagram one (`docs/probes/sockname-length-cell`).
+        // this kernel does not model too: measured for a Unix-domain stream,
+        // datagram and seqpacket socket and an IPv6 datagram one
+        // (`docs/probes/sockname-length-cell`).
         if
             SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
             && int declaredLength < 0
@@ -2218,7 +2219,9 @@ module UnixSocket =
         // Measured EFAULT on both flavours for a null and for an unmapped cell,
         // whatever the destination, with nothing written, from every socket
         // whose answer waits on the cell, those whose names this kernel does not
-        // model included (`docs/probes/sockname-length-cell`).
+        // model included: Unix-domain stream, datagram and (on Linux, which has
+        // it) seqpacket sockets, and IPv6 datagram ones
+        // (`docs/probes/sockname-length-cell`).
         match LengthCellRead.ofCell length with
         | Error refusal -> Error (GetSockNameRefusal.Buffer refusal)
         | Ok LengthCellRead.Faults -> Ok (SockNameAdmission.Answered UnixError.EFAULT)
