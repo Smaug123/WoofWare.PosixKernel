@@ -2086,12 +2086,23 @@ module UnixSystem =
                 operation
                 (fun (entries : PollEntry list) paused ->
                     let count = PausedPoll.count paused
-                    // Bounded by the entries the call copies, not by the list.
-                    let copied = List.truncate count entries
 
-                    if List.length copied < count then
-                        invalidOp
-                            $"%s{operation}: the call copies %d{count} entries, but the array's contents (CopiedArgument.Readable) hold only %d{List.length copied}. A readable array holds every entry the call copies (this is a bug in the caller)."
+                    // How `entries` compares with `count` in length, walking
+                    // no further than `count` entries into it.
+                    let rec compare (remaining : int) (rest : PollEntry list) : int =
+                        match remaining, rest with
+                        | 0, [] -> 0
+                        | 0, _ :: _ -> 1
+                        | _, [] -> -1
+                        | remaining, _ :: rest -> compare (remaining - 1) rest
+
+                    let copied =
+                        match compare count entries with
+                        | 0 -> entries
+                        | 1 -> List.truncate count entries
+                        | _ ->
+                            invalidOp
+                                $"%s{operation}: the call copies %d{count} entries, but the array's contents (CopiedArgument.Readable) hold fewer. A readable array holds every entry the call copies (this is a bug in the caller)."
 
                     UnixPoll.tryPollWithEntries copied paused
                 )

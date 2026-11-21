@@ -306,9 +306,10 @@ module TestPollUnreadableEntries =
     /// Whether the poll asleep in `parked` keeps the measured wait of a
     /// timeout of `milliseconds` from `system`: no deadline for -1, and for a
     /// positive timeout a deadline that many milliseconds on, at which the
-    /// finished call answers 0.
+    /// finished call answers 0 with `revents`.
     let private waitsAsMeasured
         (system : UnixSystem<int, string>)
+        (revents : int16 list)
         (milliseconds : int)
         (parked : UnixSystem<int, string>)
         : bool
@@ -323,7 +324,7 @@ module TestPollUnreadableEntries =
             && (let woken = UnixSystem.advanceClock wait parked |> Woken.thread thread
 
                 match UnixPoll.tryFinishPoll (Callers.thread thread woken) woken with
-                | Ok (PollOutcome.Answered ([], 0), _) -> true
+                | Ok (PollOutcome.Answered (answered, 0), _) -> answered = revents
                 | _ -> false)
 
     /// `poll` of `argument` through the public protocol, holding where it
@@ -455,7 +456,7 @@ module TestPollUnreadableEntries =
                            // infinite one is ended by the probe's timer.
                            | Ok (PollOutcome.WouldBlock _, parked) ->
                                row.Slept
-                               && waitsAsMeasured system row.Timeout parked
+                               && waitsAsMeasured system [] row.Timeout parked
                                && match row.Timeout with
                                   | 0 -> false
                                   | -1 -> row.Rv = -1 && row.Errno = "Interrupted system call"
@@ -537,7 +538,12 @@ module TestPollUnreadableEntries =
                         && row.Revents0 = "0x5a5a"
                         && match answer with
                            | Ok (PollOutcome.Answered ([ revents ], 1), _) -> ready && revents = pollOut
-                           | Ok (PollOutcome.WouldBlock _, _) -> not ready && row.Slept && row.Timeout = 100
+                           // It reaches the copy-out at its deadline.
+                           | Ok (PollOutcome.WouldBlock _, parked) ->
+                               not ready
+                               && row.Slept
+                               && row.Timeout = 100
+                               && waitsAsMeasured system [ 0s ] row.Timeout parked
                            | _ -> false
 
                     judge run system (readableArray entries) row expected
@@ -604,6 +610,7 @@ module TestPollUnreadableEntries =
                             int m.Groups.[1].Value,
                             m.Groups.[2].Value,
                             UInt64.Parse (m.Groups.[3].Value, Globalization.NumberStyles.HexNumber),
+                            UInt32.Parse m.Groups.[4].Value,
                             int m.Groups.[5].Value,
                             m.Groups.[6].Value,
                             int m.Groups.[7].Value,
@@ -620,7 +627,18 @@ module TestPollUnreadableEntries =
 
             List.length measured |> shouldEqual expected
 
-            for k, cut, address, rv, errno, charge, revents0 in measured do
+            for k, cut, address, nfds, rv, errno, charge, revents0 in measured do
+                // The probe's fixture: no poll, the whole array of k entries,
+                // or k readable entries of k + 1.
+                let expectedCount =
+                    match cut with
+                    | "no-poll" -> 0u
+                    | "none" -> uint32 k
+                    | _ -> uint32 k + 1u
+
+                if nfds <> expectedCount then
+                    failwith $"%s{run.Name}: section S row k=%d{k} cut=%s{cut} polled %d{nfds} entries"
+
                 let system, _ = worldOf run
                 let caller = Callers.thread thread system
 
@@ -697,10 +715,10 @@ module TestPollUnreadableEntries =
                     | _ ->
                         let argument =
                             match cut with
-                            | "none" -> readableArray (lead :: List.replicate (k - 1) idle)
+                            | "none" -> CopiedArgument.Readable (lead :: List.replicate (k - 1) idle), nfds
                             // Readable in part: passed at its address as an
                             // unmapped array.
-                            | _ -> unmappedArrayAt address (uint32 (k + 1))
+                            | _ -> unmappedArrayAt address nfds
 
                         match poll argument 0 system with
                         | Ok (PollOutcome.Answered (first :: _, count), system) -> (count, "-", $"0x%x{first}"), system
@@ -994,3 +1012,37 @@ module TestPollUnreadableEntries =
                     if not (obj.ReferenceEquals (after, system)) then
                         failwith $"%A{platform}: a poll of %A{fds} changed nothing but handed back another system"
                 | Error refusal -> failwith $"%A{platform}: refused %A{refusal}"
+
+    /// `UnixSystem.step` copies the first `nfds` entries a readable array
+    /// holds, and throws for one that holds fewer.
+    [<Test>]
+    let ``step copies the first nfds entries, and throws for too few`` () : unit =
+        let system, writeEnd = world false linuxArm64_6_18_5
+        let caller = Callers.thread thread system
+
+        let ready =
+            {
+                PollEntry.Fd = writeEnd
+                Events = pollOut
+            }
+
+        let idle =
+            {
+                PollEntry.Fd = -1
+                Events = pollIn
+            }
+
+        let step (entries : PollEntry list) (nfds : uint32) =
+            UnixSystem.tryStep caller (Syscall.Poll (CopiedArgument.Readable entries, nfds, 0)) system
+
+        match step [ ready ; idle ; ready ] 2u with
+        | Ok (SteppedCall.Poll (PollOutcome.Answered (revents, count), _)) ->
+            (revents, count) |> shouldEqual ([ pollOut ; 0s ], 1)
+        | other -> failwith $"%A{other}"
+
+        match step [ ready ; idle ] 2u with
+        | Ok (SteppedCall.Poll (PollOutcome.Answered (revents, count), _)) ->
+            (revents, count) |> shouldEqual ([ pollOut ; 0s ], 1)
+        | other -> failwith $"%A{other}"
+
+        (fun () -> step [ ready ] 2u |> ignore) |> shouldFail<InvalidOperationException>
