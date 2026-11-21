@@ -235,7 +235,7 @@ module TestSyscallInterruption =
         | Sleep.Accept ->
             parked
                 "the accept"
-                (UnixConnection.tryAccept
+                (AcceptCalls.tryAccept
                     (Callers.thread thread world.System)
                     world.Listener
                     UserBuffer.Mapped
@@ -359,7 +359,7 @@ module TestSyscallInterruption =
             | Error (FLockRefusal.Interruption refusal) -> answered (Ending.Refused refusal) system
             | other -> unexpected other
         | Sleep.Accept ->
-            match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
+            match AcceptCalls.tryFinishAccept 16u (Callers.thread thread system) system with
             | Ok (AcceptOutcome.Accepted _, system) -> answered Ending.Completed system
             | Ok (AcceptOutcome.Interrupted, system) -> interrupted system
             | Ok (AcceptOutcome.WouldBlock _, system) -> answered Ending.Reparked system
@@ -801,7 +801,7 @@ module TestSyscallInterruption =
                 {
                     Listener = waiting
                     Destination = UserBuffer.Mapped
-                    DeclaredLength = (Some 16u)
+                    Cell = AcceptCalls.forgedCellUnder SimulatedUnixFlavour.Linux
                     NewSocketNonBlocking = false
                     NewSocketCloseOnExec = false
                 }

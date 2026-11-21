@@ -264,6 +264,21 @@ type GetCwdDestinationFault =
     /// `UnixPathResolution.getcwd` refuses it.
     | FatalToTheProcess
 
+/// When a kernel's `accept(2)` reads the process's length cell, for a call
+/// whose address buffer is not NULL (neither reads it for a NULL one).
+///
+/// Measured on Linux 6.18.5 and Darwin 27.2.0
+/// (`docs/probes/accept-length-cell`): Darwin reads the cell before anything
+/// else, ahead of `EBADF` and before a blocking call sleeps; Linux reads it only
+/// once it holds a connection, after a sleep.
+[<RequireQualifiedAccess>]
+type AcceptLengthCellRead =
+    /// Before anything else, so a call that sleeps keeps what the cell held.
+    | BeforeAnything
+    /// Once the call holds a connection, so a call that sleeps reads the cell
+    /// as it is after the wait.
+    | OnceItHoldsAConnection
+
 /// What a kernel has already stored in the process's length cell when its
 /// `getsockname(2)` faults while copying the address out.
 ///
@@ -737,6 +752,13 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> false
         | SimulatedUnixFlavour.Darwin -> true
+
+    /// When this platform's `accept(2)` reads the process's length cell. See
+    /// `AcceptLengthCellRead`.
+    let acceptLengthCellRead (platform : SimulatedUnixPlatform) : AcceptLengthCellRead =
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> AcceptLengthCellRead.OnceItHoldsAConnection
+        | SimulatedUnixFlavour.Darwin -> AcceptLengthCellRead.BeforeAnything
 
     /// Whether this platform's `stat(2)` reports a creation time.
     ///

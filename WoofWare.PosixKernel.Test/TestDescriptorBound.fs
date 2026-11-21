@@ -141,7 +141,7 @@ module TestDescriptorBound =
 
             let system =
                 match
-                    UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped (Some 16u) 0 system
+                    AcceptCalls.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped (Some 16u) 0 system
                 with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"accept on an empty listener: %A{other}"
@@ -161,7 +161,7 @@ module TestDescriptorBound =
 
             let system = Lone.waking [ 1 ] system
 
-            match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
+            match AcceptCalls.tryFinishAccept 16u (Callers.thread 1 system) system with
             | Error (AcceptRefusal.DescriptorLimit refusal) -> refusal |> shouldEqual (refusalAt bound bound)
             | other -> failwith $"%s{run.Name}: finishing the accept on a full table: %A{other}"
 

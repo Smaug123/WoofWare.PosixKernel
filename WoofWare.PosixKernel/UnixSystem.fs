@@ -2040,8 +2040,12 @@ module UnixSystem =
             UnixSocket.tryListen caller fd backlog system
             |> Result.map SteppedCall.Listen
             |> Result.mapError SyscallRefusal.Listen
-        | Syscall.Accept (fd, destination, declaredLength, flags) ->
-            UnixConnection.tryAccept caller fd destination declaredLength flags system
+        | Syscall.Accept (fd, destination, length, flags) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.Accept"
+                UnixConnection.tryAcceptWithLength
+                length
+                (fun length -> UnixConnection.tryAccept caller fd destination length flags system)
             |> Result.map SteppedCall.Accept
             |> Result.mapError SyscallRefusal.Accept
         | Syscall.Shutdown (fd, how) ->

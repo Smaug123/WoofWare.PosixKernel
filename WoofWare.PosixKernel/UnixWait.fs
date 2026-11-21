@@ -114,7 +114,10 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     | Poll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A Darwin `poll(2)`, as `UnixPoll.finishPoll` answers it.
     | KqueuePoll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
-    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it.
+    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it, or, where
+    /// that stops for the length cell (Linux), as
+    /// `UnixConnection.acceptWithLength` then answers it, given what the cell
+    /// of the `Syscall.Accept` that `UnixWait.finish` was given holds.
     | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
     /// A `read(2)` of a pipe, as `UnixReadWrite.finishRead` answers it.
     | PipeRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
@@ -198,10 +201,14 @@ type internal FinishRefusal =
     /// The thread is parked in `parked`, which no call of the `Syscall` case
     /// given parks a thread in.
     | NotTheParkedCall of parked : ParkedSyscall
-    /// The thread is parked in `parked`, a write or a `recvfrom` that stopped
+    /// The thread is parked in `parked`, a write, a `recvfrom` or an `accept` that stopped
     /// to copy from a buffer or a length cell it was made with as readable,
     /// which the `Syscall` now gives as `buffer`.
     | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
+    /// The thread is parked in `parked`, an `accept` made with its length
+    /// cell as `was`, whose finish reads or writes the cell, which the
+    /// `Syscall` now gives as `now`, another kind.
+    | ChangedCell of parked : ParkedSyscall * was : UserBuffer * now : UserBuffer
 
 [<RequireQualifiedAccess>]
 module internal FinishRefusal =
@@ -225,6 +232,8 @@ module internal FinishRefusal =
             $"the thread is parked in %A{parked}, which no call of the Syscall case given parks a thread in; pass the Syscall the thread made."
         | FinishRefusal.UnreadableBuffer (parked, buffer) ->
             $"the thread is parked in %A{parked}, a call made with a readable buffer or length cell, which stopped to copy from it; the Syscall gives it as %A{buffer}, and this library does not model a call's buffer or cell ceasing to be readable while the call sleeps."
+        | FinishRefusal.ChangedCell (parked, was, now) ->
+            $"the thread is parked in %A{parked}, an accept made with its length cell as %A{was}, whose finish reads or writes the cell; the Syscall gives the cell as %A{now}, and this library does not model a cell becoming readable, or ceasing to be, while the call sleeps."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FinishRefusal) : RefusalKind =
@@ -242,6 +251,7 @@ module internal FinishRefusal =
         | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
         | FinishRefusal.NotTheParkedCall _ -> RefusalKind.Contradictory "call"
         | FinishRefusal.UnreadableBuffer _ -> RefusalKind.Unmodelled
+        | FinishRefusal.ChangedCell _ -> RefusalKind.Unmodelled
 
 /// Deciding which parked threads a system wakes, and finishing a woken
 /// thread's call.
@@ -804,6 +814,81 @@ module UnixWait =
             | CopiedArgument.Addressless ->
                 Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
 
+    /// The woken `accept` `thread` is parked in, finished by
+    /// `UnixConnection`'s finishing body, and, where that stops for its length
+    /// cell (Linux, which reads it once a connection has come), resumed with
+    /// what the cell `call` gives holds.
+    let private tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parked : ParkedSyscall)
+        (call : Syscall<'Thread, 'Handler>)
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, FinishRefusal>
+        =
+        let given =
+            match call with
+            | Syscall.Accept (_, _, length, _) -> length
+            | _ ->
+                failwith
+                    $"UnixWait.finish: the thread is parked in %A{parked}, an accept, but was admitted with a Syscall that is not an accept (this is a bug in this library)."
+
+        // The cell the call was made with: storage, for one Darwin read before
+        // it slept.
+        let was =
+            match parked with
+            | ParkedSyscall.Accept accept ->
+                match accept.Cell with
+                | AcceptLengthCell.Unread cell -> cell
+                | AcceptLengthCell.Read _ -> UserBuffer.Mapped
+            | _ ->
+                failwith
+                    $"UnixWait.finish: the thread is parked in %A{parked}, which is not an accept (this is a bug in this library)."
+
+        // A finish that reads or writes the cell does so as the call was made
+        // with it, so one that the Syscall now gives as another kind -- readable
+        // where it faulted, or the reverse -- is refused rather than answered as
+        // it was. A finish that never reaches the cell (an interruption, a
+        // sleep again, an ended call, a NULL destination) answers whatever the
+        // cell has become.
+        let changed =
+            LengthCellRead.ofCell was
+            <> LengthCellRead.ofCell (CopiedArgument.userBuffer given)
+
+        // An addressless destination is refused before the cell is read, so a
+        // refusal through one is never the cell's.
+        let destinationOf (parked : ParkedSyscall) : UserBuffer =
+            match parked with
+            | ParkedSyscall.Accept accept -> accept.Destination
+            | _ -> UserBuffer.Mapped
+
+        let refusedIfChanged (answer : AcceptOutcome * ProcessView<'Thread, 'Handler>) =
+            match fst answer with
+            | AcceptOutcome.Accepted (_, PeerAddressCopy.Written _)
+            | AcceptOutcome.DroppedConnection _ when changed ->
+                Error (FinishRefusal.ChangedCell (parked, was, CopiedArgument.userBuffer given))
+            | _ -> Ok answer
+
+        match UnixConnection.tryFinishAcceptIn thread system with
+        // A cell the finish could not read as the call was made with it, but
+        // now could, has changed kind too.
+        | Error (AcceptRefusal.Buffer refusal) when
+            changed
+            && LengthCellRead.ofCell was = Error refusal
+            && destinationOf parked <> UserBuffer.Addressless
+            ->
+            Error (FinishRefusal.ChangedCell (parked, was, CopiedArgument.userBuffer given))
+        | Error refusal -> Error (FinishRefusal.Accept refusal)
+        | Ok (CallProgress.Answered answer) -> refusedIfChanged answer
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            match given with
+            | CopiedArgument.Readable length ->
+                UnixConnection.tryAcceptWithLengthIn length paused
+                |> Result.mapError FinishRefusal.Accept
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                Error (FinishRefusal.ChangedCell (parked, was, CopiedArgument.userBuffer given))
+
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
     /// parked in, which `call` describes, finished by the finishing body of
     /// its family.
@@ -844,9 +929,8 @@ module UnixWait =
             |> Result.map ViewFinishedCall.KqueuePoll
             |> Result.mapError FinishRefusal.Poll
         | ParkedSyscall.Accept _ ->
-            UnixConnection.tryFinishAcceptIn thread system
+            tryFinishAcceptIn parked call thread system
             |> Result.map ViewFinishedCall.Accept
-            |> Result.mapError FinishRefusal.Accept
         | ParkedSyscall.PipeRead _ ->
             UnixReadWrite.tryFinishReadIn thread system
             |> Result.map ViewFinishedCall.PipeRead
@@ -912,9 +996,14 @@ module UnixWait =
     /// buffer is when the call is finished: `finish` hands the bytes of
     /// `call`'s buffer to the write's resumption (`UnixReadWrite.writeWithBytes`),
     /// so it never stops partway. A woken Linux `recvfrom` reads its length
-    /// cell once its datagram has arrived: `finish` hands what `call`'s cell
-    /// holds to its resumption (`UnixReadWrite.recvfromWithLength`). Every
-    /// other call is finished without reading `call`'s arguments.
+    /// cell once its datagram has arrived, and a woken Linux `accept` once its
+    /// connection has: `finish` hands what `call`'s cell holds to the
+    /// resumption (`UnixReadWrite.recvfromWithLength`,
+    /// `UnixConnection.acceptWithLength`). A woken Darwin `accept` read its
+    /// cell's value before it slept, and ignores the value `call` gives, but
+    /// it writes the reported length back, so `call` still gives the cell's
+    /// kind as it is now: readable, or not. Every other call is finished
+    /// without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
@@ -937,8 +1026,13 @@ module UnixWait =
     /// that end before the bytes it copies, as `step` does, and
     /// `UnmodelledException` if `call` gives the buffer as anything but
     /// readable, which it was when the call was made; and likewise for a
-    /// `recvfrom`'s length cell. Otherwise it throws what the family's finishing
-    /// function throws.
+    /// `recvfrom`'s length cell. For an `accept` whose finish reads or writes
+    /// its length cell, throws `UnmodelledException` if `call` gives the cell
+    /// as another kind than the call was made with (readable where it was
+    /// not, or the reverse); a cell that was not readable when the call was
+    /// made, and still is not, answers what the kernel does, such as Linux's
+    /// `AcceptOutcome.DroppedConnection` with `EFAULT`. Otherwise it throws
+    /// what the family's finishing function throws.
     let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (call : Syscall<'Thread, 'Handler>)

@@ -1238,7 +1238,7 @@ module TestMultiProcessFuzz =
             | None -> Made.Answered view
             | Some fd ->
                 match
-                    UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped (Some 16u) 0 view
+                    AcceptCalls.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped (Some 16u) 0 view
                     |> logged log
                 with
                 | Ok (AcceptOutcome.Accepted _, after) ->
@@ -1646,7 +1646,7 @@ module TestMultiProcessFuzz =
         =
         match Proc.parkedIn (Caller.make pid thread) view with
         | Some (ParkedSyscall.Accept _) ->
-            match UnixConnection.tryFinishAccept (Caller.make pid thread) view |> logged log with
+            match AcceptCalls.tryFinishAccept 16u (Caller.make pid thread) view |> logged log with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused

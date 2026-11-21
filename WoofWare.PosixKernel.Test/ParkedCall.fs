@@ -27,7 +27,18 @@ module internal ParkedCall =
         | ParkedSyscall.Flock _ -> Syscall.FLock (0, 0)
         | ParkedSyscall.Poll _
         | ParkedSyscall.KqueuePoll _ -> Syscall.Poll ([], -1)
-        | ParkedSyscall.Accept _ -> Syscall.Accept (0, UserBuffer.Mapped, Some 16u, 0)
+        | ParkedSyscall.Accept accept ->
+            // The cell as the call was made with it: storage holding 16, or
+            // what Darwin read before the sleep.
+            let cell =
+                match accept.Cell with
+                | AcceptLengthCell.Read length -> CopiedArgument.Readable length
+                | AcceptLengthCell.Unread UserBuffer.Mapped -> CopiedArgument.Readable 16u
+                | AcceptLengthCell.Unread (UserBuffer.Unmapped address) -> CopiedArgument.Unmapped address
+                | AcceptLengthCell.Unread UserBuffer.Opaque -> CopiedArgument.Opaque
+                | AcceptLengthCell.Unread UserBuffer.Addressless -> CopiedArgument.Addressless
+
+            Syscall.Accept (0, accept.Destination, cell, 0)
         | ParkedSyscall.PipeRead _
         | ParkedSyscall.InotifyRead _ -> Syscall.Read (0, UserBuffer.Mapped, 0UL)
         | ParkedSyscall.ConnectionRead read ->

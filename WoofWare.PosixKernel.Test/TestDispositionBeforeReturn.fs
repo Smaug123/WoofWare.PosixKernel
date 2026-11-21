@@ -376,7 +376,7 @@ module TestDispositionBeforeReturn =
         | _, "accept" ->
             let listener, system = KeventWorld.listenerAt port system
 
-            UnixConnection.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
+            AcceptCalls.tryAccept (s system) listener UserBuffer.Mapped (Some 16u) 0 system
             |> sleeps
                 "accept"
                 (fun outcome ->
@@ -499,7 +499,7 @@ module TestDispositionBeforeReturn =
             | Ok (SyscallOutcome.WouldBlock _, _) -> Finished.SleepsOn
             | other -> unexpected other
         | "accept" ->
-            match UnixConnection.tryFinishAccept s system with
+            match AcceptCalls.tryFinishAccept 16u s system with
             | Ok (AcceptOutcome.Interrupted, system) -> Finished.Interrupted system
             | Ok (AcceptOutcome.WouldBlock _, _) -> Finished.SleepsOn
             | other -> unexpected other

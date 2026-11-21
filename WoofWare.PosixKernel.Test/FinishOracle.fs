@@ -283,7 +283,7 @@ module internal FinishOracle =
                         | FinishRefusal.Accept refusal -> Some refusal
                         | _ -> None
                     )
-                    (UnixConnection.tryFinishAccept caller system)
+                    (AcceptCalls.tryFinishAccept 16u caller system)
                     sameOutcome
                     (fst >> UnionCaseName.ofValue)
             | ParkedSyscall.PipeRead _ ->
@@ -499,7 +499,7 @@ module internal FinishOracle =
             Syscall.Kevent (0, [], 0, UserBuffer.Mapped, 1, TimespecArgument.Null)
             Syscall.FLock (0, 0)
             Syscall.Poll ([], -1)
-            Syscall.Accept (0, UserBuffer.Mapped, Some 16u, 0)
+            Syscall.Accept (0, UserBuffer.Mapped, CopiedArgument.Readable 16u, 0)
             Syscall.Read (0, UserBuffer.Mapped, 0UL)
             Syscall.Recv (0, UserBuffer.Mapped, 0UL, 0)
             Syscall.Write (0, CopiedArgument.Readable (ParkedCall.buffer 0), 0UL)

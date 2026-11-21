@@ -470,9 +470,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match
-                    UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view
-                with
+                match AcceptCalls.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -489,7 +487,7 @@ module TestCrossProcess =
             (fun view ->
                 let view = Woken.caller (Caller.make pid thread) view
 
-                match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
+                match AcceptCalls.tryFinishAccept 16u (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
             )

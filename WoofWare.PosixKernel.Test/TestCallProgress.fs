@@ -281,6 +281,10 @@ module TestCallProgress =
             fun () ->
                 UnixSocket.getpeernameWithLength 16u Unchecked.defaultof<PausedGetPeerName<int, string>>
                 |> ignore<GetSockNameAnswer>
+            "UnixConnection.acceptWithLength",
+            fun () ->
+                UnixConnection.acceptWithLength 16u Unchecked.defaultof<PausedAccept<int, string>>
+                |> ignore<AcceptOutcome * UnixSystem<int, string>>
             "UnixSocket.getsockoptWithLength",
             fun () ->
                 UnixSocket.getsockoptWithLength 4u Unchecked.defaultof<PausedGetSockOpt<int, string>>
@@ -417,3 +421,36 @@ module TestCallProgress =
                 match UnixSocket.tryGetpeername leader fd UserBuffer.Mapped cell system with
                 | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.ENOTCONN, None))) -> ()
                 | other -> failwith $"getpeername of an unconnected socket through %A{cell} answered %A{other}"
+
+    [<Test>]
+    let ``a resumed accept that changes nothing answers the very system it was given`` () : unit =
+        // Darwin stops for the cell before anything else, so even EBADF and
+        // EAGAIN come from a resumption.
+        let platform = SimulatedUnixPlatform.macOsArm64
+        let fd, system = socketOn platform
+
+        let system =
+            match
+                CopyIn.bind
+                    fd
+                    UserBuffer.Mapped
+                    16u
+                    (CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us))
+                    system
+            with
+            | Ok (BindAnswer.Bound _, system) -> system
+            | other -> failwith $"bind answered %A{other}"
+
+        let system =
+            match UnixSocket.tryListen (Callers.leader system) fd 4 system with
+            | Ok (ListenAnswer.Listening _, system) -> NonBlocking.set fd system
+            | other -> failwith $"listen answered %A{other}"
+
+        for target, error in [ 99, UnixError.EBADF ; fd, UnixError.EAGAIN ] do
+            match UnixConnection.accept (Callers.leader system) target UserBuffer.Mapped UserBuffer.Mapped 0 system with
+            | CallProgress.NeedsCopyIn paused ->
+                match UnixConnection.acceptWithLength 16u paused with
+                | AcceptOutcome.Failed answered, after when answered = error ->
+                    obj.ReferenceEquals (after, system) |> shouldEqual true
+                | other -> failwith $"accept of fd %d{target} answered %A{other}, not %A{error}"
+            | other -> failwith $"Darwin's accept answered %A{other} without stopping for the cell"

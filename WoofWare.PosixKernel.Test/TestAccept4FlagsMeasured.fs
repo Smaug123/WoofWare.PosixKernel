@@ -97,9 +97,7 @@ module TestAccept4FlagsMeasured =
 
     /// `accept4(fd, NULL, NULL, flags)` by the leader.
     let private accept4 (fd : int) (flags : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        describe
-            (UnixConnection.tryAccept (Callers.leader system) fd (UserBuffer.Unmapped 0UL) None flags system)
-            system
+        describe (AcceptCalls.tryAccept (Callers.leader system) fd (UserBuffer.Unmapped 0UL) None flags system) system
 
     /// `accept4` with a mapped peer buffer and a length cell holding -1.
     let private accept4NegativeLength
@@ -109,7 +107,7 @@ module TestAccept4FlagsMeasured =
         : string * UnixSystem<int, string>
         =
         describe
-            (UnixConnection.tryAccept (Callers.leader system) fd UserBuffer.Mapped (Some 0xFFFFFFFFu) flags system)
+            (AcceptCalls.tryAccept (Callers.leader system) fd UserBuffer.Mapped (Some 0xFFFFFFFFu) flags system)
             system
 
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -289,15 +287,13 @@ module TestAccept4FlagsMeasured =
 
         let flags = SockNonBlock ||| SockCloseOnExec
 
-        match
-            UnixConnection.tryAccept (Callers.thread 1 system) listener (UserBuffer.Unmapped 0UL) None flags system
-        with
+        match AcceptCalls.tryAccept (Callers.thread 1 system) listener (UserBuffer.Unmapped 0UL) None flags system with
         | Ok (AcceptOutcome.WouldBlock _, system) ->
             let client, system =
                 NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
             let system = FcntlWorld.connect client 9000us system |> Woken.thread 1
-            let finished = UnixConnection.tryFinishAccept (Callers.thread 1 system) system
+            let finished = AcceptCalls.tryFinishAccept 16u (Callers.thread 1 system) system
             let answer, system = describe finished system
 
             [
@@ -360,12 +356,12 @@ module TestAccept4FlagsMeasured =
                 }
 
         for flags in [ SockNonBlock ; SockCloseOnExec ; 1 ; Int32.MinValue ] do
-            match UnixConnection.tryAccept (Callers.leader system) 500 UserBuffer.Mapped (Some 16u) flags system with
+            match AcceptCalls.tryAccept (Callers.leader system) 500 UserBuffer.Mapped (Some 16u) flags system with
             | Error (AcceptRefusal.FlagsNotProvided SimulatedUnixFlavour.Darwin) -> ()
             | other -> failwith $"flags 0x%x{flags}: expected a refusal, got %A{other}"
 
             (fun () ->
-                UnixConnection.accept (Callers.leader system) 500 UserBuffer.Mapped (Some 16u) flags system
+                AcceptCalls.accept (Callers.leader system) 500 UserBuffer.Mapped (Some 16u) flags system
                 |> ignore
             )
             |> shouldFail<PlatformNotSupportedException>

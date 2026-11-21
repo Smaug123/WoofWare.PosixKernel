@@ -638,7 +638,7 @@ module TestUnixWait =
                     {
                         Listener = target (SocketId 0L)
                         Destination = UserBuffer.Mapped
-                        DeclaredLength = (Some 16u)
+                        Cell = AcceptLengthCell.Read 16u
                         NewSocketNonBlocking = false
                         NewSocketCloseOnExec = false
                     }

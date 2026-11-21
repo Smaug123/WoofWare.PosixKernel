@@ -558,7 +558,7 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            match AcceptCalls.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
@@ -659,7 +659,7 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
+            match AcceptCalls.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped (Some 16u) 0 system with
             | Ok (AcceptOutcome.Accepted (fd, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
@@ -691,7 +691,7 @@ module TestSocketOptions =
         | Ok reset ->
             UnixSystem.checkInvariants reset |> shouldEqual []
 
-            match UnixConnection.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped (Some 16u) 0 reset with
+            match AcceptCalls.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped (Some 16u) 0 reset with
             | Ok (AcceptOutcome.Accepted (fd, _), reset) ->
                 read fd reset |> shouldEqual (ReadAnswer.Failed UnixError.ECONNRESET)
             | other -> failwith $"%O{platform}: accepting the reset connection answered %A{other}"
@@ -723,7 +723,7 @@ module TestSocketOptions =
             // A negative length: Linux takes the connection, then answers
             // EINVAL and drops it.
             client,
-            UnixConnection.tryAccept
+            AcceptCalls.tryAccept
                 (Callers.thread 0 system)
                 listener
                 UserBuffer.Mapped

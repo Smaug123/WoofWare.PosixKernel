@@ -311,6 +311,19 @@ module SleepTarget =
         | SleepTarget.Waiting (description, _) -> Some description
         | SleepTarget.EndedByClose _ -> None
 
+/// A sleeping `accept(2)`'s length cell, as the call holds it.
+[<RequireQualifiedAccess>]
+type AcceptLengthCell =
+    /// The process's cell, which the call has not read. Linux reads the cell
+    /// only once a connection has come, so it reads what the cell holds then,
+    /// not what it held as the call slept. Neither flavour reads the cell of a
+    /// call whose address buffer is NULL.
+    | Unread of cell : UserBuffer
+    /// What the cell held when the call read it, before it slept. Darwin reads
+    /// the cell before anything else, so a change that another thread makes
+    /// to the cell while the call sleeps is not seen.
+    | Read of length : uint32
+
 /// One thread's in-flight blocking `accept(2)`: the listening socket it waits on
 /// for a connection, and where the connection's peer address goes when one
 /// arrives.
@@ -326,17 +339,9 @@ type ParkedAccept =
         /// Where the peer address is to be copied out to, as the client
         /// classified it when the call was entered.
         Destination : UserBuffer
-        /// How many bytes of the peer address the process's length cell allows
-        /// to be written: the 32-bit word in the cell, which Linux reads as an
-        /// `int` and Darwin as a `socklen_t` (see `UnixConnection.accept`).
-        ///
-        /// This is the length the cell held when the call was entered. Darwin
-        /// reads the cell then. Linux reads it only when it copies the address
-        /// out, after the wait, but this library keeps the value from entry, so
-        /// under Linux it is right only if nothing writes the cell while the
-        /// call sleeps. `None` for a NULL destination, whose cell neither
-        /// flavour reads.
-        DeclaredLength : uint32 option
+        /// The process's length cell, which says how many bytes of the peer
+        /// address may be written: read already, or still to be read.
+        Cell : AcceptLengthCell
         /// Whether the call's flags carried Linux's `SOCK_NONBLOCK`, so that
         /// the socket it makes is non-blocking. Never under Darwin, which has
         /// no `accept4`.

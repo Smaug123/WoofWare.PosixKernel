@@ -75,9 +75,7 @@ module TestWakeMemo =
         Machines.doIn
             pid
             (fun view ->
-                match
-                    UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view
-                with
+                match AcceptCalls.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped (Some 16u) 0 view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept by thread %d{thread}: %A{other}"
             )
