@@ -410,7 +410,8 @@ module TestAcceptLengthCellMeasured =
             let copyFaults =
                 match row.Cell with
                 | Pointer.Holds value ->
-                    row.Destination = Pointer.Unmapped
+                    (row.Fixture = "listener-queued" || row.Fixture = "listener-queued-blocking")
+                    && row.Destination = Pointer.Unmapped
                     && value <> 0
                     && not (flavour = SimulatedUnixFlavour.Linux && value < 0)
                 | Pointer.Null

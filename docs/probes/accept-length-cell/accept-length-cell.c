@@ -411,6 +411,13 @@ static void *connector_main(void *arg) {
     if (c->cell) *c->cell = c->new_cell;
     struct sockaddr_in a = loopback(port_of(c->listener));
     need(connect(c->client, (struct sockaddr *)&a, sizeof a) == 0, "connect a client");
+    // A watchdog: the accept must return within two seconds of the connect.
+    waited = 0;
+    while (!atomic_load(&c->returned)) {
+        need(waited < 2000, "the accept returned after the connect");
+        usleep(1000);
+        waited++;
+    }
     return NULL;
 }
 

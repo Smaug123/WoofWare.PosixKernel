@@ -862,6 +862,10 @@ module UnixWait =
             | _ -> Ok answer
 
         match UnixConnection.tryFinishAcceptIn thread system with
+        // A cell the finish could not read as the call was made with it, but
+        // now could, has changed kind too.
+        | Error (AcceptRefusal.Buffer _) when changed && Result.isError (LengthCellRead.ofCell was) ->
+            Error (FinishRefusal.ChangedCell (parked, was, CopiedArgument.userBuffer given))
         | Error refusal -> Error (FinishRefusal.Accept refusal)
         | Ok (CallProgress.Answered answer) -> refusedIfChanged answer
         | Ok (CallProgress.NeedsCopyIn paused) ->

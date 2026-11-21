@@ -2196,3 +2196,38 @@ module TestBlockingAccept =
             with
             | FinishedCall.Accept (AcceptOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%A{parkedWith}: a finish that sleeps again answered %A{other}"
+
+    /// A Linux accept made with a length cell whose bytes the client cannot
+    /// produce does not read it until a connection comes; one that the finish
+    /// is then given as readable has changed kind, which is what the refusal
+    /// says, rather than that the client cannot produce the bytes.
+    [<Test>]
+    let ``UnixWait.finish names a Linux accept's opaque cell that became readable as changed`` () : unit =
+        let fd, system = world SimulatedUnixPlatform.linuxX64
+
+        let system =
+            match
+                AcceptCalls.tryAcceptThrough
+                    (Callers.thread 1 system)
+                    fd
+                    UserBuffer.Mapped
+                    UserBuffer.Opaque
+                    16u
+                    0
+                    system
+            with
+            | Ok (AcceptOutcome.WouldBlock _, system) -> system
+            | other -> failwith $"expected the accept to park, got %A{other}"
+
+        let woken = connectTo 5000us system |> Lone.wake |> snd
+
+        let finish cell =
+            UnixWait.tryFinish (Callers.thread 1 woken) (Syscall.Accept (fd, UserBuffer.Mapped, cell, 0)) woken
+
+        match finish (CopiedArgument.Readable 16u) with
+        | Error (FinishRefusal.ChangedCell (_, UserBuffer.Opaque, UserBuffer.Mapped)) -> ()
+        | other -> failwith $"expected a changed cell, got %A{other}"
+
+        match finish CopiedArgument.Opaque with
+        | Error (FinishRefusal.Accept (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer)) -> ()
+        | other -> failwith $"expected the opaque cell refused, got %A{other}"
