@@ -528,12 +528,22 @@ module PausedConnect =
 /// make again.
 [<RequireQualifiedAccess>]
 type internal PausedAcceptCall =
-    /// The call as first made, with its arguments, which is made again from
-    /// the start with the cell's value.
+    /// A Darwin call as first made, with its arguments, which is made again
+    /// from the start with the cell's value, since Darwin reads the cell
+    /// before anything else.
     | Call of fd : int * destination : UserBuffer * cell : UserBuffer * flags : int
-    /// A call that slept and was woken, whose finishing call is made again
-    /// with the cell's value: its park holds what it needs.
-    | Finish
+    /// A Linux call, made or woken, that holds a connection and has room for
+    /// the descriptor it makes, and stops for the cell before it takes the
+    /// connection: the listener `socketId`, the listening description's
+    /// `O_NONBLOCK`, the new socket's flags and the address buffer. It resumes
+    /// there with the cell's value, and a woken call then lets go of the
+    /// descriptions in `released`, as its return does.
+    | HandOver of
+        socketId : SocketId *
+        nonBlocking : bool *
+        flags : AcceptFlags *
+        destination : UserBuffer *
+        released : OpenFileDescriptionId list option
 
 /// An `accept(2)`, or a woken one, that has stopped at the point where the
 /// kernel reads the process's length cell. `UnixConnection.accept` and
@@ -2472,7 +2482,9 @@ module UnixConnection =
     /// inherits (measured, `blocking-accept.c` section F: a flag set while the
     /// call slept was inherited). `flags` is what the call's Linux `accept4`
     /// flags asked of the new socket, which it has from the moment it exists.
-    let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `handOver` once the call has room for the descriptor it makes: where a
+    /// call that stopped for the cell after that check resumes.
+    let private handOverAdmitted<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
         (flags : AcceptFlags)
@@ -2480,21 +2492,6 @@ module UnixConnection =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<HandOver<'Thread, 'Handler>, AcceptRefusal>
         =
-        // A connection is there to take, which needs a descriptor below the
-        // limit: at a limit of the bound, EMFILE (measured, `fcntl-dup.c`,
-        // LIMIT rows). A Linux accept that reaches here from its park took its
-        // descriptor before it slept, which this kernel does not hold for it,
-        // so with none left now it is refused all the same.
-        match
-            FileDescriptorRegistry.room
-                (SimulatedUnixPlatform.descriptorBound system.Machine.UnixPlatform)
-                0
-                1
-                (UnixSystemState.fileDescriptors system)
-        with
-        | Error refusal -> Error (AcceptRefusal.DescriptorLimit refusal)
-        | Ok () ->
-
         // Take the connection, and write of its client's address what
         // `address` says.
         let take (address : Ipv4Endpoint -> PeerAddressCopy) : Result<HandOver<'Thread, 'Handler>, AcceptRefusal> =
@@ -2605,6 +2602,29 @@ module UnixConnection =
                 SimulatedUnixPlatform.internetSocketAddressSize
             )
         )
+
+    let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (socketId : SocketId)
+        (nonBlocking : bool)
+        (flags : AcceptFlags)
+        (copy : AcceptCopy)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<HandOver<'Thread, 'Handler>, AcceptRefusal>
+        =
+        // A connection is there to take, which needs a descriptor below the
+        // limit: at a limit of the bound, EMFILE (measured, `fcntl-dup.c`,
+        // LIMIT rows). A Linux accept that reaches here from its park took its
+        // descriptor before it slept, which this kernel does not hold for it,
+        // so with none left now it is refused all the same.
+        match
+            FileDescriptorRegistry.room
+                (SimulatedUnixPlatform.descriptorBound system.Machine.UnixPlatform)
+                0
+                1
+                (UnixSystemState.fileDescriptors system)
+        with
+        | Error refusal -> Error (AcceptRefusal.DescriptorLimit refusal)
+        | Ok () -> handOverAdmitted socketId nonBlocking flags copy system
 
     /// `tryAccept` once `Entry` has admitted its caller, given the value of
     /// the length cell if the call has read it.
@@ -2779,7 +2799,23 @@ module UnixConnection =
             match handOver socketId description.NonBlocking acceptFlags copy system with
             | Error refusal -> Error refusal
             | Ok (HandOver.Answered (outcome, system)) -> answered outcome system
-            | Ok HandOver.StopsForTheCell -> stopsForTheCell ()
+            | Ok HandOver.StopsForTheCell ->
+                let paused : PausedAccept<'Thread, 'Handler> =
+                    {
+                        Thread = thread
+                        Call =
+                            PausedAcceptCall.HandOver (
+                                socketId,
+                                description.NonBlocking,
+                                acceptFlags,
+                                destination,
+                                None
+                            )
+                        System = made
+                        Origin = None
+                    }
+
+                Ok (CallProgress.NeedsCopyIn paused)
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2934,19 +2970,17 @@ module UnixConnection =
                 anyAsleep ValueNone (ProcessTable.find "UnixConnection.accept" key system.Others).Threads
             ))
 
-    /// `tryFinishAcceptWith`, before the call's hold on the listener is let
-    /// go of.
+    /// `tryFinishAcceptIn`, before the call's hold on the listener is let go
+    /// of, which a stop for the cell records in `released`.
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (read : uint32 option)
+        (released : OpenFileDescriptionId list)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
               CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
               AcceptRefusal
            >
         =
-        let made = system
-
         let answered (outcome : AcceptOutcome) (system : ProcessView<'Thread, 'Handler>) =
             Ok (CallProgress.Answered (outcome, system))
 
@@ -3021,25 +3055,28 @@ module UnixConnection =
                             $"UnixConnection.finishAccept: thread %O{thread}'s Linux accept holds a length cell it read before it slept, but Linux reads the cell only once it holds a connection (this is a bug in this library, or in a caller that assembled the park by hand)."
                     | _ -> ()
 
-                    match parked.Cell, read with
-                    | AcceptLengthCell.Read _, Some _ ->
-                        failwith
-                            $"UnixConnection.acceptWithLength: thread %O{thread}'s accept read its length cell before it slept, and was given it again (this is a bug in this library)."
-                    | AcceptLengthCell.Read length, None -> AcceptCopy.Holds (parked.Destination, length)
-                    | AcceptLengthCell.Unread cell, read -> AcceptCopy.ofCall parked.Destination cell read
+                    match parked.Cell with
+                    | AcceptLengthCell.Read length -> AcceptCopy.Holds (parked.Destination, length)
+                    | AcceptLengthCell.Unread cell -> AcceptCopy.ofCall parked.Destination cell None
 
                 match handOver socketId description.NonBlocking flags copy finished with
                 | Error refusal -> Error refusal
                 | Ok (HandOver.Answered (outcome, system)) -> answered outcome system
                 | Ok HandOver.StopsForTheCell ->
-                    // The finishing call is made again from the start with what
-                    // the cell holds, from the system it was made in, in which
-                    // the thread is still parked.
+                    // The handover resumes with what the cell holds, the
+                    // thread no longer parked.
                     let paused : PausedAccept<'Thread, 'Handler> =
                         {
                             Thread = thread
-                            Call = PausedAcceptCall.Finish
-                            System = made
+                            Call =
+                                PausedAcceptCall.HandOver (
+                                    socketId,
+                                    description.NonBlocking,
+                                    flags,
+                                    parked.Destination,
+                                    Some released
+                                )
+                            System = finished
                             Origin = None
                         }
 
@@ -3082,9 +3119,9 @@ module UnixConnection =
 
     /// `tryFinishAccept` once `Entry` has admitted its caller, given the value
     /// of the length cell if the finishing call has read it.
-    let private tryFinishAcceptWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishAccept` once `Entry` has admitted its caller.
+    let internal tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (read : uint32 option)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
               CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
@@ -3099,7 +3136,7 @@ module UnixConnection =
         // The call's reference to the listener goes as it returns, and with it
         // the listener, if no descriptor names it any more
         // (`open-file-references.c` section A1).
-        finishAcceptHolding thread read system
+        finishAcceptHolding thread held system
         |> Result.map (fun progress ->
             match progress with
             | CallProgress.NeedsCopyIn _ -> progress
@@ -3109,17 +3146,6 @@ module UnixConnection =
                     ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after
                 )
         )
-
-    /// `tryFinishAccept` once `Entry` has admitted its caller.
-    let internal tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<
-              CallProgress<PausedAccept<'Thread, 'Handler>, AcceptOutcome * ProcessView<'Thread, 'Handler>>,
-              AcceptRefusal
-           >
-        =
-        tryFinishAcceptWith thread None system
 
     /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -3213,7 +3239,29 @@ module UnixConnection =
             match paused.Call with
             | PausedAcceptCall.Call (fd, destination, cell, flags) ->
                 tryAcceptIn paused.Thread fd destination cell flags (Some declaredLength) paused.System
-            | PausedAcceptCall.Finish -> tryFinishAcceptWith paused.Thread (Some declaredLength) paused.System
+            | PausedAcceptCall.HandOver (socketId, nonBlocking, flags, destination, released) ->
+                handOverAdmitted
+                    socketId
+                    nonBlocking
+                    flags
+                    (AcceptCopy.Holds (destination, declaredLength))
+                    paused.System
+                |> Result.map (fun handedOver ->
+                    match handedOver with
+                    | HandOver.Answered (outcome, after) ->
+                        // A woken call's reference to the listener goes as it
+                        // returns.
+                        let after =
+                            match released with
+                            | Some held ->
+                                ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after
+                            | None -> after
+
+                        CallProgress.Answered (outcome, after)
+                    | HandOver.StopsForTheCell ->
+                        failwith
+                            "UnixConnection.acceptWithLength: the handover stopped for its length cell again, given what the cell holds (this is a bug in this library)."
+                )
 
         resumed
         |> Result.map (fun progress ->

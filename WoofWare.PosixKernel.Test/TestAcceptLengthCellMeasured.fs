@@ -339,6 +339,16 @@ module TestAcceptLengthCellMeasured =
         | AcceptOutcome.DroppedConnection error -> $"%A{error}", cellText held, 0
         | other -> failwith $"%s{row.Line}: the model answered %A{other}"
 
+    /// Fails unless `outcome`'s case says what became of the connection as the
+    /// probe saw it: a failure leaves it queued, and a dropped connection is
+    /// gone.
+    let private caseAgrees (fail : string -> unit) (outcome : AcceptOutcome) (queuedAfter : string) : unit =
+        match outcome, queuedAfter with
+        | AcceptOutcome.DroppedConnection _, "yes" ->
+            fail $"the model answered %A{outcome}, but the connection stayed queued"
+        | AcceptOutcome.Failed _, "no" -> fail $"the model answered %A{outcome}, but the connection was lost"
+        | _ -> ()
+
     let private stops (progress : Result<CallProgress<PausedAccept<int, string>, _>, AcceptRefusal>) : bool =
         match progress with
         | Ok (CallProgress.NeedsCopyIn _) -> true
@@ -437,6 +447,7 @@ module TestAcceptLengthCellMeasured =
                     | AcceptOutcome.Accepted (accepted, _) -> close accepted after
                     | _ -> after
 
+                caseAgrees (fail measurement row) outcome row.Printed.["queued"]
                 let modelled = clientView client after, (if queued fd after then "yes" else "no")
                 let printed = row.Printed.["client"], row.Printed.["queued"]
 
@@ -539,6 +550,7 @@ module TestAcceptLengthCellMeasured =
                     | AcceptOutcome.Accepted (accepted, _) -> close accepted after
                     | _ -> after
 
+                caseAgrees (fail measurement row) outcome row.Printed.["queued"]
                 let modelled = clientView client after, (if queued fd after then "yes" else "no")
 
                 if modelled <> (row.Printed.["client"], row.Printed.["queued"]) then
