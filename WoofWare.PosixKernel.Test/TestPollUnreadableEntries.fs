@@ -606,7 +606,8 @@ module TestPollUnreadableEntries =
                             UInt64.Parse (m.Groups.[3].Value, Globalization.NumberStyles.HexNumber),
                             int m.Groups.[5].Value,
                             m.Groups.[6].Value,
-                            int m.Groups.[7].Value
+                            int m.Groups.[7].Value,
+                            m.Groups.[8].Value
                         )
                     else
                         None
@@ -619,7 +620,7 @@ module TestPollUnreadableEntries =
 
             List.length measured |> shouldEqual expected
 
-            for k, cut, address, rv, errno, charge in measured do
+            for k, cut, address, rv, errno, charge, revents0 in measured do
                 let system, _ = worldOf run
                 let caller = Callers.thread thread system
 
@@ -687,9 +688,12 @@ module TestPollUnreadableEntries =
 
                 let system = ten system
 
+                // Entry 0's revents as the probe prints it: what the poll
+                // reported for the receiver, or 0x5a5a, set beforehand, where
+                // no poll wrote it.
                 let answered, system =
                     match cut with
-                    | "no-poll" -> (0, "-"), system
+                    | "no-poll" -> (0, "-", "0x5a5a"), system
                     | _ ->
                         let argument =
                             match cut with
@@ -699,8 +703,8 @@ module TestPollUnreadableEntries =
                             | _ -> unmappedArrayAt address (uint32 (k + 1))
 
                         match poll argument 0 system with
-                        | Ok (PollOutcome.Answered (_, count), system) -> (count, "-"), system
-                        | Ok (PollOutcome.Failed UnixError.EFAULT, system) -> (-1, "Bad address"), system
+                        | Ok (PollOutcome.Answered (first :: _, count), system) -> (count, "-", $"0x%x{first}"), system
+                        | Ok (PollOutcome.Failed UnixError.EFAULT, system) -> (-1, "Bad address", "0x5a5a"), system
                         | other -> failwith $"%s{run.Name}: poll of %A{argument} answered %A{other}"
 
                 let system = ten system
@@ -717,7 +721,8 @@ module TestPollUnreadableEntries =
                 let modelledCharge =
                     DatagramReceiver.charged (UnixMachineState.datagramReceiver socketId (Kernel.machine system))
 
-                (k, cut, answered, modelledCharge) |> shouldEqual (k, cut, (rv, errno), charge)
+                (k, cut, answered, modelledCharge)
+                |> shouldEqual (k, cut, (rv, errno, revents0), charge)
 
     /// Section H: Linux reads only the low 32 bits of a wider `nfds_t`, so a
     /// client gives `Unreadable` the count those bits hold.
