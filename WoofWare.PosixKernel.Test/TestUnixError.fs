@@ -558,7 +558,26 @@ module TestUnixError =
                 RawErrnoNumbering.Darwin, "WoofWare.PosixKernel.Test.rawSyscallError.darwin.txt"
             ] do
             let rows = rawSyscallRows name
-            (name, List.length rows) |> shouldEqual (name, 8)
+
+            // Every call with each carry flag, and the self-link failing with
+            // ELOOP, the one errno whose number differs between the flavours.
+            rows
+            |> List.map (fun (call, carryIn, _, _, _, errno) -> call, carryIn, errno)
+            |> List.sort
+            |> shouldEqual (
+                List.sort
+                    [
+                        for call, errno in
+                            [
+                                "getpid()", "0"
+                                "close(-1)", "EBADF"
+                                "chdir(missing)", "ENOENT"
+                                "chdir(loop)", "ELOOP"
+                            ] do
+                            for carryIn in [ 0 ; 1 ] do
+                                yield call, carryIn, errno
+                    ]
+            )
 
             for call, carryIn, ret, carryOut, libcRet, errno in rows do
                 let row = $"%s{name}: %s{call} carry_in=%d{carryIn}"
