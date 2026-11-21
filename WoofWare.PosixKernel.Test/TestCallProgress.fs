@@ -421,3 +421,19 @@ module TestCallProgress =
                 match UnixSocket.tryGetpeername leader fd UserBuffer.Mapped cell system with
                 | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.ENOTCONN, None))) -> ()
                 | other -> failwith $"getpeername of an unconnected socket through %A{cell} answered %A{other}"
+
+    [<Test>]
+    let ``a resumed accept that changes nothing answers the very system it was given`` () : unit =
+        // Darwin stops for the cell before anything else, so even EBADF and
+        // EAGAIN come from a resumption.
+        let platform = SimulatedUnixPlatform.macOsArm64
+        let fd, system = socketOn platform
+        let system = NonBlocking.set fd system
+
+        for target in [ 99 ; fd ] do
+            match UnixConnection.accept (Callers.leader system) target UserBuffer.Mapped UserBuffer.Mapped 0 system with
+            | CallProgress.NeedsCopyIn paused ->
+                match UnixConnection.acceptWithLength 16u paused with
+                | AcceptOutcome.Failed _, after -> obj.ReferenceEquals (after, system) |> shouldEqual true
+                | other -> failwith $"accept of fd %d{target} answered %A{other}"
+            | other -> failwith $"Darwin's accept answered %A{other} without stopping for the cell"

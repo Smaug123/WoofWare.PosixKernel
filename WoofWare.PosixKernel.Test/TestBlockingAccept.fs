@@ -196,6 +196,11 @@ module TestBlockingAccept =
                 && destination = UserBuffer.Addressless
                 ->
                 ()
+            | _ when
+                SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                && destination = UserBuffer.Addressless
+                ->
+                failwith "Darwin must refuse an addressless destination before it sleeps"
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
@@ -353,6 +358,11 @@ module TestBlockingAccept =
                  | _ -> true)
                 ->
                 failwith $"expected the accept to park, got %A{other}"
+            | _ when
+                SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                && destination = UserBuffer.Addressless
+                ->
+                failwith "Darwin must refuse an addressless destination before it sleeps"
             | Ok (_, system) ->
 
             // What the cell holds when a Linux call reads it, after the wait:

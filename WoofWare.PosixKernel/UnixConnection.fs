@@ -558,6 +558,10 @@ type PausedAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
             /// everything either does before it reads the cell is a question,
             /// which it asks again with the cell's value.
             System : ProcessView<'Thread, 'Handler>
+            /// The kernel `System` is a view of, as the call was given it, so
+            /// that a resumption that changes nothing answers that very
+            /// system. `None` for a paused call made from a view alone.
+            Origin : UnixSystem<'Thread, 'Handler> option
         }
 
 [<RequireQualifiedAccess>]
@@ -2552,8 +2556,9 @@ module UnixConnection =
             // Measured (`docs/probes/accept-length-cell`, A and B): Linux reads
             // the cell only now that it holds the connection, a woken call
             // included, and a cell that is NULL or faults answers EFAULT with
-            // the connection lost, as a negative length does below, the
-            // client seeing an orderly close.
+            // the connection lost, as a negative length does below; in the
+            // probe's fixture, with no linger and nothing sent, the client
+            // saw an orderly close.
             match LengthCellRead.ofCell cell with
             | Error refusal -> Error (AcceptRefusal.Buffer refusal)
             | Ok LengthCellRead.Faults ->
@@ -2629,6 +2634,7 @@ module UnixConnection =
                     Thread = thread
                     Call = PausedAcceptCall.Call (fd, destination, cell, flags)
                     System = made
+                    Origin = None
                 }
 
             Ok (CallProgress.NeedsCopyIn paused)
@@ -2795,6 +2801,15 @@ module UnixConnection =
             (Shape.result (Shape.progress Shape.withSystem))
             (tryAcceptIn (Caller.thread caller) fd destination length flags None)
             system
+        |> Result.map (fun progress ->
+            match progress with
+            | CallProgress.NeedsCopyIn paused ->
+                CallProgress.NeedsCopyIn
+                    { paused with
+                        Origin = Some system
+                    }
+            | CallProgress.Answered _ -> progress
+        )
 
     /// `accept(2)`, made by `caller`: take the oldest completed connection off
     /// the accept queue of `fd`, and answer a new descriptor onto the server
@@ -3024,6 +3039,7 @@ module UnixConnection =
                             Thread = thread
                             Call = PausedAcceptCall.Finish
                             System = made
+                            Origin = None
                         }
 
                     Ok (CallProgress.NeedsCopyIn paused)
@@ -3214,7 +3230,11 @@ module UnixConnection =
         (paused : PausedAccept<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryAcceptWithLengthIn declaredLength paused)
+        match tryAcceptWithLengthIn declaredLength paused, paused.Origin with
+        // A resumption that changed nothing, such as Darwin's EBADF after the
+        // read of the cell, answers the system the call was given.
+        | Ok (outcome, view), Some origin when ProcessView.unchangedFrom paused.System view -> Ok (outcome, origin)
+        | answer, _ -> Entry.resume (Shape.result Shape.withSystem) answer
 
     /// Finish the `accept`, or the woken one, that `paused` holds.
     /// `declaredLength` is the `socklen_t` that the client read from the

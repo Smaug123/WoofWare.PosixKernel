@@ -100,6 +100,10 @@ static void need(int ok, const char *what) {
 
 static void *faulting;
 
+// The directory the Unix-domain sockets' paths are made in.
+static char unix_dir[] = "/tmp/alc-XXXXXX";
+static int unix_dir_made = 0;
+
 static struct sockaddr_in loopback(unsigned short port) {
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
@@ -205,14 +209,19 @@ static int other_family(int domain, int type, int listens) {
     int fd = socket(domain, type, 0);
     need(fd >= 0, "socket of another family");
     if (domain == AF_UNIX) {
+        // A path in a directory of the probe's own, so that it removes
+        // nothing it did not make.
         static int serial = 0;
+        if (!unix_dir_made) {
+            need(mkdtemp(unix_dir) != NULL, "mkdtemp");
+            unix_dir_made = 1;
+        }
         struct sockaddr_un a;
         memset(&a, 0, sizeof a);
         a.sun_family = AF_UNIX;
-        snprintf(a.sun_path, sizeof a.sun_path, "/tmp/alc-%d-%d", (int)getpid(), serial++);
-        unlink(a.sun_path);
+        snprintf(a.sun_path, sizeof a.sun_path, "%s/s%d", unix_dir, serial++);
         need(bind(fd, (struct sockaddr *)&a, sizeof a) == 0, "bind a Unix-domain socket");
-        unlink(a.sun_path);
+        need(unlink(a.sun_path) == 0, "unlink the socket's path");
     } else {
         struct sockaddr_in6 a;
         memset(&a, 0, sizeof a);
@@ -489,5 +498,6 @@ int main(void) {
 
     int changes[] = { 4, 0, -1 };
     for (unsigned i = 0; i < 3; i++) row_c(changes[i]);
+    if (unix_dir_made) need(rmdir(unix_dir) == 0, "rmdir the probe's directory");
     return 0;
 }
