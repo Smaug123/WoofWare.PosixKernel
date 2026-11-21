@@ -854,6 +854,13 @@ module UnixWait =
             LengthCellRead.ofCell was
             <> LengthCellRead.ofCell (CopiedArgument.userBuffer given)
 
+        // An addressless destination is refused before the cell is read, so a
+        // refusal through one is never the cell's.
+        let destinationOf (parked : ParkedSyscall) : UserBuffer =
+            match parked with
+            | ParkedSyscall.Accept accept -> accept.Destination
+            | _ -> UserBuffer.Mapped
+
         let refusedIfChanged (answer : AcceptOutcome * ProcessView<'Thread, 'Handler>) =
             match fst answer with
             | AcceptOutcome.Accepted (_, PeerAddressCopy.Written _)
@@ -864,7 +871,11 @@ module UnixWait =
         match UnixConnection.tryFinishAcceptIn thread system with
         // A cell the finish could not read as the call was made with it, but
         // now could, has changed kind too.
-        | Error (AcceptRefusal.Buffer _) when changed && Result.isError (LengthCellRead.ofCell was) ->
+        | Error (AcceptRefusal.Buffer refusal) when
+            changed
+            && LengthCellRead.ofCell was = Error refusal
+            && destinationOf parked <> UserBuffer.Addressless
+            ->
             Error (FinishRefusal.ChangedCell (parked, was, CopiedArgument.userBuffer given))
         | Error refusal -> Error (FinishRefusal.Accept refusal)
         | Ok (CallProgress.Answered answer) -> refusedIfChanged answer

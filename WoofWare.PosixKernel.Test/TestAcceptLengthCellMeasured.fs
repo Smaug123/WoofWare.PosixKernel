@@ -440,7 +440,11 @@ module TestAcceptLengthCellMeasured =
                     $"the model answered %A{outcome}, which the probe would print as %A{(answer, cellAfter, written)}"
 
             match client with
-            | None -> ()
+            | None ->
+                // There was no connection to drop.
+                match outcome with
+                | AcceptOutcome.DroppedConnection _ -> fail measurement row $"the model answered %A{outcome}"
+                | _ -> ()
             | Some client ->
                 // The probe closes a descriptor the call made at once.
                 let after =
@@ -559,6 +563,11 @@ module TestAcceptLengthCellMeasured =
         | Ok (outcome, after) ->
             if row.Printed.["slept"] <> "no" then
                 fail measurement row $"the model answered %A{outcome} without sleeping"
+
+            // There was no connection yet to drop.
+            match outcome with
+            | AcceptOutcome.DroppedConnection _ -> fail measurement row $"the model answered %A{outcome}"
+            | _ -> ()
 
             let answer, _, written = shown row held outcome
 

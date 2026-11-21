@@ -68,7 +68,6 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
-#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -332,12 +331,6 @@ static void row_a(enum fixture f, enum kind ck, int held, enum kind dk) {
     printf("\n");
 }
 
-static long now_ms(void) {
-    struct timeval t;
-    gettimeofday(&t, NULL);
-    return t.tv_sec * 1000L + t.tv_usec / 1000;
-}
-
 // The thread that makes the accept, and whether it is asleep in it.
 #ifdef __APPLE__
 static mach_port_t accepter;
@@ -389,7 +382,11 @@ struct connector {
     atomic_int entered;
     atomic_int returned;
     int saw_asleep;
-    long acted;
+    // The order of the thread's action and the call's return, from one
+    // counter: each takes the next value.
+    atomic_int order;
+    int acted_at;
+    int returned_at;
 };
 
 static void *connector_main(void *arg) {
@@ -407,8 +404,8 @@ static void *connector_main(void *arg) {
         waited++;
     }
     c->saw_asleep = !atomic_load(&c->returned);
-    c->acted = now_ms();
     if (c->cell) *c->cell = c->new_cell;
+    c->acted_at = atomic_fetch_add(&c->order, 1);
     struct sockaddr_in a = loopback(port_of(c->listener));
     need(connect(c->client, (struct sockaddr *)&a, sizeof a) == 0, "connect a client");
     // A watchdog: the accept must return within two seconds of the connect.
@@ -437,6 +434,7 @@ static void sleeper(enum kind ck, enum kind dk, int change, int new_cell) {
     struct connector c = { .listener = l, .client = client, .cell = change ? &cell : NULL, .new_cell = new_cell };
     atomic_init(&c.entered, 0);
     atomic_init(&c.returned, 0);
+    atomic_init(&c.order, 0);
     note_accepter();
     pthread_t t;
     need(pthread_create(&t, NULL, connector_main, &c) == 0, "pthread_create");
@@ -444,10 +442,10 @@ static void sleeper(enum kind ck, enum kind dk, int change, int new_cell) {
     socklen_t *cellp = (socklen_t *)pointer(ck, &cell);
     atomic_store(&c.entered, 1);
     int e = call(QUEUED, l, dest, cellp);
-    long returned = now_ms();
+    c.returned_at = atomic_fetch_add(&c.order, 1);
     atomic_store(&c.returned, 1);
     pthread_join(t, NULL);
-    if (c.saw_asleep) need(returned >= c.acted, "a call that slept returning after the thread acted");
+    if (c.saw_asleep) need(c.returned_at > c.acted_at, "a call that slept returning after the thread acted");
     const char *seen = client_view(client);
     set_nonblocking(l, 1);
     int again = accept(l, NULL, NULL);

@@ -2231,3 +2231,33 @@ module TestBlockingAccept =
         match finish CopiedArgument.Opaque with
         | Error (FinishRefusal.Accept (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer)) -> ()
         | other -> failwith $"expected the opaque cell refused, got %A{other}"
+
+        // Through an addressless destination, which is refused before the
+        // cell is read, the refusal is the destination's whatever the cell
+        // has become.
+        let fd, system = world SimulatedUnixPlatform.linuxX64
+
+        let system =
+            match
+                AcceptCalls.tryAcceptThrough
+                    (Callers.thread 1 system)
+                    fd
+                    UserBuffer.Addressless
+                    UserBuffer.Opaque
+                    16u
+                    0
+                    system
+            with
+            | Ok (AcceptOutcome.WouldBlock _, system) -> system
+            | other -> failwith $"expected the accept to park, got %A{other}"
+
+        let woken = connectTo 5000us system |> Lone.wake |> snd
+
+        match
+            UnixWait.tryFinish
+                (Callers.thread 1 woken)
+                (Syscall.Accept (fd, UserBuffer.Addressless, CopiedArgument.Readable 16u, 0))
+                woken
+        with
+        | Error (FinishRefusal.Accept (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen)) -> ()
+        | other -> failwith $"expected the addressless destination refused, got %A{other}"
