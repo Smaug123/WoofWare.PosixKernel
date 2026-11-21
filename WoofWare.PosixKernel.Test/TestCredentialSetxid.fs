@@ -124,7 +124,7 @@ module TestCredentialSetxid =
                     | SigsuspendOutcome.WouldBlock _, system -> system
                     | outcome, _ -> failwith $"pause: %A{outcome}"
                 | Other.Polling ->
-                    match UnixPoll.poll caller [] 1000 system with
+                    match PollCall.poll caller [] 1000 system with
                     | PollOutcome.WouldBlock _, system -> system
                     | outcome, _ -> failwith $"poll: %A{outcome}"
                 | Other.OwesReturn ->

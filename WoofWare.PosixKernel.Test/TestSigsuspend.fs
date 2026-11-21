@@ -1343,7 +1343,7 @@ module TestSigsuspend =
         let polling =
             let booted = boot SimulatedUnixFlavour.Linux
 
-            match UnixPoll.tryPoll (Callers.thread main booted) [] -1 booted with
+            match PollCall.tryPoll (Callers.thread main booted) [] -1 booted with
             | Ok (PollOutcome.WouldBlock _, system) -> system
             | other -> failwith $"poll: %A{other}"
 

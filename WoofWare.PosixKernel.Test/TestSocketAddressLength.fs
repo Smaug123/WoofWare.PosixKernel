@@ -252,7 +252,7 @@ module TestSocketAddressLength =
                         UnixSystem.checkInvariants after |> shouldEqual []
 
                         match
-                            UnixPoll.tryPoll
+                            PollCall.tryPoll
                                 (Callers.thread 0 after)
                                 [
                                     {

@@ -183,7 +183,7 @@ module TestListenerTeardown =
 
         let revents, system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 1 system)
                     [
                         {
@@ -560,7 +560,7 @@ module TestListenerTeardown =
 
         let listenerPoll, system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 1 system)
                     [
                         {

@@ -504,7 +504,7 @@ module TestBlockingAccept =
 
         let system =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 2 system)
                     [
                         {

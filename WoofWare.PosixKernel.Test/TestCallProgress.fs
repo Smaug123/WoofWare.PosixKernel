@@ -281,6 +281,10 @@ module TestCallProgress =
             fun () ->
                 UnixConnection.connectWithAddress bytes Unchecked.defaultof<PausedConnect<int, string>>
                 |> ignore<SyscallOutcome * UnixSystem<int, string>>
+            "UnixPoll.pollWithEntries",
+            fun () ->
+                UnixPoll.pollWithEntries [] Unchecked.defaultof<PausedPoll<int, string>>
+                |> ignore<PollOutcome * UnixSystem<int, string>>
         ]
 
     let private resumeOfNullCases () : TestCaseData seq =
@@ -327,6 +331,7 @@ module TestCallProgress =
                 not (name.Contains ".copyRange")
                 && name <> "PausedRecvFrom.received"
                 && name <> "PausedSendMsgVectors.count"
+                && name <> "PausedPoll.count"
                 && not (name.StartsWith ("SendMsgCopy", StringComparison.Ordinal))
             )
             |> Set.ofSeq

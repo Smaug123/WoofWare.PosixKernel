@@ -360,6 +360,20 @@ module TransferCountLimit =
         | TransferCountLimit.Shortened maxTransfer
         | TransferCountLimit.Refused maxTransfer -> maxTransfer
 
+/// Whether a `poll(2)` of no entries checks the address of its array: it
+/// reads nothing there, but a kernel may still check the address as it
+/// writes the entries back, after polling.
+[<RequireQualifiedAccess>]
+type internal ZeroEntryPollAddressCheck =
+    /// No check: every address answers as an empty array does (Darwin).
+    | Unchecked
+    /// Checked against the machine's user address limit (the limit its
+    /// `UserBufferCheck.BeforeOperation` holds) after polling: an address
+    /// past it fails with `EFAULT` (the Linux kernels measured).
+    | AgainstUserAddressLimit
+    /// A Linux kernel or architecture on which the check is unmeasured.
+    | Unmeasured
+
 /// The call whose search for an ephemeral port found every port of the range
 /// taken.
 [<RequireQualifiedAccess>]
@@ -704,6 +718,32 @@ module SimulatedUnixPlatform =
 
             DatagramReceiveRules.Linux (build, admission)
         | SimulatedUnixKernel.Darwin _ -> DatagramReceiveRules.Darwin
+
+    /// Whether a `poll(2)` of no entries under `platform` checks its
+    /// array's address.
+    let internal zeroEntryPollAddressCheck (platform : SimulatedUnixPlatform) : ZeroEntryPollAddressCheck =
+        // Measured by `docs/probes/poll-unreadable-entries` section Y on
+        // exactly these kernels, so no other version is taken to agree:
+        // 6.18.5 on arm64, and 6.12.113 and 6.18.5 on x86-64 with four- and
+        // five-level paging, each failing past the machine's own limit.
+        // Older kernels are read, from their source, to check no address for
+        // no entries.
+        let at (major : uint32) (minor : uint32) (patch : uint32) : LinuxKernelVersion =
+            {
+                Major = major
+                Minor = minor
+                Patch = patch
+            }
+
+        match kernel platform, architecture platform with
+        | SimulatedUnixKernel.Darwin _, _ -> ZeroEntryPollAddressCheck.Unchecked
+        | SimulatedUnixKernel.Linux (version, _), SimulatedUnixArchitecture.Arm64 when version = at 6u 18u 5u ->
+            ZeroEntryPollAddressCheck.AgainstUserAddressLimit
+        | SimulatedUnixKernel.Linux (version, _), SimulatedUnixArchitecture.X64 when
+            version = at 6u 12u 113u || version = at 6u 18u 5u
+            ->
+            ZeroEntryPollAddressCheck.AgainstUserAddressLimit
+        | SimulatedUnixKernel.Linux _, _ -> ZeroEntryPollAddressCheck.Unmeasured
 
     /// The number every descriptor this kernel hands out lies below: the soft
     /// `RLIMIT_NOFILE` it assumes the process has at least. A call that would

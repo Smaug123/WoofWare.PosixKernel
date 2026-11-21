@@ -250,7 +250,7 @@ module TestDeviceDescriptorsAgainstHost =
                     $"poll %d{events}",
                     hostPollOnce host events,
                     (match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.thread 0 system)
                             [
                                 {

@@ -559,7 +559,7 @@ module TestConnectedTransfer =
 
             let writable (system : UnixSystem<int, string>) : bool =
                 match
-                    UnixPoll.tryPoll
+                    PollCall.tryPoll
                         (Callers.thread 0 system)
                         [
                             {
@@ -627,7 +627,7 @@ module TestConnectedTransfer =
             let system =
                 if pollBetween then
                     match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.thread 0 system)
                             [
                                 {
@@ -697,7 +697,7 @@ module TestConnectedTransfer =
 
         let level (system : UnixSystem<int, string>) : int16 =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 0 system)
                     [
                         {
@@ -1972,7 +1972,7 @@ module TestConnectedTransfer =
                     b
                     (fun view ->
                         match
-                            UnixPoll.tryPoll
+                            PollCall.tryPoll
                                 (Caller.make b 2)
                                 [
                                     {

@@ -358,7 +358,7 @@ module TestUnixWaitFinish =
         | Sleep.Poll ->
             let r, w, system = pipe system
 
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (s system)
                 [
                     {

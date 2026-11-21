@@ -2079,8 +2079,35 @@ module UnixSystem =
                 (fun length -> UnixSocket.tryGetsockopt caller fd level optionName value length system)
             |> Result.map SteppedCall.GetSockOpt
             |> Result.mapError SyscallRefusal.GetSockOpt
-        | Syscall.Poll (entries, milliseconds) ->
-            UnixPoll.tryPoll caller entries milliseconds system
+        | Syscall.Poll (fds, nfds, milliseconds) ->
+            let operation = "UnixSystem.step of Syscall.Poll"
+
+            CopiedArgument.copyValue
+                operation
+                (fun (entries : PollEntry list) paused ->
+                    let count = PausedPoll.count paused
+
+                    // How `entries` compares with `count` in length, walking
+                    // no further than `count` entries into it.
+                    let rec compare (remaining : int) (rest : PollEntry list) : int =
+                        match remaining, rest with
+                        | 0, [] -> 0
+                        | 0, _ :: _ -> 1
+                        | _, [] -> -1
+                        | remaining, _ :: rest -> compare (remaining - 1) rest
+
+                    let copied =
+                        match compare count entries with
+                        | 0 -> entries
+                        | 1 -> List.truncate count entries
+                        | _ ->
+                            invalidOp
+                                $"%s{operation}: the call copies %d{count} entries, but the array's contents (CopiedArgument.Readable) hold fewer. A readable array holds every entry the call copies (this is a bug in the caller)."
+
+                    UnixPoll.tryPollWithEntries copied paused
+                )
+                fds
+                (fun fds -> UnixPoll.tryPoll caller fds nfds milliseconds system)
             |> Result.map SteppedCall.Poll
             |> Result.mapError SyscallRefusal.Poll
         | Syscall.Select _ -> reserved "Syscall.Select"

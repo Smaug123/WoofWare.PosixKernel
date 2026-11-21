@@ -130,7 +130,7 @@ module TestProcessSignalPair =
                 | Settled.Ends (InterruptedCall.Restarts, frames, system) ->
                     let started, system = runHandlers leaderThread frames system
 
-                    match UnixPoll.poll caller [] -1 system with
+                    match PollCall.poll caller [] -1 system with
                     | PollOutcome.WouldBlock _, system -> "asleep", started, system
                     | other, _ -> failwith $"the leader's restarted poll: %A{other}"
                 | other -> failwith $"the leader's interrupted poll: %A{other}"
@@ -138,7 +138,7 @@ module TestProcessSignalPair =
         | None -> failwith "the leader is not asleep in its poll"
 
     let private leaderPolls (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixPoll.poll (Callers.thread leaderThread system) [] -1 system with
+        match PollCall.poll (Callers.thread leaderThread system) [] -1 system with
         | PollOutcome.WouldBlock _, system -> system
         | other, _ -> failwith $"the leader's poll did not sleep: %A{other}"
 
@@ -191,7 +191,7 @@ module TestProcessSignalPair =
 
         let system =
             if row.Idler then
-                match UnixPoll.poll (Callers.thread idler system) [] -1 system with
+                match PollCall.poll (Callers.thread idler system) [] -1 system with
                 | PollOutcome.WouldBlock _, system -> system
                 | other, _ -> failwith $"the idler's poll did not sleep: %A{other}"
             else

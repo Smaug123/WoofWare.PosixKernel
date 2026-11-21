@@ -2199,7 +2199,7 @@ module TestShutdownAgainstHost =
 
                 let revents, after =
                     match
-                        UnixPoll.tryPoll
+                        PollCall.tryPoll
                             (Callers.leader system)
                             [
                                 {

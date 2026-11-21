@@ -1155,7 +1155,7 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device access booted
 
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread thread system)
                     [
                         {

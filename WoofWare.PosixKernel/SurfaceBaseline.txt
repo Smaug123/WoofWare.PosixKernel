@@ -3500,6 +3500,10 @@ WoofWare.PosixKernel.PausedFutexWait`2 inherit obj
 WoofWare.PosixKernel.PausedGetSockOpt`2 inherit obj
 WoofWare.PosixKernel.PausedInotifyAddWatch`2 inherit obj
 WoofWare.PosixKernel.PausedLink`2 inherit obj
+WoofWare.PosixKernel.PausedPoll inherit obj
+WoofWare.PosixKernel.PausedPoll.copyRange [static method]: WoofWare.PosixKernel.PausedPoll<'Thread, 'Handler> -> WoofWare.PosixKernel.CopyRange
+WoofWare.PosixKernel.PausedPoll.count [static method]: WoofWare.PosixKernel.PausedPoll<'Thread, 'Handler> -> int
+WoofWare.PosixKernel.PausedPoll`2 inherit obj
 WoofWare.PosixKernel.PausedPWrite inherit obj
 WoofWare.PosixKernel.PausedPWrite.copyRange [static method]: WoofWare.PosixKernel.PausedPWrite<'Thread, 'Handler> -> WoofWare.PosixKernel.CopyRange
 WoofWare.PosixKernel.PausedPWrite`2 inherit obj
@@ -6776,10 +6780,12 @@ WoofWare.PosixKernel.Syscall`2+Pipe2.flags [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+Pipe2.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+Pipe2.get_flags [method]: unit -> int
 WoofWare.PosixKernel.Syscall`2+Poll inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2+Poll.entries [property]: [read-only] WoofWare.PosixKernel.PollEntry list
-WoofWare.PosixKernel.Syscall`2+Poll.get_entries [method]: unit -> WoofWare.PosixKernel.PollEntry list
+WoofWare.PosixKernel.Syscall`2+Poll.fds [property]: [read-only] WoofWare.PosixKernel.PollEntry list WoofWare.PosixKernel.CopiedArgument
+WoofWare.PosixKernel.Syscall`2+Poll.get_fds [method]: unit -> WoofWare.PosixKernel.PollEntry list WoofWare.PosixKernel.CopiedArgument
 WoofWare.PosixKernel.Syscall`2+Poll.get_milliseconds [method]: unit -> int
+WoofWare.PosixKernel.Syscall`2+Poll.get_nfds [method]: unit -> System.UInt32
 WoofWare.PosixKernel.Syscall`2+Poll.milliseconds [property]: [read-only] int
+WoofWare.PosixKernel.Syscall`2+Poll.nfds [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.Syscall`2+PosixFAdvise inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+PosixFAdvise.advice [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+PosixFAdvise.fd [property]: [read-only] int
@@ -7498,7 +7504,7 @@ WoofWare.PosixKernel.Syscall`2.NewNanosleep [static method]: WoofWare.PosixKerne
 WoofWare.PosixKernel.Syscall`2.NewOpen [static method]: (WoofWare.PosixKernel.PathArgumentBytes, int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewOpenAt [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, int, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewPipe2 [static method]: (WoofWare.PosixKernel.UserBuffer, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewPoll [static method]: (WoofWare.PosixKernel.PollEntry list, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewPoll [static method]: (WoofWare.PosixKernel.PollEntry list WoofWare.PosixKernel.CopiedArgument, System.UInt32, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewPosixFAdvise [static method]: (int, System.Int64, System.Int64, int) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewPRead [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt64, System.Int64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewPSelect [static method]: WoofWare.PosixKernel.PSelectArguments -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -8809,7 +8815,8 @@ WoofWare.PosixKernel.UnixPoll.epollCtl [static method]: 'Thread WoofWare.PosixKe
 WoofWare.PosixKernel.UnixPoll.epollWait [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.UserBuffer -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.EpollWaitOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixPoll.finishEpollWait [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.EpollWaitOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixPoll.finishPoll [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PollOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixPoll.poll [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.PollEntry list -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.PollOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixPoll.poll [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedPoll<'Thread, 'Handler>, (WoofWare.PosixKernel.PollOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
+WoofWare.PosixKernel.UnixPoll.pollWithEntries [static method]: WoofWare.PosixKernel.PollEntry list -> WoofWare.PosixKernel.PausedPoll<'Thread, 'Handler> -> (WoofWare.PosixKernel.PollOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixReadWrite inherit obj
 WoofWare.PosixKernel.UnixReadWrite.copyFileRange [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> System.UInt64 -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SyscallAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixReadWrite.finishRead [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ReadOutcome * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)

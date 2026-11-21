@@ -52,7 +52,7 @@ type internal PollRefusal =
     /// not, under Linux for every process and under Darwin for one that is
     /// not root. Darwin fails root's only when it also exceeds `FD_SETSIZE`
     /// (1024), so for root this is a count from 1025 to `OPEN_MAX`.
-    | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : int * assumedLimit : int
+    | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : uint32 * assumedLimit : int
     /// Under Darwin, a sleeping call was woken both with something to report
     /// and past its deadline, and has something to report now. Darwin answers
     /// whichever reached the sleeping thread first, which a wake that found
@@ -66,6 +66,31 @@ type internal PollRefusal =
     /// The poll was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
+    /// The array of entries reached its copy as a buffer whose bytes this
+    /// library cannot answer for.
+    | Buffer of BufferRefusal
+    /// Under Linux, the call names no entries at `address`, which lies past
+    /// the machine's user address limit, with a timeout of `milliseconds`,
+    /// which is not 0. Measured, Linux polls nothing for the timeout, or until
+    /// a signal ends the wait, and then fails with `EFAULT` as it writes the
+    /// entries back, even where a signal ended it; this kernel does not model
+    /// a sleeping call whose answer is that fault.
+    | UnmodelledWriteBackFault of address : uint64 * milliseconds : int
+    /// Under Linux, the call names no entries at an `Addressless` array. The
+    /// Linux kernels measured check the address of even no entries against
+    /// the user address limit, as they write them back after polling, and
+    /// without an address that fault cannot be ruled out.
+    | AddresslessZeroEntryArray
+    /// Under Linux, the call names no entries at `address`, which lies past
+    /// the machine's user address limit, on a kernel and architecture where
+    /// what that answers is unmeasured. The kernels measured (6.18.5 on
+    /// arm64, 6.12.113 and 6.18.5 on x86-64) fail with `EFAULT` as they write
+    /// the entries back, and older kernels are read, from their source, to
+    /// check no address for no entries.
+    | UnmeasuredZeroEntryAddress of
+        address : uint64 *
+        kernel : SimulatedUnixKernel *
+        architecture : SimulatedUnixArchitecture
 
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -80,8 +105,12 @@ type PollOutcome =
     /// matching `struct pollfd` (see "What every client does" in the README).
     | Answered of revents : int16 list * count : int
     /// `poll` failed with this errno. This library answers only `EINVAL`, for
-    /// more entries than any process's `RLIMIT_NOFILE` lets it name: more than
-    /// 10240 under Darwin, and more than 2147483584 under Linux.
+    /// more entries than any process's `RLIMIT_NOFILE` lets it name (more than
+    /// 10240 under Darwin, and more than 2147483584 under Linux); and `EFAULT`,
+    /// for an array of at least one entry at an address naming no storage
+    /// (`UserBuffer.Unmapped`), and under the Linux kernels measured (see
+    /// `UnixPoll.poll`) for an array of no entries at an address past the
+    /// machine's user address limit.
     | Failed of error : UnixError
     /// `poll` did not return, and the calling thread is now asleep in it.
     /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
@@ -107,7 +136,7 @@ module internal PollEntryCount =
     /// screen against the process's `RLIMIT_NOFILE`, for the largest limit a
     /// process can have: every count above it fails with `EINVAL`, whatever
     /// the limit.
-    let ceiling (flavour : SimulatedUnixFlavour) : int =
+    let ceiling (flavour : SimulatedUnixFlavour) : uint32 =
         // Measured by `docs/probes/poll-entry-count` and `poll-darwin.c`
         // section N.
         match flavour with
@@ -115,9 +144,9 @@ module internal PollEntryCount =
         // C): `setrlimit` refuses a limit above `fs.nr_open` even to root, and
         // a process keeps its limit when `fs.nr_open` is lowered, so no soft
         // limit exceeds the most it ever was. Linux screens nothing else.
-        | SimulatedUnixFlavour.Linux -> 2147483584
+        | SimulatedUnixFlavour.Linux -> 2147483584u
         // `OPEN_MAX`, which Darwin screens beside the limit.
-        | SimulatedUnixFlavour.Darwin -> 10240
+        | SimulatedUnixFlavour.Darwin -> 10240u
 
     /// The most entries a `poll(2)` under `flavour`, by a process with
     /// `privilege`, passes the screen with whatever its soft limit: Darwin
@@ -137,7 +166,7 @@ module internal PollEntryCount =
     let screen
         (platform : SimulatedUnixPlatform)
         (privilege : CallerPrivilege)
-        (count : int)
+        (count : uint32)
         : Result<UnixError option, PollRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -145,7 +174,7 @@ module internal PollEntryCount =
 
         if count > ceiling flavour then
             Ok (Some UnixError.EINVAL)
-        elif count > limitFree flavour privilege assumedLimit then
+        elif int64 count > int64 (limitFree flavour privilege assumedLimit) then
             Error (PollRefusal.UnmodelledEntryCount (flavour, count, assumedLimit))
         else
             Ok None
@@ -175,6 +204,13 @@ module internal PollRefusal =
         | PollRefusal.DeadlineBeyondClock (now, timeoutMilliseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
+        | PollRefusal.Buffer refusal -> $"the array of struct pollfd: %s{BufferRefusal.describe refusal}"
+        | PollRefusal.UnmeasuredZeroEntryAddress (address, kernel, architecture) ->
+            $"the poll names no entries at 0x%x{address}, past the machine's user address limit, on %A{kernel} %A{architecture}. Linux 6.18.5 on arm64, and 6.12.113 and 6.18.5 on x86-64, poll and then fail with EFAULT as they write the entries back; whether this kernel and architecture check the address of no entries, and against which limit, is unmeasured."
+        | PollRefusal.AddresslessZeroEntryArray ->
+            "the poll names no entries at an array that is not an address at all. The Linux kernels measured check the address of even no entries against the user address limit as they write them back, after polling, and fail with EFAULT past it; without an address, this kernel cannot rule that fault out."
+        | PollRefusal.UnmodelledWriteBackFault (address, milliseconds) ->
+            $"the poll names no entries at 0x%x{address}, past the machine's user address limit, with a timeout of %d{milliseconds}ms. Linux waits for the timeout, or until a signal ends the wait, and then fails with EFAULT as it writes the entries back, even after a signal; this kernel does not model a sleeping poll whose answer is that fault."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PollRefusal) : RefusalKind =
@@ -188,6 +224,10 @@ module internal PollRefusal =
         | PollRefusal.EventsBesideDeadline -> RefusalKind.Unmodelled
         | PollRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | PollRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
+        | PollRefusal.Buffer inner -> BufferRefusal.kind inner
+        | PollRefusal.UnmodelledWriteBackFault _ -> RefusalKind.Unmodelled
+        | PollRefusal.UnmeasuredZeroEntryAddress _ -> RefusalKind.Unmodelled
+        | PollRefusal.AddresslessZeroEntryArray -> RefusalKind.Unmodelled
 
 /// The flags `epoll_create1(2)` accepts, in Linux's numbering.
 [<RequireQualifiedAccess>]
@@ -460,6 +500,58 @@ module internal EpollCtlRefusal =
         | EpollCtlRefusal.WakeUp -> RefusalKind.Unmodelled
         | EpollCtlRefusal.PipeTarget _ -> RefusalKind.Unmodelled
         | EpollCtlRefusal.UnmeasuredSocketKind _ -> RefusalKind.Unmodelled
+
+/// A `poll(2)` that has stopped at the point where the kernel copies the
+/// process's array of `struct pollfd` in. `UnixPoll.poll` answers one.
+///
+/// To finish the call, the client reads the array (the bytes that
+/// `PausedPoll.copyRange` names: `PausedPoll.count` entries of eight bytes
+/// each) from the process's memory, and passes its entries to
+/// `UnixPoll.pollWithEntries`.
+///
+/// This value holds the whole system as it stood when the call stopped, and
+/// `pollWithEntries` answers a system built from that one. So the client
+/// resumes the call before it does anything else to the system: anything done
+/// in between is lost (see "What every client does" in the README).
+[<NoEquality ; NoComparison>]
+type PausedPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    private
+        {
+            Thread : 'Thread
+            Count : int
+            Milliseconds : int
+            /// The view of the caller's process the call was made in:
+            /// everything a `poll` does before the copy is a question.
+            System : ProcessView<'Thread, 'Handler>
+            /// The kernel `System` is a view of, handed back whole by a
+            /// resumption that changes nothing.
+            Origin : UnixSystem<'Thread, 'Handler>
+        }
+
+[<RequireQualifiedAccess>]
+module PausedPoll =
+    /// `sizeof(struct pollfd)`: an `int` and two `short`s, on every
+    /// architecture and flavour this library simulates.
+    [<Literal>]
+    let private EntrySize : int = 8
+
+    /// How many entries the kernel copies, from the start of the array: the
+    /// call's `nfds`, and so how many `UnixPoll.pollWithEntries` takes. Never
+    /// zero: a `poll` of no entries reads nothing and answers without
+    /// stopping.
+    let count<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : int
+        =
+        paused.Count
+
+    /// Which bytes of the process's array the kernel copies: every byte of
+    /// its `count` entries, from the start, eight bytes to an entry.
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : CopyRange
+        =
+        CopyRange.fromStart (paused.Count * EntrySize)
 
 [<RequireQualifiedAccess>]
 module UnixPoll =
@@ -1031,18 +1123,6 @@ module UnixPoll =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
-        // Measured (`docs/probes/poll-entry-count`, section A): ahead of the
-        // scan, and of the timeout.
-        match
-            PollEntryCount.screen
-                system.Machine.UnixPlatform
-                (UnixProcessState.callerPrivilege system.Process)
-                (List.length entries)
-        with
-        | Error refusal -> Error refusal
-        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
-        | Ok None ->
-
         match scan system entries with
         | Error refusal -> Error refusal
         | Ok (reported, triggered) ->
@@ -1317,15 +1397,6 @@ module UnixPoll =
         =
         let count = List.length entries
 
-        // Measured (`docs/probes/poll-entry-count`, and `poll-darwin.c`
-        // section N): ahead of the registrations, and of the copy-in's EFAULT.
-        match
-            PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) count
-        with
-        | Error refusal -> Error refusal
-        | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
-        | Ok None ->
-
         match darwinRegister entries system with
         | Error refusal -> Error refusal
         | Ok (revents, registrations, vnodes) ->
@@ -1496,8 +1567,8 @@ module UnixPoll =
                 Parking.parkWaiting thread parkedAgain system
             )
 
-    /// `tryPoll` once `Entry` has admitted its caller.
-    let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// A `poll` of `entries`, once the kernel holds them: see `poll`.
+    let private polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
@@ -1508,33 +1579,146 @@ module UnixPoll =
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
         | SimulatedUnixFlavour.Darwin -> darwinPoll thread entries milliseconds system
 
+    /// `tryPoll` once `Entry` has admitted its caller.
+    let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (origin : UnixSystem<'Thread, 'Handler>)
+        (fds : UserBuffer)
+        (nfds : uint32)
+        (milliseconds : int)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * ProcessView<'Thread, 'Handler>>, PollRefusal>
+        =
+        // Measured on both flavours (`docs/probes/poll-entry-count`, section
+        // A; `docs/probes/poll-unreadable-entries`, section O; and Darwin's
+        // `poll-darwin.c`, section N): the count is screened ahead of the
+        // copy, the scan, Darwin's registrations, and the timeout.
+        match
+            PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) nfds
+        with
+        | Error refusal -> Error refusal
+        | Ok (Some error) -> Ok (CallProgress.Answered (PollOutcome.Failed error, system))
+        | Ok None ->
+
+        // Measured (`docs/probes/poll-unreadable-entries`, sections Z and Y):
+        // no entries read nothing, wherever `fds` points, though the platform
+        // may check the address after polling.
+        if nfds = 0u then
+            let platform = system.Machine.UnixPlatform
+
+            // The limit is the machine's (`UnixBootImage.withUserAddressLimit`),
+            // which its `UserBufferCheck` holds under Linux. An address within
+            // it passes every rule a kernel could screen it by (and none), so
+            // only one past it needs the platform's rule.
+            let pastTheLimit (address : uint64) : bool =
+                match UnixMachineState.userBufferCheck system.Machine with
+                | UserBufferCheck.BeforeOperation limit -> address > limit
+                | UserBufferCheck.AtCopyTime -> false
+
+            let writeBackFaults =
+                match SimulatedUnixPlatform.zeroEntryPollAddressCheck platform, fds with
+                | ZeroEntryPollAddressCheck.Unchecked, _ -> Ok false
+                | _, UserBuffer.Mapped
+                | _, UserBuffer.Opaque -> Ok false
+                | _, UserBuffer.Addressless -> Error PollRefusal.AddresslessZeroEntryArray
+                | _, UserBuffer.Unmapped address when not (pastTheLimit address) -> Ok false
+                | ZeroEntryPollAddressCheck.AgainstUserAddressLimit, UserBuffer.Unmapped _ -> Ok true
+                | ZeroEntryPollAddressCheck.Unmeasured, UserBuffer.Unmapped address ->
+                    Error (
+                        PollRefusal.UnmeasuredZeroEntryAddress (
+                            address,
+                            SimulatedUnixPlatform.kernel platform,
+                            SimulatedUnixPlatform.architecture platform
+                        )
+                    )
+
+            match writeBackFaults, fds with
+            | Error refusal, _ -> Error refusal
+            | Ok false, _ -> polled thread [] milliseconds system |> Result.map CallProgress.Answered
+            | Ok true, _ when milliseconds = 0 ->
+                Ok (CallProgress.Answered (PollOutcome.Failed UnixError.EFAULT, system))
+            | Ok true, UserBuffer.Unmapped address ->
+                Error (PollRefusal.UnmodelledWriteBackFault (address, milliseconds))
+            | Ok true, other ->
+                failwith
+                    $"UnixPoll.poll: the write-back of no entries at %A{other} faults, but only an unmapped address can (this is a bug in this library)."
+        else
+
+        // Measured (`docs/probes/poll-unreadable-entries`, sections O and P):
+        // an array the kernel cannot read fails at once, reporting nothing and
+        // never sleeping, and under Linux without polling the entries it could
+        // read (section S).
+        match fds with
+        | UserBuffer.Unmapped _ -> Ok (CallProgress.Answered (PollOutcome.Failed UnixError.EFAULT, system))
+        | UserBuffer.Opaque -> Error (PollRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
+        | UserBuffer.Addressless -> Error (PollRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | UserBuffer.Mapped ->
+            // The screen passed, so `nfds` is at most the descriptor bound.
+            ({
+                Thread = thread
+                Count = int nfds
+                Milliseconds = milliseconds
+                System = system
+                Origin = origin
+            }
+            : PausedPoll<'Thread, 'Handler>)
+            |> CallProgress.NeedsCopyIn
+            |> Ok
+
     /// `poll`, with a refusal answered as the `Error` rather than raised.
     let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntry list)
+        (fds : UserBuffer)
+        (nfds : uint32)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        : Result<CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * UnixSystem<'Thread, 'Handler>>, PollRefusal>
         =
         Entry.call
             "UnixPoll.poll"
             CallerRequirement.Running
             caller
-            (Shape.result Shape.withSystem)
-            (tryPollIn (Caller.thread caller) entries milliseconds)
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryPollIn (Caller.thread caller) system fds nfds milliseconds)
             system
 
     /// `poll(2)`: what each entry reports, and how many entries report
     /// anything; or, when none does and the timeout allows it, the calling
     /// thread goes to sleep in the call.
     ///
-    /// `entries` is the process's array of `struct pollfd`, as the client read
-    /// it from the process's memory. This function has no way to say that the
-    /// array could not be read, so a client whose process passed an unreadable
-    /// array answers that call itself. The kernel screens the number of
-    /// entries before it reads the array, so a count that this function
-    /// answers with `EINVAL`, or refuses, gets that answer whether or not the
-    /// array is readable.
+    /// `fds` is the client's description of the process's array of
+    /// `struct pollfd` (see `UserBuffer`), and `nfds` how many entries the
+    /// process said it holds, as the kernel reads it: an unsigned 32-bit
+    /// count on both flavours, so under Linux, whose C library's `nfds_t` is
+    /// wider, the low 32 bits alone.
+    ///
+    /// Every answer that the call gives before the kernel reads the array
+    /// comes first, as `CallProgress.Answered`:
+    ///
+    /// - `EINVAL` for too many entries, whatever `fds` is (a count whose
+    ///   answer depends on the process's `RLIMIT_NOFILE` is refused instead,
+    ///   and throws);
+    /// - for a count of 0, the answer of a poll of no entries, which reads
+    ///   nothing. Under Linux 6.18.5 on arm64, and 6.12.113 and 6.18.5 on
+    ///   x86-64, an `Unmapped` address past the machine's user address limit
+    ///   (`UnixBootImage.withUserAddressLimit`) fails with `EFAULT` as the
+    ///   call writes its entries back, after it has polled: at once for a
+    ///   timeout of 0, and refused for any other timeout, after which Linux
+    ///   sleeps and then fails. On another Linux kernel such an address is
+    ///   refused, being unmeasured.
+    ///   Darwin answers every address as it answers an empty array;
+    /// - otherwise `EFAULT` for an `Unmapped` array, at once whatever the
+    ///   timeout.
+    ///
+    /// Otherwise the call stops at the copy (`CallProgress.NeedsCopyIn`): the
+    /// client reads the `nfds` entries and passes them to `pollWithEntries`,
+    /// which finishes the call. An array that the process can read only in
+    /// part was measured to fail as an unmapped one does, reporting nothing
+    /// and never sleeping (and under Linux, polling no entry), so the client
+    /// passes such an array as `Unmapped`. An `Opaque` or `Addressless` array
+    /// is refused once the call would copy it, and under Linux an
+    /// `Addressless` one is refused for a count of 0 too, since Linux checks
+    /// its address.
     ///
     /// Each entry's `Events`, and each `revents` answered for it, is raw bits in
     /// the simulated flavour's own `<poll.h>` numbering. The client stores each
@@ -1592,13 +1776,64 @@ module UnixPoll =
     /// call at a time.
     let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (entries : PollEntry list)
+        (fds : UserBuffer)
+        (nfds : uint32)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedPoll<'Thread, 'Handler>, PollOutcome * UnixSystem<'Thread, 'Handler>>
+        =
+        tryPoll caller fds nfds milliseconds system
+        |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
+
+    /// `tryPollWithEntries` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private tryPollWithEntriesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
+        =
+        CallProgress.requirePaused "UnixPoll.pollWithEntries" "UnixPoll.poll" paused
+
+        let supplied = List.length entries
+
+        if supplied <> paused.Count then
+            invalidOp
+                $"UnixPoll.pollWithEntries: the call copies %d{paused.Count} entries, but %d{supplied} were supplied. Supply exactly the entries PausedPoll.count names (this is a bug in the caller)."
+
+        polled paused.Thread entries paused.Milliseconds paused.System
+
+    /// `pollWithEntries`, with a refusal answered as the `Error` rather than
+    /// raised.
+    let internal tryPollWithEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        =
+        // Before either field is read.
+        CallProgress.requirePaused "UnixPoll.pollWithEntries" "UnixPoll.poll" paused
+
+        Entry.resumeFrom
+            paused.Origin
+            paused.System
+            (Shape.result Shape.withSystem)
+            (tryPollWithEntriesIn entries paused)
+
+    /// Finish the `poll` that `paused` holds. `entries` are the
+    /// `PausedPoll.count` entries of the process's array, in order, as the
+    /// client read them. See `poll`.
+    ///
+    /// The answer's system is built from the one `paused` holds, so the client
+    /// calls this before doing anything else to the system (see `PausedPoll`).
+    ///
+    /// Fails with `InvalidOperationException` if `entries` does not hold
+    /// exactly `PausedPoll.count` entries.
+    let pollWithEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entries : PollEntry list)
+        (paused : PausedPoll<'Thread, 'Handler>)
         : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryPoll caller entries milliseconds system
-        |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
+        tryPollWithEntries entries paused
+        |> Refusal.orRaise "UnixPoll.pollWithEntries" PollRefusal.kind PollRefusal.describe
 
     /// `tryFinishPoll` once `Entry` has admitted its caller.
     let internal tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

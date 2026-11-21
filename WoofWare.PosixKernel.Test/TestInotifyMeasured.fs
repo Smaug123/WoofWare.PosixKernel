@@ -321,7 +321,7 @@ module TestInotifyMeasured =
 
     let private pollIn (fd : int) (events : int16) (system : UnixSystem<int, string>) : string =
         match
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (Callers.thread 0 system)
                 [
                     {
@@ -412,7 +412,7 @@ module TestInotifyMeasured =
 
         let polled =
             match
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread 0 system)
                     [
                         {

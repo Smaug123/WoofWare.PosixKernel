@@ -233,18 +233,20 @@ module TestPollEntryCount =
                 SimulatedUnixPlatform.macOsArm64
             ]
 
-        let edges (platform : SimulatedUnixPlatform) : int list =
-            let bound = SimulatedUnixPlatform.descriptorBound platform
+        let edges (platform : SimulatedUnixPlatform) : uint32 list =
+            let bound = int64 (SimulatedUnixPlatform.descriptorBound platform)
 
             [
-                0
-                1
-                Int32.MaxValue
-                for d in -2 .. 2 do
-                    bound + d
-                    1024 + d
-                    10240 + d
-                    2147483584 + d
+                0u
+                1u
+                uint32 Int32.MaxValue
+                2147483648u
+                UInt32.MaxValue
+                for d in -2L .. 2L do
+                    uint32 (bound + d)
+                    uint32 (1024L + d)
+                    uint32 (10240L + d)
+                    uint32 (2147483584L + d)
             ]
 
         let gen =
@@ -256,14 +258,15 @@ module TestPollEntryCount =
                     Gen.frequency
                         [
                             2, Gen.elements (edges platform)
-                            1, Gen.choose (0, 20000)
-                            1, Gen.choose (0, Int32.MaxValue)
+                            1, Gen.choose (0, 20000) |> Gen.map uint32
+                            1, Gen.choose (0, Int32.MaxValue) |> Gen.map uint32
+                            1, Gen.choose (0, Int32.MaxValue) |> Gen.map (fun n -> uint32 n + 2147483648u)
                         ]
 
                 return platform, privileged, count
             }
 
-        let property (platform : SimulatedUnixPlatform, privileged : bool, count : int) : bool =
+        let property (platform : SimulatedUnixPlatform, privileged : bool, count : uint32) : bool =
             let flavour = SimulatedUnixPlatform.flavour platform
             let least, greatest = limitRange platform
             // The rule fails a count for no smaller limit than it fails it for
@@ -344,53 +347,60 @@ module TestPollEntryCount =
             for row in rows run do
                 let system, writeEnd, queue = worldAs row.Privileged run.Platform
 
-                // An unmapped buffer has no counterpart here, where the
-                // entries are a list; nor does a count no list can hold.
-                if row.Label <> "unmapped-buffer" && row.Count <= 1_048_577L then
-                    let count = int row.Count
+                // A readable buffer of more entries than a list can hold has
+                // no counterpart here; the probe made none, as the count below holds.
+                if row.Label = "unmapped-buffer" || row.Count <= 1_048_577L then
+                    let count = uint32 row.Count
 
-                    let lead =
-                        match row.Label with
-                        | "idle-buffer" ->
-                            {
-                                PollEntry.Fd = -1
-                                Events = pollIn
-                            }
-                        | "lead=ready-pipe-POLLOUT" ->
-                            {
-                                PollEntry.Fd = writeEnd
-                                Events = pollOut
-                            }
-                        | "lead=closed-fd" ->
-                            {
-                                PollEntry.Fd = closedFd
-                                Events = pollIn
-                            }
-                        | "lead=empty-epoll"
-                        | "lead=empty-kqueue" ->
-                            {
-                                PollEntry.Fd = queue
-                                Events = pollIn
-                            }
-                        | other -> failwith $"%s{run.Name}: unknown row label %s{other}"
-
-                    let entries =
-                        if count = 0 then
-                            []
+                    // The probe's unmapped buffer is at address 8.
+                    let fds =
+                        if row.Label = "unmapped-buffer" then
+                            CopiedArgument.Unmapped 8UL
                         else
-                            lead
-                            :: List.replicate
-                                (count - 1)
-                                {
-                                    PollEntry.Fd = -1
-                                    Events = pollIn
-                                }
+                            let lead =
+                                match row.Label with
+                                | "idle-buffer" ->
+                                    {
+                                        PollEntry.Fd = -1
+                                        Events = pollIn
+                                    }
+                                | "lead=ready-pipe-POLLOUT" ->
+                                    {
+                                        PollEntry.Fd = writeEnd
+                                        Events = pollOut
+                                    }
+                                | "lead=closed-fd" ->
+                                    {
+                                        PollEntry.Fd = closedFd
+                                        Events = pollIn
+                                    }
+                                | "lead=empty-epoll"
+                                | "lead=empty-kqueue" ->
+                                    {
+                                        PollEntry.Fd = queue
+                                        Events = pollIn
+                                    }
+                                | other -> failwith $"%s{run.Name}: unknown row label %s{other}"
+
+                            let entries =
+                                if row.Count = 0L then
+                                    []
+                                else
+                                    lead
+                                    :: List.replicate
+                                        (int row.Count - 1)
+                                        {
+                                            PollEntry.Fd = -1
+                                            Events = pollIn
+                                        }
+
+                            CopiedArgument.Readable entries
 
                     let caller = Callers.thread thread system
-                    let viaPoll = UnixPoll.tryPoll caller entries row.Timeout system
+                    let viaPoll = PollCall.tryPollCopied caller fds count row.Timeout system
 
                     let viaStep =
-                        match UnixSystem.tryStep caller (Syscall.Poll (entries, row.Timeout)) system with
+                        match UnixSystem.tryStep caller (Syscall.Poll (fds, count, row.Timeout)) system with
                         | Ok (SteppedCall.Poll (outcome, after)) -> Ok (outcome, after)
                         | Ok other -> failwith $"step of a poll answered %A{other}"
                         | Error (SyscallRefusal.Poll refusal) -> Error refusal
@@ -430,11 +440,14 @@ module TestPollEntryCount =
                             after <> system
                             || triggered <> row.Rv
                             || first <> row.Revents0
-                            || List.length revents <> count
+                            || uint32 (List.length revents) <> count
                         then
                             fail ()
                     | Ok (PollOutcome.WouldBlock _, _) ->
                         if row.Errno <> "Interrupted system call" then
+                            fail ()
+                    | Ok (PollOutcome.Failed UnixError.EFAULT, after) ->
+                        if after <> system || row.Errno <> "Bad address" then
                             fail ()
                     | Error (PollRefusal.UnmodelledTarget fd) ->
                         // The library does not poll an event queue it cannot
@@ -449,10 +462,11 @@ module TestPollEntryCount =
 
                     replayed <- replayed + 1
 
-        // Sections A and B of five runs, less their unmapped rows: 17 of A
-        // in each, and 2 of B in each Linux run (Darwin's is skipped); and
-        // the 16 rows of Darwin's section D, measured as root and as uid 501.
-        replayed |> shouldEqual 107
+        // Every row of the five runs: 24 of section A in each; 4 of B in each
+        // Linux run (Darwin's is skipped); 5 of C in each Linux root run, all
+        // through an unmapped buffer; and the 16 of Darwin's section D,
+        // measured as root and as uid 501.
+        replayed |> shouldEqual 158
 
     [<Test>]
     let ``a Linux poll of more entries than the descriptor bound is refused`` () : unit =
@@ -466,10 +480,10 @@ module TestPollEntryCount =
                     Events = pollIn
                 }
 
-        UnixPoll.tryPoll (Callers.thread thread system) (entries 1025) 0 system
-        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Linux, 1025, 1024)))
+        PollCall.tryPoll (Callers.thread thread system) (entries 1025) 0 system
+        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Linux, 1025u, 1024)))
 
-        UnixPoll.tryPoll (Callers.thread thread system) (entries 1024) 0 system
+        PollCall.tryPoll (Callers.thread thread system) (entries 1024) 0 system
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Answered (List.replicate 1024 0s, 0)))
 
@@ -486,16 +500,16 @@ module TestPollEntryCount =
         let root, _, _ = worldAs true SimulatedUnixPlatform.macOsArm64
         let user, _, _ = world SimulatedUnixPlatform.macOsArm64
 
-        UnixPoll.tryPoll (Callers.thread thread root) (entries 1024) 0 root
+        PollCall.tryPoll (Callers.thread thread root) (entries 1024) 0 root
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Answered (List.replicate 1024 0s, 0)))
 
-        UnixPoll.tryPoll (Callers.thread thread root) (entries 1025) 0 root
-        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 1025, 256)))
+        PollCall.tryPoll (Callers.thread thread root) (entries 1025) 0 root
+        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 1025u, 256)))
 
-        UnixPoll.tryPoll (Callers.thread thread root) (entries 10241) 0 root
+        PollCall.tryPoll (Callers.thread thread root) (entries 10241) 0 root
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Failed UnixError.EINVAL))
 
-        UnixPoll.tryPoll (Callers.thread thread user) (entries 257) 0 user
-        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 257, 256)))
+        PollCall.tryPoll (Callers.thread thread user) (entries 257) 0 user
+        |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, 257u, 256)))

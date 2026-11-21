@@ -421,7 +421,7 @@ module TestFirstWake =
             let r, w, system = pipe system
 
             let park (thread : int) (system : UnixSystem<int, string>) =
-                UnixPoll.tryPoll
+                PollCall.tryPoll
                     (Callers.thread thread system)
                     [
                         {

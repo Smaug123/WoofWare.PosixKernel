@@ -594,7 +594,7 @@ module TestCloseDrainMeasured =
                 system <- after
             | "poll0" ->
                 match
-                    UnixPoll.tryPoll
+                    PollCall.tryPoll
                         (Callers.thread 0 system)
                         [
                             {

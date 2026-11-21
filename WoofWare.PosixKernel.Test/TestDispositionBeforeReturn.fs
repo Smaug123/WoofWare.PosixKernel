@@ -261,7 +261,7 @@ module TestDispositionBeforeReturn =
         | _, "poll" ->
             let r, _, system = pipe system
 
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (s system)
                 [
                     {

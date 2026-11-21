@@ -498,7 +498,7 @@ module internal FinishOracle =
             Syscall.EpollWait (0, UserBuffer.Mapped, 1, -1)
             Syscall.Kevent (0, [], 0, UserBuffer.Mapped, 1, TimespecArgument.Null)
             Syscall.FLock (0, 0)
-            Syscall.Poll ([], -1)
+            Syscall.Poll (CopiedArgument.Readable [], 0u, -1)
             Syscall.Accept (0, UserBuffer.Mapped, Some 16u, 0)
             Syscall.Read (0, UserBuffer.Mapped, 0UL)
             Syscall.Recv (0, UserBuffer.Mapped, 0UL, 0)

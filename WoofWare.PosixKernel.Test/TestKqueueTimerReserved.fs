@@ -254,7 +254,7 @@ module TestKqueueTimerReserved =
         let mutable slept = 0
 
         let property (entries : PollEntry list) (connect : bool) : unit =
-            match UnixPoll.tryPoll (Callers.thread 2 system) entries 1000 system with
+            match PollCall.tryPoll (Callers.thread 2 system) entries 1000 system with
             | Ok (PollOutcome.WouldBlock _, parked) ->
                 slept <- slept + 1
                 noTimerAnywhere parked
@@ -285,7 +285,7 @@ module TestKqueueTimerReserved =
         // A control, so that the queries above cannot pass by never seeing a queue: a poll
         // of the listener alone sleeps, registers its read filter, and a connection queues it.
         match
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (Callers.thread 2 system)
                 [
                     {

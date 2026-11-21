@@ -339,7 +339,7 @@ module TestUnblockForAnotherThread =
 
         match sleep with
         | Sleep.PollOfNothing ->
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (Callers.thread thread system)
                 [
                     {
@@ -351,7 +351,7 @@ module TestUnblockForAnotherThread =
                 system
             |> parkedOrNot "the poll of nothing"
         | Sleep.PollListener ->
-            UnixPoll.tryPoll
+            PollCall.tryPoll
                 (Callers.thread thread system)
                 [
                     {

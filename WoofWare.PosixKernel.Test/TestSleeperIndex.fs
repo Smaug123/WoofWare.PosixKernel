@@ -220,7 +220,7 @@ module TestSleeperIndex =
                         Events = 1s
                     }
 
-                match UnixPoll.poll caller [ entry ] (1 + random.Next 5) system with
+                match PollCall.poll caller [ entry ] (1 + random.Next 5) system with
                 | PollOutcome.WouldBlock _, system ->
                     cover Label.ParkedWithDeadline
                     pipes, system
