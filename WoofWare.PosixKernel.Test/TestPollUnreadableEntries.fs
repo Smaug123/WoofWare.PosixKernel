@@ -303,6 +303,29 @@ module TestPollUnreadableEntries =
         | _, _, Ok (PollOutcome.WouldBlock _, _) -> true
         | _ -> false
 
+    /// Whether the poll asleep in `parked` keeps the measured wait of a
+    /// timeout of `milliseconds` from `system`: no deadline for -1, and for a
+    /// positive timeout a deadline that many milliseconds on, at which the
+    /// finished call answers 0.
+    let private waitsAsMeasured
+        (system : UnixSystem<int, string>)
+        (milliseconds : int)
+        (parked : UnixSystem<int, string>)
+        : bool
+        =
+        if milliseconds < 0 then
+            Lone.deadlines parked = []
+        else
+            let wait = int64 milliseconds * 1_000_000L
+            let deadline = UnixSystem.nanosecondsSinceBoot system + wait
+
+            Lone.deadlines parked = [ deadline ]
+            && (let woken = UnixSystem.advanceClock wait parked |> Woken.thread thread
+
+                match UnixPoll.tryFinishPoll (Callers.thread thread woken) woken with
+                | Ok (PollOutcome.Answered ([], 0), _) -> true
+                | _ -> false)
+
     /// `poll` of `argument` through the public protocol, holding where it
     /// paused (`PollCall.tryPollCopied`), checked to agree with
     /// `UnixSystem.tryStep` of the same call.
@@ -430,8 +453,9 @@ module TestPollUnreadableEntries =
                            | Ok (PollOutcome.Answered ([], 0), after) -> after = system && row.Rv = 0 && row.Timeout = 0
                            // The finite wait ends at its deadline, with 0; the
                            // infinite one is ended by the probe's timer.
-                           | Ok (PollOutcome.WouldBlock _, _) ->
+                           | Ok (PollOutcome.WouldBlock _, parked) ->
                                row.Slept
+                               && waitsAsMeasured system row.Timeout parked
                                && match row.Timeout with
                                   | 0 -> false
                                   | -1 -> row.Rv = -1 && row.Errno = "Interrupted system call"
