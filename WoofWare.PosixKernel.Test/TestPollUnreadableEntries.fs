@@ -560,6 +560,7 @@ module TestPollUnreadableEntries =
                 let! count =
                     Gen.frequency
                         [
+                            2, Gen.constant 0u
                             2, Gen.elements [ 0u ; 1u ; 255u ; 256u ; 257u ; 1023u ; 1024u ; 1025u ; 10240u ; 10241u ]
                             2, Gen.choose (0, 1100) |> Gen.map uint32
                             1, Gen.choose (0, Int32.MaxValue) |> Gen.map uint32
