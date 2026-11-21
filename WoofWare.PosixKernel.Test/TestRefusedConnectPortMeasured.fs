@@ -159,7 +159,7 @@ module TestRefusedConnectPortMeasured =
         | Error refusal -> failwith $"SO_ERROR refused: %s{SocketOptionRefusal.describe refusal}"
 
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
+        match SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> endpoint

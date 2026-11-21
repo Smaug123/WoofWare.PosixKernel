@@ -100,7 +100,7 @@ module TestPeerName =
         listener, client, system
 
     let private ask (fd : int) (declared : uint32) (system : UnixSystem<int, string>) =
-        UnixSocket.tryGetpeername (Callers.leader system) fd UserBuffer.Mapped declared system
+        SockNameCalls.getpeername (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped declared system
 
     let private reported
         (platform : SimulatedUnixPlatform)
@@ -191,16 +191,16 @@ module TestPeerName =
         =
         let system = fresh platform
 
-        UnixSocket.tryGetpeername (Callers.leader system) 99 UserBuffer.Opaque 16u system
+        SockNameCalls.getpeername (Callers.leader system) 99 UserBuffer.Opaque UserBuffer.Mapped 16u system
         |> shouldEqual (failed UnixError.EBADF)
 
         // Descriptor 0 is a pipe end in a booted system.
-        UnixSocket.tryGetpeername (Callers.leader system) 0 UserBuffer.Opaque 16u system
+        SockNameCalls.getpeername (Callers.leader system) 0 UserBuffer.Opaque UserBuffer.Mapped 16u system
         |> shouldEqual (failed UnixError.ENOTSOCK)
 
         let fd, system = stream system
 
-        UnixSocket.tryGetpeername (Callers.leader system) fd UserBuffer.Opaque 16u system
+        SockNameCalls.getpeername (Callers.leader system) fd UserBuffer.Opaque UserBuffer.Mapped 16u system
         |> shouldEqual (failed UnixError.ENOTCONN)
 
     // ------------------------------------------------------------------
@@ -301,7 +301,7 @@ module TestPeerName =
         ask client 128u system
         |> shouldEqual (Ok (GetSockNameAnswer.Reported (whole, 16)))
 
-        UnixSocket.tryGetpeername (Callers.leader system) client (UserBuffer.Unmapped 0UL) 0u system
+        SockNameCalls.getpeername (Callers.leader system) client (UserBuffer.Unmapped 0UL) UserBuffer.Mapped 0u system
         |> shouldEqual (Ok (GetSockNameAnswer.Reported (ImmutableArray.Empty, 16)))
 
         // Linux reads the cell as an `int`, Darwin as the `socklen_t` it is.
@@ -326,13 +326,19 @@ module TestPeerName =
         =
         let _, client, system = queued platform
 
-        UnixSocket.tryGetpeername (Callers.leader system) client (UserBuffer.Unmapped 0x1000UL) 13u system
+        SockNameCalls.getpeername
+            (Callers.leader system)
+            client
+            (UserBuffer.Unmapped 0x1000UL)
+            UserBuffer.Mapped
+            13u
+            system
         |> shouldEqual (Ok (GetSockNameAnswer.Failed (UnixError.EFAULT, lengthAfterFault)))
 
-        UnixSocket.tryGetpeername (Callers.leader system) client UserBuffer.Opaque 16u system
+        SockNameCalls.getpeername (Callers.leader system) client UserBuffer.Opaque UserBuffer.Mapped 16u system
         |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        UnixSocket.tryGetpeername (Callers.leader system) client UserBuffer.Addressless 16u system
+        SockNameCalls.getpeername (Callers.leader system) client UserBuffer.Addressless UserBuffer.Mapped 16u system
         |> shouldEqual (Error (GetSockNameRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     // ------------------------------------------------------------------

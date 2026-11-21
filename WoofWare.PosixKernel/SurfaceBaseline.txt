@@ -3497,6 +3497,8 @@ WoofWare.PosixKernel.PausedConnect inherit obj
 WoofWare.PosixKernel.PausedConnect.copyRange [static method]: WoofWare.PosixKernel.PausedConnect<'Thread, 'Handler> -> WoofWare.PosixKernel.CopyRange
 WoofWare.PosixKernel.PausedConnect`2 inherit obj
 WoofWare.PosixKernel.PausedFutexWait`2 inherit obj
+WoofWare.PosixKernel.PausedGetPeerName`2 inherit obj
+WoofWare.PosixKernel.PausedGetSockName`2 inherit obj
 WoofWare.PosixKernel.PausedGetSockOpt`2 inherit obj
 WoofWare.PosixKernel.PausedInotifyAddWatch`2 inherit obj
 WoofWare.PosixKernel.PausedLink`2 inherit obj
@@ -6610,12 +6612,12 @@ WoofWare.PosixKernel.Syscall`2+GetHostName.destination [property]: [read-only] W
 WoofWare.PosixKernel.Syscall`2+GetHostName.get_capacity [method]: unit -> System.UInt64
 WoofWare.PosixKernel.Syscall`2+GetHostName.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetPeerName inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2+GetPeerName.declaredLength [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.Syscall`2+GetPeerName.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetPeerName.fd [property]: [read-only] int
-WoofWare.PosixKernel.Syscall`2+GetPeerName.get_declaredLength [method]: unit -> System.UInt32
 WoofWare.PosixKernel.Syscall`2+GetPeerName.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetPeerName.get_fd [method]: unit -> int
+WoofWare.PosixKernel.Syscall`2+GetPeerName.get_length [method]: unit -> System.UInt32 WoofWare.PosixKernel.CopiedArgument
+WoofWare.PosixKernel.Syscall`2+GetPeerName.length [property]: [read-only] System.UInt32 WoofWare.PosixKernel.CopiedArgument
 WoofWare.PosixKernel.Syscall`2+GetRandom inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+GetRandom.buffer [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetRandom.count [property]: [read-only] System.UInt64
@@ -6638,12 +6640,12 @@ WoofWare.PosixKernel.Syscall`2+GetResUid.get_saved [method]: unit -> WoofWare.Po
 WoofWare.PosixKernel.Syscall`2+GetResUid.real [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetResUid.saved [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetSockName inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2+GetSockName.declaredLength [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.Syscall`2+GetSockName.destination [property]: [read-only] WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetSockName.fd [property]: [read-only] int
-WoofWare.PosixKernel.Syscall`2+GetSockName.get_declaredLength [method]: unit -> System.UInt32
 WoofWare.PosixKernel.Syscall`2+GetSockName.get_destination [method]: unit -> WoofWare.PosixKernel.UserBuffer
 WoofWare.PosixKernel.Syscall`2+GetSockName.get_fd [method]: unit -> int
+WoofWare.PosixKernel.Syscall`2+GetSockName.get_length [method]: unit -> System.UInt32 WoofWare.PosixKernel.CopiedArgument
+WoofWare.PosixKernel.Syscall`2+GetSockName.length [property]: [read-only] System.UInt32 WoofWare.PosixKernel.CopiedArgument
 WoofWare.PosixKernel.Syscall`2+GetSockOpt inherit WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2+GetSockOpt.fd [property]: [read-only] int
 WoofWare.PosixKernel.Syscall`2+GetSockOpt.get_fd [method]: unit -> int
@@ -7474,11 +7476,11 @@ WoofWare.PosixKernel.Syscall`2.NewGetCwd [static method]: (WoofWare.PosixKernel.
 WoofWare.PosixKernel.Syscall`2.NewGetEntropy [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetGroups [static method]: (int, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetHostName [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewGetPeerName [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewGetPeerName [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32 WoofWare.PosixKernel.CopiedArgument) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetRandom [static method]: (WoofWare.PosixKernel.UserBuffer, System.UInt64, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetResGid [static method]: (WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetResUid [static method]: (WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer, WoofWare.PosixKernel.UserBuffer) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
-WoofWare.PosixKernel.Syscall`2.NewGetSockName [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
+WoofWare.PosixKernel.Syscall`2.NewGetSockName [static method]: (int, WoofWare.PosixKernel.UserBuffer, System.UInt32 WoofWare.PosixKernel.CopiedArgument) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewGetSockOpt [static method]: (int, int, int, WoofWare.PosixKernel.UserBuffer, System.UInt32 WoofWare.PosixKernel.CopiedArgument) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewInotifyAddWatch [static method]: (int, WoofWare.PosixKernel.PathArgumentBytes, System.UInt32) -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
 WoofWare.PosixKernel.Syscall`2.NewInotifyInit1 [static method]: int -> WoofWare.PosixKernel.Syscall<'Thread, 'Handler>
@@ -8856,8 +8858,10 @@ WoofWare.PosixKernel.UnixSignal.sigsuspend [static method]: 'Thread WoofWare.Pos
 WoofWare.PosixKernel.UnixSocket inherit obj
 WoofWare.PosixKernel.UnixSocket.bind [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedBind<'Thread, 'Handler>, (WoofWare.PosixKernel.BindAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixSocket.bindWithAddress [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.PausedBind<'Thread, 'Handler> -> (WoofWare.PosixKernel.BindAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixSocket.getpeername [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.GetSockNameAnswer
-WoofWare.PosixKernel.UnixSocket.getsockname [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> System.UInt32 -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.GetSockNameAnswer
+WoofWare.PosixKernel.UnixSocket.getpeername [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedGetPeerName<'Thread, 'Handler>, WoofWare.PosixKernel.GetSockNameAnswer>
+WoofWare.PosixKernel.UnixSocket.getpeernameWithLength [static method]: System.UInt32 -> WoofWare.PosixKernel.PausedGetPeerName<'Thread, 'Handler> -> WoofWare.PosixKernel.GetSockNameAnswer
+WoofWare.PosixKernel.UnixSocket.getsockname [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedGetSockName<'Thread, 'Handler>, WoofWare.PosixKernel.GetSockNameAnswer>
+WoofWare.PosixKernel.UnixSocket.getsocknameWithLength [static method]: System.UInt32 -> WoofWare.PosixKernel.PausedGetSockName<'Thread, 'Handler> -> WoofWare.PosixKernel.GetSockNameAnswer
 WoofWare.PosixKernel.UnixSocket.getsockopt [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> int -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.CallProgress<WoofWare.PosixKernel.PausedGetSockOpt<'Thread, 'Handler>, (WoofWare.PosixKernel.GetSockOptAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)>
 WoofWare.PosixKernel.UnixSocket.getsockoptWithLength [static method]: System.UInt32 -> WoofWare.PosixKernel.PausedGetSockOpt<'Thread, 'Handler> -> (WoofWare.PosixKernel.GetSockOptAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSocket.listen [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.ListenAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)

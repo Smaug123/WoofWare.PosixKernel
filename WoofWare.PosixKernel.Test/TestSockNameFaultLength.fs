@@ -156,7 +156,15 @@ module TestSockNameFaultLength =
                     | "null" -> UserBuffer.Unmapped 0UL
                     | _ -> UserBuffer.Unmapped 0x1000UL
 
-                match UnixSocket.tryGetsockname (Callers.leader system) fd destination row.Declared system with
+                match
+                    SockNameCalls.getsockname
+                        (Callers.leader system)
+                        fd
+                        destination
+                        UserBuffer.Mapped
+                        row.Declared
+                        system
+                with
                 | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
                     let errno =
                         UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering m.Platform) error
@@ -203,7 +211,15 @@ module TestSockNameFaultLength =
                     | "null" -> UserBuffer.Unmapped 0UL
                     | _ -> UserBuffer.Unmapped 0x1000UL
 
-                match UnixSocket.tryGetpeername (Callers.leader system) fd destination row.Declared system with
+                match
+                    SockNameCalls.getpeername
+                        (Callers.leader system)
+                        fd
+                        destination
+                        UserBuffer.Mapped
+                        row.Declared
+                        system
+                with
                 | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
                     let errno =
                         UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering m.Platform) error
@@ -592,8 +608,9 @@ module TestSockNameFaultLength =
         |> Set.ofList
         |> shouldEqual (Set.ofList [ GetSockNameFaultLength.AlreadyReported ; GetSockNameFaultLength.Untouched ])
 
-/// `getsockname(2)`'s fault path put to the kernel running the suite and to a
-/// model of that same kernel: its flavour, its architecture and, on Linux, its
+/// `getsockname(2)`'s fault paths, through the address buffer and through
+/// the length cell, put to the kernel running the suite and to a model of that
+/// same kernel: its flavour, its architecture and, on Linux, its
 /// own version, read from `uname`. So it holds on whichever kernel it runs on,
 /// on either side of the 6.18 change.
 [<TestFixture>]
@@ -691,7 +708,7 @@ module TestSockNameFaultLengthAgainstHost =
         =
         let platform = UnixSystem.platform system
 
-        match UnixSocket.tryGetsockname (Callers.leader system) fd destination declared system with
+        match SockNameCalls.getsockname (Callers.leader system) fd destination UserBuffer.Mapped declared system with
         | Ok (GetSockNameAnswer.Reported (_, reported)) -> 0, uint32 reported
         | Ok (GetSockNameAnswer.Failed (error, overwritten)) ->
             UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) error,
@@ -748,6 +765,82 @@ module TestSockNameFaultLengthAgainstHost =
 
                 if not disagreements.IsEmpty then
                     failwith $"on %O{platform}:\n%s{String.Join ('\n', disagreements)}"
+            finally
+                HostCalls.close fd |> ignore<int>
+        )
+
+    [<Test>]
+    let ``getsockname through a NULL or faulting length cell answers as this kernel does`` () : unit =
+        HostPlatform.onUnixHostKernel (fun platform ->
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
+
+            if fd < 0 then
+                failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+            try
+                let system : UnixSystem<int, string> =
+                    UnixSystem.initial platform
+                    |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+                let modelFd, system =
+                    NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+
+                let numbering = SimulatedUnixPlatform.rawErrnoNumbering platform
+                let page = faultingPage.Value
+
+                let cells =
+                    [
+                        "null", 0n, UserBuffer.Unmapped 0UL
+                        "unmapped", nativeint (int64 page), UserBuffer.Unmapped page
+                    ]
+
+                // A destination of real storage, filled with a sentinel, shows
+                // that the host wrote no address through it either.
+                let storage = Marshal.AllocHGlobal 128
+
+                try
+                    let destinations = ("real", storage, UserBuffer.Mapped) :: cells
+
+                    let disagreements =
+                        [
+                            for cellName, hostCell, modelCell in cells do
+                                for destinationName, hostDestination, modelDestination in destinations do
+                                    Marshal.Copy (Array.create 128 0xAAuy, 0, storage, 128)
+                                    Marshal.SetLastPInvokeError 0
+
+                                    let errno =
+                                        if hostGetSockName (fd, hostDestination, hostCell) = 0 then
+                                            0
+                                        else
+                                            Marshal.GetLastPInvokeError ()
+
+                                    let after = Array.zeroCreate<byte> 128
+                                    Marshal.Copy (storage, after, 0, 128)
+                                    let host = errno, after |> Array.filter (fun b -> b <> 0xAAuy) |> Array.length
+
+                                    // The cell's contents are never read here.
+                                    let model =
+                                        match
+                                            SockNameCalls.getsockname
+                                                (Callers.leader system)
+                                                modelFd
+                                                modelDestination
+                                                modelCell
+                                                0u
+                                                system
+                                        with
+                                        | Ok (GetSockNameAnswer.Failed (error, None)) ->
+                                            UnixError.toRawErrnoUnder numbering error, 0
+                                        | other -> failwith $"the model answered %A{other}"
+
+                                    if host <> model then
+                                        $"%s{destinationName} destination through a %s{cellName} cell: the host answered (errno, written) %A{host}, the model %A{model}"
+                        ]
+
+                    if not disagreements.IsEmpty then
+                        failwith $"on %O{platform}:\n%s{String.Join ('\n', disagreements)}"
+                finally
+                    Marshal.FreeHGlobal storage
             finally
                 HostCalls.close fd |> ignore<int>
         )

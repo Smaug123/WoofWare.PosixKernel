@@ -291,7 +291,9 @@ module TestUnixWaitFinish =
             | SteppedCall.Bind (BindAnswer.Bound _, system) -> returned system
             | other -> failwith $"bind: %A{other}"
 
-        match UnixSystem.step leader (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
+        match
+            UnixSystem.step leader (Syscall.GetSockName (fd, UserBuffer.Mapped, CopiedArgument.Readable 16u)) system
+        with
         | SteppedCall.GetSockName (GetSockNameAnswer.Reported (copied, _)) -> fd, (CopyOut.endpoint copied).Port, system
         | other -> failwith $"getsockname: %A{other}"
 

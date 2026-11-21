@@ -293,7 +293,7 @@ module TestDualMode =
             Error (BindRefusal.Copy (SockaddrCopyRefusal.UnmodelledInet6Kind (socketId, SocketKind.Datagram)))
         )
 
-        UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 28u system
+        SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 28u system
         |> shouldEqual (Error (GetSockNameRefusal.UnmodelledInet6Kind (socketId, SocketKind.Datagram)))
 
     [<Test>]

@@ -72,7 +72,15 @@ module TestCopyOutMeasured =
 
         match call with
         | "getsockname" ->
-            match UnixSocket.tryGetsockname (Callers.leader system) client UserBuffer.Mapped declared system with
+            match
+                SockNameCalls.getsockname
+                    (Callers.leader system)
+                    client
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    declared
+                    system
+            with
             | Ok (GetSockNameAnswer.Reported (copiedOut, reported)) ->
                 Some (copiedOut, reported, local (socketOf client system))
             | Ok (GetSockNameAnswer.Failed _) -> None

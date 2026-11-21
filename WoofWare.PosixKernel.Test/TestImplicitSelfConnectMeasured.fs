@@ -129,11 +129,11 @@ module TestImplicitSelfConnectMeasured =
     let private nameOf (peer : bool) (fd : int) (system : UnixSystem<int, string>) : string =
         let call =
             if peer then
-                UnixSocket.tryGetpeername
+                SockNameCalls.getpeername
             else
-                UnixSocket.tryGetsockname
+                SockNameCalls.getsockname
 
-        match call (Callers.leader system) fd UserBuffer.Mapped 16u system with
+        match call (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint

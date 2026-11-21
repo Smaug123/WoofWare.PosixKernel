@@ -589,7 +589,15 @@ module TestListenerTeardown =
         let soerr, system = socketError accepted system
 
         let peer =
-            match UnixSocket.tryGetpeername (Callers.leader system) accepted UserBuffer.Mapped 16u system with
+            match
+                SockNameCalls.getpeername
+                    (Callers.leader system)
+                    accepted
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    16u
+                    system
+            with
             | Ok (GetSockNameAnswer.Reported _) -> "ok"
             | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
             | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"

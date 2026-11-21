@@ -241,7 +241,7 @@ module TestLocalPortRangeMeasured =
         | _ -> failwith $"not an IPv4 address: %s{text}"
 
     let private portOf (fd : int) (system : UnixSystem<int, string>) : uint16 =
-        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
+        match SockNameCalls.getsockname (Callers.leader system) fd UserBuffer.Mapped UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> endpoint.Port

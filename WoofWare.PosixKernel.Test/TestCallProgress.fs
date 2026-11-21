@@ -273,6 +273,14 @@ module TestCallProgress =
             fun () ->
                 UnixSocket.setsockoptWithValue bytes Unchecked.defaultof<PausedSetSockOpt<int, string>>
                 |> ignore<SetSockOptAnswer * UnixSystem<int, string>>
+            "UnixSocket.getsocknameWithLength",
+            fun () ->
+                UnixSocket.getsocknameWithLength 16u Unchecked.defaultof<PausedGetSockName<int, string>>
+                |> ignore<GetSockNameAnswer>
+            "UnixSocket.getpeernameWithLength",
+            fun () ->
+                UnixSocket.getpeernameWithLength 16u Unchecked.defaultof<PausedGetPeerName<int, string>>
+                |> ignore<GetSockNameAnswer>
             "UnixSocket.getsockoptWithLength",
             fun () ->
                 UnixSocket.getsockoptWithLength 4u Unchecked.defaultof<PausedGetSockOpt<int, string>>
@@ -350,3 +358,62 @@ module TestCallProgress =
         with
         | CallProgress.Answered _ -> ()
         | CallProgress.NeedsCopyIn _ -> failwith "Darwin's getsockopt stopped to read a length cell it never reads"
+
+    [<Test>]
+    let ``a getsockname or getpeername stops at the length cell only where the kernel reads it`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let fd, system = socketOn platform
+            let leader = Callers.leader system
+
+            let stops (progress : Result<CallProgress<_, GetSockNameAnswer>, GetSockNameRefusal>) : bool =
+                match progress with
+                | Ok (CallProgress.NeedsCopyIn _) -> true
+                | Ok (CallProgress.Answered _)
+                | Error _ -> false
+
+            // Real storage, reached: the call stops, and finishes with what the
+            // cell holds.
+            UnixSocket.tryGetsockname leader fd UserBuffer.Mapped UserBuffer.Mapped system
+            |> stops
+            |> shouldEqual true
+
+            match UnixSocket.getsockname leader fd UserBuffer.Mapped UserBuffer.Mapped system with
+            | CallProgress.NeedsCopyIn paused ->
+                match UnixSocket.getsocknameWithLength 16u paused with
+                | GetSockNameAnswer.Reported (copied, 16) -> copied.Length |> shouldEqual 16
+                | other -> failwith $"getsocknameWithLength answered %A{other}"
+            | other -> failwith $"getsockname answered %A{other}"
+
+            for cell in [ UserBuffer.Unmapped 0UL ; UserBuffer.Unmapped 0x1000UL ] do
+                // A cell that faults answers EFAULT where the kernel reads it,
+                // and nothing where an earlier answer comes first.
+                match UnixSocket.tryGetsockname leader fd UserBuffer.Mapped cell system with
+                | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.EFAULT, None))) -> ()
+                | other -> failwith $"getsockname through %A{cell} answered %A{other}"
+
+                match UnixSocket.tryGetpeername leader fd UserBuffer.Mapped cell system with
+                | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.ENOTCONN, None))) -> ()
+                | other -> failwith $"getpeername of an unconnected socket through %A{cell} answered %A{other}"
+
+            for cell, refusal in
+                [
+                    UserBuffer.Opaque, BufferRefusal.OpaqueAtTransfer
+                    UserBuffer.Addressless, BufferRefusal.AddresslessAtTransfer
+                ] do
+                // A cell whose contents the client cannot give is refused only
+                // where the kernel reads it.
+                UnixSocket.tryGetsockname leader fd UserBuffer.Mapped cell system
+                |> stops
+                |> shouldEqual false
+
+                match UnixSocket.tryGetsockname leader fd UserBuffer.Mapped cell system with
+                | Error (GetSockNameRefusal.Buffer actual) -> actual |> shouldEqual refusal
+                | other -> failwith $"getsockname through %A{cell} answered %A{other}"
+
+                match UnixSocket.tryGetsockname leader 99 UserBuffer.Mapped cell system with
+                | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.EBADF, None))) -> ()
+                | other -> failwith $"getsockname of a closed descriptor through %A{cell} answered %A{other}"
+
+                match UnixSocket.tryGetpeername leader fd UserBuffer.Mapped cell system with
+                | Ok (CallProgress.Answered (GetSockNameAnswer.Failed (UnixError.ENOTCONN, None))) -> ()
+                | other -> failwith $"getpeername of an unconnected socket through %A{cell} answered %A{other}"

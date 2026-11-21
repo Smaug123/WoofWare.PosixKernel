@@ -711,7 +711,7 @@ module TestPeerNameAgainstHost =
             | Destination.Null
             | Destination.Faulting -> None
 
-        match UnixSocket.tryGetpeername (Callers.leader system) fd userBuffer declared system with
+        match SockNameCalls.getpeername (Callers.leader system) fd userBuffer UserBuffer.Mapped declared system with
         | Error refusal -> failwith $"the model refused: %s{GetSockNameRefusal.describe refusal}"
         | Ok (GetSockNameAnswer.Reported (copied, reported)) ->
             {
@@ -752,6 +752,93 @@ module TestPeerNameAgainstHost =
 
                                 if host <> model then
                                     $"%A{destination} at %d{declared}: the host observed %A{host}, the model %A{model}"
+                    ]
+
+                if not disagreements.IsEmpty then
+                    failwith (String.Join ("\n", disagreements))
+            finally
+                for fd in owned do
+                    HostCalls.close fd |> ignore<int>
+        )
+
+    /// One host call through the length cell at `cell`, which names no
+    /// storage: its errno, and how many bytes of a real destination it wrote.
+    let private hostCallThroughCell (fd : int) (destination : Destination) (cell : nativeint) : int * int =
+        let storage = Marshal.AllocHGlobal BufferSize
+
+        try
+            Marshal.Copy (Array.create BufferSize sentinel, 0, storage, BufferSize)
+
+            let address =
+                match destination with
+                | Destination.Real -> storage
+                | Destination.Null -> 0n
+                | Destination.Faulting -> nativeint (int64 faultingPage.Value)
+
+            Marshal.SetLastPInvokeError 0
+
+            let errno =
+                if hostGetPeerName (fd, address, cell) = 0 then
+                    0
+                else
+                    Marshal.GetLastPInvokeError ()
+
+            let buffer = Array.zeroCreate<byte> BufferSize
+            Marshal.Copy (storage, buffer, 0, BufferSize)
+            errno, writtenBefore sentinel buffer
+        finally
+            Marshal.FreeHGlobal storage
+
+    [<TestCaseSource(nameof scenarios)>]
+    let ``getpeername through a NULL or faulting length cell answers as this kernel does``
+        (scenario : Scenario)
+        : unit
+        =
+        HostPlatform.onUnixHostKernel (fun platform ->
+            let hostFd, _, owned = hostBuild platform scenario
+
+            try
+                let modelFd, _, system = modelBuild platform scenario
+                let numbering = SimulatedUnixPlatform.rawErrnoNumbering platform
+
+                let cells =
+                    [
+                        "null", 0n, UserBuffer.Unmapped 0UL
+                        "faulting", nativeint (int64 faultingPage.Value), UserBuffer.Unmapped faultingPage.Value
+                    ]
+
+                let disagreements =
+                    [
+                        for destination in destinations do
+                            for name, hostCell, modelCell in cells do
+                                let host = hostCallThroughCell hostFd destination hostCell
+
+                                let userBuffer =
+                                    match destination with
+                                    | Destination.Real -> UserBuffer.Mapped
+                                    | Destination.Null -> UserBuffer.Unmapped 0UL
+                                    | Destination.Faulting -> UserBuffer.Unmapped faultingPage.Value
+
+                                // The cell's contents are never read here, so
+                                // what the helper is told it holds is moot.
+                                let model =
+                                    match
+                                        SockNameCalls.getpeername
+                                            (Callers.leader system)
+                                            modelFd
+                                            userBuffer
+                                            modelCell
+                                            0u
+                                            system
+                                    with
+                                    | Ok (GetSockNameAnswer.Failed (error, None)) ->
+                                        UnixError.toRawErrnoUnder numbering error, 0
+                                    | other ->
+                                        failwith
+                                            $"%A{destination} through a %s{name} cell: the model answered %A{other}"
+
+                                if host <> model then
+                                    $"%A{destination} through a %s{name} cell: the host answered (errno, written) %A{host}, the model %A{model}"
                     ]
 
                 if not disagreements.IsEmpty then

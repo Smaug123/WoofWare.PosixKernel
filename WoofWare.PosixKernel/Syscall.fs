@@ -513,10 +513,14 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | Accept of fd : int * destination : UserBuffer * declaredLength : uint32 option * flags : int
     /// `shutdown(2)`, as `UnixConnection.shutdown` makes it.
     | Shutdown of fd : int * how : int
-    /// `getsockname(2)`, as `UnixSocket.getsockname` makes it.
-    | GetSockName of fd : int * destination : UserBuffer * declaredLength : uint32
-    /// `getpeername(2)`, as `UnixSocket.getpeername` makes it.
-    | GetPeerName of fd : int * destination : UserBuffer * declaredLength : uint32
+    /// `getsockname(2)`, as `UnixSocket.getsockname` makes it, then
+    /// `UnixSocket.getsocknameWithLength` of the `socklen_t` the length cell
+    /// holds.
+    | GetSockName of fd : int * destination : UserBuffer * length : CopiedArgument<uint32>
+    /// `getpeername(2)`, as `UnixSocket.getpeername` makes it, then
+    /// `UnixSocket.getpeernameWithLength` of the `socklen_t` the length cell
+    /// holds.
+    | GetPeerName of fd : int * destination : UserBuffer * length : CopiedArgument<uint32>
     /// `setsockopt(2)`, as `UnixSocket.setsockopt` makes it, then
     /// `UnixSocket.setsockoptWithValue` of the bytes of `value` it copies.
     | SetSockOpt of
@@ -916,9 +920,11 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixConnection.shutdown` answers.
     | Shutdown of answer : ShutdownAnswer * system : UnixSystem<'Thread, 'Handler>
-    /// What `UnixSocket.getsockname` answers.
+    /// What `UnixSocket.getsockname` answers, or
+    /// `UnixSocket.getsocknameWithLength` after it.
     | GetSockName of answer : GetSockNameAnswer
-    /// What `UnixSocket.getpeername` answers.
+    /// What `UnixSocket.getpeername` answers, or
+    /// `UnixSocket.getpeernameWithLength` after it.
     | GetPeerName of answer : GetSockNameAnswer
     /// What `UnixSocket.setsockopt` answers, or
     /// `UnixSocket.setsockoptWithValue` after it.
