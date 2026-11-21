@@ -397,6 +397,21 @@ module UnixThreadLifecycle =
     /// longer live, so the machine may hand it out again, and the processor on which
     /// it was running, if any, becomes idle. The client stops running the thread.
     ///
+    /// On Linux, a thread can have a `clear_child_tid` address, set by `clone(2)`'s
+    /// `CLONE_CHILD_CLEARTID` or by `set_tid_address(2)`. While another thread shares
+    /// its address space, as every other thread of its process does, the kernel then
+    /// does two more things at its exit: it stores 0 into the four bytes at that
+    /// address, and it makes a shared `FUTEX_WAKE` of one waiter on that word. The wake
+    /// wakes what such a wake wakes, such as a `FUTEX_WAIT` or `FUTEX_WAIT_BITSET`
+    /// without `FUTEX_PRIVATE_FLAG`, and no private waiter. If the process cannot
+    /// write those bytes, the store does not happen, the wake is made all the same,
+    /// and the thread exits as any other does, with no signal.
+    /// This library holds no such address, so the client does both: it stores the 0
+    /// into the process's memory, and it makes the wake, whose waiter is asleep in a
+    /// block of the client's own, since `UnixFutex.futex` refuses a futex wait without
+    /// `FUTEX_PRIVATE_FLAG`. This function wakes no futex waiter at all. Darwin has no
+    /// such address.
+    ///
     /// The process carries on unless this was its last thread. Then, on Linux, the
     /// process ends, having exited with `status`, and is removed from the system at
     /// once, its descriptors closed as `exitGroup` closes them. Otherwise `status` is
@@ -416,6 +431,9 @@ module UnixThreadLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessFate<unit, 'Thread, 'Handler>
         =
+        // What Linux does with the `clear_child_tid` word is measured by
+        // docs/probes/clear-child-tid (6.18.5 aarch64), whose private-wait rows
+        // `TestFutex` holds this function to.
         tryExitThread caller status system
         |> Refusal.orRaise "UnixThreadLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
 
@@ -486,7 +504,8 @@ module UnixThreadLifecycle =
 
     /// `clone(2)` with `CLONE_THREAD`, made by `caller`: a new thread in the process,
     /// the thread `child`, running on the logical processor `cpu`. This is what
-    /// `pthread_create(3)` ends in.
+    /// `pthread_create(3)` ends in. The client keeps the address that
+    /// `CLONE_CHILD_CLEARTID` names, for the thread's exit (see `exitThread`).
     ///
     /// Answers the thread ID the machine's allocator hands the new thread, one no
     /// live thread on the machine holds, which starts with a copy of the caller's

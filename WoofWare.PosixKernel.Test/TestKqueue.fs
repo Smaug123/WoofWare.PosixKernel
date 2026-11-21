@@ -1239,3 +1239,73 @@ module TestKqueue =
         | [ UnixSystemDefect.DescriptionNotOfFlavour (id, OpenFileTarget.Epoll _, SimulatedUnixFlavour.Darwin) ] ->
             id |> shouldEqual (idOf fd withEpoll)
         | other -> failwith $"expected the epoll instance to be reported, got %A{other}"
+
+    /// The output of `docs/probes/kevent-size`, measured on Darwin 27.2.0 arm64.
+    let private keventSize : string list =
+        let name = "WoofWare.PosixKernel.Test.keventSize.darwin.txt"
+
+        use stream =
+            match Assembly.GetExecutingAssembly().GetManifestResourceStream name with
+            | null -> failwith $"embedded resource %s{name} not found"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+        |> List.map (fun line -> line.TrimEnd '\r')
+
+    [<Test>]
+    let ``an empty kqueue screens no range of the eventlist, whatever nevents is`` () : unit =
+        // The probe's empty-kqueue rows: INT_MAX events into a stack buffer of
+        // two, and 1 and INT_MAX events into an eventlist outside user space,
+        // each with a zero timeout, return 0 with nothing copied.
+        let rows =
+            keventSize
+            |> List.choose (fun line ->
+                let row =
+                    System.Text.RegularExpressions.Regex.Match (
+                        line,
+                        @"^empty kqueue, (?:eventlist=(0x[0-9A-F]+), )?nevents=(INT_MAX|\d+): rv=(-?\d+) errno=(\d+)$"
+                    )
+
+                if row.Success then
+                    let eventlist =
+                        if row.Groups.[1].Success then
+                            UserBuffer.Unmapped (Convert.ToUInt64 (row.Groups.[1].Value, 16))
+                        else
+                            UserBuffer.Mapped
+
+                    let nevents =
+                        match row.Groups.[2].Value with
+                        | "INT_MAX" -> Int32.MaxValue
+                        | count -> int count
+
+                    Some (line, eventlist, nevents, int64 row.Groups.[3].Value, int row.Groups.[4].Value)
+                else
+                    None
+            )
+
+        rows |> List.length |> shouldEqual 3
+
+        for line, eventlist, nevents, rv, errno in rows do
+            (line, rv, errno) |> shouldEqual (line, 0L, 0)
+            let fd, system = createKqueue darwin
+
+            match
+                UnixKqueue.tryKevent
+                    (Callers.thread 1 system)
+                    fd
+                    0
+                    []
+                    nevents
+                    eventlist
+                    (TimespecArgument.Readable
+                        {
+                            Seconds = 0L
+                            Nanoseconds = 0L
+                        })
+                    system
+            with
+            | Ok (outcome, _) -> (line, outcome) |> shouldEqual (line, KeventOutcome.Answered [])
+            | Error refusal -> failwith $"%s{line}: %s{KeventRefusal.describe refusal}"

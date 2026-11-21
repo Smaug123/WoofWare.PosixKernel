@@ -1,0 +1,22 @@
+Linux 6.18.5 aarch64
+ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+5
+store: before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a set_tid_address-returned-gettid=yes
+store-control: before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a
+wait=FUTEX_WAIT: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=3 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_PRIVATE: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1009 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_BITSET: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=2 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+wait=FUTEX_WAIT_BITSET_PRIVATE: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1009 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+two-shared: asleep=1 exit-seen-before-deadline=yes woken=1 waiter0: ret=0 errno=0 took=1 waiter1: ret=-1 errno=ETIMEDOUT took=1008 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a
+unwritable=read-only: thread-gone=yes process-runs=yes word=0x5a5a5a5a
+unwritable=prot-none: thread-gone=yes process-runs=yes word=0x5a5a5a5a
+unwritable=null-page: thread-gone=yes process-runs=yes
+wait-then-protect=private-read-only: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1010 own-wake=-1/EFAULT word=0x5a5a5a5a
+wait-then-protect=private-prot-none: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1001 own-wake=-1/EFAULT word=0x5a5a5a5a
+wait-then-protect=shared-read-only: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=2 own-wake=0/0 word=0x5a5a5a5a
+wait-then-protect=shared-prot-none: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1007 own-wake=-1/EFAULT word=0x5a5a5a5a
+last-thread=exit: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1008 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
+last-thread=exit_group: asleep=1 exit-seen-before-deadline=yes ret=-1 errno=ETIMEDOUT took=1002 before=0x5a5a5a5a word=0x5a5a5a5a after=0x5a5a5a5a child-exited=0
+last-thread=control: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=3 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0
+last-thread=clone-vm: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=1 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0
+last-thread=clone-vm-cleartid: asleep=1 exit-seen-before-deadline=yes ret=0 errno=0 took=1 before=0x5a5a5a5a word=0x00000000 after=0x5a5a5a5a child-exited=0

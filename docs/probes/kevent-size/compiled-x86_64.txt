@@ -1,0 +1,9 @@
+_probe_sizeof_kevent:
+	.quad	32                              ## 0x20
+
+	.globl	_probe_sizeof_kevent64_s        ## @probe_sizeof_kevent64_s
+--
+_probe_sizeof_kevent64_s:
+	.quad	48                              ## 0x30
+
+	.section	__TEXT,__cstring,cstring_literals

@@ -1221,3 +1221,69 @@ module TestKeventRegistration =
             [
                 FileDescriptorRegistryDefect.KqueueActiveEntryDuplicated (kqueueId, listener, KqueueFilter.Read)
             ]
+
+    [<Test>]
+    let ``a wait for INT_MAX events reports every ready one`` () : unit =
+        // `docs/probes/kevent-size`'s row "two ready, room for two,
+        // nevents=INT_MAX": with two events ready, a wait for INT_MAX events
+        // into room for two returns both. The probe's events were EVFILT_USER,
+        // which the library does not model; here they are two connected
+        // clients' EVFILT_WRITE.
+        let name = "WoofWare.PosixKernel.Test.keventSize.darwin.txt"
+
+        let measured =
+            use stream =
+                match System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream name with
+                | null -> failwith $"embedded resource %s{name} not found"
+                | stream -> stream
+
+            use reader = new System.IO.StreamReader (stream)
+
+            reader.ReadToEnd().Split ('\n', System.StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun line -> line.TrimEnd '\r')
+            |> Array.filter (fun line ->
+                line.StartsWith ("two ready, room for two, nevents=INT_MAX:", System.StringComparison.Ordinal)
+            )
+            |> Array.toList
+
+        match measured with
+        | [ line ] ->
+            (line,
+             line.StartsWith (
+                 "two ready, room for two, nevents=INT_MAX: rv=2 errno=0 ",
+                 System.StringComparison.Ordinal
+             ))
+            |> shouldEqual (line, true)
+        | other -> failwith $"expected one INT_MAX row, got %A{other}"
+
+        let system, _, kq, _ = world
+        let first, system = KeventWorld.client 5000us system
+        let second, system = KeventWorld.client 5000us system
+
+        let system =
+            KeventWorld.register kq first KeventFilter.Write KeventFlags.Add 1UL system
+
+        let system =
+            KeventWorld.register kq second KeventFilter.Write KeventFlags.Add 2UL system
+
+        match
+            UnixKqueue.tryKevent
+                (Callers.thread 1 system)
+                kq
+                0
+                []
+                System.Int32.MaxValue
+                UserBuffer.Mapped
+                (TimespecArgument.Readable
+                    {
+                        Seconds = 0L
+                        Nanoseconds = 0L
+                    })
+                system
+        with
+        | Ok (KeventOutcome.Answered events, _) ->
+            events
+            |> List.map (fun event -> event.Ident, event.Filter)
+            |> List.sort
+            |> shouldEqual (List.sort [ uint64 first, KeventFilter.Write ; uint64 second, KeventFilter.Write ])
+        | other -> failwith $"expected both events, got %A{other}"

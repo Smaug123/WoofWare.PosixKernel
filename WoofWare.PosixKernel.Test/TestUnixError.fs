@@ -505,3 +505,91 @@ module TestUnixError =
         UnixError.ofRawErrnoPortable 11 |> shouldEqual None
         UnixError.ofRawErrnoPortable 2 |> shouldEqual (Some UnixError.ENOENT)
         UnixError.ofRawErrnoPortable 15 |> shouldEqual (Some UnixError.ENOTBLK)
+
+    /// The rows of one of `docs/probes/raw-syscall-error`'s native arm64
+    /// outputs: the call, the carry flag before it, the result register as a
+    /// signed number, the carry flag after it, and what the C library's wrapper
+    /// returned and the errno it reported (0 for success).
+    let private rawSyscallRows (name : string) : (string * int * int64 * int * int64 * string) list =
+        use stream =
+            match System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream name with
+            | null -> failwith $"embedded resource %s{name} not found"
+            | stream -> stream
+
+        use reader = new StreamReader (stream)
+
+        reader.ReadToEnd().Split ('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+        |> List.choose (fun line ->
+            let row =
+                Regex.Match (
+                    line.TrimEnd '\r',
+                    @"^(\S+)\s+carry_in=(\d): ret=0x[0-9a-f]+ \((-?\d+)\) carry_out=(\d) \| libc: ret=(-?\d+) errno=\d+\(([A-Z0-9]+)\)$"
+                )
+
+            if row.Success then
+                Some (
+                    row.Groups.[1].Value,
+                    int row.Groups.[2].Value,
+                    int64 row.Groups.[3].Value,
+                    int row.Groups.[4].Value,
+                    int64 row.Groups.[5].Value,
+                    row.Groups.[6].Value
+                )
+            else
+                None
+        )
+
+    [<Test>]
+    let ``a raw arm64 syscall reports its errno as RawErrnoNumbering says`` () : unit =
+        // RawErrnoNumbering's remarks: on arm64, Linux returns the errno
+        // negated in x0 and leaves the carry flag alone; Darwin returns it
+        // positive, with the carry flag set, and clears the flag on success.
+        let errorOf (name : string) : UnixError =
+            match name with
+            | "EBADF" -> UnixError.EBADF
+            | "ENOENT" -> UnixError.ENOENT
+            | "ELOOP" -> UnixError.ELOOP
+            | other -> failwith $"the probe names no error %s{other}"
+
+        for numbering, name in
+            [
+                RawErrnoNumbering.Linux, "WoofWare.PosixKernel.Test.rawSyscallError.linux.txt"
+                RawErrnoNumbering.Darwin, "WoofWare.PosixKernel.Test.rawSyscallError.darwin.txt"
+            ] do
+            let rows = rawSyscallRows name
+
+            // Every call with each carry flag, and the self-link failing with
+            // ELOOP, the one errno whose number differs between the flavours.
+            rows
+            |> List.map (fun (call, carryIn, _, _, _, errno) -> call, carryIn, errno)
+            |> List.sort
+            |> shouldEqual (
+                List.sort
+                    [
+                        for call, errno in
+                            [
+                                "getpid()", "0"
+                                "close(-1)", "EBADF"
+                                "chdir(missing)", "ENOENT"
+                                "chdir(loop)", "ELOOP"
+                            ] do
+                            for carryIn in [ 0 ; 1 ] do
+                                yield call, carryIn, errno
+                    ]
+            )
+
+            for call, carryIn, ret, carryOut, libcRet, errno in rows do
+                let row = $"%s{name}: %s{call} carry_in=%d{carryIn}"
+
+                // A call that succeeded returns what the C library's wrapper
+                // returned for the same call (getpid's process ID).
+                match numbering, errno with
+                | RawErrnoNumbering.Linux, "0" -> (row, ret, carryOut) |> shouldEqual (row, libcRet, carryIn)
+                | RawErrnoNumbering.Darwin, "0" -> (row, ret, carryOut) |> shouldEqual (row, libcRet, 0)
+                | RawErrnoNumbering.Linux, error ->
+                    let raw = UnixError.toRawErrnoUnder numbering (errorOf error)
+                    (row, ret, carryOut) |> shouldEqual (row, -int64 raw, carryIn)
+                | RawErrnoNumbering.Darwin, error ->
+                    let raw = UnixError.toRawErrnoUnder numbering (errorOf error)
+                    (row, ret, carryOut) |> shouldEqual (row, int64 raw, 1)
