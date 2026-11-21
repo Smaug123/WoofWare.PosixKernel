@@ -984,8 +984,11 @@ module UnixWait =
     /// cell once its datagram has arrived, and a woken Linux `accept` once its
     /// connection has: `finish` hands what `call`'s cell holds to the
     /// resumption (`UnixReadWrite.recvfromWithLength`,
-    /// `UnixConnection.acceptWithLength`). Every other call is finished
-    /// without reading `call`'s arguments.
+    /// `UnixConnection.acceptWithLength`). A woken Darwin `accept` read its
+    /// cell's value before it slept, and ignores the value `call` gives, but
+    /// it writes the reported length back, so `call` still gives the cell's
+    /// kind: readable, or not, as it was when the call was made. Every other
+    /// call is finished without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
@@ -1008,8 +1011,13 @@ module UnixWait =
     /// that end before the bytes it copies, as `step` does, and
     /// `UnmodelledException` if `call` gives the buffer as anything but
     /// readable, which it was when the call was made; and likewise for a
-    /// `recvfrom`'s or an `accept`'s length cell. Otherwise it throws what the family's finishing
-    /// function throws.
+    /// `recvfrom`'s length cell. For an `accept` whose finish reads or writes
+    /// its length cell, throws `UnmodelledException` if `call` gives the cell
+    /// as another kind than the call was made with (readable where it was
+    /// not, or the reverse); a cell that was not readable when the call was
+    /// made, and still is not, answers what the kernel does, such as Linux's
+    /// `AcceptOutcome.DroppedConnection` with `EFAULT`. Otherwise it throws
+    /// what the family's finishing function throws.
     let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (call : Syscall<'Thread, 'Handler>)
