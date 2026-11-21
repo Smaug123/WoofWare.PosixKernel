@@ -79,31 +79,47 @@ module TestPollUnreadableEntries =
             Errno : string
             Slept : bool
             Revents0 : string
+            /// The `RLIMIT_NOFILE` soft limit the probe had set.
+            SoftLimit : uint32
         }
 
     let private rowPattern =
         Regex @"^([OZYPW]) (.+) nfds=(\d+) timeout=(-?\d+) rv=(-?\d+) errno=(.+) slept=(yes|no) revents0=(\S+)$"
 
+    let private limitSet = Regex @"^soft limit set to (\d+)$"
+
     let private rows (run : Run) : Row list =
-        run.Lines
-        |> List.choose (fun line ->
+        ((None, []), run.Lines)
+        ||> List.fold (fun (limit, acc) line ->
+            let set = limitSet.Match line
             let m = rowPattern.Match line
 
-            if m.Success then
-                Some
-                    {
-                        Section = m.Groups.[1].Value
-                        Label = m.Groups.[2].Value
-                        Count = UInt32.Parse m.Groups.[3].Value
-                        Timeout = int m.Groups.[4].Value
-                        Rv = int m.Groups.[5].Value
-                        Errno = m.Groups.[6].Value
-                        Slept = m.Groups.[7].Value = "yes"
-                        Revents0 = m.Groups.[8].Value
-                    }
+            if set.Success then
+                Some (UInt32.Parse set.Groups.[1].Value), acc
+            elif m.Success then
+                let softLimit =
+                    match limit with
+                    | Some limit -> limit
+                    | None -> failwith $"%s{run.Name}: a row before any limit was set: %s{line}"
+
+                limit,
+                {
+                    Section = m.Groups.[1].Value
+                    Label = m.Groups.[2].Value
+                    Count = UInt32.Parse m.Groups.[3].Value
+                    Timeout = int m.Groups.[4].Value
+                    Rv = int m.Groups.[5].Value
+                    Errno = m.Groups.[6].Value
+                    Slept = m.Groups.[7].Value = "yes"
+                    Revents0 = m.Groups.[8].Value
+                    SoftLimit = softLimit
+                }
+                :: acc
             else
-                None
+                limit, acc
         )
+        |> snd
+        |> List.rev
 
     let private sectionP =
         Regex @"^k=(\d+) cut=(entry|mid-entry|none) lead=(ready|idle)$"
@@ -211,7 +227,12 @@ module TestPollUnreadableEntries =
             | _ -> fail ()
         | Error (PollRefusal.UnmodelledEntryCount (flavour, count, _)) ->
             // The answer depends on the process's soft limit, which the
-            // library does not model; the probe set its own.
+            // library does not model. The probe set its own, and the row is
+            // EINVAL exactly when the count exceeds it (every run here is of a
+            // process for which Darwin does not let root past it).
+            if (row.Errno = "Invalid argument") <> (row.Count > row.SoftLimit) then
+                failwith $"%s{run.Name}: the measured kernel's screen disagrees with its soft limit: %A{row}"
+
             match answer with
             | Error (PollRefusal.UnmodelledEntryCount (f, c, _)) when f = flavour && c = count -> ()
             | _ -> fail ()
@@ -747,7 +768,28 @@ module TestPollUnreadableEntries =
 
         let address = ObservedUserAddressLimit.Arm64FortyEightBit + 1UL
 
-        for platform in [ olderArm64 ; SimulatedUnixPlatform.linuxX64 ; measuredVersionOnX64 ] do
+        let newerArm64 =
+            SimulatedUnixPlatform.createOrFail
+                "TestPollUnreadableEntries"
+                (SimulatedUnixKernel.Linux (
+                    {
+                        Major = 6u
+                        Minor = 18u
+                        Patch = 6u
+                    },
+                    LinuxKernelBuild.SmallBuffer832
+                ))
+                SimulatedUnixArchitecture.Arm64
+                SimulatedPageSize.FourKiB
+                "6.18.6"
+
+        for platform in
+            [
+                olderArm64
+                newerArm64
+                SimulatedUnixPlatform.linuxX64
+                measuredVersionOnX64
+            ] do
             let system, _ = world false platform
 
             let address =

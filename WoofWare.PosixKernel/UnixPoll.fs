@@ -1595,18 +1595,18 @@ module UnixPoll =
         if nfds = 0u then
             let platform = system.Machine.UnixPlatform
 
-            // Measured on Linux 6.18.5 arm64 alone. An address within the
-            // limit passes every rule a kernel could screen it by (and none),
-            // so only one past it needs the measurement.
+            // Measured on Linux 6.18.5 arm64 alone, so no other version is
+            // taken to agree. An address within the limit passes every rule a
+            // kernel could screen it by (and none), so only one past it needs
+            // the measurement.
             let measured =
                 match SimulatedUnixPlatform.kernel platform, SimulatedUnixPlatform.architecture platform with
                 | SimulatedUnixKernel.Linux (version, _), SimulatedUnixArchitecture.Arm64 ->
-                    version
-                    >= {
-                           Major = 6u
-                           Minor = 18u
-                           Patch = 5u
-                       }
+                    version = {
+                                  Major = 6u
+                                  Minor = 18u
+                                  Patch = 5u
+                              }
                 | _ -> false
 
             let writeBackFaults =
