@@ -10,8 +10,9 @@
 //   unmapped   the same PROT_NONE page
 //   mapped     128 bytes of real storage
 // Each row prints the answer, the cell afterwards (for real storage; "-"
-// otherwise), how many bytes of a mapped buffer the call overwrote (counted
-// over two fills, 0xAA and 0x55, in calls on two copies of the fixture), and,
+// otherwise), how many bytes of a mapped buffer the call overwrote (the buffer
+// filled with a byte that appears nowhere in the address the call could copy,
+// the connecting socket's, which is known before the call), and,
 // for a fixture with a connection queued, `client=` what the connecting socket
 // sees within 200 ms of the call, `none`, `eof` (a read answers 0) or an errno
 // name from the read, and then `queued=` whether a second, non-blocking accept
@@ -29,20 +30,21 @@
 //      also accept4 with an unknown flag bit (EINVAL) on a listener with one
 //      connection queued.
 //   B  a blocking listener with nothing queued, through a NULL or unmapped
-//      cell and a NULL or mapped buffer, a thread connecting 200 ms after the
-//      call is entered: the answer, whether the call slept (`slept=`: it
-//      returned only after the thread connected), and the connection's fate
-//      as in A.
+//      cell and a NULL or mapped buffer, and a thread that connects once the
+//      call is asleep in accept, or once it has returned: the answer, whether
+//      the call slept (`slept=`), and the connection's fate as in A.
 //   C  a blocking accept into a mapped buffer through a cell holding 16, asleep
 //      on an empty listener, whose cell another thread changes to 4, 0 or -1
-//      200 ms after the call is entered, and then connects: which value the
+//      once the call is asleep in accept, and then connects: which value the
 //      call used.
-// Each B and C row is made twice, through the two fills, as A's are.
+// A thread is asleep in accept when, on Linux, /proc/self/task/<tid>/stat
+// says S and .../syscall names accept or accept4, and on Darwin when
+// thread_info says TH_STATE_WAITING.
 //
 // The probe exits 1 if a fixture cannot be built; if a state it waits for (a
-// queued connection) does not arrive within two seconds; if a B or C thread
-// acts less than 100 ms after the call was entered, so that the call may not
-// have been in the kernel yet; or if a row's two calls disagree.
+// queued connection, a sleeping call or a returned one) does not arrive
+// within two seconds; or if a call that slept returned before the other
+// thread acted.
 //
 // Outputs beside this file, measured 2026-11-21:
 //
@@ -63,10 +65,14 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 
 static const char *en(int e) {
     switch (e) {
@@ -149,6 +155,29 @@ static const char *client_view(int c) {
     if (n == 0) return "eof";
     if (n > 0) return "data";
     return en(errno);
+}
+
+// A byte that appears nowhere in the address an accept of the client `c`
+// could copy out, which is `c`'s own, as getsockname reports it.
+static unsigned char fill_for(int c) {
+    unsigned char seen[256] = { 0 };
+    if (c >= 0) {
+        unsigned char a[128];
+        socklen_t l = sizeof a;
+        memset(a, 0, sizeof a);
+        need(getsockname(c, (struct sockaddr *)a, &l) == 0, "getsockname of the client");
+        for (socklen_t i = 0; i < l && i < sizeof a; i++) seen[a[i]] = 1;
+    }
+    static const unsigned char candidates[] = { 0xAA, 0x55, 0x33, 0xCC, 0x5A, 0xA5 };
+    for (unsigned i = 0; i < sizeof candidates; i++) if (!seen[candidates[i]]) return candidates[i];
+    need(0, "a fill byte absent from the client's address");
+    return 0;
+}
+
+static int written_of(const unsigned char *buf, unsigned char fill) {
+    int written = 0;
+    for (int i = 0; i < 128; i++) if (buf[i] != fill) written++;
+    return written;
 }
 
 enum kind { NUL, UNMAPPED, HOLDS };
@@ -267,35 +296,28 @@ static int call(enum fixture f, int fd, void *dest, socklen_t *cell) {
 }
 
 static void row_a(enum fixture f, enum kind ck, int held, enum kind dk) {
-    unsigned char bufs[2][128];
-    unsigned char fills[2] = { 0xAA, 0x55 };
-    int e[2], cellafter[2];
+    unsigned char buf[128];
+    struct built b = build(f);
+    unsigned char fill = fill_for(b.client);
+    memset(buf, fill, sizeof buf);
+    int cell = held;
+    int e = call(f, b.fd, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
     const char *queued = NULL, *client = NULL;
-    for (int i = 0; i < 2; i++) {
-        struct built b = build(f);
-        memset(bufs[i], fills[i], 128);
-        int cell = held;
-        e[i] = call(f, b.fd, pointer(dk, bufs[i]), (socklen_t *)pointer(ck, &cell));
-        cellafter[i] = cell;
-        if (b.client >= 0 && i == 0) {
-            client = client_view(b.client);
-            set_nonblocking(b.fd, 1);
-            int again = accept(b.fd, NULL, NULL);
-            queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
-            if (again >= 0) close(again);
-        }
-        tear(b);
+    if (b.client >= 0) {
+        client = client_view(b.client);
+        set_nonblocking(b.fd, 1);
+        int again = accept(b.fd, NULL, NULL);
+        queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
+        if (again >= 0) close(again);
     }
-    int written = 0;
-    for (int i = 0; i < 128; i++) if (bufs[0][i] != 0xAA || bufs[1][i] != 0x55) written++;
+    tear(b);
     char cn[32], dn[32];
     name(cn, sizeof cn, ck, held, 1);
     name(dn, sizeof dn, dk, 0, 0);
-    printf("A %s cell=%s dest=%s -> %s", fixture_names[f], cn, dn, en(e[0]));
-    if (ck == HOLDS) printf(" cellafter=%d", cellafter[0]); else printf(" cellafter=-");
-    printf(" written=%d", dk == HOLDS ? written : 0);
+    printf("A %s cell=%s dest=%s -> %s", fixture_names[f], cn, dn, en(e));
+    if (ck == HOLDS) printf(" cellafter=%d", cell); else printf(" cellafter=-");
+    printf(" written=%d", dk == HOLDS ? written_of(buf, fill) : 0);
     if (queued) printf(" queued=%s client=%s", queued, client);
-    if (e[0] != e[1] || cellafter[0] != cellafter[1]) printf(" MISMATCH %s cellafter=%d", en(e[1]), cellafter[1]);
     printf("\n");
 }
 
@@ -305,86 +327,115 @@ static long now_ms(void) {
     return t.tv_sec * 1000L + t.tv_usec / 1000;
 }
 
-// A thread that, 200 ms after the call was entered, writes `new_cell` to the
-// cell (if `cell` is not NULL) and then connects a client to the listener,
-// recording when it acted.
-struct connector { int listener; long entered; long acted; int client; int *cell; int new_cell; };
+// The thread that makes the accept, and whether it is asleep in it.
+#ifdef __APPLE__
+static mach_port_t accepter;
+static void note_accepter(void) { accepter = pthread_mach_thread_np(pthread_self()); }
+static int accepter_asleep(void) {
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(accepter, THREAD_BASIC_INFO, (thread_info_t)&info, &count) != KERN_SUCCESS) return 0;
+    return info.run_state == TH_STATE_WAITING;
+}
+#else
+static pid_t accepter;
+static void note_accepter(void) { accepter = (pid_t)syscall(SYS_gettid); }
+static int read_file(const char *path, char *buf, size_t n) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    size_t got = fread(buf, 1, n - 1, f);
+    fclose(f);
+    buf[got] = 0;
+    return (int)got;
+}
+static int accepter_asleep(void) {
+    char path[64], buf[512];
+    snprintf(path, sizeof path, "/proc/self/task/%d/stat", (int)accepter);
+    if (read_file(path, buf, sizeof buf) < 0) return 0;
+    char *close_paren = strrchr(buf, ')');
+    if (!close_paren || close_paren[1] != ' ' || close_paren[2] != 'S') return 0;
+    snprintf(path, sizeof path, "/proc/self/task/%d/syscall", (int)accepter);
+    if (read_file(path, buf, sizeof buf) < 0) return 0;
+    long nr = strtol(buf, NULL, 10);
+#ifdef SYS_accept
+    if (nr == SYS_accept) return 1;
+#endif
+    return nr == SYS_accept4;
+}
+#endif
+
+// A thread that waits until the accept is asleep in the kernel, or has
+// returned, then writes `new_cell` to the cell (if `cell` is not NULL) and
+// connects `client`, which is bound already, to the listener.
+struct connector {
+    int listener;
+    int client;
+    int *cell;
+    int new_cell;
+    volatile int returned;
+    int saw_asleep;
+    long acted;
+};
 
 static void *connector_main(void *arg) {
     struct connector *c = arg;
-    while (now_ms() - c->entered < 200) usleep(10000);
+    int waited = 0;
+    while (!c->returned && !accepter_asleep()) {
+        need(waited < 2000, "the accept asleep, or returned");
+        usleep(1000);
+        waited++;
+    }
+    c->saw_asleep = !c->returned;
     c->acted = now_ms();
     if (c->cell) *c->cell = c->new_cell;
-    c->client = socket(AF_INET, SOCK_STREAM, 0);
-    need(c->client >= 0, "socket for a client");
     struct sockaddr_in a = loopback(port_of(c->listener));
     need(connect(c->client, (struct sockaddr *)&a, sizeof a) == 0, "connect a client");
     return NULL;
 }
 
-struct trial { int e; int cellafter; int slept; const char *client; const char *queued; };
-
 // One blocking accept on an empty listener through the cell `ck` (holding 16
-// where it is storage) and the buffer `dk` filled with `fill`, a thread acting
-// as `connector_main` says, changing the cell to `new_cell` if `change`.
-static struct trial sleeper(enum kind ck, enum kind dk, int change, int new_cell, unsigned char fill, unsigned char *buf) {
-    struct trial r;
+// where it is storage) and the buffer `dk`, and a thread acting as
+// `connector_main` says, changing the cell to `new_cell` if `change`.
+static void sleeper(enum kind ck, enum kind dk, int change, int new_cell) {
     int l = listener(0);
-    memset(buf, fill, 128);
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    need(client >= 0, "socket for a client");
+    struct sockaddr_in any = loopback(0);
+    need(bind(client, (struct sockaddr *)&any, sizeof any) == 0, "bind the client");
+    unsigned char buf[128];
+    unsigned char fill = fill_for(client);
+    memset(buf, fill, sizeof buf);
     int cell = 16;
-    struct connector c = { l, 0, 0, -1, change ? &cell : NULL, new_cell };
-    c.entered = now_ms();
+    struct connector c = { l, client, change ? &cell : NULL, new_cell, 0, 0, 0 };
+    note_accepter();
     pthread_t t;
     need(pthread_create(&t, NULL, connector_main, &c) == 0, "pthread_create");
-    long entered = now_ms();
-    r.e = call(QUEUED, l, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
+    int e = call(QUEUED, l, pointer(dk, buf), (socklen_t *)pointer(ck, &cell));
     long returned = now_ms();
+    c.returned = 1;
     pthread_join(t, NULL);
-    need(c.acted - entered >= 100, "the thread acted at least 100 ms after the call was entered");
-    r.slept = returned >= c.acted;
-    r.cellafter = cell;
-    r.client = client_view(c.client);
+    if (c.saw_asleep) need(returned >= c.acted, "a call that slept returning after the thread acted");
+    const char *seen = client_view(client);
     set_nonblocking(l, 1);
     int again = accept(l, NULL, NULL);
-    r.queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
+    const char *queued = again >= 0 ? "yes" : (errno == EAGAIN ? "no" : en(errno));
     if (again >= 0) close(again);
-    close(c.client);
-    close(l);
-    return r;
-}
-
-static int written_over(unsigned char *first, unsigned char *second) {
-    int written = 0;
-    for (int i = 0; i < 128; i++) if (first[i] != 0xAA || second[i] != 0x55) written++;
-    return written;
-}
-
-static void agree(struct trial a, struct trial b) {
-    need(a.e == b.e && a.cellafter == b.cellafter && a.slept == b.slept && strcmp(a.client, b.client) == 0
-             && strcmp(a.queued, b.queued) == 0,
-         "a row's two calls agreeing");
-}
-
-static void row_b(enum kind ck, enum kind dk) {
-    unsigned char first[128], second[128];
-    struct trial a = sleeper(ck, dk, 0, 0, 0xAA, first);
-    struct trial b = sleeper(ck, dk, 0, 0, 0x55, second);
-    agree(a, b);
     char cn[32], dn[32];
     name(cn, sizeof cn, ck, 16, 1);
     name(dn, sizeof dn, dk, 0, 0);
-    printf("B blocking-empty cell=%s dest=%s -> %s slept=%s written=%d queued=%s client=%s\n", cn, dn, en(a.e),
-           a.slept ? "yes" : "no", dk == HOLDS ? written_over(first, second) : 0, a.queued, a.client);
+    if (change)
+        printf("C cell=16 changed-to=%d dest=mapped -> %s slept=%s cellafter=%d written=%d queued=%s client=%s\n",
+               new_cell, en(e), c.saw_asleep ? "yes" : "no", cell, written_of(buf, fill), queued, seen);
+    else
+        printf("B blocking-empty cell=%s dest=%s -> %s slept=%s written=%d queued=%s client=%s\n", cn, dn, en(e),
+               c.saw_asleep ? "yes" : "no", dk == HOLDS ? written_of(buf, fill) : 0, queued, seen);
+    close(client);
+    close(l);
 }
 
-static void row_c(int new_cell) {
-    unsigned char first[128], second[128];
-    struct trial a = sleeper(HOLDS, HOLDS, 1, new_cell, 0xAA, first);
-    struct trial b = sleeper(HOLDS, HOLDS, 1, new_cell, 0x55, second);
-    agree(a, b);
-    printf("C cell=16 changed-to=%d dest=mapped -> %s slept=%s cellafter=%d written=%d queued=%s client=%s\n", new_cell,
-           en(a.e), a.slept ? "yes" : "no", a.cellafter, written_over(first, second), a.queued, a.client);
-}
+static void row_b(enum kind ck, enum kind dk) { sleeper(ck, dk, 0, 0); }
+
+static void row_c(int new_cell) { sleeper(HOLDS, HOLDS, 1, new_cell); }
 
 int main(void) {
     struct utsname u;

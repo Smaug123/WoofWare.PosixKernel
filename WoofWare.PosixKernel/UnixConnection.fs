@@ -3129,8 +3129,11 @@ module UnixConnection =
     /// destination with which the call was made (`PeerAddressCopy`); see
     /// `accept` for the destinations it refuses. A Linux call reads its length
     /// cell only now, so it may stop for it (`CallProgress.NeedsCopyIn`), as
-    /// `accept` does, and `acceptWithLength` takes what the cell holds now. A
-    /// Darwin call read the cell before it slept, and never stops here. When the queue is empty again
+    /// `accept` does, and `acceptWithLength` takes what the cell holds now. It
+    /// reads the cell as `accept` was given it (`UserBuffer`), and this library
+    /// cannot express a cell that has become readable, or ceased to be, while
+    /// the call slept. A Darwin call read the cell before it slept, and never
+    /// stops here. When the queue is empty again
     /// (another thread took the connection), the thread goes back to sleep,
     /// behind every other sleeping thread, as a real kernel puts it at the
     /// back of the listener's queue of accepting threads. The thread also goes

@@ -205,6 +205,10 @@ type internal FinishRefusal =
     /// to copy from a buffer or a length cell it was made with as readable,
     /// which the `Syscall` now gives as `buffer`.
     | UnreadableBuffer of parked : ParkedSyscall * buffer : UserBuffer
+    /// The thread is parked in `parked`, a Linux `accept` that has not read
+    /// its length cell, which it was made with as `was`, and which the
+    /// `Syscall` now gives as `now`.
+    | ChangedCell of parked : ParkedSyscall * was : UserBuffer * now : UserBuffer
 
 [<RequireQualifiedAccess>]
 module internal FinishRefusal =
@@ -228,6 +232,8 @@ module internal FinishRefusal =
             $"the thread is parked in %A{parked}, which no call of the Syscall case given parks a thread in; pass the Syscall the thread made."
         | FinishRefusal.UnreadableBuffer (parked, buffer) ->
             $"the thread is parked in %A{parked}, a call made with a readable buffer or length cell, which stopped to copy from it; the Syscall gives it as %A{buffer}, and this library does not model a call's buffer or cell ceasing to be readable while the call sleeps."
+        | FinishRefusal.ChangedCell (parked, was, now) ->
+            $"the thread is parked in %A{parked}, a Linux accept made with its length cell as %A{was}, which it reads only now; the Syscall gives the cell as %A{now}, and this library does not model a cell becoming readable, or ceasing to be, while the call sleeps."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FinishRefusal) : RefusalKind =
@@ -245,6 +251,7 @@ module internal FinishRefusal =
         | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
         | FinishRefusal.NotTheParkedCall _ -> RefusalKind.Contradictory "call"
         | FinishRefusal.UnreadableBuffer _ -> RefusalKind.Unmodelled
+        | FinishRefusal.ChangedCell _ -> RefusalKind.Unmodelled
 
 /// Deciding which parked threads a system wakes, and finishing a woken
 /// thread's call.
@@ -818,6 +825,28 @@ module UnixWait =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, FinishRefusal>
         =
+        let given =
+            match call with
+            | Syscall.Accept (_, _, length, _) -> CopiedArgument.userBuffer length
+            | _ ->
+                failwith
+                    $"UnixWait.finish: the thread is parked in %A{parked}, an accept, but was admitted with a Syscall that is not an accept (this is a bug in this library)."
+
+        // A cell the call has not read is read as the call was made with it;
+        // one whose kind the Syscall now gives differently is refused, rather
+        // than answered as it was.
+        let changed =
+            match parked with
+            | ParkedSyscall.Accept {
+                                       Cell = AcceptLengthCell.Unread was
+                                       Destination = destination
+                                   } when destination <> UserBuffer.Unmapped 0UL && was <> given -> Some was
+            | _ -> None
+
+        match changed with
+        | Some was -> Error (FinishRefusal.ChangedCell (parked, was, given))
+        | None ->
+
         match UnixConnection.tryFinishAcceptIn thread system with
         | Error refusal -> Error (FinishRefusal.Accept refusal)
         | Ok (CallProgress.Answered answer) -> Ok answer
@@ -836,7 +865,8 @@ module UnixWait =
             | CopiedArgument.Unmapped _
             | CopiedArgument.Opaque
             | CopiedArgument.Addressless ->
-                Error (FinishRefusal.UnreadableBuffer (parked, CopiedArgument.userBuffer cell))
+                failwith
+                    $"UnixWait.finish: the accept the thread is parked in, %A{parked}, stopped for a length cell the Syscall gives as %A{CopiedArgument.userBuffer cell}, but a call stops only for a readable cell, and a changed one is refused first (this is a bug in this library)."
 
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
     /// parked in, which `call` describes, finished by the finishing body of

@@ -2113,3 +2113,52 @@ module TestBlockingAccept =
 
             Lone.UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
             |> shouldEqual (Error (SocketOptionRefusal.UnmodelledOption (socketId, level, option)))
+
+    /// A woken Linux accept reads its length cell only now, as `UnixWait.finish`
+    /// is given it; a cell whose kind has changed since the call was made, so
+    /// that it has become readable or ceased to be, is refused rather than
+    /// answered as it was.
+    [<Test>]
+    let ``UnixWait.finish refuses a Linux accept's cell that changed kind while it slept`` () : unit =
+        let platform = SimulatedUnixPlatform.linuxX64
+
+        for parkedWith, finishedWith in
+            [
+                UserBuffer.Mapped, CopiedArgument.Unmapped 0x10000UL
+                UserBuffer.Mapped, CopiedArgument.Unmapped 0UL
+                UserBuffer.Unmapped 0x10000UL, CopiedArgument.Readable 16u
+                UserBuffer.Unmapped 0UL, CopiedArgument.Readable 16u
+            ] do
+            let fd, system = world platform
+
+            let system =
+                match
+                    AcceptCalls.tryAcceptThrough (Callers.thread 1 system) fd UserBuffer.Mapped parkedWith 16u 0 system
+                with
+                | Ok (AcceptOutcome.WouldBlock _, system) -> system
+                | other -> failwith $"expected the accept to park, got %A{other}"
+
+            let woken = connectTo 5000us system |> Lone.wake |> snd
+
+            Assert.Throws<UnmodelledException> (fun () ->
+                UnixWait.finish
+                    (Callers.thread 1 woken)
+                    (Syscall.Accept (fd, UserBuffer.Mapped, finishedWith, 0))
+                    woken
+                |> ignore<FinishedCall<int, string>>
+            )
+            |> ignore<UnmodelledException>
+
+            // Not vacuous: the cell as the call was made with it finishes.
+            let unchanged =
+                match parkedWith with
+                | UserBuffer.Mapped -> CopiedArgument.Readable 16u
+                | UserBuffer.Unmapped address -> CopiedArgument.Unmapped address
+                | other -> failwith $"%A{other}"
+
+            match
+                UnixWait.finish (Callers.thread 1 woken) (Syscall.Accept (fd, UserBuffer.Mapped, unchanged, 0)) woken
+            with
+            | FinishedCall.Accept ((AcceptOutcome.Accepted _ | AcceptOutcome.DroppedConnection UnixError.EFAULT), _) ->
+                ()
+            | other -> failwith $"%A{parkedWith}: finishing with the same cell answered %A{other}"

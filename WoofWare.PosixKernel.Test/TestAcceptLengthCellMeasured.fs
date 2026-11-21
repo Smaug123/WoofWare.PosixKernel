@@ -318,13 +318,18 @@ module TestAcceptLengthCellMeasured =
 
         match outcome with
         | AcceptOutcome.Accepted (_, PeerAddressCopy.Written (copied, reported)) ->
+            // A store through a NULL destination, or into a cell that is no
+            // storage, is one no kernel asks for.
+            if row.Destination = Pointer.Null || held.IsNone then
+                failwith $"%s{row.Line}: the model asks the client to store %A{outcome}"
+
             let written =
                 match row.Destination with
                 | Pointer.Holds _ -> copied.Length
                 | Pointer.Null
                 | Pointer.Unmapped -> 0
 
-            "OK", cellText (held |> Option.map (fun _ -> reported)), written
+            "OK", cellText (Some reported), written
         | AcceptOutcome.Accepted (_, PeerAddressCopy.NotRequested) -> "OK", cellText held, 0
         | AcceptOutcome.Failed error
         | AcceptOutcome.DroppedConnection error -> $"%A{error}", cellText held, 0
@@ -488,9 +493,30 @@ module TestAcceptLengthCellMeasured =
             if stopped <> shouldStop then
                 fail measurement row $"the finishing call stopped for the cell: %b{stopped}"
 
+            let contentsAtFinish = atFinish |> Option.defaultValue 0 |> uint32
+
+            let familyAnswer =
+                AcceptCalls.tryFinishAccept contentsAtFinish (Callers.thread 1 woken) woken
+
+            // `UnixWait.finish`, given the cell as it is now, answers as the
+            // family's finishing call does.
+            let cellNow =
+                match row.Cell with
+                | Pointer.Holds _ -> CopiedArgument.Readable contentsAtFinish
+                | Pointer.Null -> CopiedArgument.Unmapped 0UL
+                | Pointer.Unmapped -> CopiedArgument.Unmapped 0x10000UL
+
             match
-                AcceptCalls.tryFinishAccept (atFinish |> Option.defaultValue 0 |> uint32) (Callers.thread 1 woken) woken
+                familyAnswer,
+                UnixWait.tryFinish (Callers.thread 1 woken) (Syscall.Accept (fd, destination, cellNow, 0)) woken
             with
+            | Ok (outcome, system), Ok (FinishedCall.Accept (viaFinish, viaSystem)) ->
+                if (outcome, system) <> (viaFinish, viaSystem) then
+                    fail measurement row $"UnixWait.finish answered %A{viaFinish}, and finishAccept %A{outcome}"
+            | family, viaFinish ->
+                fail measurement row $"finishAccept answered %A{family}, and UnixWait.finish %A{viaFinish}"
+
+            match familyAnswer with
             | Error refusal ->
                 fail measurement row $"the finishing call was refused: %s{AcceptRefusal.describe refusal}"
             | Ok (outcome, after) ->
