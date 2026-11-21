@@ -417,7 +417,14 @@ module TestDevfs =
             atime system |> shouldEqual before
 
             let readOne (system : UnixSystem<int, string>) =
-                match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+                match
+                    UnixNamespace.tryReadDirectoryEntry
+                        (Callers.leader system)
+                        fd
+                        UserBuffer.Mapped
+                        DirectoryBatchPlace.First
+                        system
+                with
                 | Ok (answer, system) -> answer, system
                 | Error refusal -> failwith $"reading %s{directory}: %s{ReadDirectoryRefusal.describe refusal}"
 
@@ -446,6 +453,7 @@ module TestDevfs =
                 | ReadDirectoryAnswer.Entry _, system -> toEnd system
                 | ReadDirectoryAnswer.EndOfDirectory, system -> system
                 | ReadDirectoryAnswer.Failed error, _ -> failwith $"reading %s{directory}: %O{error}"
+                | ReadDirectoryAnswer.Stopped, _ -> failwith $"reading %s{directory} through a writable buffer stopped"
 
             let system = toEnd system
 

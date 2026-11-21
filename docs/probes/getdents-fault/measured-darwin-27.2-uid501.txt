@@ -1,0 +1,110 @@
+# Darwin 27.2.0 arm64, uid 501
+# control offsets (d_off / d_seekoff): .=0 ..=0 a=0 c=0 d=0 e=0 b=0
+# smallest count accepted: 64 (r=64)
+# fixture: prot_none=0x102bc0000 edge=0x102bc8000 (page 16384); control r=224: 7 entries .,..,a,c,d,e,b; R1=32 R2=32
+closed-fd      dest=ok       : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=null     : r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=prot_none: r=-1 errno=EBADF pos=-1->-1
+closed-fd      dest=high     : r=-1 errno=EBADF pos=-1->-1
+regular-file   dest=ok       : r=-1 errno=EINVAL pos=0->0
+regular-file   dest=null     : r=-1 errno=EINVAL pos=0->0
+regular-file   dest=prot_none: r=-1 errno=EINVAL pos=0->0
+regular-file   dest=high     : r=-1 errno=EINVAL pos=0->0
+count-1        dest=ok       : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=null     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=prot_none: r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+count-1        dest=high     : r=-1 errno=EINVAL pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=ok       : r=224 errno=0 pos=0->2147483647 then=0:
+start          dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=prot_none: r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+start          dest=high     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# after-first: first read of 64 bytes r=64 .,..
+after-first    dest=ok       : r=160 errno=0 pos=8589934594->2147483647 then=0:
+# after-first: first read of 64 bytes r=64 .,..
+after-first    dest=null     : r=-1 errno=EFAULT pos=12884901890->17179869187 then=4:c,d,e,b
+# after-first: first read of 64 bytes r=64 .,..
+after-first    dest=prot_none: r=-1 errno=EFAULT pos=21474836482->25769803779 then=4:c,d,e,b
+# after-first: first read of 64 bytes r=64 .,..
+after-first    dest=high     : r=-1 errno=EFAULT pos=30064771074->34359738371 then=4:c,d,e,b
+partial-R1     dest=edge     : r=-1 errno=EFAULT pos=0->32 then=0:
+# partial-R1: first writable record now 1:.
+partial-R1+8   dest=edge     : r=-1 errno=EFAULT pos=0->32 then=0:
+# partial-R1+8: first writable record now 1:.
+partial-R1+R2  dest=edge     : r=-1 errno=EFAULT pos=0->38654705667 then=4:c,d,e,b
+# partial-R1+R2: first writable record now 1:.
+partial-R1+R2+R3 dest=edge     : r=-1 errno=EFAULT pos=0->42949672964 then=4:c,d,e,b
+# partial-R1+R2+R3: first writable record now 1:.
+end            dest=ok       : r=0 errno=0 pos=2147483647->2147483647 then=0:
+end            dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end            dest=prot_none: r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end            dest=high     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+end-partial    dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-mostly     dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-last-byte  dest=edge     : r=-1 errno=EFAULT pos=2147483647->2147483647
+removed        dest=ok       : r=0 errno=0 pos=0->2147483647 then=0:
+removed        dest=null     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
+removed        dest=prot_none: r=-1 errno=EFAULT pos=0->2147483647 then=0:
+removed        dest=high     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
+removed-first  dest=null     : r=-1 errno=EFAULT pos=0->2147483647
+removed-again  dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647 then=0:
+atime          dest=ok       : r=224 errno=0 atime=moved
+atime          dest=null     : r=-1 errno=EFAULT atime=kept
+atime          dest=prot_none: r=-1 errno=EFAULT atime=kept
+atime          dest=high     : r=-1 errno=EFAULT atime=kept
+end-null-512   dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-null-1023  dest=null     : r=0 errno=0 pos=2147483647->2147483647
+end-null-1024  dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-null-4096  dest=null     : r=-1 errno=EFAULT pos=2147483647->2147483647
+end-prefix     dest=edge     : r=0 errno=0 pos=2147483647->2147483647
+start-null-512 dest=null     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+start-tail     dest=edge     : r=-1 errno=EFAULT pos=0->2147483647 then=0:
+start-prefix   dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# resumed-null-512: first read of 64 bytes r=64 .,..
+resumed-null-512 dest=null     : r=0 errno=0 pos=47244640258->51539607555 then=4:c,d,e,b
+# resumed-null-512: atime=moved
+# resumed-null-4096: first read of 64 bytes r=64 .,..
+resumed-null-4096 dest=null     : r=-1 errno=EFAULT pos=55834574850->60129542147 then=4:c,d,e,b
+# resumed-null-4096: atime=moved
+first-16       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# first-16: changed 16 of 16 writable bytes
+first-22       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# first-22: changed 16 of 22 writable bytes
+first-23       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# first-23: changed 16 of 23 writable bytes
+first-31       dest=edge     : r=-1 errno=EFAULT pos=0->0 then=7:.,..,a,c,d,e,b
+# first-31: changed 16 of 31 writable bytes
+big-1024       dest=ok       : r=992 errno=0 pos=0->4294967327 then=11:n21,n26,n19,n04,n03,n35,n32,n33,n34,n02,n05
+big-tail-1024  dest=edge     : r=-1 errno=EFAULT pos=0->8589934623 then=11:n21,n26,n19,n04,n03,n35,n32,n33,n34,n02,n05
+partial-R1+R2-512 dest=edge     : r=64 errno=0 pos=0->64424509443 then=4:c,d,e,b
+removed-32     dest=null     : r=0 errno=0 pos=0->2147483647 then=0:
+removed-atime  dest=ok       : r=0 errno=0 atime=moved
+removed-atime  dest=null     : r=-1 errno=EFAULT atime=moved
+removed-atime-again dest=null     : r=-1 errno=EFAULT atime=kept
+devfs-resumed  dest=null     : r=-1 errno=EFAULT pos=12->12 atime=moved
+# devfs-resumed: first read ., next read ..
+devfs-32       dest=ok       : r=32 errno=0 pos=0->12
+devfs-32       dest=null     : r=-1 errno=EFAULT pos=0->0
+devfs-96       dest=ok       : r=64 errno=0 pos=0->24
+devfs-start    dest=ok       : r=3096 errno=0 pos=0->1532
+# devfs-start: then 260 entries
+devfs-start    dest=null     : r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 356 entries
+devfs-start    dest=prot_none: r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 356 entries
+devfs-start    dest=high     : r=-1 errno=EFAULT pos=0->0
+# devfs-start: then 356 entries
+# devfs control r=11760; R1=32
+devfs-partial  dest=edge     : r=-1 errno=EFAULT pos=0->32
+# devfs-partial: then 353 entries
+devfs-end      dest=ok       : r=0 errno=0 pos=5916->5916
+devfs-end      dest=null     : r=-1 errno=EFAULT pos=5916->5916
+devfs-end      dest=prot_none: r=-1 errno=EFAULT pos=5916->5916
+devfs-end      dest=high     : r=-1 errno=EFAULT pos=5916->5916
+devfs-atime    dest=ok       : r=3096 errno=0 atime=moved
+devfs-atime-end dest=ok       : r=0 errno=0 atime=moved
+devfs-atime    dest=null     : r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=null     : r=-1 errno=EFAULT atime=moved
+devfs-atime    dest=prot_none: r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=prot_none: r=-1 errno=EFAULT atime=moved
+devfs-atime    dest=high     : r=-1 errno=EFAULT atime=moved
+devfs-atime-end dest=high     : r=-1 errno=EFAULT atime=moved

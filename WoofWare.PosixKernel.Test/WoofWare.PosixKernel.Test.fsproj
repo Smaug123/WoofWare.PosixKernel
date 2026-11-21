@@ -165,6 +165,7 @@
     <Compile Include="TestLinkCount.fs" />
     <Compile Include="TestStatBlocks.fs" />
     <Compile Include="TestStatDestination.fs" />
+    <Compile Include="TestDirectoryDestination.fs" />
     <Compile Include="TestWithFileSystemAndCurrentDirectory.fs" />
     <Compile Include="TestSeedSymlinkTarget.fs" />
     <Compile Include="TestInodeLifetime.fs" />
@@ -412,6 +413,9 @@
     <!-- docs/probes/stat-output-buffer. `TestStatDestination` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\stat-output-buffer\measured-linux-6.18.5-aarch64-uid65534.txt" LogicalName="WoofWare.PosixKernel.Test.stat-output-buffer.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\stat-output-buffer\measured-darwin-27.2-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.stat-output-buffer.darwin.txt" />
+    <!-- docs/probes/getdents-fault. `TestDirectoryDestination` replays the rows the library models. -->
+    <EmbeddedResource Include="..\docs\probes\getdents-fault\measured-linux-6.18.5-aarch64-uid65534.txt" LogicalName="WoofWare.PosixKernel.Test.getdents-fault.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\getdents-fault\measured-darwin-27.2-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.getdents-fault.darwin.txt" />
     <!-- docs/probes/gethostname. `TestGetHostName` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\gethostname\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.gethostname.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\gethostname\measured-darwin-27.2-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.gethostname.darwin.txt" />

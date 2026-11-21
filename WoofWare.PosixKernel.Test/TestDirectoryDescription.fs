@@ -116,7 +116,14 @@ module TestDirectoryDescription =
         Answered.dup (Callers.leader system) fd system |> returned $"dup %d{fd}"
 
     let private read (fd : int) (system : UnixSystem<int, string>) =
-        match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+        match
+            UnixNamespace.tryReadDirectoryEntry
+                (Callers.leader system)
+                fd
+                UserBuffer.Mapped
+                DirectoryBatchPlace.First
+                system
+        with
         | Ok result -> result
         | Error refusal -> failwith $"read of fd %d{fd} was refused: %s{ReadDirectoryRefusal.describe refusal}"
 
@@ -139,6 +146,7 @@ module TestDirectoryDescription =
             | ReadDirectoryAnswer.EndOfDirectory, system -> List.rev acc, system
             | ReadDirectoryAnswer.Entry record, system -> go (fuel - 1) (record :: acc) system
             | ReadDirectoryAnswer.Failed error, _ -> failwith $"reading fd %d{fd} failed with %O{error}"
+            | ReadDirectoryAnswer.Stopped, _ -> failwith $"reading fd %d{fd} through a writable buffer stopped"
 
         go 1000 [] system
 
@@ -454,7 +462,14 @@ module TestDirectoryDescription =
             | SyscallAnswer.Completed answered, _ when answered = offset -> ()
             | other -> failwith $"SEEK_CUR after SEEK_SET %d{offset}: %A{other}"
 
-            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            match
+                UnixNamespace.tryReadDirectoryEntry
+                    (Callers.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    DirectoryBatchPlace.First
+                    system
+            with
             | Error (ReadDirectoryRefusal.UnenumerablePosition (_, refused)) -> refused |> shouldEqual offset
             | other -> failwith $"read after SEEK_SET %d{offset}: %A{other}"
 
@@ -593,7 +608,12 @@ module TestDirectoryDescription =
 
             match
                 SimulatedUnixPlatform.flavour platform,
-                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system
+                UnixNamespace.tryReadDirectoryEntry
+                    (Callers.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    DirectoryBatchPlace.First
+                    system
             with
             | SimulatedUnixFlavour.Linux, Ok (ReadDirectoryAnswer.Failed UnixError.ENOENT, _) -> ()
             | SimulatedUnixFlavour.Darwin, Error (ReadDirectoryRefusal.UnenumerablePosition (_, 5L)) -> ()

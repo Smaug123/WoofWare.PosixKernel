@@ -466,7 +466,7 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 | `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `OpenOutcome * UnixSystem` |
 | `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
-| one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (caller : Caller) (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
+| one entry of `getdents64(2)` or `__getdirentries64`, without its byte layout | `UnixNamespace.readDirectoryEntry (caller : Caller) (fd : int) (destination : UserBuffer) (place : DirectoryBatchPlace)` | `ReadDirectoryAnswer * UnixSystem` |
 | `mkdir(2)` | `UnixNamespace.mkdir (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
 | `mkdirat(2)` | `UnixNamespace.mkdirat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
 | `mknod(2)`, regular files only | `UnixNamespace.mknod (caller : Caller) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
@@ -489,6 +489,11 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 `UnixNamespace.openPath` and `UnixNamespace.openat` answer an `OpenOutcome` because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
 Nothing makes a FIFO yet, so both always answer `OpenOutcome.Answered`.
+
+`UnixNamespace.readDirectoryEntry` reads one record of Linux's `getdents64(2)` or Darwin's `__getdirentries64` at a time, and its `place` says whether the client has already stored records for the same call.
+Its `destination` describes the bytes the answer stores into: a record's own (on Linux up to its name's NUL, on Darwin its whole `d_reclen`), or, at the end of the directory on Darwin, the four-byte status word at the end of a buffer of 1024 bytes or more.
+The client asks with `UserBuffer.Mapped`, and asks again from the same system with `UserBuffer.Unmapped` when those bytes are not all writable.
+On the filesystems these were measured on (Linux's tmpfs, Darwin's APFS and devfs; NFS throws `UnmodelledException`), through such a buffer Linux answers `EFAULT` for the call's first record and `ReadDirectoryAnswer.Stopped` (the call returns the records already stored) for a later one, and Darwin answers `EFAULT` for the first record on a fresh description (or any devfs one) and at the end of the directory; a Darwin fault after records have been stored, short of the end of an APFS directory, or on an APFS description earlier calls have read from, throws `UnmodelledException`.
 
 A Linux directory compares names byte for byte.
 Darwin's APFS takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it: `é` as U+00E9 and as `e` followed by U+0301, or `K` and U+212A KELVIN SIGN.

@@ -471,6 +471,8 @@ module TestDirectoryReadAgainstHost =
                                             UnixNamespace.tryReadDirectoryEntry
                                                 (Callers.leader system)
                                                 target.ModelFd
+                                                UserBuffer.Mapped
+                                                DirectoryBatchPlace.First
                                                 system
                                         with
                                         | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> List.rev acc, system
@@ -555,7 +557,12 @@ module TestDirectoryReadAgainstHost =
                                 | Error error -> ReadDirectoryAnswer.Failed error
 
                             match
-                                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) target.ModelFd system
+                                UnixNamespace.tryReadDirectoryEntry
+                                    (Callers.leader system)
+                                    target.ModelFd
+                                    UserBuffer.Mapped
+                                    DirectoryBatchPlace.First
+                                    system
                             with
                             | Ok (model, _) -> model |> shouldEqual host
                             | Error refusal -> failwith $"model read of a removed directory refused: %A{refusal}"
@@ -636,7 +643,14 @@ module TestDirectoryReadAgainstHost =
                     | Error error -> ReadDirectoryAnswer.Failed error
 
                 let modelAnswer (fd : int) : ReadDirectoryAnswer =
-                    match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+                    match
+                        UnixNamespace.tryReadDirectoryEntry
+                            (Callers.leader system)
+                            fd
+                            UserBuffer.Mapped
+                            DirectoryBatchPlace.First
+                            system
+                    with
                     | Ok (answer, _) -> answer
                     | Error refusal -> failwith $"%A{refusal}"
 

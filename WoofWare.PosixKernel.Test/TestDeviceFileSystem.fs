@@ -1857,7 +1857,14 @@ module TestDeviceFileSystem =
             | other -> failwith $"utimensat /dev/net: %A{other}"
 
         let atEnd (system : UnixSystem<int, string>) : UnixTimestamp * UnixSystem<int, string> =
-            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
+            match
+                UnixNamespace.tryReadDirectoryEntry
+                    (Callers.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    DirectoryBatchPlace.First
+                    system
+            with
             | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> (reported "/dev/net" system).AccessTime, system
             | other -> failwith $"reading /dev/net at its end: %A{other}"
 

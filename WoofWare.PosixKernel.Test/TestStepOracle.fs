@@ -206,8 +206,8 @@ module TestStepOracle =
             UnixNamespace.tryReadlinkat caller dirfd path destination capacity system
             |> Result.map SteppedCall.ReadLinkAt
             |> Result.mapError SyscallRefusal.ReadLinkAt
-        | Syscall.ReadDirectoryEntry fd ->
-            UnixNamespace.tryReadDirectoryEntry caller fd system
+        | Syscall.ReadDirectoryEntry (fd, destination, place) ->
+            UnixNamespace.tryReadDirectoryEntry caller fd destination place system
             |> Result.map SteppedCall.ReadDirectoryEntry
             |> Result.mapError SyscallRefusal.ReadDirectoryEntry
         | Syscall.MkDir (path, mode) ->
@@ -1633,7 +1633,12 @@ module TestStepOracle =
                 let! destination = userBufferGen
                 return Syscall.ReadLinkAt (dirfd, path, destination, capacity)
             }
-            "ReadDirectoryEntry", fd |> Gen.map Syscall.ReadDirectoryEntry
+            "ReadDirectoryEntry",
+            Gen.map3
+                (fun fd destination place -> Syscall.ReadDirectoryEntry (fd, destination, place))
+                fd
+                userBufferGen
+                (Gen.elements [ DirectoryBatchPlace.First ; DirectoryBatchPlace.Following ])
             "MkDir", Gen.map2 (fun path mode -> Syscall.MkDir (path, mode)) pathGen modeGen
             "MkDirAt", Gen.map3 (fun dirfd path mode -> Syscall.MkDirAt (dirfd, path, mode)) fd pathGen modeGen
             "MkNod", Gen.map3 (fun path mode dev -> Syscall.MkNod (path, mode, dev)) pathGen nodeModeGen nodeDeviceGen

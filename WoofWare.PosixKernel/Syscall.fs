@@ -380,9 +380,9 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | ReadLink of path : PathArgumentBytes * destination : UserBuffer * capacity : int
     /// `readlinkat(2)`, as `UnixNamespace.readlinkat` makes it.
     | ReadLinkAt of dirfd : int * path : PathArgumentBytes * destination : UserBuffer * capacity : int
-    /// One entry of `getdents(2)` or `getdirentries(2)`, as
+    /// One entry of `getdents64(2)` or `__getdirentries64`, as
     /// `UnixNamespace.readDirectoryEntry` makes it.
-    | ReadDirectoryEntry of fd : int
+    | ReadDirectoryEntry of fd : int * destination : UserBuffer * place : DirectoryBatchPlace
     /// `mkdir(2)`, as `UnixNamespace.mkdir` makes it.
     | MkDir of path : PathArgumentBytes * mode : int
     /// `mkdirat(2)`, as `UnixNamespace.mkdirat` makes it. `dirfd` and `mode`

@@ -279,7 +279,7 @@ module TestAccessTime =
 
     /// Read `d` to its end, one entry at a time, through `fd`.
     let rec private readToEnd (fd : int) (cell : Cell) : int64 * Cell =
-        match step cell (Syscall.ReadDirectoryEntry fd) with
+        match step cell (Syscall.ReadDirectoryEntry (fd, UserBuffer.Mapped, DirectoryBatchPlace.First)) with
         | SteppedCall.ReadDirectoryEntry (ReadDirectoryAnswer.Entry _, system) ->
             let ret, cell =
                 readToEnd
