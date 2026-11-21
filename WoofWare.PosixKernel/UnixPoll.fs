@@ -76,10 +76,10 @@ type internal PollRefusal =
     /// entries back, even where a signal ended it; this kernel does not model
     /// a sleeping call whose answer is that fault.
     | UnmodelledWriteBackFault of address : uint64 * milliseconds : int
-    /// Under Linux, the call names no entries at an `Addressless` array.
-    /// Linux checks the address of even no entries against the user address
-    /// limit, as it writes them back after polling, and this one has no
-    /// address to check.
+    /// Under Linux, the call names no entries at an `Addressless` array. The
+    /// Linux kernels measured check the address of even no entries against
+    /// the user address limit, as they write them back after polling, and
+    /// without an address that fault cannot be ruled out.
     | AddresslessZeroEntryArray
     /// Under Linux, the call names no entries at `address`, which lies past
     /// the machine's user address limit, on a kernel and architecture where
@@ -208,7 +208,7 @@ module internal PollRefusal =
         | PollRefusal.UnmeasuredZeroEntryAddress (address, kernel, architecture) ->
             $"the poll names no entries at 0x%x{address}, past the machine's user address limit, on %A{kernel} %A{architecture}. Linux 6.18.5 on arm64, and 6.12.113 and 6.18.5 on x86-64, poll and then fail with EFAULT as they write the entries back; whether this kernel and architecture check the address of no entries, and against which limit, is unmeasured."
         | PollRefusal.AddresslessZeroEntryArray ->
-            "the poll names no entries at an array that is not an address at all. Linux checks the address of even no entries against the user address limit as it writes them back, after polling, and fails with EFAULT past it; there is no address here to check, so the answer is unknown."
+            "the poll names no entries at an array that is not an address at all. The Linux kernels measured check the address of even no entries against the user address limit as they write them back, after polling, and fail with EFAULT past it; without an address, this kernel cannot rule that fault out."
         | PollRefusal.UnmodelledWriteBackFault (address, milliseconds) ->
             $"the poll names no entries at 0x%x{address}, past the machine's user address limit, with a timeout of %d{milliseconds}ms. Linux waits for the timeout, or until a signal ends the wait, and then fails with EFAULT as it writes the entries back, even after a signal; this kernel does not model a sleeping poll whose answer is that fault."
 
@@ -1809,6 +1809,9 @@ module UnixPoll =
         (paused : PausedPoll<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
+        // Before either field is read.
+        CallProgress.requirePaused "UnixPoll.pollWithEntries" "UnixPoll.poll" paused
+
         Entry.resumeFrom
             paused.Origin
             paused.System
