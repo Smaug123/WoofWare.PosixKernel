@@ -69,6 +69,13 @@ type internal PollRefusal =
     /// The array of entries reached its copy as a buffer whose bytes this
     /// library cannot answer for.
     | Buffer of BufferRefusal
+    /// Under Linux, the call names no entries at `address`, which lies past
+    /// the machine's user address limit, with a timeout of `milliseconds`,
+    /// which is not 0. Measured, Linux polls nothing for the timeout, or until
+    /// a signal ends the wait, and then fails with `EFAULT` as it writes the
+    /// entries back, even where a signal ended it; this kernel does not model
+    /// a sleeping call whose answer is that fault.
+    | UnmodelledWriteBackFault of address : uint64 * milliseconds : int
 
 /// What became of a `poll(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -181,6 +188,8 @@ module internal PollRefusal =
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
         | PollRefusal.Buffer refusal -> $"the array of struct pollfd: %s{BufferRefusal.describe refusal}"
+        | PollRefusal.UnmodelledWriteBackFault (address, milliseconds) ->
+            $"the poll names no entries at 0x%x{address}, past the machine's user address limit, with a timeout of %d{milliseconds}ms. Linux waits for the timeout, or until a signal ends the wait, and then fails with EFAULT as it writes the entries back, even after a signal; this kernel does not model a sleeping poll whose answer is that fault."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PollRefusal) : RefusalKind =
@@ -195,6 +204,7 @@ module internal PollRefusal =
         | PollRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | PollRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | PollRefusal.Buffer inner -> BufferRefusal.kind inner
+        | PollRefusal.UnmodelledWriteBackFault _ -> RefusalKind.Unmodelled
 
 /// The flags `epoll_create1(2)` accepts, in Linux's numbering.
 [<RequireQualifiedAccess>]
@@ -1563,10 +1573,32 @@ module UnixPoll =
         | Ok (Some error) -> Ok (CallProgress.Answered (PollOutcome.Failed error, system))
         | Ok None ->
 
-        // Measured (`docs/probes/poll-unreadable-entries`, section Z): no
-        // entries read nothing, wherever `fds` points.
+        // Measured (`docs/probes/poll-unreadable-entries`, sections Z and Y):
+        // no entries read nothing, wherever `fds` points. Linux still checks
+        // the array's address against the user address limit when it writes
+        // the entries back, after it has polled, and fails with EFAULT there;
+        // Darwin checks nothing. The machine's `UserBufferCheck` holds that
+        // limit under Linux, and is `AtCopyTime` under Darwin.
         if nfds = 0u then
-            polled thread [] milliseconds system |> Result.map CallProgress.Answered
+            let writeBackFaults =
+                match fds, UnixMachineState.userBufferCheck system.Machine with
+                | UserBuffer.Unmapped address, check -> Ok (UserBufferCheck.faultsBeforeOperation check address 0UL)
+                | UserBuffer.Mapped, _
+                | UserBuffer.Opaque, _
+                | UserBuffer.Addressless, UserBufferCheck.AtCopyTime -> Ok false
+                | UserBuffer.Addressless, UserBufferCheck.BeforeOperation _ ->
+                    Error (PollRefusal.Buffer BufferRefusal.AddresslessAtScreen)
+
+            match writeBackFaults, fds with
+            | Error refusal, _ -> Error refusal
+            | Ok false, _ -> polled thread [] milliseconds system |> Result.map CallProgress.Answered
+            | Ok true, _ when milliseconds = 0 ->
+                Ok (CallProgress.Answered (PollOutcome.Failed UnixError.EFAULT, system))
+            | Ok true, UserBuffer.Unmapped address ->
+                Error (PollRefusal.UnmodelledWriteBackFault (address, milliseconds))
+            | Ok true, other ->
+                failwith
+                    $"UnixPoll.poll: the write-back of no entries at %A{other} faults, but only an unmapped address can (this is a bug in this library)."
         else
 
         // Measured (`docs/probes/poll-unreadable-entries`, sections O and P):
@@ -1617,16 +1649,30 @@ module UnixPoll =
     /// wider, the low 32 bits alone.
     ///
     /// Every answer that the call gives before the kernel reads the array
-    /// comes first, as `CallProgress.Answered`: `EINVAL`, or a refusal, for
-    /// the count, whatever `fds` is; then, for a count of 0, the answer of a
-    /// poll of no entries, which reads nothing wherever `fds` points; then
-    /// `EFAULT` for an `Unmapped` array, at once whatever the timeout.
+    /// comes first, as `CallProgress.Answered`:
+    ///
+    /// - `EINVAL` for too many entries, whatever `fds` is (a count whose
+    ///   answer depends on the process's `RLIMIT_NOFILE` is refused instead,
+    ///   and throws);
+    /// - for a count of 0, the answer of a poll of no entries, which reads
+    ///   nothing. Under Linux an `Unmapped` address past the machine's user
+    ///   address limit (`UnixBootImage.withUserAddressLimit`) fails with
+    ///   `EFAULT` as the call writes its entries back, after it has polled:
+    ///   at once for a timeout of 0, and refused for any other timeout, after
+    ///   which Linux sleeps and then fails. Darwin answers every address as it
+    ///   answers an empty array;
+    /// - otherwise `EFAULT` for an `Unmapped` array, at once whatever the
+    ///   timeout.
+    ///
     /// Otherwise the call stops at the copy (`CallProgress.NeedsCopyIn`): the
     /// client reads the `nfds` entries and passes them to `pollWithEntries`,
     /// which finishes the call. An array that the process can read only in
-    /// part was measured to fail as an unmapped one does, without polling any
-    /// entry, so the client passes such an array as `Unmapped`. An `Opaque` or
-    /// `Addressless` array is refused once the call would copy it.
+    /// part was measured to fail as an unmapped one does, reporting nothing
+    /// and never sleeping (and under Linux, polling no entry), so the client
+    /// passes such an array as `Unmapped`. An `Opaque` or `Addressless` array
+    /// is refused once the call would copy it, and under Linux an
+    /// `Addressless` one is refused for a count of 0 too, since Linux checks
+    /// its address.
     ///
     /// Each entry's `Events`, and each `revents` answered for it, is raw bits in
     /// the simulated flavour's own `<poll.h>` numbering. The client stores each

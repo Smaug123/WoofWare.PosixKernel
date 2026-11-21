@@ -14,6 +14,11 @@
 //      each with timeout 0, 100 and -1. `slept` says whether the call took
 //      at least 50 ms; a delay in scheduling the probe can set it too, so it
 //      means something only for a call that should sleep.
+//   Y  addresses at and past the top of the user address space, which a
+//      kernel can screen without reading anything: 2^48 - 1, 2^48, 2^48 + 1
+//      (the arm64 limit with a 48-bit virtual address) and 2^64 - 1, at
+//      nfds 0 with timeout 0, 100 and -1, and at nfds 1 with timeout 0 and
+//      -1. `slept` as in section Z.
 //   P  the soft limit raised to 4096: an array whose first k entries lie
 //      whole on a readable page and whose next byte is the first of a
 //      PROT_NONE page (`cut=entry`), or whose (k+1)th entry has its `fd`
@@ -73,6 +78,12 @@
 //      on the idle one.
 //   W  a read-only array is EFAULT on both, at the write-back: the idle lead
 //      sleeps its 100 ms first, and the ready lead's revents is not written.
+//   Y  nfds 1 is EFAULT at once at every address, on both. nfds 0 is
+//      answered as an empty array on Darwin at every address, and on Linux
+//      up to 2^48, the arm64 limit; past it (2^48 + 1 and 2^64 - 1) Linux
+//      polls as for an empty array and then fails with EFAULT: at once for
+//      timeout 0, after the wait for timeout 100, and for timeout -1 when the
+//      timer ends the sleep, in place of EINTR.
 //   S  Linux: the array cut after k entries is EFAULT and leaves the charge
 //      at 46080, as no poll does, where the whole array polls the receiver
 //      (rv 1, POLLIN, 23040), for every k: the entries it could read were
@@ -185,6 +196,22 @@ static void section_z(long page)
         row("Z", "prot-none", none, 0, timeouts[t], NULL);
     }
     munmap(none, page);
+}
+
+static void section_y(void)
+{
+    uintptr_t addresses[] = { ((uintptr_t)1 << 48) - 1, (uintptr_t)1 << 48, ((uintptr_t)1 << 48) + 1, UINTPTR_MAX };
+    for (size_t a = 0; a < sizeof addresses / sizeof addresses[0]; a++)
+    {
+        char label[48];
+        snprintf(label, sizeof label, "addr=0x%llx", (unsigned long long)addresses[a]);
+        void *buf = (void *)addresses[a];
+        row("Y", label, buf, 0, 0, NULL);
+        row("Y", label, buf, 0, 100, NULL);
+        row("Y", label, buf, 0, -1, NULL);
+        row("Y", label, buf, 1, 0, NULL);
+        row("Y", label, buf, 1, -1, NULL);
+    }
 }
 
 static void section_p(long page, int ready_fd)
@@ -360,6 +387,7 @@ int main(void)
     section_o(256);
 #endif
     section_z(page);
+    section_y();
     section_p(page, ready_fd);
     section_w(page, ready_fd);
 #ifdef __linux__

@@ -82,7 +82,7 @@ module TestPollUnreadableEntries =
         }
 
     let private rowPattern =
-        Regex @"^([OZPW]) (.+) nfds=(\d+) timeout=(-?\d+) rv=(-?\d+) errno=(.+) slept=(yes|no) revents0=(\S+)$"
+        Regex @"^([OZYPW]) (.+) nfds=(\d+) timeout=(-?\d+) rv=(-?\d+) errno=(.+) slept=(yes|no) revents0=(\S+)$"
 
     let private rows (run : Run) : Row list =
         run.Lines
@@ -140,10 +140,24 @@ module TestPollUnreadableEntries =
     /// The array of a `poll`, and its `nfds`, as `Syscall.Poll` holds them.
     type private PollArray = CopiedArgument<PollEntry list> * uint32
 
-    /// An array of `count` entries at an address naming no storage, as the
-    /// probe's unmapped address (8) is, and as a client passes an array the
-    /// process can read only in part.
-    let private unmappedArray (count : uint32) : PollArray = CopiedArgument.Unmapped 8UL, count
+    /// An array of `count` entries at `address`, which names no storage, as
+    /// a client passes an array the process can read only in part.
+    let private unmappedArrayAt (address : uint64) (count : uint32) : PollArray = CopiedArgument.Unmapped address, count
+
+    /// `unmappedArrayAt` the probe's unmapped address, 8.
+    let private unmappedArray (count : uint32) : PollArray = unmappedArrayAt 8UL count
+
+    /// The address a probe row's label names: NULL, the probe's unmapped
+    /// address (8), a `PROT_NONE` page (somewhere below the user address
+    /// limit; the probe does not print it, and no answer depends on it), or
+    /// the address written out.
+    let private addressOf (label : string) : uint64 =
+        match label with
+        | "null" -> 0UL
+        | "unmapped" -> 8UL
+        | "prot-none" -> 0x10_0000UL
+        | _ when label.StartsWith "addr=0x" -> UInt64.Parse (label.Substring 7, Globalization.NumberStyles.HexNumber)
+        | _ -> failwith $"no address for the label %s{label}"
 
     /// A readable array holding `entries`.
     let private readableArray (entries : PollEntry list) : PollArray =
@@ -237,9 +251,28 @@ module TestPollUnreadableEntries =
                 match row.Section with
                 | "O" ->
                     // A NULL pointer and an unmapped one are both unreadable.
-                    judge run system (unmappedArray row.Count) row (faulted system row)
+                    judge run system (unmappedArrayAt (addressOf row.Label) row.Count) row (faulted system row)
                     count "O"
-                | "Z" ->
+                | "Y" when row.Count > 0u ->
+                    judge run system (unmappedArrayAt (addressOf row.Label) row.Count) row (faulted system row)
+                    count "Y"
+                | "Y" when row.Errno = "Bad address" ->
+                    // Linux's write-back of no entries past the user address
+                    // limit: at once for a timeout of 0, and otherwise after
+                    // a sleep this kernel does not model.
+                    let address = addressOf row.Label
+
+                    let expected (answer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>) : bool =
+                        match row.Timeout with
+                        | 0 -> not row.Slept && answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                        | timeout ->
+                            row.Slept
+                            && answer = Error (PollRefusal.UnmodelledWriteBackFault (address, timeout))
+
+                    judge run system (unmappedArrayAt address 0u) row expected
+                    count "Y"
+                | "Z"
+                | "Y" ->
                     // No entries are read, so an unreadable array of none is
                     // answered as an empty one, sleeping where it would sleep.
                     let asEmpty = poll (readableArray []) row.Timeout system
@@ -258,8 +291,8 @@ module TestPollUnreadableEntries =
                                   | _ -> row.Rv = 0 && row.Errno = "-"
                            | _ -> false
 
-                    judge run system (unmappedArray 0u) row expected
-                    count "Z"
+                    judge run system (unmappedArrayAt (addressOf row.Label) 0u) row expected
+                    count row.Section
                 | "P" ->
                     let m = sectionP.Match row.Label
 
@@ -314,9 +347,10 @@ module TestPollUnreadableEntries =
                 | other -> failwith $"%s{run.Name}: unknown section %s{other}"
 
             // Section O: 6 counts, at NULL and unmapped, at two timeouts.
-            // Section Z: 3 addresses at 3 timeouts. Section P: 17 values of k,
-            // 3 cuts, 2 leads. Section W: 2 rows.
-            replayed |> shouldEqual (Map.ofList [ "O", 24 ; "P", 102 ; "Z", 9 ])
+            // Section Z: 3 addresses at 3 timeouts. Section Y: 4 addresses at
+            // 5 counts and timeouts. Section P: 17 values of k, 3 cuts, 2
+            // leads. Section W: 2 rows.
+            replayed |> shouldEqual (Map.ofList [ "O", 24 ; "P", 102 ; "Y", 20 ; "Z", 9 ])
 
             skipped |> shouldEqual 2
 
@@ -484,19 +518,24 @@ module TestPollUnreadableEntries =
                     let m = pattern.Match line
 
                     if m.Success then
-                        Some (UInt64.Parse m.Groups.[2].Value, int m.Groups.[3].Value, m.Groups.[4].Value)
+                        Some (
+                            addressOf m.Groups.[1].Value,
+                            UInt64.Parse m.Groups.[2].Value,
+                            int m.Groups.[3].Value,
+                            m.Groups.[4].Value
+                        )
                     else
                         None
                 )
 
             List.length measured |> shouldEqual 6
 
-            for nfds, rv, errno in measured do
+            for address, nfds, rv, errno in measured do
                 nfds |> shouldBeGreaterThan (uint64 UInt32.MaxValue)
                 let system, _ = world run.Privileged run.Platform
                 let count = uint32 (nfds &&& 0xFFFFFFFFUL)
 
-                match poll (unmappedArray count) 0 system, rv, errno with
+                match poll (unmappedArrayAt address count) 0 system, rv, errno with
                 | Ok (PollOutcome.Answered ([], 0), after), 0, "-" when after = system -> ()
                 | Ok (PollOutcome.Failed UnixError.EFAULT, after), -1, "Bad address" when after = system -> ()
                 // 1025 entries pass Linux's screen for a soft limit of 1025 or
@@ -532,6 +571,12 @@ module TestPollUnreadableEntries =
                         [
                             UserBuffer.Unmapped 0UL
                             UserBuffer.Unmapped 8UL
+                            // Either side of the x86-64 and arm64 limits.
+                            UserBuffer.Unmapped ObservedUserAddressLimit.X64FourLevelPaging
+                            UserBuffer.Unmapped (ObservedUserAddressLimit.X64FourLevelPaging + 1UL)
+                            UserBuffer.Unmapped ObservedUserAddressLimit.Arm64FortyEightBit
+                            UserBuffer.Unmapped (ObservedUserAddressLimit.Arm64FortyEightBit + 1UL)
+                            UserBuffer.Unmapped UInt64.MaxValue
                             UserBuffer.Opaque
                             UserBuffer.Addressless
                         ]
@@ -570,7 +615,22 @@ module TestPollUnreadableEntries =
                 | UserBuffer.Mapped -> failwith "unreachable"
 
             if count = 0u then
-                answer = poll (readableArray []) milliseconds system
+                // Linux checks the address of no entries against its limit
+                // as it writes them back, after polling (section Y).
+                let limit =
+                    match UnixMachineState.userBufferCheck (Kernel.machine system) with
+                    | UserBufferCheck.BeforeOperation limit -> Some limit
+                    | UserBufferCheck.AtCopyTime -> None
+
+                match buffer, limit with
+                | UserBuffer.Unmapped address, Some limit when address > limit ->
+                    if milliseconds = 0 then
+                        answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                    else
+                        answer = Error (PollRefusal.UnmodelledWriteBackFault (address, milliseconds))
+                | UserBuffer.Addressless, Some _ ->
+                    answer = Error (PollRefusal.Buffer BufferRefusal.AddresslessAtScreen)
+                | _ -> answer = poll (readableArray []) milliseconds system
             elif count <= 1100u then
                 // The same count of readable entries, none of which reports.
                 let readable =

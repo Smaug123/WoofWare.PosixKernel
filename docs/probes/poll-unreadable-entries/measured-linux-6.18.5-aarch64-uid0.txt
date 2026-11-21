@@ -34,6 +34,26 @@ Z prot-none nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
 Z null nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
 Z unmapped nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
 Z prot-none nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0xffffffffffff nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Y addr=0xffffffffffff nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Y addr=0xffffffffffff nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0xffffffffffff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x1000000000000 nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Y addr=0x1000000000000 nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Y addr=0x1000000000000 nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0x1000000000000 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x1000000000000 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x1000000000001 nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x1000000000001 nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x1000000000001 nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x1000000000001 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x1000000000001 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffffffff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
 soft limit set to 4096
 P k=1 cut=entry lead=idle nfds=2 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
 P k=1 cut=entry lead=ready nfds=2 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
