@@ -264,7 +264,9 @@ module TestPollUnreadableEntries =
 
                     let expected (answer : Result<PollOutcome * UnixSystem<int, string>, PollRefusal>) : bool =
                         match row.Timeout with
-                        | 0 -> not row.Slept && answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
+                        // `slept`, which a delay in scheduling the probe can
+                        // also set, says nothing of a call that cannot sleep.
+                        | 0 -> answer = Ok (PollOutcome.Failed UnixError.EFAULT, system)
                         | timeout ->
                             row.Slept
                             && answer = Error (PollRefusal.UnmodelledWriteBackFault (address, timeout))

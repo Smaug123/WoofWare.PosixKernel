@@ -93,7 +93,8 @@ type PollOutcome =
     /// more entries than any process's `RLIMIT_NOFILE` lets it name (more than
     /// 10240 under Darwin, and more than 2147483584 under Linux); and `EFAULT`,
     /// for an array of at least one entry at an address naming no storage
-    /// (`UserBuffer.Unmapped`).
+    /// (`UserBuffer.Unmapped`), and under Linux for an array of no entries at
+    /// an address past the machine's user address limit.
     | Failed of error : UnixError
     /// `poll` did not return, and the calling thread is now asleep in it.
     /// Nothing wakes the thread by itself: the client calls `UnixWait.wake`,
