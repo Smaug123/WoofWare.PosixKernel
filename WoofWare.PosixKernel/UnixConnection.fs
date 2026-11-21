@@ -2476,15 +2476,6 @@ module UnixConnection =
         /// The kernel reads the length cell, which the call has not read.
         | StopsForTheCell
 
-    /// Hand the oldest connection on `socketId`'s queue over to the caller: the
-    /// half of `accept(2)` that follows the choice of a connection, shared by a
-    /// call that finds one at once and a parked call that finds one on waking.
-    ///
-    /// `nonBlocking` is the listening description's `O_NONBLOCK` as the
-    /// connection is handed over, which is what Darwin's accepted socket
-    /// inherits (measured, `blocking-accept.c` section F: a flag set while the
-    /// call slept was inherited). `flags` is what the call's Linux `accept4`
-    /// flags asked of the new socket, which it has from the moment it exists.
     /// `handOver` once the call has room for the descriptor it makes: where a
     /// call that stopped for the cell after that check resumes.
     let private handOverAdmitted<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2606,6 +2597,15 @@ module UnixConnection =
             )
         )
 
+    /// Hand the oldest connection on `socketId`'s queue over to the caller: the
+    /// half of `accept(2)` that follows the choice of a connection, shared by a
+    /// call that finds one at once and a parked call that finds one on waking.
+    ///
+    /// `nonBlocking` is the listening description's `O_NONBLOCK` as the
+    /// connection is handed over, which is what Darwin's accepted socket
+    /// inherits (measured, `blocking-accept.c` section F: a flag set while the
+    /// call slept was inherited). `flags` is what the call's Linux `accept4`
+    /// flags asked of the new socket, which it has from the moment it exists.
     let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
