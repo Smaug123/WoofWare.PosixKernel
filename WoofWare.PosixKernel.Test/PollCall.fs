@@ -36,9 +36,11 @@ module internal PollCall =
 
     /// `UnixPoll.tryPoll` of the array `fds` describes, with `nfds` entries,
     /// and if it stops at the copy, `UnixPoll.tryPollWithEntries` of the
-    /// first `PausedPoll.count` entries `fds` holds; failing if the call
-    /// stops at the copy of an array not given as readable, or holding too
-    /// few entries.
+    /// first `nfds` entries `fds` holds. Fails unless the call stopped at the
+    /// copy exactly when the array is readable and holds some entries and the
+    /// count's screen did not answer (`EINVAL`, or a refusal of the count),
+    /// and then named `nfds` entries of eight bytes; and if it stopped at the
+    /// copy of an array holding too few entries.
     let tryPollCopied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fds : CopiedArgument<PollEntry list>)
@@ -47,12 +49,49 @@ module internal PollCall =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        UnixPoll.tryPoll caller (CopiedArgument.userBuffer fds) nfds milliseconds system
-        |> CallProgress.resumeWith (fun paused ->
-            let count = PausedPoll.count paused
+        let progress =
+            UnixPoll.tryPoll caller (CopiedArgument.userBuffer fds) nfds milliseconds system
 
+        let paused =
+            match progress with
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                if PausedPoll.count paused <> int nfds then
+                    failwith $"the paused poll copies %d{PausedPoll.count paused} entries, not %d{nfds}"
+
+                if
+                    PausedPoll.copyRange paused
+                    <> {
+                           FirstByte = 0
+                           ByteCount = 8 * int nfds
+                       }
+                then
+                    failwith $"the paused poll copies %A{PausedPoll.copyRange paused}, not %d{nfds} entries of 8 bytes"
+
+                true
+            | _ -> false
+
+        let answer =
+            progress
+            |> CallProgress.resumeWith (fun paused ->
+                match fds with
+                | CopiedArgument.Readable entries when List.length (List.truncate (int nfds) entries) = int nfds ->
+                    UnixPoll.tryPollWithEntries (List.truncate (int nfds) entries) paused
+                | other -> failwith $"poll stopped to copy %d{nfds} entries from %A{other}"
+            )
+
+        let screenAnswered =
+            match answer with
+            | Ok (PollOutcome.Failed UnixError.EINVAL, _)
+            | Error (PollRefusal.UnmodelledEntryCount _) -> true
+            | _ -> false
+
+        let shouldPause =
             match fds with
-            | CopiedArgument.Readable entries when List.length entries >= count ->
-                UnixPoll.tryPollWithEntries (List.truncate count entries) paused
-            | other -> failwith $"poll stopped to copy %d{count} entries from %A{other}"
-        )
+            | CopiedArgument.Readable _ -> nfds > 0u && not screenAnswered
+            | _ -> false
+
+        if paused <> shouldPause then
+            failwith
+                $"the poll of %d{nfds} entries from %A{fds} paused=%b{paused}, where it should have been %b{shouldPause}"
+
+        answer

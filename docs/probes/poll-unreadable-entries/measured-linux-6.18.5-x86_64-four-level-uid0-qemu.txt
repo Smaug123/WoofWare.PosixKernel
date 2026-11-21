@@ -1,0 +1,227 @@
+uname Linux 6.18.5+deb13-amd64 x86_64 uid=0
+page=4096 ready_fd=4 (a pipe's write end)
+soft limit set to 1024
+O null nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1024 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1024 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1025 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=1025 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483584 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483584 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483585 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483585 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=4294967295 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=4294967295 timeout=0 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1024 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1024 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1025 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=1025 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483584 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483584 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483585 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483585 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=4294967295 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=4294967295 timeout=-1 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=1 timeout=100 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1 timeout=100 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1024 timeout=100 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1024 timeout=100 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1025 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=1025 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483584 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483584 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483585 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483585 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=4294967295 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=4294967295 timeout=100 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=1 timeout=-2 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1 timeout=-2 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1024 timeout=-2 rv=-1 errno=Bad address slept=no revents0=-
+O unmapped nfds=1024 timeout=-2 rv=-1 errno=Bad address slept=no revents0=-
+O null nfds=1025 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=1025 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483584 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483584 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=2147483585 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=2147483585 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O null nfds=4294967295 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+O unmapped nfds=4294967295 timeout=-2 rv=-1 errno=Invalid argument slept=no revents0=-
+Z null nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Z unmapped nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Z prot-none addr=0x7fa8f2548000 nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Z null nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Z unmapped nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Z prot-none addr=0x7fa8f2548000 nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Z null nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Z unmapped nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Z prot-none addr=0x7fa8f2548000 nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0x7fffffffefff nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Y addr=0x7fffffffefff nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Y addr=0x7fffffffefff nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0x7fffffffefff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7fffffffefff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7ffffffff000 nfds=0 timeout=0 rv=0 errno=- slept=no revents0=-
+Y addr=0x7ffffffff000 nfds=0 timeout=100 rv=0 errno=- slept=yes revents0=-
+Y addr=0x7ffffffff000 nfds=0 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=-
+Y addr=0x7ffffffff000 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7ffffffff000 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7ffffffff001 nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7ffffffff001 nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x7ffffffff001 nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x7ffffffff001 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7ffffffff001 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffefff nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffefff nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffefff nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffefff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffefff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff000 nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff000 nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xfffffffffff000 nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xfffffffffff000 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff000 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff001 nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff001 nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xfffffffffff001 nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xfffffffffff001 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xfffffffffff001 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7fffffffffffffff nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7fffffffffffffff nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x7fffffffffffffff nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x7fffffffffffffff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x7fffffffffffffff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x8000000000000000 nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x8000000000000000 nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x8000000000000000 nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0x8000000000000000 nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0x8000000000000000 nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=100 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffffffff nfds=0 timeout=-1 rv=-1 errno=Bad address slept=yes revents0=-
+Y addr=0xffffffffffffffff nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=-
+Y addr=0xffffffffffffffff nfds=1 timeout=-1 rv=-1 errno=Bad address slept=no revents0=-
+soft limit set to 4096
+P k=1 cut=entry lead=idle addr=0x7fa8f2547ff8 nfds=2 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1 cut=entry lead=ready addr=0x7fa8f2547ff8 nfds=2 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1 cut=mid-entry lead=idle addr=0x7fa8f2547ff4 nfds=2 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1 cut=mid-entry lead=ready addr=0x7fa8f2547ff4 nfds=2 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1 cut=none lead=idle addr=0x7fa8f2547ff8 nfds=1 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=1 cut=none lead=ready addr=0x7fa8f2547ff8 nfds=1 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=2 cut=entry lead=idle addr=0x7fa8f2547ff0 nfds=3 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2 cut=entry lead=ready addr=0x7fa8f2547ff0 nfds=3 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2 cut=mid-entry lead=idle addr=0x7fa8f2547fec nfds=3 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2 cut=mid-entry lead=ready addr=0x7fa8f2547fec nfds=3 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2 cut=none lead=idle addr=0x7fa8f2547ff0 nfds=2 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=2 cut=none lead=ready addr=0x7fa8f2547ff0 nfds=2 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=29 cut=entry lead=idle addr=0x7fa8f2547f18 nfds=30 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=29 cut=entry lead=ready addr=0x7fa8f2547f18 nfds=30 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=29 cut=mid-entry lead=idle addr=0x7fa8f2547f14 nfds=30 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=29 cut=mid-entry lead=ready addr=0x7fa8f2547f14 nfds=30 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=29 cut=none lead=idle addr=0x7fa8f2547f18 nfds=29 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=29 cut=none lead=ready addr=0x7fa8f2547f18 nfds=29 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=30 cut=entry lead=idle addr=0x7fa8f2547f10 nfds=31 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=30 cut=entry lead=ready addr=0x7fa8f2547f10 nfds=31 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=30 cut=mid-entry lead=idle addr=0x7fa8f2547f0c nfds=31 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=30 cut=mid-entry lead=ready addr=0x7fa8f2547f0c nfds=31 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=30 cut=none lead=idle addr=0x7fa8f2547f10 nfds=30 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=30 cut=none lead=ready addr=0x7fa8f2547f10 nfds=30 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=31 cut=entry lead=idle addr=0x7fa8f2547f08 nfds=32 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=31 cut=entry lead=ready addr=0x7fa8f2547f08 nfds=32 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=31 cut=mid-entry lead=idle addr=0x7fa8f2547f04 nfds=32 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=31 cut=mid-entry lead=ready addr=0x7fa8f2547f04 nfds=32 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=31 cut=none lead=idle addr=0x7fa8f2547f08 nfds=31 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=31 cut=none lead=ready addr=0x7fa8f2547f08 nfds=31 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=32 cut=entry lead=idle addr=0x7fa8f2547f00 nfds=33 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=32 cut=entry lead=ready addr=0x7fa8f2547f00 nfds=33 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=32 cut=mid-entry lead=idle addr=0x7fa8f2547efc nfds=33 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=32 cut=mid-entry lead=ready addr=0x7fa8f2547efc nfds=33 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=32 cut=none lead=idle addr=0x7fa8f2547f00 nfds=32 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=32 cut=none lead=ready addr=0x7fa8f2547f00 nfds=32 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=63 cut=entry lead=idle addr=0x7fa8f2547e08 nfds=64 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=63 cut=entry lead=ready addr=0x7fa8f2547e08 nfds=64 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=63 cut=mid-entry lead=idle addr=0x7fa8f2547e04 nfds=64 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=63 cut=mid-entry lead=ready addr=0x7fa8f2547e04 nfds=64 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=63 cut=none lead=idle addr=0x7fa8f2547e08 nfds=63 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=63 cut=none lead=ready addr=0x7fa8f2547e08 nfds=63 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=64 cut=entry lead=idle addr=0x7fa8f2547e00 nfds=65 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=64 cut=entry lead=ready addr=0x7fa8f2547e00 nfds=65 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=64 cut=mid-entry lead=idle addr=0x7fa8f2547dfc nfds=65 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=64 cut=mid-entry lead=ready addr=0x7fa8f2547dfc nfds=65 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=64 cut=none lead=idle addr=0x7fa8f2547e00 nfds=64 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=64 cut=none lead=ready addr=0x7fa8f2547e00 nfds=64 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=255 cut=entry lead=idle addr=0x7fa8f2547808 nfds=256 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=255 cut=entry lead=ready addr=0x7fa8f2547808 nfds=256 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=255 cut=mid-entry lead=idle addr=0x7fa8f2547804 nfds=256 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=255 cut=mid-entry lead=ready addr=0x7fa8f2547804 nfds=256 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=255 cut=none lead=idle addr=0x7fa8f2547808 nfds=255 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=255 cut=none lead=ready addr=0x7fa8f2547808 nfds=255 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=256 cut=entry lead=idle addr=0x7fa8f2547800 nfds=257 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=256 cut=entry lead=ready addr=0x7fa8f2547800 nfds=257 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=256 cut=mid-entry lead=idle addr=0x7fa8f25477fc nfds=257 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=256 cut=mid-entry lead=ready addr=0x7fa8f25477fc nfds=257 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=256 cut=none lead=idle addr=0x7fa8f2547800 nfds=256 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=256 cut=none lead=ready addr=0x7fa8f2547800 nfds=256 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=509 cut=entry lead=idle addr=0x7fa8f2547018 nfds=510 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=509 cut=entry lead=ready addr=0x7fa8f2547018 nfds=510 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=509 cut=mid-entry lead=idle addr=0x7fa8f2547014 nfds=510 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=509 cut=mid-entry lead=ready addr=0x7fa8f2547014 nfds=510 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=509 cut=none lead=idle addr=0x7fa8f2547018 nfds=509 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=509 cut=none lead=ready addr=0x7fa8f2547018 nfds=509 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=510 cut=entry lead=idle addr=0x7fa8f2547010 nfds=511 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=510 cut=entry lead=ready addr=0x7fa8f2547010 nfds=511 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=510 cut=mid-entry lead=idle addr=0x7fa8f254700c nfds=511 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=510 cut=mid-entry lead=ready addr=0x7fa8f254700c nfds=511 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=510 cut=none lead=idle addr=0x7fa8f2547010 nfds=510 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=510 cut=none lead=ready addr=0x7fa8f2547010 nfds=510 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=511 cut=entry lead=idle addr=0x7fa8f2547008 nfds=512 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=511 cut=entry lead=ready addr=0x7fa8f2547008 nfds=512 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=511 cut=mid-entry lead=idle addr=0x7fa8f2547004 nfds=512 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=511 cut=mid-entry lead=ready addr=0x7fa8f2547004 nfds=512 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=511 cut=none lead=idle addr=0x7fa8f2547008 nfds=511 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=511 cut=none lead=ready addr=0x7fa8f2547008 nfds=511 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=512 cut=entry lead=idle addr=0x7fa8f2547000 nfds=513 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=512 cut=entry lead=ready addr=0x7fa8f2547000 nfds=513 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=512 cut=mid-entry lead=idle addr=0x7fa8f2546ffc nfds=513 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=512 cut=mid-entry lead=ready addr=0x7fa8f2546ffc nfds=513 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=512 cut=none lead=idle addr=0x7fa8f2547000 nfds=512 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=512 cut=none lead=ready addr=0x7fa8f2547000 nfds=512 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=513 cut=entry lead=idle addr=0x7fa8f2546ff8 nfds=514 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=513 cut=entry lead=ready addr=0x7fa8f2546ff8 nfds=514 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=513 cut=mid-entry lead=idle addr=0x7fa8f2546ff4 nfds=514 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=513 cut=mid-entry lead=ready addr=0x7fa8f2546ff4 nfds=514 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=513 cut=none lead=idle addr=0x7fa8f2546ff8 nfds=513 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=513 cut=none lead=ready addr=0x7fa8f2546ff8 nfds=513 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=1000 cut=entry lead=idle addr=0x7fa8f25460c0 nfds=1001 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1000 cut=entry lead=ready addr=0x7fa8f25460c0 nfds=1001 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1000 cut=mid-entry lead=idle addr=0x7fa8f25460bc nfds=1001 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1000 cut=mid-entry lead=ready addr=0x7fa8f25460bc nfds=1001 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=1000 cut=none lead=idle addr=0x7fa8f25460c0 nfds=1000 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=1000 cut=none lead=ready addr=0x7fa8f25460c0 nfds=1000 timeout=0 rv=1 errno=- slept=no revents0=0x4
+P k=2000 cut=entry lead=idle addr=0x7fa8f2544180 nfds=2001 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2000 cut=entry lead=ready addr=0x7fa8f2544180 nfds=2001 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2000 cut=mid-entry lead=idle addr=0x7fa8f254417c nfds=2001 timeout=-1 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2000 cut=mid-entry lead=ready addr=0x7fa8f254417c nfds=2001 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+P k=2000 cut=none lead=idle addr=0x7fa8f2544180 nfds=2000 timeout=-1 rv=-1 errno=Interrupted system call slept=yes revents0=0x0
+P k=2000 cut=none lead=ready addr=0x7fa8f2544180 nfds=2000 timeout=0 rv=1 errno=- slept=no revents0=0x4
+W read-only lead=idle nfds=1 timeout=100 rv=-1 errno=Bad address slept=yes revents0=0x5a5a
+W read-only lead=ready nfds=1 timeout=0 rv=-1 errno=Bad address slept=no revents0=0x5a5a
+S k=1 cut=no-poll lead=udp addr=0x7fa8f2547ff8 nfds=0 timeout=0 rv=0 errno=- charge-after=46080 revents0=0x5a5a
+S k=1 cut=none lead=udp addr=0x7fa8f2547ff8 nfds=1 timeout=0 rv=1 errno=- charge-after=23040 revents0=0x1
+S k=1 cut=entry lead=udp addr=0x7fa8f2547ff8 nfds=2 timeout=0 rv=-1 errno=Bad address charge-after=46080 revents0=0x5a5a
+S k=31 cut=no-poll lead=udp addr=0x7fa8f2547f08 nfds=0 timeout=0 rv=0 errno=- charge-after=46080 revents0=0x5a5a
+S k=31 cut=none lead=udp addr=0x7fa8f2547f08 nfds=31 timeout=0 rv=1 errno=- charge-after=23040 revents0=0x1
+S k=31 cut=entry lead=udp addr=0x7fa8f2547f08 nfds=32 timeout=0 rv=-1 errno=Bad address charge-after=46080 revents0=0x5a5a
+S k=600 cut=no-poll lead=udp addr=0x7fa8f2546d40 nfds=0 timeout=0 rv=0 errno=- charge-after=46080 revents0=0x5a5a
+S k=600 cut=none lead=udp addr=0x7fa8f2546d40 nfds=600 timeout=0 rv=1 errno=- charge-after=23040 revents0=0x1
+S k=600 cut=entry lead=udp addr=0x7fa8f2546d40 nfds=601 timeout=0 rv=-1 errno=Bad address charge-after=46080 revents0=0x5a5a
+soft limit set to 1024
+H null nfds=4294967296 timeout=0 rv=0 errno=-
+H unmapped nfds=4294967296 timeout=0 rv=0 errno=-
+H null nfds=4294967297 timeout=0 rv=-1 errno=Bad address
+H unmapped nfds=4294967297 timeout=0 rv=-1 errno=Bad address
+H null nfds=4294968321 timeout=0 rv=-1 errno=Invalid argument
+H unmapped nfds=4294968321 timeout=0 rv=-1 errno=Invalid argument
+probe done rc=0

@@ -8,15 +8,17 @@
 //      `SimulatedUnixPlatform.descriptorBound`): NULL and an unmapped address
 //      (8), at nfds 1, the limit, the limit + 1, the flavour's ceiling
 //      (Linux 2147483584, the most fs.nr_open takes; Darwin OPEN_MAX, 10240)
-//      and one more, and 4294967295; each with timeout 0 and timeout -1. A
+//      and one more, and 4294967295; each with timeout 0, -1, 100 and -2. A
 //      250 ms timer cuts a sleep short, so EINTR means the call slept.
-//   Z  nfds 0, at NULL, at an unmapped address (8), and at a PROT_NONE page;
-//      each with timeout 0, 100 and -1. `slept` says whether the call took
+//   Z  nfds 0, at NULL, at an unmapped address (8), and at a PROT_NONE page
+//      (its label gives its address); each with timeout 0, 100 and -1. `slept` says whether the call took
 //      at least 50 ms; a delay in scheduling the probe can set it too, so it
 //      means something only for a call that should sleep.
 //   Y  addresses at and past the top of the user address space, which a
-//      kernel can screen without reading anything: 2^48 - 1, 2^48, 2^48 + 1
-//      (the arm64 limit with a 48-bit virtual address) and 2^64 - 1, at
+//      kernel can screen without reading anything: on arm64 2^48 - 1, 2^48
+//      and 2^48 + 1 (the limit with a 48-bit virtual address); on x86-64
+//      either side of 2^47 - 4096 and of 2^56 - 4096 (the limits with four-
+//      and five-level paging), 2^63 - 1 and 2^63; and 2^64 - 1 on both. Each at
 //      nfds 0 with timeout 0, 100 and -1, and at nfds 1 with timeout 0 and
 //      -1. `slept` as in section Z.
 //   P  the soft limit raised to 4096: an array whose first k entries lie
@@ -25,7 +27,8 @@
 //      readable and its `events` and `revents` on the PROT_NONE page
 //      (`cut=mid-entry`); nfds = k + 1. As a control, `cut=none` is the
 //      same k entries ending at the PROT_NONE page, with nfds = k, which the
-//      kernel can read whole. Entry 0 is either a pipe's write end
+//      kernel can read whole. The label gives the array's address. Entry 0
+//      is either a pipe's write end
 //      asking for POLLOUT, which is ready (`lead=ready`), or fd -1
 //      (`lead=idle`); every other readable entry is fd -1. Each readable
 //      entry's revents is set to 0x5a5a beforehand, and `revents0` is entry
@@ -44,7 +47,8 @@
 //      taken. `charge-after=23040` means the poll moved the first ten (it
 //      polled the receiver); 46080 means it did not. Rows: no poll; the
 //      array readable whole (nfds = k); and cut at an entry boundary
-//      (nfds = k + 1), for k = 1, 31 and 600, with timeout 0. Each of the
+//      (nfds = k + 1), for k = 1, 31 and 600, with timeout 0; the label gives
+//      the array's address. Each of the
 //      ten takes must return a datagram of 1000 bytes, or the probe stops.
 //   H  Linux only: an nfds_t wider than 32 bits (glibc's is unsigned long),
 //      at NULL and at an unmapped address: 2^32, 2^32 + 1 and 2^32 + 1025,
@@ -52,22 +56,36 @@
 //      is an unsigned int.
 //
 // Every row is `section label nfds=N timeout=T rv=R errno=E` and what else it
-// names; errno is `-` when the call succeeded.
+// names; errno is `-` when the call succeeded. Every call that builds a
+// fixture is checked, and the probe stops at the first that fails.
 //
 // Build and run, from this directory:
 //   Darwin: cc -Wall -O1 -o /tmp/pue poll-unreadable-entries.c && /tmp/pue
 //   Linux, root (Apple's `container`, gcc:14 image):
 //     container run --rm -v "$PWD":/probe gcc:14 sh -c 'gcc -Wall -O1 -o /tmp/pue /probe/poll-unreadable-entries.c && /tmp/pue'
+//   Linux x86-64, as /init of an initramfs booted under QEMU (it brings the
+//   loopback interface up first when it runs as pid 1, and powers off at the
+//   end): in an amd64 debian:trixie container, install gcc, libc6-dev and
+//   cpio, `apt-get download` a linux-image-*-amd64 package and take its
+//   vmlinuz, build this probe with `gcc -static -O1` as /init in a directory
+//   holding an empty /proc, and `find . | cpio -o -H newc | gzip` it; then
+//     qemu-system-x86_64 -m 1G -cpu max -kernel vmlinuz -initrd init.cpio.gz
+//       -append "console=ttyS0 panic=-1 quiet loglevel=0" -nographic -no-reboot
+//   keeping the lines of the console that the probe printed. `-cpu max` gives
+//   five-level paging (a user address limit of 2^56 - 4096), and
+//   `-cpu max,la57=off` four-level (2^47 - 4096); the output's name says which.
 //   Linux, uid 1000:
 //     container run --rm -v "$PWD":/probe gcc:14 sh -c 'gcc -Wall -O1 -o /tmp/pue /probe/poll-unreadable-entries.c && setpriv --reuid=1000 --regid=1000 --clear-groups /tmp/pue'
 //
-// Measured 2026-11-20 on Darwin 27.2.0 arm64 (uid 501) and Linux 6.18.5
-// aarch64 (Apple `container`, as root and as uid 1000); each `measured-*.txt`
-// is one run's output, the Linux ones with `container`'s progress lines
-// (written to stderr) removed. Not measured on x86-64. Every run agrees:
+// Measured 2026-11-21 on Darwin 27.2.0 arm64 (uid 501), Linux 6.18.5
+// aarch64 (Apple `container`, as root and as uid 1000), and Debian's Linux
+// 6.12.113 and 6.18.5 x86-64 kernels under QEMU (as root, with five-level
+// and with four-level paging); each `measured-*.txt` is one run's output,
+// with `container`'s progress lines (written to stderr) and QEMU's console
+// noise removed. Every run agrees:
 //   O  a count above the soft limit is EINVAL whatever the pointer, and one
-//      at or below it is EFAULT, at once, under timeout -1 as under 0. Linux
-//      answers alike for root and uid 1000.
+//      at or below it is EFAULT, at once, under every timeout (0, -1, 100,
+//      -2). Linux answers alike for root and uid 1000.
 //   Z  nfds 0 is answered as an empty array wherever it points: 0 at once
 //      for timeout 0, 0 after sleeping for timeout 100, and a sleep that the
 //      timer ends (EINTR) for timeout -1.
@@ -80,10 +98,12 @@
 //      sleeps its 100 ms first, and the ready lead's revents is not written.
 //   Y  nfds 1 is EFAULT at once at every address, on both. nfds 0 is
 //      answered as an empty array on Darwin at every address, and on Linux
-//      up to 2^48, the arm64 limit; past it (2^48 + 1 and 2^64 - 1) Linux
-//      polls as for an empty array and then fails with EFAULT: at once for
-//      timeout 0, after the wait for timeout 100, and for timeout -1 when the
-//      timer ends the sleep, in place of EINTR.
+//      at every address up to the machine's user address limit (2^48 on
+//      arm64; 2^56 - 4096 with five-level paging and 2^47 - 4096 with
+//      four-level on x86-64, on both kernels); past it Linux polls as for an
+//      empty array and then fails with EFAULT: at once for timeout 0, after
+//      the wait for timeout 100, and for timeout -1 when the timer ends the
+//      sleep, in place of EINTR.
 //   S  Linux: the array cut after k entries is EFAULT and leaves the charge
 //      at 46080, as no poll does, where the whole array polls the receiver
 //      (rv 1, POLLIN, 23040), for every k: the entries it could read were
@@ -105,6 +125,12 @@
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/reboot.h>
+#include <sys/socket.h>
+#endif
 
 static void on_alarm(int sig) { (void)sig; }
 
@@ -113,19 +139,19 @@ static void on_alarm(int sig) { (void)sig; }
 static void arm_timer_ms(int ms)
 {
     struct itimerval it = { { ms / 1000, (ms % 1000) * 1000 }, { ms / 1000, (ms % 1000) * 1000 } };
-    setitimer(ITIMER_REAL, &it, NULL);
+    if (setitimer(ITIMER_REAL, &it, NULL) != 0) { perror("setitimer"); exit(1); }
 }
 
 static void disarm_timer(void)
 {
     struct itimerval it = { { 0, 0 }, { 0, 0 } };
-    setitimer(ITIMER_REAL, &it, NULL);
+    if (setitimer(ITIMER_REAL, &it, NULL) != 0) { perror("setitimer"); exit(1); }
 }
 
 static long long now_ms(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) { perror("clock_gettime"); exit(1); }
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
@@ -175,8 +201,8 @@ static void section_o(unsigned int limit)
     unsigned int ceiling = 10240u;
 #endif
     unsigned int counts[] = { 1, limit, limit + 1, ceiling, ceiling + 1, 4294967295u };
-    int timeouts[] = { 0, -1 };
-    for (size_t t = 0; t < 2; t++)
+    int timeouts[] = { 0, -1, 100, -2 };
+    for (size_t t = 0; t < sizeof timeouts / sizeof timeouts[0]; t++)
         for (size_t k = 0; k < sizeof counts / sizeof counts[0]; k++)
         {
             row("O", "null", NULL, counts[k], timeouts[t], NULL);
@@ -189,18 +215,26 @@ static void section_z(long page)
     void *none = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (none == MAP_FAILED) { perror("mmap"); exit(1); }
     int timeouts[] = { 0, 100, -1 };
+    char none_label[48];
+    snprintf(none_label, sizeof none_label, "prot-none addr=0x%llx", (unsigned long long)(uintptr_t)none);
     for (size_t t = 0; t < 3; t++)
     {
         row("Z", "null", NULL, 0, timeouts[t], NULL);
         row("Z", "unmapped", unmapped, 0, timeouts[t], NULL);
-        row("Z", "prot-none", none, 0, timeouts[t], NULL);
+        row("Z", none_label, none, 0, timeouts[t], NULL);
     }
     munmap(none, page);
 }
 
 static void section_y(void)
 {
+#ifdef __x86_64__
+    uintptr_t four = ((uintptr_t)1 << 47) - 4096, five = ((uintptr_t)1 << 56) - 4096;
+    uintptr_t addresses[] = { four - 1, four, four + 1, five - 1, five, five + 1, ((uintptr_t)1 << 63) - 1,
+                              (uintptr_t)1 << 63, UINTPTR_MAX };
+#else
     uintptr_t addresses[] = { ((uintptr_t)1 << 48) - 1, (uintptr_t)1 << 48, ((uintptr_t)1 << 48) + 1, UINTPTR_MAX };
+#endif
     for (size_t a = 0; a < sizeof addresses / sizeof addresses[0]; a++)
     {
         char label[48];
@@ -234,9 +268,10 @@ static void section_p(long page, int ready_fd)
                 for (unsigned int j = 0; j < k; j++) { p[j].fd = -1; p[j].events = POLLIN; p[j].revents = 0x5a5a; }
                 if (cut == 1) p[k].fd = -1;
                 if (ready) { p[0].fd = ready_fd; p[0].events = POLLOUT; }
-                char label[64];
+                char label[96];
                 const char *cuts[] = { "entry", "mid-entry", "none" };
-                snprintf(label, sizeof label, "k=%u cut=%s lead=%s", k, cuts[cut], ready ? "ready" : "idle");
+                snprintf(label, sizeof label, "k=%u cut=%s lead=%s addr=0x%llx", k, cuts[cut], ready ? "ready" : "idle",
+                         (unsigned long long)(uintptr_t)p);
                 row("P", label, p, cut == 2 ? k : k + 1, ready ? 0 : -1, &p[0].revents);
                 munmap(base, (pages + 1) * page);
             }
@@ -294,14 +329,16 @@ static void send1(int s, int r, struct sockaddr_in *to)
 static void section_s_row(long page, unsigned int k, int cut)
 {
     int r = socket(AF_INET, SOCK_DGRAM, 0);
+    if (r < 0) { perror("socket"); exit(1); }
     struct sockaddr_in to;
     memset(&to, 0, sizeof to);
     to.sin_family = AF_INET;
     to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(r, (struct sockaddr *)&to, sizeof to) != 0) { perror("bind"); exit(1); }
     socklen_t len = sizeof to;
-    getsockname(r, (struct sockaddr *)&to, &len);
+    if (getsockname(r, (struct sockaddr *)&to, &len) != 0 || to.sin_port == 0) { perror("getsockname"); exit(1); }
     int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) { perror("socket"); exit(1); }
     for (int i = 0; i < 10; i++) send1(s, r, &to);
 
     size_t pages = (k + 1) * sizeof(struct pollfd) / page + 2;
@@ -313,9 +350,9 @@ static void section_s_row(long page, unsigned int k, int cut)
     for (unsigned int j = 0; j < k; j++) { p[j].fd = -1; p[j].events = POLLIN; p[j].revents = 0x5a5a; }
     p[0].fd = r;
 
-    char label[64];
+    char label[96];
     const char *cuts[] = { "no-poll", "none", "entry" };
-    snprintf(label, sizeof label, "k=%u cut=%s lead=udp", k, cuts[cut]);
+    snprintf(label, sizeof label, "k=%u cut=%s lead=udp addr=0x%llx", k, cuts[cut], (unsigned long long)(uintptr_t)p);
     int rv = 0, e = 0;
     unsigned int nfds = cut == 2 ? k + 1 : k;
     if (cut != 0)
@@ -362,19 +399,56 @@ static void section_s(long page)
 }
 #endif
 
+#ifdef __linux__
+// As the /init of a booted kernel: the loopback interface section S sends
+// through starts down.
+static void loopback_up(void)
+{
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) { perror("socket"); exit(1); }
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof ifr);
+    strcpy(ifr.ifr_name, "lo");
+    if (ioctl(s, SIOCGIFFLAGS, &ifr) != 0) { perror("SIOCGIFFLAGS"); exit(1); }
+    ifr.ifr_flags |= IFF_UP;
+    if (ioctl(s, SIOCSIFFLAGS, &ifr) != 0) { perror("SIOCSIFFLAGS"); exit(1); }
+    close(s);
+}
+#endif
+
+static int run(void);
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
+#ifdef __linux__
+    if (getpid() == 1)
+    {
+        loopback_up();
+        int rc = run();
+        printf("probe done rc=%d\n", rc);
+        fflush(stdout);
+        sync();
+        reboot(RB_POWER_OFF);
+        return rc;
+    }
+#endif
+    return run();
+}
+
+static int run(void)
+{
     struct utsname u;
-    uname(&u);
+    if (uname(&u) != 0) { perror("uname"); exit(1); }
     printf("uname %s %s %s uid=%d\n", u.sysname, u.release, u.machine, (int)getuid());
 
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_alarm;
-    sigaction(SIGALRM, &sa, NULL);
+    if (sigaction(SIGALRM, &sa, NULL) != 0) { perror("sigaction"); exit(1); }
 
     long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) { perror("sysconf"); exit(1); }
     int fds[2];
     if (pipe(fds) != 0) { perror("pipe"); exit(1); }
     // fds[1] is the write end: an empty pipe's is ready for POLLOUT.
