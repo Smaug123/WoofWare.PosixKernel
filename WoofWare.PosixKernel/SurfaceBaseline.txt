@@ -81,6 +81,21 @@ WoofWare.PosixKernel.AcceptLengthCell.IsUnread [property]: [read-only] bool
 WoofWare.PosixKernel.AcceptLengthCell.NewRead [static method]: System.UInt32 -> WoofWare.PosixKernel.AcceptLengthCell
 WoofWare.PosixKernel.AcceptLengthCell.NewUnread [static method]: WoofWare.PosixKernel.UserBuffer -> WoofWare.PosixKernel.AcceptLengthCell
 WoofWare.PosixKernel.AcceptLengthCell.Tag [property]: [read-only] int
+WoofWare.PosixKernel.AcceptLengthCellRead inherit obj, implements WoofWare.PosixKernel.AcceptLengthCellRead System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.AcceptLengthCellRead System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.AcceptLengthCellRead+Tags inherit obj
+WoofWare.PosixKernel.AcceptLengthCellRead+Tags.BeforeAnything [static field]: int = 0
+WoofWare.PosixKernel.AcceptLengthCellRead+Tags.OnceItHoldsAConnection [static field]: int = 1
+WoofWare.PosixKernel.AcceptLengthCellRead.BeforeAnything [static property]: [read-only] WoofWare.PosixKernel.AcceptLengthCellRead
+WoofWare.PosixKernel.AcceptLengthCellRead.Equals [method]: (WoofWare.PosixKernel.AcceptLengthCellRead, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.AcceptLengthCellRead.get_BeforeAnything [static method]: unit -> WoofWare.PosixKernel.AcceptLengthCellRead
+WoofWare.PosixKernel.AcceptLengthCellRead.get_IsBeforeAnything [method]: unit -> bool
+WoofWare.PosixKernel.AcceptLengthCellRead.get_IsOnceItHoldsAConnection [method]: unit -> bool
+WoofWare.PosixKernel.AcceptLengthCellRead.get_OnceItHoldsAConnection [static method]: unit -> WoofWare.PosixKernel.AcceptLengthCellRead
+WoofWare.PosixKernel.AcceptLengthCellRead.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.AcceptLengthCellRead.IsBeforeAnything [property]: [read-only] bool
+WoofWare.PosixKernel.AcceptLengthCellRead.IsOnceItHoldsAConnection [property]: [read-only] bool
+WoofWare.PosixKernel.AcceptLengthCellRead.OnceItHoldsAConnection [static property]: [read-only] WoofWare.PosixKernel.AcceptLengthCellRead
+WoofWare.PosixKernel.AcceptLengthCellRead.Tag [property]: [read-only] int
 WoofWare.PosixKernel.AcceptOutcome inherit obj, implements WoofWare.PosixKernel.AcceptOutcome System.IEquatable, System.Collections.IStructuralEquatable - union type with 5 cases
 WoofWare.PosixKernel.AcceptOutcome+Accepted inherit WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome+Accepted.address [property]: [read-only] WoofWare.PosixKernel.PeerAddressCopy
@@ -4878,6 +4893,7 @@ WoofWare.PosixKernel.SimulatedUnixPlatformError.NewUnmeasuredKernel [static meth
 WoofWare.PosixKernel.SimulatedUnixPlatformError.Tag [property]: [read-only] int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule inherit obj
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.acceptedSocketInheritsNonBlocking [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool
+WoofWare.PosixKernel.SimulatedUnixPlatformModule.acceptLengthCellRead [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.AcceptLengthCellRead
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.architecture [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.SimulatedUnixArchitecture
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.assertValid [static method]: string -> WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.SimulatedUnixPlatform
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.bindableEntryNames [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.BindableEntryNames

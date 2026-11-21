@@ -564,9 +564,11 @@ type PausedAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
             /// The thread that made the call, which the rest of it is made by.
             Thread : 'Thread
             Call : PausedAcceptCall
-            /// The system the call, or its finishing call, was made in:
-            /// everything either does before it reads the cell is a question,
-            /// which it asks again with the cell's value.
+            /// For `PausedAcceptCall.Call`, the system the call was made in,
+            /// whose every question before the read it asks again with the
+            /// cell's value. For `PausedAcceptCall.HandOver`, the system as the
+            /// call reached its handover: for a woken call, with the thread no
+            /// longer parked.
             System : ProcessView<'Thread, 'Handler>
             /// The kernel `System` is a view of, as the call was given it, so
             /// that a resumption that changes nothing answers that very
@@ -2544,11 +2546,11 @@ module UnixConnection =
             // client with no number for it cannot say.
             Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen)
         | AcceptCopy.Unread (_, cell) ->
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin ->
+            match SimulatedUnixPlatform.acceptLengthCellRead system.Machine.UnixPlatform with
+            | AcceptLengthCellRead.BeforeAnything ->
                 failwith
-                    "UnixConnection.accept: a Darwin accept reached its connection without having read its length cell, which Darwin reads before anything else (this is a bug in this library)."
-            | SimulatedUnixFlavour.Linux ->
+                    "UnixConnection.accept: an accept reached its connection without having read its length cell, which this platform reads before anything else (this is a bug in this library)."
+            | AcceptLengthCellRead.OnceItHoldsAConnection ->
 
             // Measured (`docs/probes/accept-length-cell`, A and B): Linux reads
             // the cell only now that it holds the connection, a woken call
@@ -2675,10 +2677,10 @@ module UnixConnection =
         // connection queued. Linux reads it only once it holds a connection
         // (`handOver`).
         let readFirst =
-            match flavour, copy with
-            | SimulatedUnixFlavour.Darwin, AcceptCopy.Unread (UserBuffer.Addressless, _) ->
+            match SimulatedUnixPlatform.acceptLengthCellRead system.Machine.UnixPlatform, copy with
+            | AcceptLengthCellRead.BeforeAnything, AcceptCopy.Unread (UserBuffer.Addressless, _) ->
                 Some (Error (AcceptRefusal.Buffer BufferRefusal.AddresslessAtScreen))
-            | SimulatedUnixFlavour.Darwin, AcceptCopy.Unread (_, cell) ->
+            | AcceptLengthCellRead.BeforeAnything, AcceptCopy.Unread (_, cell) ->
                 match LengthCellRead.ofCell cell with
                 | Error refusal -> Some (Error (AcceptRefusal.Buffer refusal))
                 | Ok LengthCellRead.Faults -> Some (answered (AcceptOutcome.Failed UnixError.EFAULT) system)
@@ -3049,10 +3051,10 @@ module UnixConnection =
                     }
 
                 let copy =
-                    match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, parked.Cell with
-                    | SimulatedUnixFlavour.Linux, AcceptLengthCell.Read _ ->
+                    match SimulatedUnixPlatform.acceptLengthCellRead system.Machine.UnixPlatform, parked.Cell with
+                    | AcceptLengthCellRead.OnceItHoldsAConnection, AcceptLengthCell.Read _ ->
                         failwith
-                            $"UnixConnection.finishAccept: thread %O{thread}'s Linux accept holds a length cell it read before it slept, but Linux reads the cell only once it holds a connection (this is a bug in this library, or in a caller that assembled the park by hand)."
+                            $"UnixConnection.finishAccept: thread %O{thread}'s accept holds a length cell it read before it slept, but this platform reads the cell only once it holds a connection (this is a bug in this library, or in a caller that assembled the park by hand)."
                     | _ -> ()
 
                     match parked.Cell with

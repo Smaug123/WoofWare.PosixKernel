@@ -987,8 +987,8 @@ module UnixWait =
     /// `UnixConnection.acceptWithLength`). A woken Darwin `accept` read its
     /// cell's value before it slept, and ignores the value `call` gives, but
     /// it writes the reported length back, so `call` still gives the cell's
-    /// kind: readable, or not, as it was when the call was made. Every other
-    /// call is finished without reading `call`'s arguments.
+    /// kind as it is now: readable, or not. Every other call is finished
+    /// without reading `call`'s arguments.
     ///
     /// So it answers as that function would: the call's answer, which clears the
     /// park; the thread parked again, asleep, for a new wake, where what woke it
