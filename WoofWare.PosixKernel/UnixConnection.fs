@@ -2866,8 +2866,9 @@ module UnixConnection =
     /// `SO_RCVTIMEO`, which bounds such a wait on Linux (but not on Darwin), is
     /// an option that `setsockopt` refuses to set. When several threads sleep
     /// on one listener, a connection wakes the one that went to sleep first
-    /// (see `UnixWait.wake`). The kernel does not look at the destination
-    /// before the thread sleeps, and only Darwin reads the cell then.
+    /// (see `UnixWait.wake`). Neither flavour writes the destination before
+    /// the thread sleeps. Darwin asks whether it is NULL, to decide whether to
+    /// read the cell, which it then reads; Linux looks at neither.
     ///
     /// Under Darwin, closing the descriptor through which a sleeping accept was
     /// made ends every accept asleep on the listener, whichever descriptor it

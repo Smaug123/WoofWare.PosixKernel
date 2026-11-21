@@ -428,12 +428,29 @@ module TestCallProgress =
         // EAGAIN come from a resumption.
         let platform = SimulatedUnixPlatform.macOsArm64
         let fd, system = socketOn platform
-        let system = NonBlocking.set fd system
 
-        for target in [ 99 ; fd ] do
+        let system =
+            match
+                CopyIn.bind
+                    fd
+                    UserBuffer.Mapped
+                    16u
+                    (CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us))
+                    system
+            with
+            | Ok (BindAnswer.Bound _, system) -> system
+            | other -> failwith $"bind answered %A{other}"
+
+        let system =
+            match UnixSocket.tryListen (Callers.leader system) fd 4 system with
+            | Ok (ListenAnswer.Listening _, system) -> NonBlocking.set fd system
+            | other -> failwith $"listen answered %A{other}"
+
+        for target, error in [ 99, UnixError.EBADF ; fd, UnixError.EAGAIN ] do
             match UnixConnection.accept (Callers.leader system) target UserBuffer.Mapped UserBuffer.Mapped 0 system with
             | CallProgress.NeedsCopyIn paused ->
                 match UnixConnection.acceptWithLength 16u paused with
-                | AcceptOutcome.Failed _, after -> obj.ReferenceEquals (after, system) |> shouldEqual true
-                | other -> failwith $"accept of fd %d{target} answered %A{other}"
+                | AcceptOutcome.Failed answered, after when answered = error ->
+                    obj.ReferenceEquals (after, system) |> shouldEqual true
+                | other -> failwith $"accept of fd %d{target} answered %A{other}, not %A{error}"
             | other -> failwith $"Darwin's accept answered %A{other} without stopping for the cell"
