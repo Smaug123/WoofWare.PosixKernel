@@ -508,9 +508,9 @@ module TestUnixError =
 
     /// The rows of one of `docs/probes/raw-syscall-error`'s native arm64
     /// outputs: the call, the carry flag before it, the result register as a
-    /// signed number, the carry flag after it, and the errno the C library's
-    /// wrapper reported (0 for success).
-    let private rawSyscallRows (name : string) : (string * int * int64 * int * string) list =
+    /// signed number, the carry flag after it, and what the C library's wrapper
+    /// returned and the errno it reported (0 for success).
+    let private rawSyscallRows (name : string) : (string * int * int64 * int * int64 * string) list =
         use stream =
             match System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream name with
             | null -> failwith $"embedded resource %s{name} not found"
@@ -524,7 +524,7 @@ module TestUnixError =
             let row =
                 Regex.Match (
                     line.TrimEnd '\r',
-                    @"^(\S+)\s+carry_in=(\d): ret=0x[0-9a-f]+ \((-?\d+)\) carry_out=(\d) \| libc: ret=-?\d+ errno=\d+\(([A-Z0-9]+)\)$"
+                    @"^(\S+)\s+carry_in=(\d): ret=0x[0-9a-f]+ \((-?\d+)\) carry_out=(\d) \| libc: ret=(-?\d+) errno=\d+\(([A-Z0-9]+)\)$"
                 )
 
             if row.Success then
@@ -533,7 +533,8 @@ module TestUnixError =
                     int row.Groups.[2].Value,
                     int64 row.Groups.[3].Value,
                     int row.Groups.[4].Value,
-                    row.Groups.[5].Value
+                    int64 row.Groups.[5].Value,
+                    row.Groups.[6].Value
                 )
             else
                 None
@@ -559,12 +560,14 @@ module TestUnixError =
             let rows = rawSyscallRows name
             (name, List.length rows) |> shouldEqual (name, 8)
 
-            for call, carryIn, ret, carryOut, errno in rows do
+            for call, carryIn, ret, carryOut, libcRet, errno in rows do
                 let row = $"%s{name}: %s{call} carry_in=%d{carryIn}"
 
+                // A call that succeeded returns what the C library's wrapper
+                // returned for the same call (getpid's process ID).
                 match numbering, errno with
-                | RawErrnoNumbering.Linux, "0" -> (row, carryOut) |> shouldEqual (row, carryIn)
-                | RawErrnoNumbering.Darwin, "0" -> (row, carryOut) |> shouldEqual (row, 0)
+                | RawErrnoNumbering.Linux, "0" -> (row, ret, carryOut) |> shouldEqual (row, libcRet, carryIn)
+                | RawErrnoNumbering.Darwin, "0" -> (row, ret, carryOut) |> shouldEqual (row, libcRet, 0)
                 | RawErrnoNumbering.Linux, error ->
                     let raw = UnixError.toRawErrnoUnder numbering (errorOf error)
                     (row, ret, carryOut) |> shouldEqual (row, -int64 raw, carryIn)
