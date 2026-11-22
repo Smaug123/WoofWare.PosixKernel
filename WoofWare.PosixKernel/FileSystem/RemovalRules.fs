@@ -401,7 +401,7 @@ module internal UnlinkRules =
             UnlinkVerdict.Refuse UnixError.EPERM
         elif
             VirtualFileSystem.isOnDevfs directory vfs
-            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
         then
             UnlinkVerdict.Refuse UnixError.EPERM
         elif
@@ -677,7 +677,7 @@ module internal RmDirRules =
             RmDirVerdict.Refuse UnixError.EBUSY
         elif
             VirtualFileSystem.isOnDevfs directory vfs
-            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
         then
             RmDirVerdict.Refuse UnixError.EPERM
         elif

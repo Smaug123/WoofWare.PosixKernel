@@ -134,7 +134,7 @@ type internal UnixProcessState<'Thread, 'Handler when 'Thread : comparison and '
 module internal UnixProcessState =
 
     /// Whether the simulated process is exempt from the permission rules a kernel
-    /// applies to everyone else. This is `Credentials.privilege` of its
+    /// applies to everyone else. This is `CallerPrivilege.ofCredentials` of its
     /// credentials, which is where the rule is stated.
     ///
     /// `CallerPrivilege` rather than a `bool` because the answer travels through
@@ -151,7 +151,7 @@ module internal UnixProcessState =
         (proc : UnixProcessState<'Thread, 'Handler>)
         : CallerPrivilege
         =
-        Credentials.privilege proc.Credentials
+        CallerPrivilege.ofCredentials proc.Credentials
 
     /// The environment the process was started with, entry by entry, in order.
     /// See `UnixProcessState.Environment`.

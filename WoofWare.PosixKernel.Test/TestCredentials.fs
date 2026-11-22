@@ -82,7 +82,7 @@ module TestCredentials =
                 else
                     CallerPrivilege.Unprivileged
 
-            Credentials.privilege credentials |> shouldEqual expected
+            CallerPrivilege.ofCredentials credentials |> shouldEqual expected
 
         Check.One (config, Prop.forAll (Arb.fromGen CredentialsGen.credentials) property)
 
@@ -96,15 +96,15 @@ module TestCredentials =
 
         // bind(127.0.0.1:80), and opening a root-owned 0600 file, as each.
         withIds 0u 1000u 0u
-        |> Credentials.privilege
+        |> CallerPrivilege.ofCredentials
         |> shouldEqual CallerPrivilege.Unprivileged
 
         withIds 1000u 0u 1000u
-        |> Credentials.privilege
+        |> CallerPrivilege.ofCredentials
         |> shouldEqual CallerPrivilege.Privileged
 
         withIds 1000u 1000u 0u
-        |> Credentials.privilege
+        |> CallerPrivilege.ofCredentials
         |> shouldEqual CallerPrivilege.Unprivileged
 
         // Group 0 is not root, whichever of the group IDs holds it.
@@ -112,7 +112,7 @@ module TestCredentials =
             RealGroup = gid 0u
             SavedGroup = gid 0u
         }
-        |> Credentials.privilege
+        |> CallerPrivilege.ofCredentials
         |> shouldEqual CallerPrivilege.Unprivileged
 
     [<Test>]
@@ -141,7 +141,7 @@ module TestCredentials =
             |> shouldEqual (Credentials.ofIds (UnixSystem.defaultUserId flavour) (UnixSystem.defaultGroupId flavour) [])
 
             UnixSystem.defaultCredentials flavour
-            |> Credentials.privilege
+            |> CallerPrivilege.ofCredentials
             |> shouldEqual CallerPrivilege.Unprivileged
 
     let private agreeing (credentials : Credentials) : bool =

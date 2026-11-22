@@ -71,7 +71,8 @@ module internal SymlinkRules =
         // `symlink(x, /dev/null)`, `symlink(x, /dev)`, `symlink(x, /dev/.)`
         // and `symlink(x, /dev/monotonic/..)`); a free name there is
         // `NewNameRules`'.
-        let unprivileged = Credentials.privilege credentials = CallerPrivilege.Unprivileged
+        let unprivileged =
+            CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
 
         match resolution.Target with
         | ResolvedTarget.Entry (directory, _, Some existing) when

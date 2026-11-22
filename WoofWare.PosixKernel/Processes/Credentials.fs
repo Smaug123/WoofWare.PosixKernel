@@ -144,8 +144,8 @@ type Credentials =
         /// The effective group is represented separately by <c>EffectiveGroup</c>.
         /// <para />
         /// The platforms differ on how <c>getgroups(2)</c> (<c>UnixCredentials.getgroups</c>) presents this list.
-        /// <c>SimulatedUnixPlatform.groupListReport</c> holds the flavour's rule (see <c>GroupListReport</c>),
-        /// which the kernel already applies.
+        /// <c>SimulatedUnixPlatform.groupListReport</c> holds the flavour's rule (see <c>GroupListReport</c>).
+        /// You can't configure that behaviour: it's derived from the flavour.
         /// </remarks>
         SupplementaryGroups : GroupId list
     }
@@ -185,7 +185,7 @@ module Credentials =
     /// </summary>
     /// <remarks>
     /// This represents a process that has not been started
-    /// set-user-ID or set-group-ID and has not changed its IDs since being started.
+    /// set-user-ID or set-group-ID, and has not changed its IDs since being started.
     /// </remarks>
     let ofIds (user : UserId) (group : GroupId) (supplementaryGroups : GroupId list) : Credentials =
         {
@@ -197,31 +197,6 @@ module Credentials =
             SavedGroup = group
             SupplementaryGroups = supplementaryGroups
         }
-
-    /// <summary>
-    /// Whether a process with these credentials is exempt from the permission
-    /// rules a kernel applies to everyone else.
-    /// </summary>
-    /// <remarks>
-    /// Decided by the effective user ID alone: only effective uid 0 has this privilege.
-    /// </remarks>
-    let privilege (credentials : Credentials) : CallerPrivilege =
-        // Measured on Linux 6.18.5 (`credentials.c`): binding port 80 succeeds with
-        // real 1000 / effective 0 / saved 1000, and is EACCES with real 0 /
-        // effective 1000 / saved 0 and with real 1000 / effective 1000 / saved 0.
-        // Opening a root-owned 0600 file follows the same split. Group 0 is not
-        // root.
-        //
-        // Every privilege question goes through here rather than comparing an ID
-        // at its own site, because the sites answer *different* questions from
-        // the same fact (whether `open` may ignore a mode that forbids the access
-        // it was asked for, whether a write keeps a file's set-user-ID bits,
-        // whether `bind` may take a port below 1024) and must not drift apart
-        // about who root is.
-        if credentials.EffectiveUser = UserId.root then
-            CallerPrivilege.Privileged
-        else
-            CallerPrivilege.Unprivileged
 
     /// <summary>
     /// Whether a process with these credentials is in <c>group</c>: it is the
@@ -241,9 +216,9 @@ module Credentials =
     /// <remarks>
     /// This is who <c>access(2)</c> checks a path as, at every step of the
     /// walk and at the inode it reaches.
-    ///
-    /// Everything else is kept, so privilege and group membership are still
-    /// decided as for any credentials (see <c>Credentials.privilege</c>), from
+    /// <para />
+    /// All the other contents of <c>credentials</c> are kept, so privilege and group membership are still
+    /// decided as for any credentials (see <c>CallerPrivilege.ofCredentials</c>), from
     /// the substituted IDs: a real uid of 0 is privileged here whatever
     /// the effective uid, and the supplementary groups count as they always
     /// do.

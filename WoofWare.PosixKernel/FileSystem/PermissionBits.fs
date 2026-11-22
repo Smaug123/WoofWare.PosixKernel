@@ -19,6 +19,33 @@ type CallerPrivilege =
     /// </summary>
     | Unprivileged
 
+[<RequireQualifiedAccess>]
+module CallerPrivilege =
+    /// <summary>
+    /// Whether a process with these credentials is exempt from the permission
+    /// rules a kernel applies to everyone else.
+    /// </summary>
+    /// <remarks>
+    /// Decided by the effective user ID alone: only effective uid 0 has this privilege.
+    /// </remarks>
+    let ofCredentials (credentials : Credentials) : CallerPrivilege =
+        // Measured on Linux 6.18.5 (`credentials.c`): binding port 80 succeeds with
+        // real 1000 / effective 0 / saved 1000, and is EACCES with real 0 /
+        // effective 1000 / saved 0 and with real 1000 / effective 1000 / saved 0.
+        // Opening a root-owned 0600 file follows the same split. Group 0 is not
+        // root.
+        //
+        // Every privilege question goes through here rather than comparing an ID
+        // at its own site, because the sites answer *different* questions from
+        // the same fact (whether `open` may ignore a mode that forbids the access
+        // it was asked for, whether a write keeps a file's set-user-ID bits,
+        // whether `bind` may take a port below 1024) and must not drift apart
+        // about who root is.
+        if credentials.EffectiveUser = UserId.root then
+            CallerPrivilege.Privileged
+        else
+            CallerPrivilege.Unprivileged
+
 /// <summary>
 /// The one thing a caller is asking permission to do, as
 /// <c>PermissionBits.deniedTo</c> is asked it.
@@ -201,13 +228,13 @@ type PermissionBits =
 /// There's no corresponding rule for an <i>unprivileged</i> caller,
 /// which always gets <c>EACCES</c> unless the target has the appropriate execute bit.
 /// <para />
-/// This is a fact of the flavour, which the kernel already applies.
-/// <c>SimulatedUnixPlatform.privilegedExecution</c> hands it out only so that a client can learn what the kernel will do.
+/// You can't configure this behaviour: it's derived from the flavour.
+/// The type is public only so that a client can inspect it with <c>SimulatedUnixPlatform.privilegedExecution</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type PrivilegedExecution =
     /// <summary>
-    /// The caller is granted exactly when at least one of the three execute bits is set,
+    /// The privileged caller is granted exactly when at least one of the three execute bits is set,
     /// whether or not the caller owns the inode or is in its group.
     /// Otherwise, it gets <c>EACCES</c>.
     /// </summary>

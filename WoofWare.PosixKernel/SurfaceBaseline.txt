@@ -259,6 +259,8 @@ WoofWare.PosixKernel.CallerPrivilege.IsUnprivileged [property]: [read-only] bool
 WoofWare.PosixKernel.CallerPrivilege.Privileged [static property]: [read-only] WoofWare.PosixKernel.CallerPrivilege
 WoofWare.PosixKernel.CallerPrivilege.Tag [property]: [read-only] int
 WoofWare.PosixKernel.CallerPrivilege.Unprivileged [static property]: [read-only] WoofWare.PosixKernel.CallerPrivilege
+WoofWare.PosixKernel.CallerPrivilegeModule inherit obj
+WoofWare.PosixKernel.CallerPrivilegeModule.ofCredentials [static method]: WoofWare.PosixKernel.Credentials -> WoofWare.PosixKernel.CallerPrivilege
 WoofWare.PosixKernel.CallProgress`2 inherit obj, implements WoofWare.PosixKernel.CallProgress<'Paused, 'Answer> System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.CallProgress<'Paused, 'Answer> System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.CallProgress`2+Answered inherit WoofWare.PosixKernel.CallProgress<'Paused, 'Answer>
 WoofWare.PosixKernel.CallProgress`2+Answered.answer [property]: [read-only] 'Answer
@@ -496,7 +498,6 @@ WoofWare.PosixKernel.Credentials.SupplementaryGroups [property]: [read-only] Woo
 WoofWare.PosixKernel.CredentialsModule inherit obj
 WoofWare.PosixKernel.CredentialsModule.isInGroup [static method]: WoofWare.PosixKernel.Credentials -> WoofWare.PosixKernel.GroupId -> bool
 WoofWare.PosixKernel.CredentialsModule.ofIds [static method]: WoofWare.PosixKernel.UserId -> WoofWare.PosixKernel.GroupId -> WoofWare.PosixKernel.GroupId list -> WoofWare.PosixKernel.Credentials
-WoofWare.PosixKernel.CredentialsModule.privilege [static method]: WoofWare.PosixKernel.Credentials -> WoofWare.PosixKernel.CallerPrivilege
 WoofWare.PosixKernel.CredentialsModule.realIdsAsEffective [static method]: WoofWare.PosixKernel.Credentials -> WoofWare.PosixKernel.Credentials
 WoofWare.PosixKernel.DarwinFileSystemGeometry inherit obj, implements WoofWare.PosixKernel.DarwinFileSystemGeometry System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DarwinFileSystemGeometry System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.DarwinFileSystemGeometry..ctor [constructor]: (System.UInt32, int)
