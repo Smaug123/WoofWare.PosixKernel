@@ -1,5 +1,112 @@
 namespace WoofWare.PosixKernel
 
+/// One filter a Darwin-flavoured `poll(2)` registered in the kqueue it makes
+/// for its own use, keyed beside it by the descriptor number and the filter.
+///
+/// Darwin's `poll` registers, for each entry, one filter per group of the bits
+/// it asks for, each added once only (`EV_ONESHOT`): the first report it makes
+/// removes it, whether or not that report adds anything to the entry.
+type internal PollRegistration =
+    {
+        /// The index, in the call's entries, of the entry the filter reports
+        /// into: the last entry naming this descriptor and filter, since a
+        /// later entry's registration of the same pair replaces the earlier's
+        /// `udata` rather than adding a filter (measured).
+        Entry : int
+        /// Whether the entry that first registered the pair asked for
+        /// `POLLPRI` or `POLLRDBAND`, which registers `EVFILT_READ` with
+        /// `EV_OOBAND`. A later entry's registration keeps the first one's
+        /// flags (measured). A socket's filter ignores the flag; every other
+        /// target's reports it back, and `poll` then answers `POLLPRI` and
+        /// `POLLRDBAND` for a ready read.
+        OutOfBand : bool
+        /// Where the pair's first registration stands in the order the call
+        /// made them. One event that activates several registrations of a
+        /// socket's filter, made through different descriptors onto it,
+        /// queues the latest-made first, as it does in a kqueue `kevent` fills.
+        RegisteredAt : int
+        /// For a socket's filter, the socket the descriptor named when the
+        /// call registered it: what the filter is attached to, so that an
+        /// event on the socket reaches it whichever process's call caused the
+        /// event, without reading any descriptor table. `None` for a pipe's or
+        /// a regular file's filter, which nothing activates (see
+        /// `PollQueue.Active`).
+        Socket : SocketId option
+    }
+
+/// The identity of the kqueue a Darwin `poll(2)` made for its own use
+/// (`PollQueue`). Minted from a counter the machine keeps, and never reused.
+type PollQueueId =
+    | PollQueueId of int64
+
+    /// A human-readable description of the identity.
+    override this.ToString () =
+        match this with
+        | PollQueueId.PollQueueId i -> $"<poll queue #%i{i}>"
+
+/// The kqueue a Darwin `poll(2)` made for its own use, while the call sleeps.
+///
+/// Darwin builds `poll` over kqueue: the call registers a filter per group of
+/// requested bits in a kqueue that has no descriptor, and translates what the
+/// filters report back into `revents`. A sleeping call keeps that kqueue, and
+/// what it reports when it wakes depends on what has been activated in it, and
+/// in which order -- not only on what its descriptors present then.
+///
+/// Held on the machine rather than in the call's park, because a socket event
+/// in any process's call activates its filters, as one does a kqueue's. It
+/// lives exactly as long as the park
+/// naming it (`ParkedKqueuePoll.Queue`): the park's end destroys it.
+///
+/// Its representation is internal, so a later version may change what a
+/// registration holds and what it is attached to without breaking a client. A
+/// client reads one through `PollQueue.registered`, `PollQueue.entry` and
+/// `PollQueue.activated`, and builds none.
+type PollQueue =
+    internal
+        {
+            /// The process whose `poll` made the queue, whose descriptor table its
+            /// registrations' descriptor numbers are read in.
+            Owner : ProcessId
+            /// The filters still registered: those that have not yet reported, keyed
+            /// by descriptor number and filter. Closing a descriptor removes every
+            /// one made through it, as it does from a kqueue a process holds.
+            Registrations : Map<int * KqueueFilter, PollRegistration>
+            /// The registrations of sockets' filters something has activated since
+            /// the call last scanned, in the order they were activated: the order
+            /// a scan reports them in, which decides whether a reported `POLLHUP`
+            /// suppresses a socket's `POLLOUT`. Always a subset of
+            /// `Registrations`, with no duplicates, naming sockets alone.
+            ///
+            /// A pipe's filters are not listed: every operation that makes one
+            /// ready activates it (measured), and the order a pipe entry's two
+            /// filters report in cannot change what the entry answers, so a scan
+            /// reports a pipe's registration exactly while its filter is ready.
+            Active : (int * KqueueFilter) list
+        }
+
+/// What a client reads of a sleeping Darwin poll's kqueue (`UnixSystem.pollQueue`).
+[<RequireQualifiedAccess>]
+module PollQueue =
+    /// The filters the call registered that have not yet reported, each as the
+    /// descriptor it was registered through and its filter, in ascending order.
+    let registered (queue : PollQueue) : (int * KqueueFilter) list =
+        queue.Registrations |> Map.toList |> List.map fst
+
+    /// The index, in the call's entries, of the entry that the filter `filter`
+    /// registered through `fd` reports into; `None` when no such filter is
+    /// registered. Where several entries name the same descriptor and filter,
+    /// it is the last of them.
+    let entry (fd : int) (filter : KqueueFilter) (queue : PollQueue) : int option =
+        queue.Registrations
+        |> Map.tryFind (fd, filter)
+        |> Option.map (fun (registration : PollRegistration) -> registration.Entry)
+
+    /// The registered filters that something has activated since the call
+    /// last scanned, in the order they were activated, which is the order the
+    /// call reports them in. In this version only a socket's filters are
+    /// listed: the call reports a pipe's filter exactly while it is ready.
+    let activated (queue : PollQueue) : (int * KqueueFilter) list = queue.Active
+
 /// The kqueue of every Darwin `poll(2)` asleep on the machine (`PollQueue`), by
 /// identity, and two indexes of them: which queues registered through each
 /// descriptor of each process, which a close reads, as Darwin keeps a list per

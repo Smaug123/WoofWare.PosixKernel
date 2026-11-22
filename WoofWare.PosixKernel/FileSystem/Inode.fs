@@ -369,7 +369,7 @@ module internal Standing =
         // over all 4096 modes. A Darwin process cannot have differing real and
         // effective IDs in this library (`ProcessLaunch.withCredentials`).
         {
-            Privilege = Credentials.privilege credentials
+            Privilege = CallerPrivilege.ofCredentials credentials
             Owns = owner.User = credentials.EffectiveUser
             InGroup = Credentials.isInGroup credentials owner.Group
         }

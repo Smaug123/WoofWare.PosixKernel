@@ -95,7 +95,7 @@ module internal LinkRules =
         let onDevfs (inode : InodeNumber) = VirtualFileSystem.isOnDevfs inode vfs
 
         let devfsRefuses =
-            Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
             && match resolution.Target with
                | ResolvedTarget.Entry (directory, _, existing) ->
                    (onDevfs source || onDevfs directory || Option.exists onDevfs existing)

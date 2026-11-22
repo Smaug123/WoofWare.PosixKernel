@@ -189,7 +189,7 @@ module internal MkNodRules =
             | NodeTypeField.SymbolicLink
             | NodeTypeField.Unnamed _ -> MkNodScreen.Fails UnixError.EINVAL
         | MkNodRules.PrivilegeBeforePath ->
-            match Credentials.privilege credentials with
+            match CallerPrivilege.ofCredentials credentials with
             | CallerPrivilege.Unprivileged ->
                 match field with
                 | NodeTypeField.Fifo -> MkNodScreen.Refused MkNodRefusal.Fifo
@@ -248,12 +248,12 @@ module internal MkNodRules =
         | MkNodNode.Fifo -> MkNodVerdict.Refused MkNodRefusal.Fifo
         | MkNodNode.Socket -> MkNodVerdict.Refused MkNodRefusal.Socket
         | MkNodNode.CharacterDevice dev ->
-            match Credentials.privilege credentials with
+            match CallerPrivilege.ofCredentials credentials with
             | CallerPrivilege.Unprivileged when dev <> 0u -> MkNodVerdict.Refuse UnixError.EPERM
             | CallerPrivilege.Unprivileged
             | CallerPrivilege.Privileged -> MkNodVerdict.Refused (MkNodRefusal.CharacterDevice dev)
         | MkNodNode.BlockDevice dev ->
-            match Credentials.privilege credentials with
+            match CallerPrivilege.ofCredentials credentials with
             | CallerPrivilege.Unprivileged -> MkNodVerdict.Refuse UnixError.EPERM
             | CallerPrivilege.Privileged -> MkNodVerdict.Refused (MkNodRefusal.BlockDevice dev)
         | MkNodNode.Invalid -> MkNodVerdict.Refuse UnixError.EINVAL

@@ -488,7 +488,7 @@ module UnixCredentials =
     // starting triple over {0, 1000, 1001} and every requested triple over
     // {-1, 0, 1000, 1001, 1002}, from three starting user triples for the
     // groups. "Privileged" is an effective user ID of 0, for the group IDs as
-    // for the user IDs (`Credentials.privilege`): an effective group of 0
+    // for the user IDs (`CallerPrivilege.ofCredentials`): an effective group of 0
     // grants nothing, nor does a real or saved user ID of 0, and a process
     // holding a supplementary group may not take it as a real, effective or
     // saved group. In every row the filesystem uid and gid, which this model
@@ -559,7 +559,7 @@ module UnixCredentials =
 
         match
             replaceIds
-                (Credentials.privilege credentials)
+                (CallerPrivilege.ofCredentials credentials)
                 (credentials.RealUser, credentials.EffectiveUser, credentials.SavedUser)
                 (real, effective, saved)
         with
@@ -648,7 +648,7 @@ module UnixCredentials =
 
         match
             replaceIds
-                (Credentials.privilege credentials)
+                (CallerPrivilege.ofCredentials credentials)
                 (credentials.RealGroup, credentials.EffectiveGroup, credentials.SavedGroup)
                 (real, effective, saved)
         with

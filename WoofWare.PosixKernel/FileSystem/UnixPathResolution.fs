@@ -1486,7 +1486,7 @@ module UnixPathResolution =
         // rows): `chmod` of `/dev`, `/dev/null` and `/dev/monotonic` is EPERM,
         // and so is that of `/dev/console` by its owner, to its own mode.
         if VirtualFileSystem.isOnDevfs inode system.Machine.FileSystem then
-            match Credentials.privilege system.Process.Credentials with
+            match CallerPrivilege.ofCredentials system.Process.Credentials with
             | CallerPrivilege.Unprivileged -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
             | CallerPrivilege.Privileged -> Error (DevfsAttributeRefusal.PrivilegedCaller inode)
         else

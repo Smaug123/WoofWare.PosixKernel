@@ -167,7 +167,7 @@ module private UnixByteStringInternal =
 /// No encoding is implied. A Unix filesystem just directly stores the bytes
 /// a caller handed it, so a name need not be text at all. That is why
 /// <c>tryToString</c> is a partial function.
-///
+/// <para />
 /// Construct via <c>UnixByteString.ofBytes</c> or <c>UnixByteString.ofString</c>.
 /// </remarks>
 [<Struct>]
@@ -231,11 +231,10 @@ module UnixByteString =
         | UnixByteStringDefect.ContainsNul index ->
             $"contains a NUL at byte index %d{index}, which cannot survive a C string boundary"
 
+    /// <summary>
     /// Take these bytes as a Unix byte string, or explain why they are not one.
-    ///
-    /// Throws if `bytes` is a *default* `ImmutableArray` rather than
-    /// an empty one: that is a forged value rather than data, and no byte string a
-    /// caller could supply produces it.
+    /// </summary>
+    /// <exception cref="ArgumentException"><c>bytes</c> is a default (uninitialised) <c>ImmutableArray</c>, i.e. its internal array is null.</exception>
     let ofBytes (bytes : ImmutableArray<byte>) : Result<UnixByteString, UnixByteStringDefect> =
         if bytes.IsDefault then
             raise (
@@ -255,16 +254,19 @@ module UnixByteString =
                     Bytes = bytes
                 }
 
+    /// <summary>
     /// Encode this .NET string as UTF-8 and take the result as a Unix byte string,
     /// or explain why the string has no such encoding.
-    ///
+    /// </summary>
+    /// <remarks>
     /// This is the constructor for configuration which the client writes, such
     /// as a path written as an F# literal. A path which a process passes
-    /// arrives as bytes, and goes through `ofBytes` instead.
-    ///
+    /// arrives as bytes, and goes through <c>ofBytes</c> instead.
+    /// <para />
     /// An unpaired surrogate is rejected here rather than encoded: it has no
     /// UTF-8 encoding, so a strict encoder would throw, and a lenient one would
     /// silently substitute U+FFFD and name a different file.
+    /// </remarks>
     let ofString (candidate : string) : Result<UnixByteString, UnixPathTextDefect> =
         if isNull candidate then
             nullArg (nameof candidate)
@@ -277,8 +279,12 @@ module UnixByteString =
                     Bytes = UnixPathText.utf8.GetBytes candidate |> ImmutableArray.CreateRange
                 }
 
+    /// <summary>
     /// The bytes, as a Unix kernel would hand them back.
+    /// </summary>
+    /// <remarks>
     /// Has no NUL terminator; callers that need a C string append it themselves.
+    /// </remarks>
     let toBytes (s : UnixByteString) : ImmutableArray<byte> =
         UnixByteStringInternal.checkedBytes s.Bytes
 
@@ -343,8 +349,8 @@ module UnixByteString =
     /// <remarks>
     /// Our Darwin flavour currently happens to admit exactly the names for which this
     /// is <c>Some</c>, but that is a chosen approximation of APFS's rule rather than
-    /// APFS's rule: real APFS also refuses Unicode noncharacters and over-long
-    /// combining sequences, which this accepts.
+    /// the rule itself: real APFS also refuses Unicode noncharacters and over-long
+    /// combining sequences, whereas we accept them.
     /// Do not read a <c>Some</c> here as "a real Darwin would bind this".
     /// </remarks>
     let tryToString (s : UnixByteString) : string option =

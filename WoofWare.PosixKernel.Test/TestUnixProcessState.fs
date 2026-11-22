@@ -183,7 +183,7 @@ module TestUnixProcessState =
                 { empty with
                     Credentials = credentials
                 }
-            |> shouldEqual (Credentials.privilege credentials)
+            |> shouldEqual (CallerPrivilege.ofCredentials credentials)
 
         Check.One (
             Config.QuickThrowOnFailure.WithMaxTest 200,

@@ -102,4 +102,5 @@ module UnixPathText =
     /// Intended to be used after validation with <c>firstDefect</c>, which already rejects the only inputs that
     /// could cause the encoder to throw.
     /// </remarks>
+    // TODO: this contract is a slap in the face to parse-don't-validate
     let utf8 : UTF8Encoding = UTF8Encoding (false, true)

@@ -131,7 +131,7 @@ module internal NewNameRules =
             match source with
             | NewNameSource.Fresh ->
                 VirtualFileSystem.isOnDevfs directory vfs
-                && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+                && CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
             | NewNameSource.Linked _
             | NewNameSource.Cloned _ -> false
 

@@ -7,7 +7,7 @@ namespace WoofWare.PosixKernel
 type FileNameError =
     /// <summary>The candidate was null or empty.</summary>
     /// <remarks>
-    /// No directory contains an entry with the empty name; a path that appears
+    /// No directory ever contains an entry with the empty name; a path that appears
     /// to ask for one ("a//b", "a/") has a zero-length <i>segment</i>, which
     /// <c>UnixPath.components</c> drops rather than turning into a name.
     /// </remarks>
@@ -39,7 +39,7 @@ type FileNameError =
 /// This is non-empty, separator-free, NUL-free, and neither "." nor "..".
 /// It need not be valid UTF-8, so it need not be valid on the simulated machine's
 /// filesystem.
-///
+/// <para />
 /// Construct via <c>DirectoryEntryName.parse</c> or <c>DirectoryEntryName.ofByteString</c>.
 /// </remarks>
 [<Struct>]
@@ -237,7 +237,7 @@ module PathComponent =
         | PathComponent.Name name -> DirectoryEntryName.toByteString name
 
 /// <summary>
-/// Why a .NET string is not usable as a Unix path.
+/// Why a .NET string is not usable as a Unix path that a process might pass to the kernel.
 /// </summary>
 ///
 /// <remarks>
@@ -266,19 +266,18 @@ type UnixPathError =
 /// <remarks>
 /// Possibly relative, possibly containing "." and ".." components and symlinks,
 /// possibly with a trailing separator.
-///
+/// <para />
 /// This is the input to the <c>VirtualFileSystem</c> resolution walk.
 /// The syscall functions do not take a <c>UnixPath</c>: they take <c>PathArgumentBytes</c>, which the
-/// kernel copies in and turns into one. A client meets <c>UnixPath</c> in
-/// <c>PathWalk.resolveExistingFromRoot</c> and <c>SymlinkTarget.toUnixPath</c>.
-///
+/// kernel copies in and turns into a <c>UnixPath</c>. A client driving WoofWare.PosixKernel sees <c>UnixPath</c>
+/// in <c>PathWalk.resolveExistingFromRoot</c> and <c>SymlinkTarget.toUnixPath</c>.
+/// <para />
 /// Contrast <c>AbsoluteUnixPath</c>, which is the strictly narrower shape
 /// <c>getcwd(3)</c> can <i>return</i>.
 /// Every <c>AbsoluteUnixPath</c> is a <c>UnixPath</c> (see <c>UnixPath.ofAbsolute</c>); the
 /// converse holds only for paths a resolution walk has already reduced.
-///
+/// <para />
 /// Construct via <c>UnixPath.parse</c> or <c>UnixPath.ofByteString</c>.
-///
 /// Recover the path's structure on demand with <c>UnixPath.components</c>.
 /// </remarks>
 type UnixPath =
@@ -554,8 +553,8 @@ module UnixPath =
     /// Take a byte string as a path.
     /// </summary>
     /// <remarks>
-    /// A process may pass any NUL-free byte string (and hence any <c>UnixByteString</c>) to a syscall
-    /// as a path, so this cannot fail.
+    /// Intended for use when a process is passing a byte string to a syscall as a path.
+    /// Therefore this cannot fail: the kernel has to be able to handle any (non-NUL-containing) input.
     /// </remarks>
     let ofByteString (bytes : UnixByteString) : UnixPath =
         // Stores the bytes verbatim, for the reasons `parse` gives.
@@ -577,7 +576,7 @@ module UnixPath =
     /// Stores the UTF-8 encoding of the candidate verbatim.
     /// (Even the simplest normalisation, collapsing consecutive separator characters, is observable on Darwin,
     /// so we can't even do <i>that</i> during parse.)
-    ///
+    /// <para />
     /// In POSIX, the treatment of a path beginning with exactly two separators
     /// is implementation-defined (it may denote a distinct namespace).
     /// WoofWare.PosixKernel treats it as the root.

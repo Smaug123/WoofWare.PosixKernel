@@ -561,7 +561,7 @@ module internal RenameRules =
             RenameVerdict.Refuse UnixError.EXDEV
         elif
             VirtualFileSystem.isOnDevfs sourceDirectory vfs
-            && Credentials.privilege credentials = CallerPrivilege.Unprivileged
+            && CallerPrivilege.ofCredentials credentials = CallerPrivilege.Unprivileged
             && destinationExisting <> Some moved
         then
             RenameVerdict.Refuse UnixError.EPERM

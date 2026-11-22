@@ -178,7 +178,7 @@ module AbsoluteUnixPath =
     /// This rejects invalid input, such as paths with components which are just "..", rather than performing any normalisation.
     /// (Paths cannot be normalised correctly without risking changing their meaning if there are symlinks. For example,
     /// <c>"/a/link/.."</c> would normalise syntactically to "/a", which is likely semantically incorrect in a running
-    /// system.)
+    /// system because <c>link</c> is probably pointing elsewhere.)
     /// </remarks>
     let parse (candidate : string) : Result<AbsoluteUnixPath, AbsoluteUnixPathError> =
         if String.IsNullOrEmpty candidate then

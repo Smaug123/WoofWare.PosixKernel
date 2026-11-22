@@ -856,7 +856,7 @@ module UnixNamespace =
         (vfs : VirtualFileSystem)
         : PathRefusal option
         =
-        match Credentials.privilege credentials with
+        match CallerPrivilege.ofCredentials credentials with
         | CallerPrivilege.Unprivileged -> None
         | CallerPrivilege.Privileged ->
             inodes
@@ -3046,7 +3046,7 @@ module UnixNamespace =
         // CLONE): with no flags root's clone keeps the source's owner and
         // group, and under CLONE_NOOWNERCOPY it is owned as a new file in its
         // directory, as an ordinary user's clone always is.
-        match Credentials.privilege system.Process.Credentials with
+        match CallerPrivilege.ofCredentials system.Process.Credentials with
         | CallerPrivilege.Privileged when flags &&& cloneAcl <> 0 -> Error (CloneFileRefusal.PrivilegedAclCopy flags)
         | privilege ->
 
@@ -3558,7 +3558,7 @@ module UnixNamespace =
             | AtDirectory.CurrentDirectory -> false
 
         let privileged =
-            Credentials.privilege system.Process.Credentials = CallerPrivilege.Privileged
+            CallerPrivilege.ofCredentials system.Process.Credentials = CallerPrivilege.Privileged
 
         if
             arguments.EmptyPath = EmptyPathMeaning.NamesStartingPoint

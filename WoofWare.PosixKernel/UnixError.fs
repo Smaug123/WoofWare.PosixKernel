@@ -10,30 +10,46 @@ namespace WoofWare.PosixKernel
 /// </summary>
 ///
 /// <remarks>
-/// This exists because <c>&lt;errno.h&gt;</c> can be different on different platforms.
-/// </remarks>
-/// <remarks>
-/// Get the one for a platform from <c>SimulatedUnixPlatform.rawErrnoNumbering</c>, and pass it to
+/// Get the convention for a platform from <c>SimulatedUnixPlatform.rawErrnoNumbering</c>, and pass it to
 /// <c>UnixError.toRawErrnoUnder</c>, <c>UnixError.tryToRawErrnoUnder</c> or <c>UnixError.ofRawErrnoUnder</c>.
-/// </remarks>
-/// <remarks>
-/// The two kernels also hand a failed syscall's errno back to the process differently, at the syscall instruction itself.
-/// On arm64, Linux returns the errno negated in <c>x0</c>, and leaves the carry flag as it was before the call.
-/// Darwin returns the errno itself, positive, in <c>x0</c>, and sets the carry flag; a call that succeeds returns with the carry flag clear.
-/// Either way, the number is in that platform's own numbering.
+/// <para />
+/// This exists because <c>&lt;errno.h&gt;</c> can be different on different platforms, and because different platforms
+/// also use a different calling convention to return errnos from syscalls.
+/// <para />
+/// This abstraction is very coarse and somewhat inaccurately named.
+/// For example, on SPARC, Linux defines some errnos like <c>ELOOP</c> differently.
+/// We currently consider only linux-x64, linux-arm64, and darwin-arm64; our table is accurate for those platforms.
+/// <para />
+/// Note that there is an additional client responsibility related to errnos:
+/// you must also handle the calling convention by which raw errno integers are made visible to the simulated caller of
+/// the syscall.
+/// This happens to move the same way as the errno numbering itself does, on all our modelled platforms, but is
+/// logically distinct.
+/// <para />
+/// How that calling convention works:
+/// Linux returns the errno negated in <c>x0</c> (arm64) or <c>rax</c> (x64), and leaves the carry flag as it was before
+/// the call.
+/// Darwin returns the errno itself, positive, in <c>x0</c> (arm64), and sets the carry flag;
+/// a successful call returns with the carry flag clear.
 /// </remarks>
 /// <example>
 /// A <c>chdir(2)</c> through a symbolic link that names itself fails with <c>ELOOP</c>.
-/// On arm64, the syscall instruction returns -40 on Linux, and 62 with the carry flag set on Darwin.
+/// On Linux, <c>ELOOP</c> is assigned the errno 40; on Darwin, it's assigned 62.
+/// <c>RawErrnoNumbering</c> expresses that difference.
+/// When the kernel returns that errno in response to a syscall, the client driving PosixKernel must additionally
+/// consider the emulated architecture: on arm64, the syscall instruction returns -40 on Linux, but 62 with the carry
+/// flag set on Darwin.
 /// </example>
 [<RequireQualifiedAccess>]
 type RawErrnoNumbering =
     /// <summary>
-    /// <c>&lt;errno.h&gt;</c> is derived from Linux.
+    /// <c>&lt;errno.h&gt;</c> is derived from Linux's behaviour on x64 and arm64, and the calling convention returns
+    /// errnos negated.
     /// </summary>
     | Linux
     /// <summary>
-    /// <c>&lt;errno.h&gt;</c> is derived from Darwin.
+    /// <c>&lt;errno.h&gt;</c> is derived from Darwin's behaviour on arm64, and the calling convention returns errnos
+    /// positive but with the carry flag set.
     /// </summary>
     | Darwin
 
@@ -50,10 +66,13 @@ type RawErrnoNumbering =
 [<RequireQualifiedAccess>]
 type RawErrnoPortability =
     /// <summary>
-    /// This error has the same raw number on every Unix we model, so the
-    /// emulated kernel can report it without first deciding which platform it is
-    /// impersonating.
+    /// This error has the same raw number on every Unix we model, so its numeric value can be
+    /// determined without first deciding which platform we are emulating.
     /// </summary>
+    /// <remarks>
+    /// Note that encoding the number as a syscall result <i>does</i> require knowing the platform: Linux x64 returns
+    /// errnos negated, whereas Darwin arm64 does not.
+    /// </remarks>
     | Portable of value : int
     /// <summary>
     /// This error's raw number is not consistent among the modelled Unixes,
@@ -98,8 +117,9 @@ type RawErrnoPortability =
 /// those only one of them has (such as Linux's <c>ENOKEY</c> or Darwin's <c>EAUTH</c>).
 ///
 /// A second spelling of the same error, like <c>EWOULDBLOCK</c> for <c>EAGAIN</c>, has no case of its own.
-/// The exception is <c>ENOTSUP</c> and <c>EOPNOTSUPP</c>: Darwin numbers them differently, so each has a case,
-/// but Linux gives both the number 95, which <c>UnixError.ofRawErrnoUnder</c> decodes as <c>EOPNOTSUPP</c>.
+/// The exception is <c>ENOTSUP</c> and <c>EOPNOTSUPP</c>: Darwin's kernel ABI assigns them different numbers,
+/// so they each have a case (even though some Darwin C compatibility modes alias them in <c>errno.h</c>).
+/// Linux gives both the number 95, which <c>UnixError.ofRawErrnoUnder</c> decodes as <c>EOPNOTSUPP</c>.
 /// So under Linux, converting <c>ENOTSUP</c> to a number and back answers <c>EOPNOTSUPP</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
@@ -158,11 +178,12 @@ type UnixError =
     /// Bad address.
     /// </summary>
     /// <example>
-    /// Returned by <c>read(2)</c> / <c>write(2)</c> and friends when the buffer
-    /// pointer is outside the process's accessible address space - most
-    /// notably when the caller passes <c>NULL</c> (or any other
-    /// non-dereferenceable bit pattern) with a non-zero <c>bufferSize</c>.
-    /// The kernel performs no I/O for such a call.
+    /// Returned by <c>read(2)</c> / <c>write(2)</c> and friends when the kernel attempts
+    /// to access a buffer outside the process's accessible address space.
+    /// For example, a non-zero-length read into an inaccessible address may result in <c>EFAULT</c>.
+    /// (Not all invocations of a syscall necessarily access any given supplied buffer: e.g. if validation fails for some
+    /// other reason before the kernel would check that the buffer is accessible, you might get a different errno
+    /// representing <i>that</i> validation failure.)
     /// </example>
     | EFAULT
     /// <summary>
@@ -198,8 +219,11 @@ type UnixError =
     /// </summary>
     | ENFILE
     /// <summary>
-    /// File descriptor value too large.
+    /// "File descriptor value too large".
     /// </summary>
+    /// <remarks>
+    /// In practice, this usually means "Too many open file descriptors".
+    /// </remarks>
     | EMFILE
     /// <summary>Inappropriate I/O control operation.</summary>
     /// <example>
@@ -436,9 +460,10 @@ type UnixError =
     /// Operation now in progress.
     /// </summary>
     /// <example>
-    /// Reported by <c>connect(2)</c> when a connect is issued on a non-blocking socket.
-    /// (This is true regardless of whether the destination is already listening or has refused the connection,
-    /// and is true on loopback too, on all modelled platforms.)
+    /// Reported by <c>connect(2)</c> when a connect is issued on a non-blocking stream socket but the connection
+    /// cannot complete immediately, so completion or failure is determined asynchronously.
+    /// (This is observed to be the behaviour of an initial TCP connect regardless of whether the destination is already
+    /// listening or has refused the connection, and is true on loopback too, on all modelled platforms.)
     /// </example>
     /// <remarks>
     /// This is one of the many errnos with an integer value that's not portable.
@@ -450,7 +475,7 @@ type UnixError =
     /// </summary>
     /// <example>
     /// Reported by <c>connect(2)</c> on Linux when another idle stream socket is already bound to
-    /// the destination port but is not listening. (Not on Darwin, though; there, the SYN is dropped
+    /// the destination port but is not listening. (Not on Darwin, though; there, we observed that the SYN is dropped
     /// and the connect pends towards <c>ETIMEDOUT</c> instead.)
     /// Delivered inline if the connect was blocking, or on the first retry if the connect was non-blocking.
     /// </example>
@@ -1531,6 +1556,9 @@ module UnixError =
     /// The raw <c>&lt;errno.h&gt;</c> integer for this error on the chosen platform.
     /// </summary>
     /// <remarks>
+    /// This returns the positive errno: it doesn't model the calling convention of the platform (e.g. on Linux x64,
+    /// the simulated caller will actually receive the <i>negated</i> value in response to a failed syscall).
+    /// <para />
     /// Throws for an error the chosen platform does not have, such as <c>ENOKEY</c> under Darwin.
     /// Use <c>tryToRawErrnoUnder</c> to get <c>None</c> instead.
     /// </remarks>
@@ -1565,14 +1593,19 @@ module UnixError =
     /// <example>
     /// POSIX specifies that errnos are positive, so any negative int is unambiguously a nonstandard raw errno.
     /// </example>
+    /// <remarks>
+    /// This expects the raw errno, not the contents of a register by which that errno is conveyed to a caller.
+    /// Those register contents <i>can</i> be negative, depending on the calling convention of the platform (e.g.
+    /// on Linux x64/arm64).
+    /// </remarks>
     let isUnambiguouslyNonStandardRawErrno (raw : int) : bool = raw < 0
 
     /// <summary>
     /// Convert a portable raw integer errno to a structured error.
     /// </summary>
     /// <remarks>
-    /// This returns <c>None</c> for non-portable errnos, and for numbers which aren't named under any
-    /// modelled Unix.
+    /// This returns <c>None</c> for non-portable errnos, and for numbers which aren't named in any of this library's
+    /// modelled errno tables.
     ///
     /// Use <c>ofRawErrnoUnder</c> to convert an errno if you already know the platform you're simulating.
     /// </remarks>
@@ -1594,10 +1627,8 @@ module UnixError =
     /// <example>
     /// Linux gives ENOTSUP and EOPNOTSUPP one number, 95, and the kernel's own
     /// name for it is EOPNOTSUPP: its headers don't define ENOTSUP, and glibc's
-    /// <c>&lt;errno.h&gt;</c> adds as a synonym. So under Linux the number decodes as
-    /// EOPNOTSUPP, and ENOTSUP is only ever encoded.
-    ///
-    /// So this function returns <c>false</c> for ENOTSUP.
+    /// <c>&lt;errno.h&gt;</c> adds as a synonym. So under Linux we always decode the number as
+    /// EOPNOTSUPP: you never get ENOTSUP, so this function returns <c>false</c> for ENOTSUP.
     /// </example>
     let private decodesUnder (reporting : RawErrnoNumbering) (error : UnixError) : bool =
         match reporting, error with
@@ -1626,13 +1657,15 @@ module UnixError =
         decodeTable RawErrnoNumbering.Darwin
 
     /// <summary>
-    /// Convert a raw integer errno to a structured error on the specified platform.
+    /// Convert a raw nonnegative integer errno to a structured error on the specified platform.
     /// </summary>
     /// <remarks>
     /// Unlike <c>ofRawErrnoPortable</c>, this returns values for platform-dependent entries too.
-    /// It returns <c>None</c> exactly for a number that platform's <c>&lt;errno.h&gt;</c> names no error for.
+    /// It returns <c>None</c> exactly when you supply a number that the platform's <c>&lt;errno.h&gt;</c> doesn't
+    /// assign a name to.
+    /// <para />
     /// Where a platform gives two errors one number, one of them is answered:
-    /// Linux's 95 is <c>EOPNOTSUPP</c>, never <c>ENOTSUP</c>.
+    /// Linux's 95 is <c>EOPNOTSUPP</c>, not <c>ENOTSUP</c>.
     /// </remarks>
     let ofRawErrnoUnder (reporting : RawErrnoNumbering) (raw : int) : UnixError option =
         match reporting with
